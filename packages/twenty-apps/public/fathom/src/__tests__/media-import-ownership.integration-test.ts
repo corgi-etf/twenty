@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 
 import { claimFathomMediaImport } from 'src/logic-functions/utils/claim-fathom-media-import.util';
 import { updateCallRecordingMedia } from 'src/logic-functions/utils/update-call-recording-media.util';
+import { updateFathomMediaDownloadId } from 'src/logic-functions/utils/update-fathom-media-download-id.util';
 
 describe('Fathom media import ownership', () => {
   it.each([
@@ -92,15 +93,30 @@ describe('Fathom media import ownership', () => {
         }),
       ).toBe(false);
 
+      const replacementDownloadId = randomUUID();
+
+      expect(
+        await updateFathomMediaDownloadId({
+          coreApiClient,
+          callRecordingId,
+          writeContext,
+          downloadId: replacementDownloadId,
+        }),
+      ).toBe(false);
+
       const current = await coreApiClient.query({
         callRecording: {
           __args: { filter: { id: { eq: callRecordingId } } },
           fathomMediaFailureReason: true,
+          fathomMediaDownloadId: true,
         },
       });
 
       expect(current.callRecording?.fathomMediaFailureReason).toBe(
         'download_expired',
+      );
+      expect(current.callRecording?.fathomMediaDownloadId).not.toBe(
+        replacementDownloadId,
       );
     } finally {
       await coreApiClient.mutation({
