@@ -170,15 +170,38 @@ data "aws_iam_policy_document" "github_deploy" {
     effect = "Allow"
     actions = [
       "ecs:DescribeServices",
-      "ecs:DescribeTasks",
-      "ecs:ListTasks",
       "ecs:UpdateService",
     ]
     resources = [
       aws_ecs_service.server.id,
       aws_ecs_service.worker.id,
-      "${aws_ecs_cluster.crm.arn}/*",
     ]
+
+    condition {
+      test     = "ArnEquals"
+      variable = "ecs:cluster"
+      values   = [aws_ecs_cluster.crm.arn]
+    }
+  }
+
+  statement {
+    sid       = "ListCrmTasks"
+    effect    = "Allow"
+    actions   = ["ecs:ListTasks"]
+    resources = ["*"]
+
+    condition {
+      test     = "ArnEquals"
+      variable = "ecs:cluster"
+      values   = [aws_ecs_cluster.crm.arn]
+    }
+  }
+
+  statement {
+    sid       = "DescribeCrmTasks"
+    effect    = "Allow"
+    actions   = ["ecs:DescribeTasks"]
+    resources = ["arn:aws:ecs:${var.aws_region}:${var.aws_account_id}:task/${aws_ecs_cluster.crm.name}/*"]
 
     condition {
       test     = "ArnEquals"
@@ -229,6 +252,13 @@ data "aws_iam_policy_document" "github_deploy" {
       aws_cloudwatch_log_group.server.arn,
       aws_cloudwatch_log_group.worker.arn,
     ]
+  }
+
+  statement {
+    sid       = "ListLogGroups"
+    effect    = "Allow"
+    actions   = ["logs:DescribeLogGroups"]
+    resources = ["*"]
   }
 }
 
