@@ -100,7 +100,7 @@ resource "aws_cloudwatch_metric_alarm" "cache_memory" {
   treat_missing_data  = "breaching"
 
   dimensions = {
-    ReplicationGroupId = aws_elasticache_replication_group.crm.replication_group_id
+    CacheClusterId = aws_elasticache_replication_group.crm.member_clusters[0]
   }
 }
 
@@ -176,7 +176,7 @@ resource "aws_cloudwatch_dashboard" "crm" {
           region = var.aws_region
           period = 60
           metrics = [
-            ["AWS/ElastiCache", "DatabaseMemoryUsagePercentage", "ReplicationGroupId", aws_elasticache_replication_group.crm.replication_group_id],
+            ["AWS/ElastiCache", "DatabaseMemoryUsagePercentage", "CacheClusterId", aws_elasticache_replication_group.crm.member_clusters[0]],
             [".", "EngineCPUUtilization", ".", "."],
             [".", "CurrConnections", ".", "."],
           ]
