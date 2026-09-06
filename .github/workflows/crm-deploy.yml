@@ -32,8 +32,6 @@ env:
     twenty-front-component-renderer,twenty-sdk,twenty-client-sdk,twenty-emails
   NX_CLOUD_ACCESS_TOKEN: ''
   NX_DAEMON: 'false'
-  TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
-  TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
 
 jobs:
   validate:
@@ -45,16 +43,6 @@ jobs:
       nx_base: ${{ steps.nx-shas.outputs.base }}
       nx_head: ${{ steps.nx-shas.outputs.head }}
     steps:
-      - name: Send start notification
-        if: env.TELEGRAM_TOKEN != '' && env.TELEGRAM_CHAT_ID != ''
-        shell: bash
-        run: |
-          curl --fail --silent --show-error \
-            --request POST \
-            "https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage" \
-            --data-urlencode "chat_id=${TELEGRAM_CHAT_ID}" \
-            --data-urlencode "text=CRM production pipeline started for ${GITHUB_REPOSITORY}@${GITHUB_SHA}."
-
       - name: Check out the exact revision with full history
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
@@ -160,16 +148,6 @@ jobs:
             --projects="${CRM_RUNTIME_PROJECTS}" \
             --targets=lint,typecheck,test,build \
             --parallel=3
-
-      - name: Send validation failure notification
-        if: failure() && env.TELEGRAM_TOKEN != '' && env.TELEGRAM_CHAT_ID != ''
-        shell: bash
-        run: |
-          curl --fail --silent --show-error \
-            --request POST \
-            "https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage" \
-            --data-urlencode "chat_id=${TELEGRAM_CHAT_ID}" \
-            --data-urlencode "text=CRM production validation failed: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
 
   deploy:
     name: Build and deploy immutable image
@@ -531,26 +509,6 @@ jobs:
 
           echo "Deployed ${IMAGE_REF} to server and worker."
 
-      - name: Send deployment success notification
-        if: success() && env.TELEGRAM_TOKEN != '' && env.TELEGRAM_CHAT_ID != ''
-        shell: bash
-        run: |
-          curl --fail --silent --show-error \
-            --request POST \
-            "https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage" \
-            --data-urlencode "chat_id=${TELEGRAM_CHAT_ID}" \
-            --data-urlencode "text=CRM production deployment succeeded for ${GITHUB_REPOSITORY}@${GITHUB_SHA}."
-
-      - name: Send deployment failure notification
-        if: failure() && env.TELEGRAM_TOKEN != '' && env.TELEGRAM_CHAT_ID != ''
-        shell: bash
-        run: |
-          curl --fail --silent --show-error \
-            --request POST \
-            "https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage" \
-            --data-urlencode "chat_id=${TELEGRAM_CHAT_ID}" \
-            --data-urlencode "text=CRM production deployment failed: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
-
   no-runtime-change:
     name: Skip image deployment
     needs: validate
@@ -561,12 +519,3 @@ jobs:
         run: >-
           echo "Nx and Docker input detection found no production image changes;
           the validated infrastructure/workflow-only commit will not replace the pinned runtime image."
-      - name: Send validation-only success notification
-        if: success() && env.TELEGRAM_TOKEN != '' && env.TELEGRAM_CHAT_ID != ''
-        shell: bash
-        run: |
-          curl --fail --silent --show-error \
-            --request POST \
-            "https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage" \
-            --data-urlencode "chat_id=${TELEGRAM_CHAT_ID}" \
-            --data-urlencode "text=CRM production validation succeeded; no runtime image change was deployed for ${GITHUB_SHA}."
