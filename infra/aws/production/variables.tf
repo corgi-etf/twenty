@@ -30,7 +30,7 @@ variable "hosted_zone_id" {
 variable "github_repository" {
   description = "GitHub organization and repository allowed to deploy the CRM."
   type        = string
-  default     = "Corgi-ETF/twenty"
+  default     = "corgi-etf/twenty"
 }
 
 variable "github_environment" {
