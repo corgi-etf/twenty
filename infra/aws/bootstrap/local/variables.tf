@@ -15,4 +15,3 @@ variable "state_bucket_name" {
   type        = string
   default     = "corgi-crm-terraform-state-182018075072-us-east-2"
 }
-
