@@ -1,0 +1,572 @@
+name: CRM production deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: crm-production-deploy
+  cancel-in-progress: false
+
+env:
+  AWS_ACCOUNT_ID: '182018075072'
+  AWS_REGION: us-east-2
+  AWS_ROLE_ARN: arn:aws:iam::182018075072:role/crm-production-github-deploy
+  ECS_CLUSTER: crm-production
+  ECR_REPOSITORY: crm-production-twenty
+  SERVER_SERVICE: crm-production-server
+  SERVER_TASK_FAMILY: crm-production-server
+  SERVER_CONTAINER: server
+  SERVER_LOG_GROUP: /ecs/crm-production/server
+  WORKER_SERVICE: crm-production-worker
+  WORKER_TASK_FAMILY: crm-production-worker
+  WORKER_CONTAINER: worker
+  HEALTH_URL: https://crm.corgiinvest.com/healthz
+  CRM_RUNTIME_PROJECTS: >-
+    twenty-server,twenty-front,twenty-shared,twenty-ui,
+    twenty-front-component-renderer,twenty-sdk,twenty-client-sdk,twenty-emails
+  NX_CLOUD_ACCESS_TOKEN: ''
+  NX_DAEMON: 'false'
+  TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+  TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+
+jobs:
+  validate:
+    name: Validate affected runtime projects
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    outputs:
+      deploy_image: ${{ steps.runtime-change.outputs.deploy_image }}
+      nx_base: ${{ steps.nx-shas.outputs.base }}
+      nx_head: ${{ steps.nx-shas.outputs.head }}
+    steps:
+      - name: Send start notification
+        if: env.TELEGRAM_TOKEN != '' && env.TELEGRAM_CHAT_ID != ''
+        shell: bash
+        run: |
+          curl --fail --silent --show-error \
+            --request POST \
+            "https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage" \
+            --data-urlencode "chat_id=${TELEGRAM_CHAT_ID}" \
+            --data-urlencode "text=CRM production pipeline started for ${GITHUB_REPOSITORY}@${GITHUB_SHA}."
+
+      - name: Check out the exact revision with full history
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          fetch-depth: 0
+
+      - name: Install Node and Yarn dependencies
+        uses: ./.github/actions/yarn-install
+
+      - name: Resolve Nx comparison SHAs
+        id: nx-shas
+        shell: bash
+        env:
+          PUSH_BASE_SHA: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          NX_HEAD="$(git rev-parse HEAD)"
+
+          if [[ "${GITHUB_EVENT_NAME}" == "push" ]] &&
+             [[ -n "${PUSH_BASE_SHA}" ]] &&
+             [[ "${PUSH_BASE_SHA}" != "0000000000000000000000000000000000000000" ]]; then
+            NX_BASE="${PUSH_BASE_SHA}"
+          else
+            NX_BASE="$(git rev-parse "${NX_HEAD}^")"
+          fi
+
+          git cat-file -e "${NX_BASE}^{commit}"
+          git cat-file -e "${NX_HEAD}^{commit}"
+          echo "base=${NX_BASE}" >> "${GITHUB_OUTPUT}"
+          echo "head=${NX_HEAD}" >> "${GITHUB_OUTPUT}"
+
+      - name: Detect production image changes with Nx
+        id: runtime-change
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE="${{ steps.nx-shas.outputs.base }}"
+          HEAD="${{ steps.nx-shas.outputs.head }}"
+          AFFECTED_FILE="${RUNNER_TEMP}/crm-affected-projects.json"
+
+          npx nx show projects \
+            --affected \
+            --base="${BASE}" \
+            --head="${HEAD}" \
+            --json > "${AFFECTED_FILE}"
+
+          jq -e 'type == "array"' "${AFFECTED_FILE}" >/dev/null
+          if jq -e \
+            --argjson runtime_projects '[
+              "twenty-server",
+              "twenty-front",
+              "twenty-shared",
+              "twenty-ui",
+              "twenty-front-component-renderer",
+              "twenty-sdk",
+              "twenty-client-sdk",
+              "twenty-emails"
+            ]' \
+            'any(.[]; . as $project | $runtime_projects | index($project))' \
+            "${AFFECTED_FILE}" >/dev/null; then
+            NX_RUNTIME_CHANGED=true
+          else
+            NX_RUNTIME_CHANGED=false
+          fi
+
+          # Nx owns project/dependency awareness. These extra paths are Docker
+          # context inputs that are not necessarily represented by an Nx project.
+          if git diff --name-only "${BASE}" "${HEAD}" | grep -Eq \
+            '^(package.json|yarn.lock|\.yarnrc\.yml|nx.json|tsconfig\.base\.json|\.yarn/(releases|patches)/|packages/twenty-docker/twenty/)'; then
+            DOCKER_INPUT_CHANGED=true
+          else
+            DOCKER_INPUT_CHANGED=false
+          fi
+
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]] ||
+             [[ "${NX_RUNTIME_CHANGED}" == "true" ]] ||
+             [[ "${DOCKER_INPUT_CHANGED}" == "true" ]]; then
+            DEPLOY_IMAGE=true
+          else
+            DEPLOY_IMAGE=false
+          fi
+
+          echo "Nx runtime project changed: ${NX_RUNTIME_CHANGED}"
+          echo "Non-project Docker input changed: ${DOCKER_INPUT_CHANGED}"
+          echo "Build and deploy image: ${DEPLOY_IMAGE}"
+          echo "deploy_image=${DEPLOY_IMAGE}" >> "${GITHUB_OUTPUT}"
+
+      - name: Show affected production projects
+        shell: bash
+        run: |
+          npx nx show projects \
+            --affected \
+            --base="${{ steps.nx-shas.outputs.base }}" \
+            --head="${{ steps.nx-shas.outputs.head }}" \
+            --projects="${CRM_RUNTIME_PROJECTS}"
+
+      - name: Run affected lint, typecheck, tests, and builds
+        shell: bash
+        run: |
+          npx nx affected \
+            --nxBail \
+            --base="${{ steps.nx-shas.outputs.base }}" \
+            --head="${{ steps.nx-shas.outputs.head }}" \
+            --projects="${CRM_RUNTIME_PROJECTS}" \
+            --targets=lint,typecheck,test,build \
+            --parallel=3
+
+      - name: Send validation failure notification
+        if: failure() && env.TELEGRAM_TOKEN != '' && env.TELEGRAM_CHAT_ID != ''
+        shell: bash
+        run: |
+          curl --fail --silent --show-error \
+            --request POST \
+            "https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage" \
+            --data-urlencode "chat_id=${TELEGRAM_CHAT_ID}" \
+            --data-urlencode "text=CRM production validation failed: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+
+  deploy:
+    name: Build and deploy immutable image
+    needs: validate
+    if: needs.validate.outputs.deploy_image == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    environment: production
+    steps:
+      - name: Check out the validated revision
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          fetch-depth: 0
+
+      - name: Configure AWS credentials through GitHub OIDC
+        uses: aws-actions/configure-aws-credentials@61815dcd50bd041e203e49132bacad1fd04d2708 # v5.1.1
+        with:
+          role-to-assume: ${{ env.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Verify AWS deployment preconditions
+        shell: bash
+        run: |
+          set -euo pipefail
+          CALLER_ACCOUNT="$(aws sts get-caller-identity --query Account --output text)"
+          [[ "${CALLER_ACCOUNT}" == "${AWS_ACCOUNT_ID}" ]]
+
+          aws ecr describe-repositories \
+            --repository-names "${ECR_REPOSITORY}" >/dev/null
+          aws ecs describe-clusters \
+            --clusters "${ECS_CLUSTER}" \
+            --query 'clusters[0].status' \
+            --output text | grep -qx ACTIVE
+
+          for service in "${SERVER_SERVICE}" "${WORKER_SERVICE}"; do
+            STATUS="$(aws ecs describe-services \
+              --cluster "${ECS_CLUSTER}" \
+              --services "${service}" \
+              --query 'services[0].status' \
+              --output text)"
+            [[ "${STATUS}" == "ACTIVE" ]]
+          done
+
+          SERVER_DESIRED="$(aws ecs describe-services \
+            --cluster "${ECS_CLUSTER}" \
+            --services "${SERVER_SERVICE}" \
+            --query 'services[0].desiredCount' \
+            --output text)"
+          if [[ "${SERVER_DESIRED}" != "1" ]]; then
+            echo "Expected the intentionally single-task server service to have desiredCount=1." >&2
+            exit 1
+          fi
+
+      - name: Build and push the production image
+        id: image
+        shell: bash
+        run: |
+          set -euo pipefail
+          IMAGE_TAG="git-${GITHUB_SHA}"
+          ECR_REGISTRY="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+          ECR_URI="${ECR_REGISTRY}/${ECR_REPOSITORY}"
+
+          aws ecr get-login-password --region "${AWS_REGION}" |
+            docker login --username AWS --password-stdin "${ECR_REGISTRY}"
+
+          IMAGE_DIGEST="$(aws ecr describe-images \
+            --repository-name "${ECR_REPOSITORY}" \
+            --image-ids "imageTag=${IMAGE_TAG}" \
+            --query 'imageDetails[0].imageDigest' \
+            --output text 2>/dev/null || true)"
+
+          if [[ "${IMAGE_DIGEST}" == sha256:* ]]; then
+            echo "Immutable image ${IMAGE_TAG} already exists; reusing it for this retry."
+          else
+            LATEST_DIGEST="$(aws ecr describe-images \
+              --repository-name "${ECR_REPOSITORY}" \
+              --query 'sort_by(imageDetails,&imagePushedAt)[-1].imageDigest' \
+              --output text)"
+            CACHE_FROM_ARGS=()
+            if [[ "${LATEST_DIGEST}" == sha256:* ]]; then
+              CACHE_FROM_ARGS=(--cache-from "type=registry,ref=${ECR_URI}@${LATEST_DIGEST}")
+            fi
+
+            docker buildx create --name crm-production-builder --use
+            docker buildx build \
+              --platform linux/amd64 \
+              --target twenty \
+              --build-arg "APP_VERSION=${IMAGE_TAG}" \
+              "${CACHE_FROM_ARGS[@]}" \
+              --cache-to type=inline \
+              --provenance=false \
+              --sbom=false \
+              --tag "${ECR_URI}:${IMAGE_TAG}" \
+              --file packages/twenty-docker/twenty/Dockerfile \
+              --push \
+              .
+
+            IMAGE_DIGEST="$(aws ecr describe-images \
+              --repository-name "${ECR_REPOSITORY}" \
+              --image-ids "imageTag=${IMAGE_TAG}" \
+              --query 'imageDetails[0].imageDigest' \
+              --output text)"
+          fi
+
+          [[ "${IMAGE_DIGEST}" == sha256:* ]]
+          echo "ref=${ECR_URI}@${IMAGE_DIGEST}" >> "${GITHUB_OUTPUT}"
+          echo "tag=${IMAGE_TAG}" >> "${GITHUB_OUTPUT}"
+
+      - name: Deploy server, verify migrations, then deploy worker
+        shell: bash
+        env:
+          IMAGE_REF: ${{ steps.image.outputs.ref }}
+        run: |
+          set -Eeuo pipefail
+
+          TMP_DIR="${RUNNER_TEMP}/crm-deployment"
+          mkdir -p "${TMP_DIR}"
+          SERVER_UPDATED=false
+          WORKER_UPDATED=false
+
+          service_task_definition() {
+            aws ecs describe-services \
+              --cluster "${ECS_CLUSTER}" \
+              --services "$1" \
+              --query 'services[0].taskDefinition' \
+              --output text
+          }
+
+          task_family() {
+            local task_arn="$1"
+            local family_revision="${task_arn##*/}"
+            echo "${family_revision%%:*}"
+          }
+
+          clone_task_definition_with_image() {
+            local old_arn="$1"
+            local expected_family="$2"
+            local container_name="$3"
+            local stem="$4"
+            local described="${TMP_DIR}/${stem}-described.json"
+            local payload="${TMP_DIR}/${stem}-register.json"
+
+            if [[ "$(task_family "${old_arn}")" != "${expected_family}" ]]; then
+              echo "Service task definition ${old_arn} is not in expected family ${expected_family}." >&2
+              return 1
+            fi
+
+            aws ecs describe-task-definition \
+              --task-definition "${old_arn}" \
+              --include TAGS > "${described}"
+
+            if [[ "$(jq --arg name "${container_name}" \
+              '[.taskDefinition.containerDefinitions[] | select(.name == $name)] | length' \
+              "${described}")" != "1" ]]; then
+              echo "Expected exactly one ${container_name} container in ${old_arn}." >&2
+              return 1
+            fi
+
+            jq \
+              --arg image "${IMAGE_REF}" \
+              --arg name "${container_name}" \
+              '.taskDefinition
+               | (.containerDefinitions[] | select(.name == $name) | .image) = $image
+               | del(
+                   .taskDefinitionArn,
+                   .revision,
+                   .status,
+                   .requiresAttributes,
+                   .compatibilities,
+                   .registeredAt,
+                   .registeredBy,
+                   .deregisteredAt
+                 )' \
+              "${described}" |
+              jq --slurpfile source "${described}" \
+                '. + {tags: ($source[0].tags // [])}' > "${payload}"
+
+            # Normalize the one allowed change and prove every other setting,
+            # secret selector, role, command, health check, and tag stayed equal.
+            jq --arg name "${container_name}" \
+              '.taskDefinition
+               | (.containerDefinitions[] | select(.name == $name) | .image) = "__IMAGE__"
+               | del(
+                   .taskDefinitionArn,
+                   .revision,
+                   .status,
+                   .requiresAttributes,
+                   .compatibilities,
+                   .registeredAt,
+                   .registeredBy,
+                   .deregisteredAt
+                 )
+               | . + {tags: (input.tags // [])}' \
+              "${described}" "${described}" > "${TMP_DIR}/${stem}-expected.json"
+            jq --arg name "${container_name}" \
+              '(.containerDefinitions[] | select(.name == $name) | .image) = "__IMAGE__"' \
+              "${payload}" > "${TMP_DIR}/${stem}-actual.json"
+            diff -u \
+              "${TMP_DIR}/${stem}-expected.json" \
+              "${TMP_DIR}/${stem}-actual.json" >/dev/null
+
+            aws ecs register-task-definition \
+              --cli-input-json "file://${payload}" \
+              --query 'taskDefinition.taskDefinitionArn' \
+              --output text
+          }
+
+          verify_service() {
+            local service="$1"
+            local expected_task_definition="$2"
+            local service_json="${TMP_DIR}/${service}-service.json"
+
+            aws ecs wait services-stable \
+              --cluster "${ECS_CLUSTER}" \
+              --services "${service}"
+            aws ecs describe-services \
+              --cluster "${ECS_CLUSTER}" \
+              --services "${service}" > "${service_json}"
+
+            jq -e \
+              --arg task_definition "${expected_task_definition}" \
+              '.services[0]
+               | .status == "ACTIVE"
+                 and .runningCount == .desiredCount
+                 and .pendingCount == 0
+                 and .taskDefinition == $task_definition' \
+              "${service_json}" >/dev/null
+          }
+
+          verify_server_alb() {
+            local service_json="${TMP_DIR}/${SERVER_SERVICE}-service.json"
+            local target_groups
+            target_groups="$(jq -r '.services[0].loadBalancers[].targetGroupArn' "${service_json}")"
+            if [[ -z "${target_groups}" ]]; then
+              echo "Server service has no ALB target group to verify." >&2
+              return 1
+            fi
+
+            while IFS= read -r target_group; do
+              local health_file="${TMP_DIR}/target-health.json"
+              aws elbv2 describe-target-health \
+                --target-group-arn "${target_group}" > "${health_file}"
+              jq -e '.TargetHealthDescriptions | length > 0' "${health_file}" >/dev/null
+              jq -e \
+                '[.TargetHealthDescriptions[].TargetHealth.State]
+                 | any(.[]; . == "healthy")
+                   and all(.[]; . == "healthy" or . == "draining")' \
+                "${health_file}" >/dev/null
+            done <<< "${target_groups}"
+          }
+
+          verify_server_health_endpoint() {
+            for attempt in $(seq 1 30); do
+              if curl --fail --silent --show-error --max-time 10 "${HEALTH_URL}" >/dev/null; then
+                return 0
+              fi
+              echo "Health endpoint not ready (attempt ${attempt}/30)."
+              sleep 10
+            done
+            echo "Health endpoint did not become ready." >&2
+            return 1
+          }
+
+          verify_server_migrations() {
+            local start_ms="$1"
+            local log_file="${TMP_DIR}/server-migration-messages.json"
+            local messages_file="${TMP_DIR}/server-migration-messages.txt"
+
+            for attempt in $(seq 1 18); do
+              aws logs filter-log-events \
+                --log-group-name "${SERVER_LOG_GROUP}" \
+                --start-time "${start_ms}" \
+                --query 'events[].message' \
+                --output json > "${log_file}"
+              jq -r '.[]' "${log_file}" > "${messages_file}"
+
+              if grep -Eiq \
+                'Warning: (Upgrade completed with errors|Failed to flush cache (before|after) upgrade)|migration(s)?[^[:alnum:]]+.*(failed|error)|upgrade[^[:alnum:]]+.*failed' \
+                "${messages_file}"; then
+                echo "Server logs contain database migration or upgrade failure evidence." >&2
+                return 1
+              fi
+              if grep -Fq 'Successfully migrated DB!' "${messages_file}"; then
+                return 0
+              fi
+
+              echo "Waiting for successful migration evidence (attempt ${attempt}/18)."
+              sleep 10
+            done
+
+            echo "Server logs did not contain successful migration completion evidence." >&2
+            return 1
+          }
+
+          rollback() {
+            local exit_code=$?
+            trap - ERR
+            set +e
+            echo "Deployment failed; restoring prior ECS task definitions." >&2
+
+            if [[ "${WORKER_UPDATED}" == "true" ]]; then
+              aws ecs update-service \
+                --cluster "${ECS_CLUSTER}" \
+                --service "${WORKER_SERVICE}" \
+                --task-definition "${OLD_WORKER_ARN}" >/dev/null
+            fi
+            if [[ "${SERVER_UPDATED}" == "true" ]]; then
+              aws ecs update-service \
+                --cluster "${ECS_CLUSTER}" \
+                --service "${SERVER_SERVICE}" \
+                --task-definition "${OLD_SERVER_ARN}" >/dev/null
+            fi
+
+            if [[ "${WORKER_UPDATED}" == "true" ]]; then
+              aws ecs wait services-stable \
+                --cluster "${ECS_CLUSTER}" \
+                --services "${WORKER_SERVICE}"
+            fi
+            if [[ "${SERVER_UPDATED}" == "true" ]]; then
+              aws ecs wait services-stable \
+                --cluster "${ECS_CLUSTER}" \
+                --services "${SERVER_SERVICE}"
+            fi
+            exit "${exit_code}"
+          }
+
+          OLD_SERVER_ARN="$(service_task_definition "${SERVER_SERVICE}")"
+          OLD_WORKER_ARN="$(service_task_definition "${WORKER_SERVICE}")"
+          NEW_SERVER_ARN="$(clone_task_definition_with_image \
+            "${OLD_SERVER_ARN}" \
+            "${SERVER_TASK_FAMILY}" \
+            "${SERVER_CONTAINER}" \
+            server)"
+          NEW_WORKER_ARN="$(clone_task_definition_with_image \
+            "${OLD_WORKER_ARN}" \
+            "${WORKER_TASK_FAMILY}" \
+            "${WORKER_CONTAINER}" \
+            worker)"
+
+          trap rollback ERR
+          SERVER_DEPLOY_START_MS="$(( $(date +%s) * 1000 ))"
+          SERVER_UPDATED=true
+          aws ecs update-service \
+            --cluster "${ECS_CLUSTER}" \
+            --service "${SERVER_SERVICE}" \
+            --task-definition "${NEW_SERVER_ARN}" >/dev/null
+          verify_service "${SERVER_SERVICE}" "${NEW_SERVER_ARN}"
+          verify_server_alb
+          verify_server_health_endpoint
+          verify_server_migrations "${SERVER_DEPLOY_START_MS}"
+
+          WORKER_UPDATED=true
+          aws ecs update-service \
+            --cluster "${ECS_CLUSTER}" \
+            --service "${WORKER_SERVICE}" \
+            --task-definition "${NEW_WORKER_ARN}" >/dev/null
+          verify_service "${WORKER_SERVICE}" "${NEW_WORKER_ARN}"
+          trap - ERR
+
+          echo "Deployed ${IMAGE_REF} to server and worker."
+
+      - name: Send deployment success notification
+        if: success() && env.TELEGRAM_TOKEN != '' && env.TELEGRAM_CHAT_ID != ''
+        shell: bash
+        run: |
+          curl --fail --silent --show-error \
+            --request POST \
+            "https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage" \
+            --data-urlencode "chat_id=${TELEGRAM_CHAT_ID}" \
+            --data-urlencode "text=CRM production deployment succeeded for ${GITHUB_REPOSITORY}@${GITHUB_SHA}."
+
+      - name: Send deployment failure notification
+        if: failure() && env.TELEGRAM_TOKEN != '' && env.TELEGRAM_CHAT_ID != ''
+        shell: bash
+        run: |
+          curl --fail --silent --show-error \
+            --request POST \
+            "https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage" \
+            --data-urlencode "chat_id=${TELEGRAM_CHAT_ID}" \
+            --data-urlencode "text=CRM production deployment failed: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+
+  no-runtime-change:
+    name: Skip image deployment
+    needs: validate
+    if: needs.validate.outputs.deploy_image != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Record safe deployment skip
+        run: >-
+          echo "Nx and Docker input detection found no production image changes;
+          the validated infrastructure/workflow-only commit will not replace the pinned runtime image."
+      - name: Send validation-only success notification
+        if: success() && env.TELEGRAM_TOKEN != '' && env.TELEGRAM_CHAT_ID != ''
+        shell: bash
+        run: |
+          curl --fail --silent --show-error \
+            --request POST \
+            "https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage" \
+            --data-urlencode "chat_id=${TELEGRAM_CHAT_ID}" \
+            --data-urlencode "text=CRM production validation succeeded; no runtime image change was deployed for ${GITHUB_SHA}."
