@@ -68,7 +68,7 @@ resource "aws_ecs_task_definition" "server" {
   container_definitions = jsonencode([
     {
       name        = "server"
-      image       = "twentycrm/twenty:v2.38.1"
+      image       = "twentycrm/twenty:v2.38.1@sha256:1f4526b05f6591461335700f8c6d45e88cbc4dc037e1ef0bef9daca62da343ea"
       essential   = true
       stopTimeout = 120
       linuxParameters = {
@@ -124,7 +124,7 @@ resource "aws_ecs_task_definition" "worker" {
   container_definitions = jsonencode([
     {
       name        = "worker"
-      image       = "twentycrm/twenty:v2.38.1"
+      image       = "twentycrm/twenty:v2.38.1@sha256:1f4526b05f6591461335700f8c6d45e88cbc4dc037e1ef0bef9daca62da343ea"
       essential   = true
       command     = ["yarn", "worker:prod"]
       stopTimeout = 120

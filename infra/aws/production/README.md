@@ -103,7 +103,7 @@ curl --fail --show-error --silent https://crm.corgiinvest.com/healthz >/dev/null
 | Worker log group / prefix | `/ecs/crm-production/worker` / `worker` |
 | OIDC role | `crm-production-github-deploy` |
 
-The bootstrap task definitions use the exact upstream release image `twentycrm/twenty:v2.38.1` on Linux x86_64. CI builds with Nx, pushes immutable commit-addressed images to ECR, registers new task definition revisions, and updates only these two services.
+The bootstrap task definitions use the upstream Linux x86_64 release pinned as `twentycrm/twenty:v2.38.1@sha256:1f4526b05f6591461335700f8c6d45e88cbc4dc037e1ef0bef9daca62da343ea`. CI builds with Nx, pushes immutable commit-addressed images to ECR, registers new task definition revisions, and updates only these two services.
 
 ## Cost and operational notes
 
