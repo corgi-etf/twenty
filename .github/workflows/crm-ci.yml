@@ -8,6 +8,10 @@ on:
 permissions:
   contents: read
 
+env:
+  TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+  TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+
 concurrency:
   group: crm-ci-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
@@ -24,6 +28,16 @@ jobs:
         twenty-front-component-renderer,twenty-sdk,twenty-client-sdk,twenty-emails
       NX_CLOUD_ACCESS_TOKEN: ''
     steps:
+      - name: Send start notification
+        if: env.TELEGRAM_TOKEN != '' && env.TELEGRAM_CHAT_ID != ''
+        shell: bash
+        run: |
+          curl --fail --silent --show-error \
+            --request POST \
+            "https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage" \
+            --data-urlencode "chat_id=${TELEGRAM_CHAT_ID}" \
+            --data-urlencode "text=CRM CI started for ${GITHUB_REPOSITORY}@${GITHUB_SHA}."
+
       - name: Check out the exact head with full history
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
@@ -80,3 +94,23 @@ jobs:
             --projects="${CRM_RUNTIME_PROJECTS}" \
             --targets=lint,typecheck,test,build \
             --parallel=3
+
+      - name: Send success notification
+        if: success() && env.TELEGRAM_TOKEN != '' && env.TELEGRAM_CHAT_ID != ''
+        shell: bash
+        run: |
+          curl --fail --silent --show-error \
+            --request POST \
+            "https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage" \
+            --data-urlencode "chat_id=${TELEGRAM_CHAT_ID}" \
+            --data-urlencode "text=CRM CI succeeded for ${GITHUB_REPOSITORY}@${GITHUB_SHA}."
+
+      - name: Send failure notification
+        if: failure() && env.TELEGRAM_TOKEN != '' && env.TELEGRAM_CHAT_ID != ''
+        shell: bash
+        run: |
+          curl --fail --silent --show-error \
+            --request POST \
+            "https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage" \
+            --data-urlencode "chat_id=${TELEGRAM_CHAT_ID}" \
+            --data-urlencode "text=CRM CI failed: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
