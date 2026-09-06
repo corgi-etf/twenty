@@ -30,6 +30,9 @@ env:
   CRM_RUNTIME_PROJECTS: >-
     twenty-server,twenty-front,twenty-shared,twenty-ui,
     twenty-front-component-renderer,twenty-sdk,twenty-client-sdk,twenty-emails
+  CRM_RUNTIME_EXCLUDE_FILTER: >-
+    *,!twenty-server,!twenty-front,!twenty-shared,!twenty-ui,
+    !twenty-front-component-renderer,!twenty-sdk,!twenty-client-sdk,!twenty-emails
   NX_CLOUD_ACCESS_TOKEN: ''
   NX_DAEMON: 'false'
 
@@ -145,7 +148,7 @@ jobs:
             --nxBail \
             --base="${{ steps.nx-shas.outputs.base }}" \
             --head="${{ steps.nx-shas.outputs.head }}" \
-            --projects="${CRM_RUNTIME_PROJECTS}" \
+            --exclude="${CRM_RUNTIME_EXCLUDE_FILTER}" \
             --targets=lint,typecheck,test,build \
             --parallel=3
 
