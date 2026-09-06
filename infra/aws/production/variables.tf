@@ -73,3 +73,8 @@ variable "monthly_budget_usd" {
   default     = 300
 }
 
+variable "use_nat_gateways" {
+  description = "Use one NAT gateway per AZ; disable temporarily only when the account EIP quota blocks creation."
+  type        = bool
+  default     = true
+}

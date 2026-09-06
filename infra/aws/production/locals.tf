@@ -13,6 +13,12 @@ locals {
     availability_zone => cidrsubnet("10.20.0.0/16", 8, index + 10)
   }
 
+  public_subnet_ids  = [for subnet in aws_subnet.public : subnet.id]
+  private_subnet_ids = [for subnet in aws_subnet.private : subnet.id]
+
+  task_subnet_ids     = var.use_nat_gateways ? local.private_subnet_ids : local.public_subnet_ids
+  task_public_ip_mode = !var.use_nat_gateways
+
   common_environment = [
     { name = "NODE_ENV", value = "production" },
     { name = "NODE_PORT", value = "3000" },
@@ -53,4 +59,3 @@ data "aws_route53_zone" "public" {
   zone_id      = var.hosted_zone_id
   private_zone = false
 }
-

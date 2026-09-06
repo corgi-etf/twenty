@@ -45,7 +45,7 @@ resource "aws_subnet" "private" {
 }
 
 resource "aws_eip" "nat" {
-  for_each = aws_subnet.public
+  for_each = var.use_nat_gateways ? aws_subnet.public : {}
 
   domain = "vpc"
 
@@ -57,7 +57,7 @@ resource "aws_eip" "nat" {
 }
 
 resource "aws_nat_gateway" "crm" {
-  for_each = aws_subnet.public
+  for_each = var.use_nat_gateways ? aws_subnet.public : {}
 
   allocation_id = aws_eip.nat[each.key].id
   subnet_id     = each.value.id
@@ -94,9 +94,13 @@ resource "aws_route_table" "private" {
 
   vpc_id = aws_vpc.crm.id
 
-  route {
-    cidr_block     = "0.0.0.0/0"
-    nat_gateway_id = aws_nat_gateway.crm[each.key].id
+  dynamic "route" {
+    for_each = var.use_nat_gateways ? [true] : []
+
+    content {
+      cidr_block     = "0.0.0.0/0"
+      nat_gateway_id = aws_nat_gateway.crm[each.key].id
+    }
   }
 
   tags = {
@@ -110,4 +114,3 @@ resource "aws_route_table_association" "private" {
   subnet_id      = each.value.id
   route_table_id = aws_route_table.private[each.key].id
 }
-

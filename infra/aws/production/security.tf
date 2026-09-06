@@ -98,4 +98,3 @@ resource "aws_vpc_security_group_ingress_rule" "cache_from_tasks" {
   to_port                      = 6379
   ip_protocol                  = "tcp"
 }
-

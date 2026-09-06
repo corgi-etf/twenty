@@ -43,6 +43,35 @@ resource "aws_s3_bucket_ownership_controls" "uploads" {
   }
 }
 
+resource "aws_s3_bucket_policy" "uploads" {
+  bucket = aws_s3_bucket.uploads.id
+  policy = data.aws_iam_policy_document.uploads_bucket.json
+}
+
+data "aws_iam_policy_document" "uploads_bucket" {
+  statement {
+    sid    = "DenyInsecureTransport"
+    effect = "Deny"
+
+    principals {
+      type        = "*"
+      identifiers = ["*"]
+    }
+
+    actions = ["s3:*"]
+    resources = [
+      aws_s3_bucket.uploads.arn,
+      "${aws_s3_bucket.uploads.arn}/*",
+    ]
+
+    condition {
+      test     = "Bool"
+      variable = "aws:SecureTransport"
+      values   = ["false"]
+    }
+  }
+}
+
 resource "aws_s3_bucket_cors_configuration" "uploads" {
   bucket = aws_s3_bucket.uploads.id
 
@@ -57,7 +86,7 @@ resource "aws_s3_bucket_cors_configuration" "uploads" {
 
 resource "aws_db_subnet_group" "crm" {
   name       = "${local.name_prefix}-database"
-  subnet_ids = [for subnet in aws_subnet.private : subnet.id]
+  subnet_ids = local.private_subnet_ids
 
   tags = {
     Name = "${local.name_prefix}-database"
@@ -109,7 +138,7 @@ resource "aws_db_instance" "crm" {
 
 resource "aws_elasticache_subnet_group" "crm" {
   name       = "${local.name_prefix}-cache"
-  subnet_ids = [for subnet in aws_subnet.private : subnet.id]
+  subnet_ids = local.private_subnet_ids
 }
 
 resource "aws_elasticache_parameter_group" "crm" {
