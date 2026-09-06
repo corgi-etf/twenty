@@ -288,6 +288,7 @@ jobs:
           ROLLBACK_ARMED=false
           DEPLOYMENT_COMPLETE=false
           ROLLBACK_RUNNING=false
+          FORWARD_RECOVERY_REQUIRED=false
 
           service_task_definition() {
             aws ecs describe-services \
@@ -452,6 +453,7 @@ jobs:
                 return 1
               fi
               if grep -Fq 'Successfully migrated DB!' "${messages_file}"; then
+                echo "Migrations confirmed; forward-only recovery remains active for the rest of the deployment."
                 return 0
               fi
 
@@ -478,7 +480,39 @@ jobs:
 
             ROLLBACK_RUNNING=true
             set +e
-            echo "Deployment interrupted (${reason}); restoring prior ECS task definitions." >&2
+
+            if [[ "${FORWARD_RECOVERY_REQUIRED}" == "true" ]]; then
+              echo "Deployment interrupted (${reason}) after the server rollout crossed the migration-safety boundary." >&2
+              echo "Migrations may be partially applied; rollback to prior task definitions is unsafe." >&2
+              echo "Requesting forward recovery on the new server and worker revisions." >&2
+
+              timeout 20s aws ecs update-service \
+                --cluster "${ECS_CLUSTER}" \
+                --service "${SERVER_SERVICE}" \
+                --task-definition "${NEW_SERVER_ARN}" >/dev/null ||
+                echo "Server forward-recovery request did not complete." >&2
+              timeout 20s aws ecs update-service \
+                --cluster "${ECS_CLUSTER}" \
+                --service "${WORKER_SERVICE}" \
+                --task-definition "${NEW_WORKER_ARN}" >/dev/null ||
+                echo "Worker forward-recovery request did not complete." >&2
+
+              if [[ "${wait_for_stability}" == "true" ]]; then
+                aws ecs wait services-stable \
+                  --cluster "${ECS_CLUSTER}" \
+                  --services "${SERVER_SERVICE}" ||
+                  echo "Server forward recovery did not stabilize before the waiter ended." >&2
+                aws ecs wait services-stable \
+                  --cluster "${ECS_CLUSTER}" \
+                  --services "${WORKER_SERVICE}" ||
+                  echo "Worker forward recovery did not stabilize before the waiter ended." >&2
+              fi
+
+              ROLLBACK_ARMED=false
+              return 0
+            fi
+
+            echo "Deployment interrupted (${reason}) before the server rollout began; restoring prior task definitions." >&2
 
             if [[ "${WORKER_UPDATED}" == "true" ]]; then
               timeout 20s aws ecs update-service \
@@ -559,6 +593,11 @@ jobs:
           trap handle_exit EXIT
           ROLLBACK_ARMED=true
 
+          # The server entrypoint may begin schema changes as soon as ECS starts
+          # the new task. Cross the irreversible boundary before update-service
+          # so even partial or unlogged migrations can never trigger old code.
+          FORWARD_RECOVERY_REQUIRED=true
+          echo "Server rollout starting; all subsequent recovery is forward-only because migrations may begin."
           SERVER_DEPLOY_START_MS="$(( $(date +%s) * 1000 ))"
           SERVER_UPDATED=true
           aws ecs update-service \
