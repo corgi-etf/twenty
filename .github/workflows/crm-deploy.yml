@@ -113,7 +113,7 @@ jobs:
           # Nx owns project/dependency awareness. These extra paths are Docker
           # context inputs that are not necessarily represented by an Nx project.
           if git diff --name-only "${BASE}" "${HEAD}" | grep -Eq \
-            '^(package.json|yarn.lock|\.yarnrc\.yml|nx.json|tsconfig\.base\.json|\.yarn/(releases|patches)/|packages/twenty-docker/twenty/)'; then
+            '^(package.json|yarn.lock|\.yarnrc\.yml|\.dockerignore|nx.json|tsconfig\.base\.json|\.yarn/(releases|patches)/|packages/twenty-docker/twenty/)'; then
             DOCKER_INPUT_CHANGED=true
           else
             DOCKER_INPUT_CHANGED=false
