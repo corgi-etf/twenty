@@ -100,7 +100,7 @@ resource "aws_db_instance" "crm" {
   engine_version = "16"
   instance_class = "db.t4g.medium"
 
-  db_name  = "default"
+  db_name  = "twenty"
   username = "twenty"
   port     = 5432
 
