@@ -23,6 +23,7 @@ locals {
     { name = "NODE_ENV", value = "production" },
     { name = "NODE_PORT", value = "3000" },
     { name = "SERVER_URL", value = "https://${var.domain_name}" },
+    { name = "DPA_DEPLOYMENT_REGION", value = "US" },
     { name = "REDIS_URL", value = "rediss://${aws_elasticache_replication_group.crm.primary_endpoint_address}:6379" },
     { name = "STORAGE_TYPE", value = "S_3" },
     { name = "STORAGE_S3_REGION", value = var.aws_region },
