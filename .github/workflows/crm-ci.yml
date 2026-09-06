@@ -34,7 +34,7 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - name: Install Node and Yarn dependencies
-        uses: ./.github/actions/yarn-install
+        uses: ./.github/actions/crm-yarn-install
 
       - name: Resolve Nx comparison SHAs
         id: nx-shas
