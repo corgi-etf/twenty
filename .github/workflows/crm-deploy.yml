@@ -288,6 +288,7 @@ jobs:
           ROLLBACK_ARMED=false
           DEPLOYMENT_COMPLETE=false
           ROLLBACK_RUNNING=false
+          MIGRATIONS_CONFIRMED=false
 
           service_task_definition() {
             aws ecs describe-services \
@@ -452,6 +453,10 @@ jobs:
                 return 1
               fi
               if grep -Fq 'Successfully migrated DB!' "${messages_file}"; then
+                # This is the irreversible deployment boundary. From here on,
+                # old application revisions may be incompatible with the schema.
+                MIGRATIONS_CONFIRMED=true
+                echo "Migrations confirmed; any subsequent failure will recover forward on the new task definitions."
                 return 0
               fi
 
@@ -478,7 +483,38 @@ jobs:
 
             ROLLBACK_RUNNING=true
             set +e
-            echo "Deployment interrupted (${reason}); restoring prior ECS task definitions." >&2
+
+            if [[ "${MIGRATIONS_CONFIRMED}" == "true" ]]; then
+              echo "Deployment interrupted (${reason}) after migrations were confirmed." >&2
+              echo "Rollback to prior task definitions is unsafe; requesting forward recovery on the new revisions." >&2
+
+              timeout 20s aws ecs update-service \
+                --cluster "${ECS_CLUSTER}" \
+                --service "${SERVER_SERVICE}" \
+                --task-definition "${NEW_SERVER_ARN}" >/dev/null ||
+                echo "Server forward-recovery request did not complete." >&2
+              timeout 20s aws ecs update-service \
+                --cluster "${ECS_CLUSTER}" \
+                --service "${WORKER_SERVICE}" \
+                --task-definition "${NEW_WORKER_ARN}" >/dev/null ||
+                echo "Worker forward-recovery request did not complete." >&2
+
+              if [[ "${wait_for_stability}" == "true" ]]; then
+                aws ecs wait services-stable \
+                  --cluster "${ECS_CLUSTER}" \
+                  --services "${SERVER_SERVICE}" ||
+                  echo "Server forward recovery did not stabilize before the waiter ended." >&2
+                aws ecs wait services-stable \
+                  --cluster "${ECS_CLUSTER}" \
+                  --services "${WORKER_SERVICE}" ||
+                  echo "Worker forward recovery did not stabilize before the waiter ended." >&2
+              fi
+
+              ROLLBACK_ARMED=false
+              return 0
+            fi
+
+            echo "Deployment interrupted (${reason}) before migrations were confirmed; restoring prior task definitions." >&2
 
             if [[ "${WORKER_UPDATED}" == "true" ]]; then
               timeout 20s aws ecs update-service \
