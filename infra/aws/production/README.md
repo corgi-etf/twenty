@@ -52,8 +52,8 @@ AWS_PROFILE=etf-deployment aws secretsmanager get-secret-value \
   --secret-id "$CRM_RDS_SECRET_ARN" \
   --query SecretString \
   --output text \
-| jq -r --arg host "$CRM_DATABASE_HOST" \
-  '"postgres://\(.username | @uri):\(.password | @uri)@\($host):5432/twenty?sslmode=require"' \
+| jq -jr --arg host "$CRM_DATABASE_HOST" \
+  '"postgres://\(.username | @uri):\(.password | @uri)@\($host):5432/twenty"' \
 | AWS_PROFILE=etf-deployment aws secretsmanager put-secret-value \
   --secret-id "$CRM_DATABASE_SECRET_ARN" \
   --secret-string file:///dev/stdin \
