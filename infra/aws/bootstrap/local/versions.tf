@@ -1,10 +1,6 @@
 terraform {
-  backend "s3" {
-    bucket       = "corgi-crm-terraform-state-182018075072-us-east-2"
-    key          = "bootstrap/terraform.tfstate"
-    region       = "us-east-2"
-    encrypt      = true
-    use_lockfile = true
+  backend "local" {
+    path = "../terraform.tfstate"
   }
 
   required_version = ">= 1.10.0"
@@ -32,3 +28,4 @@ provider "aws" {
     }
   }
 }
+

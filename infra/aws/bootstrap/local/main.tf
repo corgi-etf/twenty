@@ -1,5 +1,6 @@
 module "state" {
-  source = "./module"
+  source = "../module"
 
   state_bucket_name = var.state_bucket_name
 }
+
