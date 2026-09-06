@@ -160,7 +160,9 @@ jobs:
     needs: validate
     if: needs.validate.outputs.deploy_image == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    # A cold multi-stage Twenty build plus two serial ECS stability waits can
+    # legitimately exceed one hour even when the deployment is healthy.
+    timeout-minutes: 120
     environment: production
     steps:
       - name: Check out the validated revision
@@ -204,6 +206,16 @@ jobs:
             --output text)"
           if [[ "${SERVER_DESIRED}" != "1" ]]; then
             echo "Expected the intentionally single-task server service to have desiredCount=1." >&2
+            exit 1
+          fi
+
+          WORKER_DESIRED="$(aws ecs describe-services \
+            --cluster "${ECS_CLUSTER}" \
+            --services "${WORKER_SERVICE}" \
+            --query 'services[0].desiredCount' \
+            --output text)"
+          if [[ "${WORKER_DESIRED}" != "1" ]]; then
+            echo "Expected the intentionally single-task worker service to have desiredCount=1." >&2
             exit 1
           fi
 
@@ -273,6 +285,9 @@ jobs:
           mkdir -p "${TMP_DIR}"
           SERVER_UPDATED=false
           WORKER_UPDATED=false
+          ROLLBACK_ARMED=false
+          DEPLOYMENT_COMPLETE=false
+          ROLLBACK_RUNNING=false
 
           service_task_definition() {
             aws ecs describe-services \
@@ -448,34 +463,79 @@ jobs:
             return 1
           }
 
-          rollback() {
-            local exit_code=$?
-            trap - ERR
+          rollback_services() {
+            local reason="$1"
+            local wait_for_stability="$2"
+
+            # A rollback command can itself fail; disarm every trap first so a
+            # best-effort recovery never recurses through the handlers.
+            trap - ERR INT TERM EXIT
+            if [[ "${ROLLBACK_RUNNING}" == "true" ]] ||
+               [[ "${ROLLBACK_ARMED}" != "true" ]] ||
+               [[ "${DEPLOYMENT_COMPLETE}" == "true" ]]; then
+              return 0
+            fi
+
+            ROLLBACK_RUNNING=true
             set +e
-            echo "Deployment failed; restoring prior ECS task definitions." >&2
+            echo "Deployment interrupted (${reason}); restoring prior ECS task definitions." >&2
 
             if [[ "${WORKER_UPDATED}" == "true" ]]; then
-              aws ecs update-service \
+              timeout 20s aws ecs update-service \
                 --cluster "${ECS_CLUSTER}" \
                 --service "${WORKER_SERVICE}" \
-                --task-definition "${OLD_WORKER_ARN}" >/dev/null
+                --task-definition "${OLD_WORKER_ARN}" >/dev/null ||
+                echo "Worker rollback request did not complete." >&2
             fi
             if [[ "${SERVER_UPDATED}" == "true" ]]; then
-              aws ecs update-service \
+              timeout 20s aws ecs update-service \
                 --cluster "${ECS_CLUSTER}" \
                 --service "${SERVER_SERVICE}" \
-                --task-definition "${OLD_SERVER_ARN}" >/dev/null
+                --task-definition "${OLD_SERVER_ARN}" >/dev/null ||
+                echo "Server rollback request did not complete." >&2
             fi
 
-            if [[ "${WORKER_UPDATED}" == "true" ]]; then
-              aws ecs wait services-stable \
-                --cluster "${ECS_CLUSTER}" \
-                --services "${WORKER_SERVICE}"
+            # INT/TERM handlers intentionally skip waiters because hosted
+            # runners provide only a short grace period after cancellation.
+            if [[ "${wait_for_stability}" == "true" ]]; then
+              if [[ "${WORKER_UPDATED}" == "true" ]]; then
+                aws ecs wait services-stable \
+                  --cluster "${ECS_CLUSTER}" \
+                  --services "${WORKER_SERVICE}" ||
+                  echo "Worker rollback did not stabilize before the waiter ended." >&2
+              fi
+              if [[ "${SERVER_UPDATED}" == "true" ]]; then
+                aws ecs wait services-stable \
+                  --cluster "${ECS_CLUSTER}" \
+                  --services "${SERVER_SERVICE}" ||
+                  echo "Server rollback did not stabilize before the waiter ended." >&2
+              fi
             fi
-            if [[ "${SERVER_UPDATED}" == "true" ]]; then
-              aws ecs wait services-stable \
-                --cluster "${ECS_CLUSTER}" \
-                --services "${SERVER_SERVICE}"
+
+            ROLLBACK_ARMED=false
+          }
+
+          handle_error() {
+            local exit_code=$?
+            rollback_services "command error" true
+            exit "${exit_code}"
+          }
+
+          handle_signal() {
+            local signal_name="$1"
+            local exit_code="$2"
+            rollback_services "signal ${signal_name}" false
+            exit "${exit_code}"
+          }
+
+          handle_exit() {
+            local exit_code=$?
+            if [[ "${ROLLBACK_ARMED}" == "true" ]] &&
+               [[ "${DEPLOYMENT_COMPLETE}" != "true" ]]; then
+              rollback_services "incomplete exit" true
+              if [[ "${exit_code}" -eq 0 ]]; then
+                exit_code=1
+              fi
             fi
             exit "${exit_code}"
           }
@@ -493,7 +553,12 @@ jobs:
             "${WORKER_CONTAINER}" \
             worker)"
 
-          trap rollback ERR
+          trap handle_error ERR
+          trap 'handle_signal INT 130' INT
+          trap 'handle_signal TERM 143' TERM
+          trap handle_exit EXIT
+          ROLLBACK_ARMED=true
+
           SERVER_DEPLOY_START_MS="$(( $(date +%s) * 1000 ))"
           SERVER_UPDATED=true
           aws ecs update-service \
@@ -511,7 +576,10 @@ jobs:
             --service "${WORKER_SERVICE}" \
             --task-definition "${NEW_WORKER_ARN}" >/dev/null
           verify_service "${WORKER_SERVICE}" "${NEW_WORKER_ARN}"
-          trap - ERR
+
+          DEPLOYMENT_COMPLETE=true
+          ROLLBACK_ARMED=false
+          trap - ERR INT TERM EXIT
 
           echo "Deployed ${IMAGE_REF} to server and worker."
 
