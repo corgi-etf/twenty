@@ -1,0 +1,61 @@
+name: CRM Yarn install
+description: Install Twenty's pinned Node and Yarn dependencies with the upstream cache policy.
+
+inputs:
+  node-version:
+    description: Node.js major version required by the Twenty workspace.
+    required: false
+    default: '24'
+
+runs:
+  using: composite
+  steps:
+    - name: Free disk space for install
+      if: runner.os == 'Linux'
+      shell: bash
+      run: |
+        sudo rm -rf /usr/share/dotnet
+        sudo rm -rf /usr/local/lib/android
+        sudo rm -rf /opt/ghc
+        sudo rm -rf /opt/hostedtoolcache/CodeQL
+        df -h
+
+    - name: Build dependency cache key
+      id: cache-key
+      shell: bash
+      run: |
+        echo "prefix=node-modules-cache-node-${{ inputs.node-version }}-${{ hashFiles('yarn.lock') }}" >> "${GITHUB_OUTPUT}"
+        {
+          echo 'paths<<EOF'
+          echo 'node_modules'
+          echo 'packages/*/node_modules'
+          echo 'EOF'
+        } >> "${GITHUB_OUTPUT}"
+
+    - name: Set up Node.js
+      uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+      with:
+        node-version: ${{ inputs.node-version }}
+
+    - name: Restore node_modules
+      id: restore-node-modules
+      uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+      with:
+        key: v4-${{ steps.cache-key.outputs.prefix }}-${{ github.sha }}
+        restore-keys: v4-${{ steps.cache-key.outputs.prefix }}-
+        path: ${{ steps.cache-key.outputs.paths }}
+
+    - name: Install immutable dependencies
+      if: steps.restore-node-modules.outputs.cache-hit != 'true' && steps.restore-node-modules.outputs.cache-matched-key == ''
+      shell: bash
+      run: |
+        yarn config set enableHardenedMode true
+        yarn config set enableScripts false
+        yarn --immutable --check-cache
+
+    - name: Save node_modules
+      if: steps.restore-node-modules.outputs.cache-hit != 'true' && steps.restore-node-modules.outputs.cache-matched-key == '' && format('{0}', github.event.pull_request.head.repo.fork) != 'true'
+      uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+      with:
+        key: ${{ steps.restore-node-modules.outputs.cache-primary-key }}
+        path: ${{ steps.cache-key.outputs.paths }}

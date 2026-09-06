@@ -1,0 +1,42 @@
+name: CRM infrastructure validation
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: crm-infrastructure-validation
+  cancel-in-progress: true
+
+jobs:
+  terraform:
+    name: Terraform local validation
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out infrastructure
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          fetch-depth: 0
+
+      - name: Install Terraform
+        uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3.1.2
+        with:
+          terraform_version: '1.14.9'
+          terraform_wrapper: false
+
+      - name: Check Terraform formatting
+        run: terraform -chdir=infra/aws fmt -check -recursive
+
+      - name: Initialize and validate without a backend
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          for stack in bootstrap production; do
+            echo "Validating infra/aws/${stack}"
+            terraform -chdir="infra/aws/${stack}" init -backend=false -input=false
+            terraform -chdir="infra/aws/${stack}" validate
+          done

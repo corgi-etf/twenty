@@ -1,0 +1,85 @@
+name: CRM CI
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: crm-ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  nx-affected:
+    name: Nx affected validation
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      # These projects and their Nx dependency graph make up the production image.
+      CRM_RUNTIME_PROJECTS: >-
+        twenty-server,twenty-front,twenty-shared,twenty-ui,
+        twenty-front-component-renderer,twenty-sdk,twenty-client-sdk,twenty-emails
+      CRM_RUNTIME_EXCLUDE_FILTER: >-
+        *,!twenty-server,!twenty-front,!twenty-shared,!twenty-ui,
+        !twenty-front-component-renderer,!twenty-sdk,!twenty-client-sdk,!twenty-emails
+      NX_CLOUD_ACCESS_TOKEN: ''
+    steps:
+      - name: Check out the exact head with full history
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Install Node and Yarn dependencies
+        uses: ./.github/actions/crm-yarn-install
+
+      - name: Resolve Nx comparison SHAs
+        id: nx-shas
+        shell: bash
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin main
+
+          if [[ "${GITHUB_EVENT_NAME}" == "pull_request" ]]; then
+            NX_BASE="${PR_BASE_SHA}"
+            NX_HEAD="${PR_HEAD_SHA}"
+          else
+            NX_HEAD="$(git rev-parse HEAD)"
+            MAIN_SHA="$(git rev-parse origin/main)"
+            if [[ "${NX_HEAD}" == "${MAIN_SHA}" ]]; then
+              NX_BASE="$(git rev-parse "${NX_HEAD}^")"
+            else
+              NX_BASE="$(git merge-base origin/main "${NX_HEAD}")"
+            fi
+          fi
+
+          git cat-file -e "${NX_BASE}^{commit}"
+          git cat-file -e "${NX_HEAD}^{commit}"
+          echo "base=${NX_BASE}" >> "${GITHUB_OUTPUT}"
+          echo "head=${NX_HEAD}" >> "${GITHUB_OUTPUT}"
+
+      - name: Show affected production projects
+        shell: bash
+        run: |
+          npx nx show projects \
+            --affected \
+            --base="${{ steps.nx-shas.outputs.base }}" \
+            --head="${{ steps.nx-shas.outputs.head }}" \
+            --projects="${CRM_RUNTIME_PROJECTS}"
+
+      - name: Run affected lint, typecheck, tests, and builds
+        shell: bash
+        run: |
+          npx nx affected \
+            --nxBail \
+            --base="${{ steps.nx-shas.outputs.base }}" \
+            --head="${{ steps.nx-shas.outputs.head }}" \
+            --exclude="${CRM_RUNTIME_EXCLUDE_FILTER}" \
+            --targets=lint,typecheck,test,build \
+            --parallel=3
