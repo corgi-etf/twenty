@@ -21,6 +21,9 @@ test('schema declares every migration object and unique provenance fields', () =
       'outreachActivities',
       'sourceRecords',
       'holdingObservations',
+      'importBatches',
+      'importReviewItems',
+      'archivedOutreachActivities',
     ],
   );
   for (const objectName of [
@@ -53,6 +56,15 @@ test('schema declares every migration object and unique provenance fields', () =
         objectName === 'leadAssignment' &&
         name === 'company' &&
         relation?.targetObjectName === 'company',
+    ),
+    true,
+  );
+  assert.equal(
+    schema.fields.some(
+      ({ objectName, name, relation }) =>
+        objectName === 'company' &&
+        name === 'historicalOwner' &&
+        relation?.targetObjectName === 'wholesaler',
     ),
     true,
   );

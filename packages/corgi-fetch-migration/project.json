@@ -5,6 +5,41 @@
   "projectType": "application",
   "tags": ["scope:tooling"],
   "targets": {
+    "plan": {
+      "executor": "nx:run-commands",
+      "options": {
+        "cwd": "{projectRoot}",
+        "command": "node --experimental-strip-types src/cli.ts plan"
+      }
+    },
+    "schema:bootstrap": {
+      "executor": "nx:run-commands",
+      "options": {
+        "cwd": "{projectRoot}",
+        "command": "node --experimental-strip-types src/cli.ts bootstrap"
+      }
+    },
+    "apply": {
+      "executor": "nx:run-commands",
+      "options": {
+        "cwd": "{projectRoot}",
+        "command": "node --experimental-strip-types src/cli.ts apply"
+      }
+    },
+    "verify": {
+      "executor": "nx:run-commands",
+      "options": {
+        "cwd": "{projectRoot}",
+        "command": "node --experimental-strip-types src/cli.ts verify"
+      }
+    },
+    "rollback": {
+      "executor": "nx:run-commands",
+      "options": {
+        "cwd": "{projectRoot}",
+        "command": "node --experimental-strip-types src/cli.ts rollback"
+      }
+    },
     "test": {
       "executor": "nx:run-commands",
       "options": {
@@ -23,7 +58,7 @@
       "executor": "nx:run-commands",
       "options": {
         "cwd": "{projectRoot}",
-        "command": "npx oxlint -c ../../.oxlintrc.json src test && npx oxfmt --check src test"
+        "command": "npx oxlint -c .oxlintrc.json src test && npx oxfmt --check src test"
       }
     }
   }

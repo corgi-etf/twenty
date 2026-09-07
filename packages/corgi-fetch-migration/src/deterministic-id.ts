@@ -1,10 +1,9 @@
 import { createHash } from 'node:crypto';
 
-export const FETCH_MIGRATION_NAMESPACE =
-  '9c0a3020-1a52-5bb7-a0df-31fcf39f55dc';
+export const FETCH_MIGRATION_NAMESPACE = '9c0a3020-1a52-5bb7-a0df-31fcf39f55dc';
 
 const uuidBytes = (uuid: string): Buffer =>
-  Buffer.from(uuid.replaceAll('-', ''), 'hex');
+  Buffer.from(uuid.replace(/-/g, ''), 'hex');
 
 const formatUuid = (bytes: Buffer): string => {
   const hex = bytes.toString('hex');

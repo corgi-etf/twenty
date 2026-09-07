@@ -1,5 +1,8 @@
 export type FetchLike = typeof fetch;
 
+import type { MetadataField, MetadataObject } from './schema-bootstrap.ts';
+import type { FieldDefinition, ObjectDefinition } from './schema.ts';
+
 export class TwentyApiError extends Error {
   readonly status?: number;
 
@@ -92,5 +95,175 @@ export class TwentyClient {
     }
 
     throw lastError ?? new Error(`Twenty API request failed for ${path}`);
+  }
+
+  async listAll(
+    objectPlural: string,
+  ): Promise<Array<Record<string, unknown> & { id: string }>> {
+    const records: Array<Record<string, unknown> & { id: string }> = [];
+    let cursor: string | undefined;
+
+    do {
+      const query = new URLSearchParams({ limit: '100', depth: '0' });
+      if (cursor) query.set('starting_after', cursor);
+      const response = await this.request<{
+        data?: Record<string, unknown>;
+        pageInfo?: { hasNextPage?: boolean; endCursor?: string };
+      }>(`/rest/${objectPlural}?${query}`);
+      const items = response.data?.[objectPlural];
+
+      if (!Array.isArray(items)) {
+        throw new Error(
+          `Twenty list response did not contain data.${objectPlural}`,
+        );
+      }
+      records.push(
+        ...(items as Array<Record<string, unknown> & { id: string }>),
+      );
+      cursor = response.pageInfo?.hasNextPage
+        ? response.pageInfo.endCursor
+        : undefined;
+      if (response.pageInfo?.hasNextPage && !cursor) {
+        throw new Error(
+          `Twenty pagination omitted endCursor for ${objectPlural}`,
+        );
+      }
+    } while (cursor);
+
+    return records;
+  }
+
+  async batchUpsert(
+    objectPlural: string,
+    records: Record<string, unknown>[],
+  ): Promise<void> {
+    if (records.length < 1 || records.length > 100) {
+      throw new Error('Twenty batch upsert requires 1 through 100 records');
+    }
+    await this.request(`/rest/batch/${objectPlural}?upsert=true&depth=0`, {
+      method: 'POST',
+      body: JSON.stringify(records),
+    });
+  }
+
+  async getOne(
+    objectPlural: string,
+    id: string,
+  ): Promise<Record<string, unknown> & { id: string }> {
+    const response = await this.request<{ data?: Record<string, unknown> }>(
+      `/rest/${objectPlural}/${encodeURIComponent(id)}?depth=0`,
+    );
+    const singular = objectPlural.endsWith('ies')
+      ? `${objectPlural.slice(0, -3)}y`
+      : objectPlural.endsWith('s')
+        ? objectPlural.slice(0, -1)
+        : objectPlural;
+    const direct = response.data?.[singular];
+    const operation = response.data
+      ? Object.values(response.data).find(
+          (value) =>
+            value && typeof value === 'object' && !Array.isArray(value),
+        )
+      : undefined;
+    const record = direct ?? operation;
+
+    if (!record || typeof record !== 'object' || !('id' in record)) {
+      throw new Error(
+        `Twenty get response did not contain ${objectPlural}/${id}`,
+      );
+    }
+
+    return record as Record<string, unknown> & { id: string };
+  }
+
+  async patchOne(
+    objectPlural: string,
+    id: string,
+    data: Record<string, unknown>,
+  ): Promise<void> {
+    await this.request(
+      `/rest/${objectPlural}/${encodeURIComponent(id)}?depth=0`,
+      {
+        method: 'PATCH',
+        body: JSON.stringify(data),
+      },
+    );
+  }
+
+  async softDeleteOne(objectPlural: string, id: string): Promise<void> {
+    await this.request(
+      `/rest/${objectPlural}/${encodeURIComponent(id)}?soft_delete=true`,
+      { method: 'DELETE' },
+    );
+  }
+
+  async listMetadataObjects(): Promise<MetadataObject[]> {
+    const objects: MetadataObject[] = [];
+    let cursor: string | undefined;
+
+    do {
+      const query = new URLSearchParams({ limit: '100' });
+      if (cursor) query.set('starting_after', cursor);
+      const response = await this.request<{
+        data?: MetadataObject[] | { objects?: MetadataObject[] };
+        pageInfo?: { hasNextPage?: boolean; endCursor?: string | null };
+      }>(`/rest/metadata/objects?${query}`);
+      const items = Array.isArray(response.data)
+        ? response.data
+        : (response.data?.objects ?? []);
+      objects.push(...items);
+      cursor = response.pageInfo?.hasNextPage
+        ? (response.pageInfo.endCursor ?? undefined)
+        : undefined;
+      if (response.pageInfo?.hasNextPage && !cursor) {
+        throw new Error('Twenty metadata pagination omitted endCursor');
+      }
+    } while (cursor);
+
+    return objects;
+  }
+
+  async createMetadataObject(definition: ObjectDefinition): Promise<void> {
+    await this.request('/rest/metadata/objects', {
+      method: 'POST',
+      body: JSON.stringify({
+        ...definition,
+        isLabelSyncedWithName: false,
+      }),
+    });
+  }
+
+  async createMetadataField(
+    definition: FieldDefinition,
+    objectMetadataId: string,
+    targetObjectMetadataId?: string,
+  ): Promise<void> {
+    const payload: Record<string, unknown> = {
+      objectMetadataId,
+      type: definition.type,
+      name: definition.name,
+      label: definition.label,
+      isLabelSyncedWithName: false,
+      ...(definition.isUnique !== undefined
+        ? { isUnique: definition.isUnique }
+        : {}),
+      ...(definition.options ? { options: definition.options } : {}),
+    };
+
+    if (definition.relation) {
+      if (!targetObjectMetadataId) {
+        throw new Error(`Missing target metadata ID for ${definition.name}`);
+      }
+      payload.relationCreationPayload = {
+        targetObjectMetadataId,
+        targetFieldLabel: definition.relation.targetFieldLabel,
+        type: definition.relation.type,
+      };
+    }
+
+    await this.request<MetadataField>('/rest/metadata/fields', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
   }
 }

@@ -1,3 +1,6 @@
+import { deterministicId } from './deterministic-id.ts';
+import { sourceRowHmac } from './integrity.ts';
+
 export type SourceCompany = {
   id: string;
   name: string;
@@ -70,6 +73,15 @@ export type SourceUser = Omit<SourceRow, 'id'> & {
   disabled_at?: string | null;
   disabled_email?: string | null;
   color?: string | null;
+};
+export type SourceAuthUser = {
+  id: string;
+  name?: string | null;
+  email: string;
+  role?: string | null;
+  banned?: boolean | null;
+  createdAt?: string | null;
+  updatedAt?: string | null;
 };
 
 export type SourceTeam = SourceRow & {
@@ -145,12 +157,52 @@ export type SourceHoldingObservation = SourceRow & {
 };
 export type SourceTag = SourceRow & { name: string };
 export type SourceCompanyTag = { company_id: string; tag_id: string };
+export type SourceImportBatch = SourceRow & {
+  file_name?: string | null;
+  status?: string | null;
+  uploaded_by?: string | null;
+  row_count?: number | null;
+  created_company_count?: number | null;
+  merged_company_count?: number | null;
+  created_contact_count?: number | null;
+  review_count?: number | null;
+  error_count?: number | null;
+  preview_data?: unknown;
+  committed_at?: string | null;
+};
+export type SourceImportReviewItem = SourceRow & {
+  import_batch_id: string;
+  source_file?: string | null;
+  source_sheet?: string | null;
+  source_row?: number | null;
+  reason?: string | null;
+  candidate_company_id?: string | null;
+  raw_data?: unknown;
+  status?: string | null;
+  reviewed_by?: string | null;
+  reviewed_at?: string | null;
+};
+export type SourceArchivedActivity = SourceRow & {
+  company_id: string;
+  contact_id?: string | null;
+  user_id: string;
+  assignment_id?: string | null;
+  activity_type?: string | null;
+  outcome?: string | null;
+  notes?: string | null;
+  occurred_at?: string | null;
+  metadata?: unknown;
+  canonical_activity_id?: string | null;
+  archive_reason?: string | null;
+  archived_at?: string | null;
+};
 
 export type MinimalSnapshot = {
   companies: SourceCompany[];
   contacts: SourceContact[];
   companyLocations?: SourceCompanyLocation[];
   users?: SourceUser[];
+  authUsers?: SourceAuthUser[];
   teams?: SourceTeam[];
   teamMemberships?: SourceTeamMembership[];
   assignments?: SourceAssignment[];
@@ -160,6 +212,9 @@ export type MinimalSnapshot = {
   holdingObservations?: SourceHoldingObservation[];
   tags?: SourceTag[];
   companyTags?: SourceCompanyTag[];
+  importBatches?: SourceImportBatch[];
+  importReviewItems?: SourceImportReviewItem[];
+  archivedActivities?: SourceArchivedActivity[];
 };
 
 export type PlannedRecord = {
@@ -299,8 +354,28 @@ export const buildPlan = (
   const domainHolder = canonicalIdByValue(companies, (row) =>
     normalizeDomain(row.website),
   );
+  const contactRichness = (row: SourceContact) =>
+    [
+      row.first_name,
+      row.last_name,
+      row.title,
+      row.phone,
+      row.linkedin,
+      row.address,
+      row.city,
+      row.state_region,
+      row.postal_code,
+      row.notes,
+    ].filter((value) => typeof value === 'string' && value.trim() !== '')
+      .length;
+  const contactsByCanonicalPriority = [...contacts].sort(
+    (left, right) =>
+      Number(Boolean(right.is_primary)) - Number(Boolean(left.is_primary)) ||
+      contactRichness(right) - contactRichness(left) ||
+      left.id.localeCompare(right.id),
+  );
   const emailHolder = canonicalIdByValue(
-    contacts,
+    contactsByCanonicalPriority,
     (row) => row.email?.trim().toLowerCase() ?? '',
   );
 
@@ -332,6 +407,9 @@ export const buildPlan = (
       fetchNotes: row.notes ?? null,
       fetchStatus: row.status ?? null,
       legacyOwnerId: row.owned_by_user_id ?? null,
+      historicalOwnerId: row.owned_by_user_id
+        ? deterministicId('wholesaler', row.owned_by_user_id)
+        : null,
       ownedAt: row.owned_at ?? null,
       amountAskedFor: row.amount_asked_for ?? null,
       legacyWebsite: row.website ?? null,
@@ -434,6 +512,26 @@ export const buildPlan = (
   for (const row of sortedUsers) {
     if (!userId(row)) throw new Error('A Fetch user is missing its source ID');
   }
+  const authUsers = sortById(snapshot.authUsers ?? []);
+  const authUserById = new Map(authUsers.map((row) => [row.id, row]));
+  const roleByAuthUserId = new Map(
+    sortedUsers.map((row) => [userId(row)!, row]),
+  );
+  if (snapshot.authUsers) {
+    for (const row of sortedUsers) {
+      if (!authUserById.has(userId(row)!)) {
+        warnings.push({
+          code: 'ROLE_WITHOUT_AUTH_USER',
+          sourceIds: [userId(row)!],
+        });
+      }
+    }
+    for (const row of authUsers) {
+      if (!roleByAuthUserId.has(row.id)) {
+        warnings.push({ code: 'AUTH_USER_WITHOUT_ROLE', sourceIds: [row.id] });
+      }
+    }
+  }
   const wholesalers = sortedUsers.map((row) =>
     customRecord(
       'wholesalers',
@@ -504,7 +602,10 @@ export const buildPlan = (
     customRecord('tasks', 'task', row, {
       title: row.notes?.trim() || `Follow up ${row.due_date ?? row.id}`,
       bodyV2: { blocknote: null, markdown: row.notes ?? '' },
-      dueAt: row.due_date ?? null,
+      dueAt:
+        row.due_date && /^\d{4}-\d{2}-\d{2}$/.test(row.due_date)
+          ? new Date(`${row.due_date}T00:00:00.000Z`).toISOString()
+          : (row.due_date ?? null),
       status: row.status === 'completed' ? 'DONE' : 'TODO',
       legacyCompanyId: row.company_id,
       legacyContactId: row.contact_id ?? null,
@@ -514,7 +615,13 @@ export const buildPlan = (
   const taskTargets = sortById(snapshot.followUps ?? []).map((row) => {
     const sourceId = `followup:${row.id}:company`;
     const targetPayload = {
-      id: deterministicId('taskTarget', sourceId),
+      ...provenance(
+        row,
+        'taskTarget',
+        sourceId,
+        options.migrationRunId,
+        options.hmacKey,
+      ),
       taskId: deterministicId('task', row.id),
       targetCompanyId: deterministicId('company', row.company_id),
     };
@@ -556,6 +663,97 @@ export const buildPlan = (
         rawData: jsonText(row.raw_data),
       }),
   );
+  const importBatches = sortById(snapshot.importBatches ?? []).map((row) =>
+    customRecord('importBatches', 'importBatch', row, {
+      name: row.file_name ?? `Import ${row.id}`,
+      fileName: row.file_name ?? null,
+      importStatus: row.status ?? null,
+      uploadedByLegacyId: row.uploaded_by ?? null,
+      rowCount: row.row_count ?? null,
+      createdCompanyCount: row.created_company_count ?? null,
+      mergedCompanyCount: row.merged_company_count ?? null,
+      createdContactCount: row.created_contact_count ?? null,
+      reviewCount: row.review_count ?? null,
+      errorCount: row.error_count ?? null,
+      previewData: jsonText(row.preview_data),
+      committedAt: row.committed_at ?? null,
+    }),
+  );
+  const companyIds = new Set(companies.map(({ id }) => id));
+  const importReviewItems = sortById(snapshot.importReviewItems ?? []).map(
+    (row) => {
+      const candidateExists = row.candidate_company_id
+        ? companyIds.has(row.candidate_company_id)
+        : false;
+
+      if (row.candidate_company_id && !candidateExists) {
+        warnings.push({
+          code: 'REVIEW_CANDIDATE_COMPANY_MISSING',
+          sourceIds: [row.id, row.candidate_company_id],
+        });
+      }
+
+      return customRecord('importReviewItems', 'importReviewItem', row, {
+        name: `Review ${row.source_file ?? ''} ${row.source_row ?? row.id}`.trim(),
+        importBatchId: deterministicId('importBatch', row.import_batch_id),
+        sourceFile: row.source_file ?? null,
+        sourceSheet: row.source_sheet ?? null,
+        sourceRow: row.source_row ?? null,
+        reason: row.reason ?? null,
+        legacyCandidateCompanyId: row.candidate_company_id ?? null,
+        ...(candidateExists
+          ? {
+              candidateCompanyId: deterministicId(
+                'company',
+                row.candidate_company_id!,
+              ),
+            }
+          : {}),
+        rawData: jsonText(row.raw_data),
+        reviewStatus: row.status ?? null,
+        reviewedByLegacyId: row.reviewed_by ?? null,
+        reviewedAt: row.reviewed_at ?? null,
+      });
+    },
+  );
+  const activityIds = new Set((snapshot.activities ?? []).map(({ id }) => id));
+  const archivedOutreachActivities = sortById(
+    snapshot.archivedActivities ?? [],
+  ).map((row) =>
+    customRecord(
+      'archivedOutreachActivities',
+      'archivedOutreachActivity',
+      row,
+      {
+        name: `Archived ${row.activity_type ?? 'activity'} ${row.occurred_at ?? row.id}`,
+        companyId: deterministicId('company', row.company_id),
+        contactId: row.contact_id
+          ? deterministicId('person', row.contact_id)
+          : null,
+        wholesalerId: deterministicId('wholesaler', row.user_id),
+        assignmentId: row.assignment_id
+          ? deterministicId('leadAssignment', row.assignment_id)
+          : null,
+        activityType: row.activity_type ?? null,
+        outcome: row.outcome ?? null,
+        notes: row.notes ?? null,
+        occurredAt: row.occurred_at ?? null,
+        fetchMetadata: jsonText(row.metadata),
+        legacyCanonicalActivityId: row.canonical_activity_id ?? null,
+        ...(row.canonical_activity_id &&
+        activityIds.has(row.canonical_activity_id)
+          ? {
+              canonicalActivityId: deterministicId(
+                'outreachActivity',
+                row.canonical_activity_id,
+              ),
+            }
+          : {}),
+        archiveReason: row.archive_reason ?? null,
+        archivedAt: row.archived_at ?? null,
+      },
+    ),
+  );
 
   warnings.sort((left, right) =>
     `${left.code}:${left.sourceIds.join(',')}`.localeCompare(
@@ -563,14 +761,29 @@ export const buildPlan = (
     ),
   );
 
-  const invitationPlan = sortedUsers
-    .filter(({ disabled_at }) => !disabled_at)
-    .map((row) => ({
-      email: row.email.toLowerCase(),
-      name: row.name ?? row.email,
-      requestedRole: row.role ?? 'member',
-      sourceUserId: userId(row)!,
-    }));
+  const invitationPlan = snapshot.authUsers
+    ? authUsers.flatMap((authUser) => {
+        const role = roleByAuthUserId.get(authUser.id);
+
+        return !role || role.disabled_at || authUser.banned
+          ? []
+          : [
+              {
+                email: authUser.email.toLowerCase(),
+                name: authUser.name ?? role.name ?? authUser.email,
+                requestedRole: role.role ?? authUser.role ?? 'member',
+                sourceUserId: authUser.id,
+              },
+            ];
+      })
+    : sortedUsers
+        .filter(({ disabled_at }) => !disabled_at)
+        .map((row) => ({
+          email: row.email.toLowerCase(),
+          name: row.name ?? row.email,
+          requestedRole: row.role ?? 'member',
+          sourceUserId: userId(row)!,
+        }));
 
   return {
     records: [
@@ -585,10 +798,11 @@ export const buildPlan = (
       ...taskTargets,
       ...sourceRecords,
       ...holdingObservations,
+      ...importBatches,
+      ...importReviewItems,
+      ...archivedOutreachActivities,
     ],
     warnings,
     invitationPlan,
   };
 };
-import { deterministicId } from './deterministic-id.ts';
-import { sourceRowHmac } from './integrity.ts';

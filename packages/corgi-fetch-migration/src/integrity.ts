@@ -38,7 +38,12 @@ export const sourceRowHmac = (value: unknown, key: string): string => {
 const hashPlan = (plan: object): string =>
   createHash('sha256').update(canonicalJson(plan)).digest('hex');
 
-export const sealPlan = <T extends object>(plan: T): T & { planHash: string } => {
+export const contentHash = (value: unknown): string =>
+  createHash('sha256').update(canonicalJson(value)).digest('hex');
+
+export const sealPlan = <T extends object>(
+  plan: T,
+): T & { planHash: string } => {
   return { ...plan, planHash: hashPlan(plan) };
 };
 
@@ -48,6 +53,8 @@ export const assertPlanIntegrity = (plan: object & { planHash: string }) => {
   const actual = Buffer.from(planHash, 'hex');
 
   if (expected.length !== actual.length || !timingSafeEqual(expected, actual)) {
-    throw new Error('Migration plan hash mismatch; the frozen plan was modified');
+    throw new Error(
+      'Migration plan hash mismatch; the frozen plan was modified',
+    );
   }
 };

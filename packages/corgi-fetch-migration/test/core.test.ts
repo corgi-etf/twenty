@@ -134,6 +134,7 @@ test('planning transforms every Fetch relationship into ordered Twenty records',
           state_region: 'IL',
           country: 'United States',
           status: 'active',
+          owned_by_user_id: 'user-1',
           created_at: '2025-01-01T00:00:00Z',
         },
       ],
@@ -165,6 +166,15 @@ test('planning transforms every Fetch relationship into ordered Twenty records',
           email: 'whitney@example.com',
           role: 'admin',
           disabled_at: null,
+        },
+      ],
+      authUsers: [
+        {
+          id: 'user-1',
+          name: 'Whitney Wholesaler',
+          email: 'whitney@example.com',
+          role: 'admin',
+          banned: false,
         },
       ],
       teams: [{ id: 'team-1', name: 'Central' }],
@@ -227,6 +237,43 @@ test('planning transforms every Fetch relationship into ordered Twenty records',
       ],
       tags: [{ id: 'tag-1', name: 'Buffer Buyer' }],
       companyTags: [{ company_id: 'company-1', tag_id: 'tag-1' }],
+      importBatches: [
+        {
+          id: 'batch-1',
+          file_name: 'book.xlsx',
+          status: 'committed',
+          uploaded_by: 'user-1',
+          row_count: 10,
+          review_count: 1,
+          preview_data: { headers: ['Company'] },
+        },
+      ],
+      importReviewItems: [
+        {
+          id: 'review-1',
+          import_batch_id: 'batch-1',
+          source_file: 'book.xlsx',
+          source_sheet: 'Leads',
+          source_row: 8,
+          reason: 'Multiple possible company matches',
+          candidate_company_id: 'company-1',
+          raw_data: { Company: 'Possible duplicate' },
+          status: 'pending',
+        },
+      ],
+      archivedActivities: [
+        {
+          id: 'archived-1',
+          company_id: 'company-1',
+          contact_id: 'contact-1',
+          user_id: 'user-1',
+          activity_type: 'call',
+          notes: 'Duplicate history',
+          canonical_activity_id: 'activity-1',
+          archive_reason: 'duplicate',
+          archived_at: '2025-02-05T00:00:00Z',
+        },
+      ],
     },
     { migrationRunId: 'run-full', hmacKey: 'key' },
   );
@@ -245,6 +292,9 @@ test('planning transforms every Fetch relationship into ordered Twenty records',
       'taskTargets',
       'sourceRecords',
       'holdingObservations',
+      'importBatches',
+      'importReviewItems',
+      'archivedOutreachActivities',
     ],
   );
   const company = plan.records.find(
@@ -261,6 +311,10 @@ test('planning transforms every Fetch relationship into ordered Twenty records',
     addressLng: -87.63,
   });
   assert.deepEqual(company.payload.fetchTags, ['BUFFER_BUYER']);
+  assert.equal(
+    company.payload.historicalOwnerId,
+    deterministicId('wholesaler', 'user-1'),
+  );
   const person = plan.records.find(
     ({ objectPlural }) => objectPlural === 'people',
   )!;
@@ -294,4 +348,113 @@ test('planning transforms every Fetch relationship into ordered Twenty records',
       sourceUserId: 'user-1',
     },
   ]);
+  const task = plan.records.find(
+    ({ objectPlural }) => objectPlural === 'tasks',
+  )!;
+  assert.equal(task.payload.dueAt, '2025-02-03T00:00:00.000Z');
+  const review = plan.records.find(
+    ({ objectPlural }) => objectPlural === 'importReviewItems',
+  )!;
+  assert.equal(
+    review.payload.candidateCompanyId,
+    deterministicId('company', 'company-1'),
+  );
+  assert.equal(
+    plan.records.filter(({ objectPlural }) => objectPlural === 'companies')
+      .length,
+    1,
+    'pending review rows must not be promoted to companies',
+  );
+});
+
+test('duplicate email canonical holder prefers primary and richer contacts before stable ID', () => {
+  const plan = buildPlan(
+    {
+      companies: [{ id: 'company', name: 'Company' }],
+      contacts: [
+        { id: 'a', company_id: 'company', email: 'same@example.com' },
+        {
+          id: 'z',
+          company_id: 'company',
+          email: 'same@example.com',
+          first_name: 'Primary',
+          title: 'Buyer',
+          phone: '+13125550100',
+          is_primary: true,
+        },
+      ],
+    },
+    { migrationRunId: 'run', hmacKey: 'key' },
+  );
+  const people = plan.records.filter(
+    ({ objectPlural }) => objectPlural === 'people',
+  );
+
+  assert.equal(
+    people.find(({ sourceId }) => sourceId === 'a')!.payload.emails,
+    undefined,
+  );
+  assert.deepEqual(
+    people.find(({ sourceId }) => sourceId === 'z')!.payload.emails,
+    {
+      primaryEmail: 'same@example.com',
+      additionalEmails: [],
+    },
+  );
+});
+
+test('auth reconciliation invites only active matched users and reports identity gaps', () => {
+  const plan = buildPlan(
+    {
+      companies: [],
+      contacts: [],
+      users: [
+        {
+          auth_user_id: 'matched',
+          name: 'Matched',
+          email: 'role@example.com',
+          role: 'member',
+        },
+        {
+          auth_user_id: 'role-only',
+          name: 'Legacy Only',
+          email: 'legacy@example.com',
+          role: 'member',
+        },
+      ],
+      authUsers: [
+        {
+          id: 'matched',
+          name: 'Auth Name',
+          email: 'auth@example.com',
+          banned: false,
+        },
+        {
+          id: 'auth-only',
+          name: 'No Role',
+          email: 'norole@example.com',
+          banned: false,
+        },
+      ],
+    },
+    { migrationRunId: 'run', hmacKey: 'key' },
+  );
+
+  assert.deepEqual(plan.invitationPlan, [
+    {
+      email: 'auth@example.com',
+      name: 'Auth Name',
+      requestedRole: 'member',
+      sourceUserId: 'matched',
+    },
+  ]);
+  assert.deepEqual(plan.warnings.map(({ code }) => code).sort(), [
+    'AUTH_USER_WITHOUT_ROLE',
+    'ROLE_WITHOUT_AUTH_USER',
+  ]);
+  assert.equal(
+    plan.records.filter(({ objectPlural }) => objectPlural === 'wholesalers')
+      .length,
+    2,
+  );
 });
