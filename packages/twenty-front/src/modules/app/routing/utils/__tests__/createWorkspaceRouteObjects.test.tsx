@@ -106,6 +106,31 @@ describe('workspace route objects', () => {
     ).toBe(true);
   });
 
+  it('hosts the wholesaler map on the main surface only', () => {
+    const routeObjects = createWorkspaceRouteObjects({});
+    const wholesalerMapRoute = routeObjects.find(
+      ({ path }) => path === AppPath.WholesalerMapPage,
+    );
+
+    expect(wholesalerMapRoute).toBeDefined();
+    expect(wholesalerMapRoute?.handle?.workspaceSurfaces).toEqual(['main']);
+
+    expect(
+      isWorkspaceLocationAvailableOnSurface(
+        routeObjects,
+        'main',
+        AppPath.WholesalerMapPage,
+      ),
+    ).toBe(true);
+    expect(
+      isWorkspaceLocationAvailableOnSurface(
+        routeObjects,
+        'side-panel',
+        AppPath.WholesalerMapPage,
+      ),
+    ).toBe(false);
+  });
+
   it.each([
     '/settings/objects',
     '/settings/objects/companies',
