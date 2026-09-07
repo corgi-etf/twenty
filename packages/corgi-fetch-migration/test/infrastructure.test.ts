@@ -172,3 +172,37 @@ test('Twenty client retries only timeout, 429, and 5xx responses', async () => {
   );
   assert.equal(attempts, 1);
 });
+
+test('Twenty relation metadata payload includes the required target field icon', async () => {
+  let requestBody: Record<string, unknown> | undefined;
+  const captureFetch: typeof fetch = async (_input, init) => {
+    requestBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+    return new Response('{}', {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    });
+  };
+  const client = new TwentyClient(
+    'https://crm.example',
+    'secret',
+    captureFetch,
+    1,
+  );
+  const relation = buildMigrationSchema([]).fields.find(
+    ({ objectName, name }) =>
+      objectName === 'company' && name === 'historicalOwner',
+  )!;
+
+  await client.createMetadataField(
+    relation,
+    'company-object-id',
+    'owner-object-id',
+  );
+
+  assert.deepEqual(requestBody?.relationCreationPayload, {
+    targetObjectMetadataId: 'owner-object-id',
+    targetFieldLabel: 'Companies',
+    targetFieldIcon: 'IconLink',
+    type: 'MANY_TO_ONE',
+  });
+});

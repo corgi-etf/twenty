@@ -257,6 +257,7 @@ export class TwentyClient {
       payload.relationCreationPayload = {
         targetObjectMetadataId,
         targetFieldLabel: definition.relation.targetFieldLabel,
+        targetFieldIcon: definition.relation.targetFieldIcon,
         type: definition.relation.type,
       };
     }

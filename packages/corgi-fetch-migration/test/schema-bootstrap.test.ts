@@ -72,6 +72,7 @@ test('schema bootstrap creates objects before scalar fields and relations and is
         relation: {
           targetObjectName: 'company',
           targetFieldLabel: 'Lead Assignments',
+          targetFieldIcon: 'IconLink',
           type: 'MANY_TO_ONE' as const,
         },
       },

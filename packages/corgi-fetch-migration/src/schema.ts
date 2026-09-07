@@ -11,6 +11,7 @@ export type FieldDefinition = {
   relation?: {
     targetObjectName: string;
     targetFieldLabel: string;
+    targetFieldIcon: string;
     type: 'MANY_TO_ONE';
   };
 };
@@ -76,7 +77,12 @@ const relation = (
   targetFieldLabel: string,
 ): FieldDefinition =>
   field(objectName, name, label, 'RELATION', {
-    relation: { targetObjectName, targetFieldLabel, type: 'MANY_TO_ONE' },
+    relation: {
+      targetObjectName,
+      targetFieldLabel,
+      targetFieldIcon: 'IconLink',
+      type: 'MANY_TO_ONE',
+    },
   });
 
 export const buildMigrationSchema = (
