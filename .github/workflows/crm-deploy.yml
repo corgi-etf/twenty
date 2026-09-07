@@ -685,3 +685,42 @@ jobs:
         run: >-
           echo "Nx and Docker input detection found no production image changes;
           the validated infrastructure/workflow-only commit will not replace the pinned runtime image."
+
+  production-smoke:
+    name: Verify production user journeys
+    needs: [validate, deploy, no-runtime-change]
+    if: >-
+      ${{
+        always() &&
+        needs.validate.result == 'success' &&
+        (needs.deploy.result == 'success' || needs.no-runtime-change.result == 'success')
+      }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: production
+    steps:
+      - name: Check out the deployed revision
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - name: Install Node and Yarn dependencies
+        uses: ./.github/actions/crm-yarn-install
+
+      - name: Install the Chromium test browser
+        run: npx playwright install --with-deps chromium
+
+      - name: Run fail-closed production smoke tests
+        env:
+          FRONTEND_BASE_URL: https://crm.corgiinvest.com
+          BACKEND_BASE_URL: https://crm.corgiinvest.com
+          CRM_E2E_LOGIN: ${{ secrets.CRM_E2E_LOGIN }}
+          CRM_E2E_PASSWORD: ${{ secrets.CRM_E2E_PASSWORD }}
+        run: npx nx test:production twenty-e2e-testing
+
+      - name: Upload failure screenshots
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: production-playwright-failures-${{ github.run_attempt }}
+          path: packages/twenty-e2e-testing/run_results/production/
+          if-no-files-found: ignore
+          retention-days: 7
