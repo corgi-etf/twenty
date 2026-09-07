@@ -91,17 +91,36 @@ AWS_PROFILE=etf-deployment aws ecs describe-services \
 curl --fail --show-error --silent https://crm.corgiinvest.com/healthz >/dev/null
 ```
 
+## Workspace invitation email
+
+Platform email uses Amazon SES through the ECS task role; it does not use
+long-lived SMTP credentials. The role can call only `ses:SendEmail` through the
+verified `corgiinvest.com` identity, and only when the From address is
+`noreply@corgiinvest.com`.
+
+Do not create workspace invitations while the SES production-access request is
+pending. In the SES sandbox, arbitrary recipients are rejected even though the
+sender domain is verified. After AWS grants production access in `us-east-2`,
+first confirm the effective database-backed email configuration does not
+override the Terraform environment values, then verify delivery to the SES
+mailbox simulator and one controlled internal recipient before inviting prior
+Fetch users.
+
+Keep every historical Fetch user as a Wholesaler record independently of
+invitation status. Only active, reconciled users should receive invitations;
+link the Wholesaler to a Workspace Member after acceptance.
+
 ## CI/CD contract
 
-| Item | Value |
-| --- | --- |
-| Cluster | `crm-production` |
-| ECR repository | `crm-production-twenty` |
+| Item                                     | Value                                                        |
+| ---------------------------------------- | ------------------------------------------------------------ |
+| Cluster                                  | `crm-production`                                             |
+| ECR repository                           | `crm-production-twenty`                                      |
 | Server service / task family / container | `crm-production-server` / `crm-production-server` / `server` |
 | Worker service / task family / container | `crm-production-worker` / `crm-production-worker` / `worker` |
-| Server log group / prefix | `/ecs/crm-production/server` / `server` |
-| Worker log group / prefix | `/ecs/crm-production/worker` / `worker` |
-| OIDC role | `crm-production-github-deploy` |
+| Server log group / prefix                | `/ecs/crm-production/server` / `server`                      |
+| Worker log group / prefix                | `/ecs/crm-production/worker` / `worker`                      |
+| OIDC role                                | `crm-production-github-deploy`                               |
 
 The bootstrap task definitions use the upstream Linux x86_64 release pinned as `twentycrm/twenty:v2.38.1@sha256:1f4526b05f6591461335700f8c6d45e88cbc4dc037e1ef0bef9daca62da343ea`. CI builds with Nx, pushes immutable commit-addressed images to ECR, registers new task definition revisions, and updates only these two services.
 

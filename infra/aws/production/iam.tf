@@ -48,6 +48,19 @@ resource "aws_iam_role" "ecs_task" {
 
 data "aws_iam_policy_document" "ecs_task" {
   statement {
+    sid       = "SendPlatformEmail"
+    effect    = "Allow"
+    actions   = ["ses:SendEmail"]
+    resources = ["arn:aws:ses:${var.aws_region}:${var.aws_account_id}:identity/corgiinvest.com"]
+
+    condition {
+      test     = "StringEquals"
+      variable = "ses:FromAddress"
+      values   = ["noreply@corgiinvest.com"]
+    }
+  }
+
+  statement {
     sid    = "ListUploadsBucket"
     effect = "Allow"
     actions = [
