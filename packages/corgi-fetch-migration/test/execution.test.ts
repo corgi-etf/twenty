@@ -16,6 +16,7 @@ class FakeApi implements MigrationApi {
   batches: Array<{ objectPlural: string; size: number }> = [];
   inFlight = 0;
   maxInFlight = 0;
+  getCalls = 0;
 
   key(objectPlural: string, id: string) {
     return `${objectPlural}:${id}`;
@@ -44,6 +45,7 @@ class FakeApi implements MigrationApi {
   }
 
   async getOne(objectPlural: string, id: string) {
+    this.getCalls += 1;
     const record = this.records.get(this.key(objectPlural, id));
     if (!record) throw new Error('not found');
     return structuredClone(record);
@@ -125,6 +127,11 @@ test('verify compares both external identity and row HMAC', async () => {
   const plan = makePlan(2);
   await applyPlan(plan, api);
   assert.deepEqual(await verifyPlan(plan, api), { verified: 2 });
+  assert.equal(
+    api.getCalls,
+    0,
+    'verification should paginate instead of issuing one request per row',
+  );
 
   api.records.get('companies:id-1')!.sourceRowHmac = 'drifted';
   await assert.rejects(() => verifyPlan(plan, api), /verification.*id-1/i);

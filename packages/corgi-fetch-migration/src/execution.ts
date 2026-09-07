@@ -191,16 +191,26 @@ export const verifyPlan = async (
 ): Promise<{ verified: number }> => {
   assertPlanIntegrity(plan);
 
-  for (const record of plan.records) {
-    const current = await api.getOne(record.objectPlural, record.targetId);
+  for (const objectPlural of new Set(
+    plan.records.map((record) => record.objectPlural),
+  )) {
+    const currentById = new Map(
+      (await api.listAll(objectPlural)).map((record) => [record.id, record]),
+    );
+    for (const record of plan.records.filter(
+      (item) => item.objectPlural === objectPlural,
+    )) {
+      const current = currentById.get(record.targetId);
 
-    if (
-      current.legacyFetchId !== record.payload.legacyFetchId ||
-      current.sourceRowHmac !== record.payload.sourceRowHmac
-    ) {
-      throw new Error(
-        `Migration verification failed for ${record.objectPlural}/${record.targetId}`,
-      );
+      if (
+        !current ||
+        current.legacyFetchId !== record.payload.legacyFetchId ||
+        current.sourceRowHmac !== record.payload.sourceRowHmac
+      ) {
+        throw new Error(
+          `Migration verification failed for ${record.objectPlural}/${record.targetId}`,
+        );
+      }
     }
   }
 
