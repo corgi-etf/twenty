@@ -83,3 +83,11 @@ jobs:
             --exclude="${CRM_RUNTIME_EXCLUDE_FILTER}" \
             --targets=lint,typecheck,test,build \
             --parallel=3
+
+      - name: Validate production smoke-suite discovery
+        env:
+          FRONTEND_BASE_URL: https://crm.invalid
+          BACKEND_BASE_URL: https://crm.invalid
+          CRM_E2E_LOGIN: playwright-discovery@example.invalid
+          CRM_E2E_PASSWORD: playwright-discovery-only
+        run: npx nx test:production twenty-e2e-testing -- --list
