@@ -483,6 +483,7 @@ jobs:
             local start_ms="$1"
             local log_file="${TMP_DIR}/server-migration-messages.json"
             local messages_file="${TMP_DIR}/server-migration-messages.txt"
+            local failure_scan_file="${TMP_DIR}/server-migration-failure-scan.txt"
 
             for attempt in $(seq 1 18); do
               aws logs filter-log-events \
@@ -492,9 +493,15 @@ jobs:
                 --output json > "${log_file}"
               jq -r '.[]' "${log_file}" > "${messages_file}"
 
+              # Remove only the known healthy zero-failure clause before the
+              # broad failure scan. Any other text on the same log line remains,
+              # while nonzero structured summaries still match explicitly.
+              sed -E \
+                's/Upgrade summary: [0-9]+ workspace\(s\) succeeded, 0 workspace\(s\) failed//g' \
+                "${messages_file}" > "${failure_scan_file}"
               if grep -Eiq \
-                'Warning: (Upgrade completed with errors|Failed to flush cache (before|after) upgrade)|migration(s)?[^[:alnum:]]+.*(failed|error)|upgrade[^[:alnum:]]+.*failed' \
-                "${messages_file}"; then
+                'Warning: (Upgrade completed with errors|Failed to flush cache (before|after) upgrade)|Upgrade summary: [0-9]+ workspace\(s\) succeeded, [1-9][0-9]* workspace\(s\) failed|migration(s)?[^[:alnum:]]+.*(failed|error)|upgrade[^[:alnum:]]+.*failed' \
+                "${failure_scan_file}"; then
                 echo "Server logs contain database migration or upgrade failure evidence." >&2
                 return 1
               fi
