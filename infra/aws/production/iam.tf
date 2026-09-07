@@ -218,10 +218,11 @@ data "aws_iam_policy_document" "github_deploy" {
   }
 
   statement {
-    sid       = "VerifyServerTargets"
-    effect    = "Allow"
-    actions   = ["elasticloadbalancing:DescribeTargetHealth"]
-    resources = [aws_lb_target_group.server.arn]
+    sid     = "VerifyServerTargets"
+    effect  = "Allow"
+    actions = ["elasticloadbalancing:DescribeTargetHealth"]
+    # AWS does not support resource-level authorization for this read-only action.
+    resources = ["*"]
   }
 
   statement {
