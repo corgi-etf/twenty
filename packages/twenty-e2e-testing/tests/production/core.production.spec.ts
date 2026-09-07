@@ -91,7 +91,7 @@ test('creates, verifies, and removes a person through the production UI', async 
     personId = page.url().match(/\/object\/person\/([a-f0-9-]+)/)?.[1];
     expect(personId).toBeTruthy();
     await expect(
-      page.getByText(`${firstName} ${lastName}`, { exact: true }),
+      page.getByText(`${firstName} ${lastName}`, { exact: true }).first(),
     ).toBeVisible();
   } finally {
     if (personId) {
