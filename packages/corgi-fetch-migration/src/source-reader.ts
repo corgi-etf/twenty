@@ -101,15 +101,58 @@ export const buildPsqlArguments = (sql: string): string[] => [
   `BEGIN TRANSACTION READ ONLY; COPY (SELECT row_to_json(source_row)::text FROM (${sql}) AS source_row) TO STDOUT; COMMIT;`,
 ];
 
+export const buildPsqlEnvironment = (
+  databaseUrl: string,
+  baseEnvironment: NodeJS.ProcessEnv = process.env,
+): NodeJS.ProcessEnv => {
+  const parsed = new URL(databaseUrl);
+
+  if (!['postgres:', 'postgresql:'].includes(parsed.protocol)) {
+    throw new Error('FETCH_DATABASE_URL must be a PostgreSQL connection URL');
+  }
+  const database = decodeURIComponent(parsed.pathname.replace(/^\//, ''));
+  if (!parsed.hostname || !parsed.username || !database) {
+    throw new Error(
+      'PostgreSQL connection URL requires host, user, and database name',
+    );
+  }
+
+  const environment = { ...baseEnvironment };
+  for (const name of [
+    'PGHOST',
+    'PGHOSTADDR',
+    'PGPORT',
+    'PGDATABASE',
+    'PGUSER',
+    'PGPASSWORD',
+    'PGPASSFILE',
+    'PGSERVICE',
+    'PGSERVICEFILE',
+    'PGSSLMODE',
+    'PGCHANNELBINDING',
+    'PGOPTIONS',
+  ]) {
+    delete environment[name];
+  }
+
+  return {
+    ...environment,
+    PGHOST: parsed.hostname.replace(/^\[|\]$/g, ''),
+    PGPORT: parsed.port || '5432',
+    PGUSER: decodeURIComponent(parsed.username),
+    PGPASSWORD: decodeURIComponent(parsed.password),
+    PGDATABASE: database,
+    PGSSLMODE: parsed.searchParams.get('sslmode') ?? 'require',
+    PGCHANNELBINDING: parsed.searchParams.get('channel_binding') ?? 'prefer',
+    PGCONNECT_TIMEOUT: '15',
+    PGAPPNAME: 'corgi-fetch-migration-read-only',
+  };
+};
+
 const runPsql = async (databaseUrl: string, args: string[]): Promise<string> =>
   new Promise((resolve, reject) => {
     const child = spawn('psql', args, {
-      env: {
-        ...process.env,
-        PGDATABASE: databaseUrl,
-        PGCONNECT_TIMEOUT: '15',
-        PGAPPNAME: 'corgi-fetch-migration-read-only',
-      },
+      env: buildPsqlEnvironment(databaseUrl),
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     let stdout = '';

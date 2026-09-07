@@ -2,7 +2,11 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { buildMigrationSchema } from '../src/schema.ts';
-import { buildPsqlArguments, SOURCE_QUERIES } from '../src/source-reader.ts';
+import {
+  buildPsqlArguments,
+  buildPsqlEnvironment,
+  SOURCE_QUERIES,
+} from '../src/source-reader.ts';
 import { TwentyApiError, TwentyClient } from '../src/twenty-client.ts';
 
 test('schema declares every migration object and unique provenance fields', () => {
@@ -92,6 +96,31 @@ test('source reader wraps every query in a read-only transaction without embeddi
     assert.doesNotMatch(command, /postgresql:\/\//);
     assert.doesNotMatch(command, /password/i);
   }
+});
+
+test('source reader converts a connection URL to allowlisted libpq environment variables', () => {
+  const environment = buildPsqlEnvironment(
+    'postgresql://db_user:p%40ss@db.example:6543/crm%20data?sslmode=require&channel_binding=require&ignored=secret',
+    { PATH: '/bin', PGSERVICE: 'unsafe-default' },
+  );
+
+  assert.deepEqual(environment, {
+    PATH: '/bin',
+    PGHOST: 'db.example',
+    PGPORT: '6543',
+    PGUSER: 'db_user',
+    PGPASSWORD: 'p@ss',
+    PGDATABASE: 'crm data',
+    PGSSLMODE: 'require',
+    PGCHANNELBINDING: 'require',
+    PGCONNECT_TIMEOUT: '15',
+    PGAPPNAME: 'corgi-fetch-migration-read-only',
+  });
+  assert.equal(Object.values(environment).includes('ignored=secret'), false);
+  assert.throws(
+    () => buildPsqlEnvironment('https://db.example/database'),
+    /PostgreSQL connection URL/i,
+  );
 });
 
 test('Twenty client retries only timeout, 429, and 5xx responses', async () => {
