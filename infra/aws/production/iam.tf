@@ -102,10 +102,7 @@ data "aws_iam_policy_document" "github_assume_role" {
     condition {
       test     = "StringEquals"
       variable = "token.actions.githubusercontent.com:sub"
-      values = [
-        "repo:${var.github_repository}:environment:${var.github_environment}",
-        "repo:Corgi-ETF/twenty:environment:${var.github_environment}",
-      ]
+      values   = ["repo:corgi-etf@241377158/twenty@1359532075:environment:${var.github_environment}"]
     }
   }
 }
