@@ -98,6 +98,16 @@ test('source reader wraps every query in a read-only transaction without embeddi
   }
 });
 
+test('source row JSON alias cannot collide with a source_row column', () => {
+  const command = buildPsqlArguments(
+    'SELECT id, source_row FROM public.import_review_items',
+  ).join(' ');
+
+  assert.match(command, /row_to_json\(corgi_source_record\)/);
+  assert.match(command, /AS corgi_source_record/);
+  assert.doesNotMatch(command, /row_to_json\(source_row\)/);
+});
+
 test('source reader converts a connection URL to allowlisted libpq environment variables', () => {
   const environment = buildPsqlEnvironment(
     'postgresql://db_user:p%40ss@db.example:6543/crm%20data?sslmode=require&channel_binding=require&ignored=secret',

@@ -98,7 +98,7 @@ export const buildPsqlArguments = (sql: string): string[] => [
   '--tuples-only',
   '--no-align',
   '--command',
-  `BEGIN TRANSACTION READ ONLY; COPY (SELECT row_to_json(source_row)::text FROM (${sql}) AS source_row) TO STDOUT; COMMIT;`,
+  `BEGIN TRANSACTION READ ONLY; COPY (SELECT row_to_json(corgi_source_record)::text FROM (${sql}) AS corgi_source_record) TO STDOUT; COMMIT;`,
 ];
 
 export const buildPsqlEnvironment = (
@@ -214,7 +214,7 @@ export const readSourceSnapshot = async (
     'BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY;',
     ...selected.flatMap(({ key, sql }) => [
       '--command',
-      `COPY (SELECT json_build_object('__corgiCollection', '${String(key)}')::text UNION ALL SELECT row_to_json(source_row)::text FROM (${sql}) AS source_row) TO STDOUT;`,
+      `COPY (SELECT json_build_object('__corgiCollection', '${String(key)}')::text UNION ALL SELECT row_to_json(corgi_source_record)::text FROM (${sql}) AS corgi_source_record) TO STDOUT;`,
     ]),
     '--command',
     'COMMIT;',
