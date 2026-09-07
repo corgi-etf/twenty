@@ -27,6 +27,10 @@ env:
   WORKER_TASK_FAMILY: crm-production-worker
   WORKER_CONTAINER: worker
   HEALTH_URL: https://crm.corgiinvest.com/healthz
+  # The production database was bootstrapped with the official v2.38.1 image.
+  # Never report an older application version from a fork commit whose nearest
+  # reachable source tag predates that patch release.
+  CRM_BOOTSTRAP_APP_VERSION: '2.38.1'
   CRM_RUNTIME_PROJECTS: >-
     twenty-server,twenty-front,twenty-shared,twenty-ui,
     twenty-front-component-renderer,twenty-sdk,twenty-client-sdk,twenty-emails
@@ -219,9 +223,51 @@ jobs:
             exit 1
           fi
 
+      - name: Resolve Twenty application version
+        id: app-version
+        shell: bash
+        run: |
+          set -euo pipefail
+          RELEASE_TAG="$(git describe \
+            --tags \
+            --abbrev=0 \
+            --match 'twenty/v[0-9]*' \
+            --match 'v[0-9]*' \
+            HEAD)"
+          SOURCE_APP_VERSION="${RELEASE_TAG#twenty/}"
+          SOURCE_APP_VERSION="${SOURCE_APP_VERSION#v}"
+
+          # Twenty expects APP_VERSION to be semantic, while the ECR image tag
+          # remains independently and immutably tied to the Git commit.
+          STRICT_STABLE_SEMVER='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
+          if [[ ! "${SOURCE_APP_VERSION}" =~ ${STRICT_STABLE_SEMVER} ]]; then
+            echo "Nearest Twenty release tag did not resolve to strict semver: ${RELEASE_TAG}" >&2
+            exit 1
+          fi
+          if [[ ! "${CRM_BOOTSTRAP_APP_VERSION}" =~ ${STRICT_STABLE_SEMVER} ]]; then
+            echo "CRM_BOOTSTRAP_APP_VERSION is not strict semver." >&2
+            exit 1
+          fi
+
+          APP_VERSION="${SOURCE_APP_VERSION}"
+          LOWEST_VERSION="$(printf '%s\n' \
+            "${SOURCE_APP_VERSION}" \
+            "${CRM_BOOTSTRAP_APP_VERSION}" | sort -V | head -n 1)"
+          if [[ "${SOURCE_APP_VERSION}" != "${CRM_BOOTSTRAP_APP_VERSION}" ]] &&
+             [[ "${LOWEST_VERSION}" == "${SOURCE_APP_VERSION}" ]]; then
+            echo "Reachable source release ${SOURCE_APP_VERSION} predates the deployed ${CRM_BOOTSTRAP_APP_VERSION} bootstrap; using the bootstrap version."
+            APP_VERSION="${CRM_BOOTSTRAP_APP_VERSION}"
+          fi
+
+          [[ "${APP_VERSION}" =~ ${STRICT_STABLE_SEMVER} ]]
+          echo "Twenty APP_VERSION=${APP_VERSION} (nearest reachable release: ${RELEASE_TAG})"
+          echo "version=${APP_VERSION}" >> "${GITHUB_OUTPUT}"
+
       - name: Build and push the production image
         id: image
         shell: bash
+        env:
+          APP_VERSION: ${{ steps.app-version.outputs.version }}
         run: |
           set -euo pipefail
           IMAGE_TAG="git-${GITHUB_SHA}"
@@ -253,7 +299,7 @@ jobs:
             docker buildx build \
               --platform linux/amd64 \
               --target twenty \
-              --build-arg "APP_VERSION=${IMAGE_TAG}" \
+              --build-arg "APP_VERSION=${APP_VERSION}" \
               "${CACHE_FROM_ARGS[@]}" \
               --cache-to type=inline \
               --provenance=false \
