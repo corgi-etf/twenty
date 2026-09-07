@@ -5,8 +5,7 @@ import { getWholesalerMapAccess } from '@/wholesaler-map/utils/getWholesalerMapA
 
 export const useWholesalerMapAccess = () => {
   const { objectMetadataItem } = useObjectMetadataItem({
-    objectNameSingular:
-      WHOLESALER_MAP_DATA_CONTRACT.companyObjectNameSingular,
+    objectNameSingular: WHOLESALER_MAP_DATA_CONTRACT.companyObjectNameSingular,
   });
   const objectPermissions = useObjectPermissionsForObject(
     objectMetadataItem.id,

@@ -1,6 +1,6 @@
 import { renderHook, waitFor } from '@testing-library/react';
 
-import { WHOLESALER_MAP_PAGE_SIZE } from '@/wholesaler-map/constants/WholesalerMapDataContract';
+import { WHOLESALER_MAP_DATA_CONTRACT } from '@/wholesaler-map/constants/WholesalerMapDataContract';
 import { useWholesalerMapCompanies } from '@/wholesaler-map/hooks/useWholesalerMapCompanies';
 
 const mockUseFindManyRecords = jest.fn();
@@ -49,7 +49,7 @@ describe('useWholesalerMapCompanies', () => {
         address: true,
         historicalOwner: { id: true, name: true },
       },
-      limit: WHOLESALER_MAP_PAGE_SIZE,
+      limit: WHOLESALER_MAP_DATA_CONTRACT.pageSize,
       skip: false,
     });
   });

@@ -39,12 +39,7 @@ describe('getWholesalerMapAccess', () => {
     expect(
       getWholesalerMapAccess({
         canReadCompanyRecords: true,
-        readableCompanyFieldNames: [
-          'id',
-          'name',
-          'address',
-          'historicalOwner',
-        ],
+        readableCompanyFieldNames: ['id', 'name', 'address', 'historicalOwner'],
       }),
     ).toEqual({
       canViewMap: true,

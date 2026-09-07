@@ -36,7 +36,15 @@ const createCompany = (
 
 describe('normalizeWholesalerMapCompanies', () => {
   it('builds valid GeoJSON points with CRM detail properties', () => {
-    expect(normalizeWholesalerMapCompanies([createCompany()], null)).toEqual({
+    expect(
+      normalizeWholesalerMapCompanies(
+        [createCompany()],
+        null,
+        'Unassigned',
+        ['blue', 'red'],
+        'gray',
+      ),
+    ).toEqual({
       type: 'FeatureCollection',
       features: [
         expect.objectContaining({
@@ -72,9 +80,15 @@ describe('normalizeWholesalerMapCompanies', () => {
       },
     });
 
-    expect(normalizeWholesalerMapCompanies([company], null).features).toEqual(
-      [],
-    );
+    expect(
+      normalizeWholesalerMapCompanies(
+        [company],
+        null,
+        'Unassigned',
+        ['blue', 'red'],
+        'gray',
+      ).features,
+    ).toEqual([]);
   });
 
   it('filters points by historical owner and retains unassigned companies', () => {
@@ -88,6 +102,9 @@ describe('normalizeWholesalerMapCompanies', () => {
       normalizeWholesalerMapCompanies(
         [createCompany(), unassigned],
         'owner-1',
+        'Unassigned',
+        ['blue', 'red'],
+        'gray',
       ).features.map(({ properties }) => properties.companyId),
     ).toEqual(['company-1']);
 
@@ -95,6 +112,9 @@ describe('normalizeWholesalerMapCompanies', () => {
       normalizeWholesalerMapCompanies(
         [createCompany(), unassigned],
         '',
+        'Unassigned',
+        ['blue', 'red'],
+        'gray',
       ).features.map(({ properties }) => properties.companyId),
     ).toEqual(['company-2']);
   });

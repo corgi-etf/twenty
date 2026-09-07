@@ -1,0 +1,124 @@
+import { i18n } from '@lingui/core';
+import { I18nProvider } from '@lingui/react';
+import { render, screen } from '@testing-library/react';
+
+import { WholesalerCoverageMap } from '@/wholesaler-map/components/WholesalerCoverageMap';
+
+const mockSetData = jest.fn();
+const mockAddSource = jest.fn();
+const mockAddLayer = jest.fn();
+const mockAddControl = jest.fn();
+const mockGetCanvas = jest.fn(() => ({ style: { cursor: '' } }));
+const mockGetSource = jest.fn(() => ({ setData: mockSetData }));
+const mockRemove = jest.fn();
+const mockEaseTo = jest.fn();
+const mapEventHandlers = new Map<string, (...args: never[]) => void>();
+const mockOn = jest.fn(
+  (
+    eventName: string,
+    layerOrHandler: string | ((...args: never[]) => void),
+    possibleHandler?: (...args: never[]) => void,
+  ) => {
+    const eventKey =
+      typeof layerOrHandler === 'string'
+        ? `${eventName}:${layerOrHandler}`
+        : eventName;
+    const handler =
+      typeof layerOrHandler === 'function' ? layerOrHandler : possibleHandler;
+
+    if (handler) {
+      mapEventHandlers.set(eventKey, handler);
+    }
+  },
+);
+const mockMap = {
+  addControl: mockAddControl,
+  addLayer: mockAddLayer,
+  addSource: mockAddSource,
+  easeTo: mockEaseTo,
+  getCanvas: mockGetCanvas,
+  getSource: mockGetSource,
+  on: mockOn,
+  remove: mockRemove,
+};
+
+jest.mock('maplibre-gl', () => ({
+  AttributionControl: jest.fn(),
+  MapLibreMap: jest.fn(function MockMapLibreMap() {
+    return mockMap;
+  }),
+  NavigationControl: jest.fn(),
+}));
+
+const featureCollection = {
+  type: 'FeatureCollection' as const,
+  features: [
+    {
+      type: 'Feature' as const,
+      geometry: {
+        type: 'Point' as const,
+        coordinates: [-87.6298, 41.8781] as [number, number],
+      },
+      properties: {
+        companyId: 'company-1',
+        companyName: 'Northstar Capital',
+        locationLabel: 'Chicago, IL, US',
+        ownerId: 'owner-1',
+        ownerName: 'Alex Morgan',
+        ownerColor: 'blue',
+      },
+    },
+  ],
+};
+
+const renderMap = (onCompanySelect = jest.fn()) =>
+  render(
+    <I18nProvider i18n={i18n}>
+      <WholesalerCoverageMap
+        featureCollection={featureCollection}
+        onCompanySelect={onCompanySelect}
+      />
+    </I18nProvider>,
+  );
+
+describe('WholesalerCoverageMap', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mapEventHandlers.clear();
+  });
+
+  it('renders one clustered GeoJSON source and accessible map canvas', () => {
+    renderMap();
+
+    mapEventHandlers.get('load')?.();
+
+    expect(
+      screen.getByRole('img', { name: /lead coverage by wholesaler/i }),
+    ).toBeInTheDocument();
+    expect(mockAddSource).toHaveBeenCalledWith('wholesaler-leads', {
+      type: 'geojson',
+      data: featureCollection,
+      cluster: true,
+      clusterMaxZoom: 14,
+      clusterRadius: 50,
+    });
+    expect(mockAddLayer).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'lead-clusters' }),
+    );
+    expect(mockAddLayer).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'unclustered-leads' }),
+    );
+  });
+
+  it('selects a Company through an unclustered map point', () => {
+    const onCompanySelect = jest.fn();
+
+    renderMap(onCompanySelect);
+    mapEventHandlers.get('load')?.();
+    mapEventHandlers.get('click:unclustered-leads')?.({
+      features: [{ properties: { companyId: 'company-1' } }],
+    } as never);
+
+    expect(onCompanySelect).toHaveBeenCalledWith('company-1');
+  });
+});

@@ -4,31 +4,25 @@ import {
   type WholesalerMapFeatureCollection,
 } from '@/wholesaler-map/types/WholesalerMapCompany';
 
-const OWNER_COLORS = [
-  '#1965B0',
-  '#DC050C',
-  '#F7A35C',
-  '#4EB265',
-  '#7BAFDE',
-  '#882E72',
-  '#F4A736',
-  '#9A6324',
-] as const;
+const isValidLatitude = (value: number | null): value is number =>
+  typeof value === 'number' &&
+  Number.isFinite(value) &&
+  value >= -90 &&
+  value <= 90;
 
-const UNASSIGNED_OWNER_COLOR = '#6B7280';
-
-const isValidLatitude = (value: number | null) =>
-  typeof value === 'number' && Number.isFinite(value) && value >= -90 && value <= 90;
-
-const isValidLongitude = (value: number | null) =>
+const isValidLongitude = (value: number | null): value is number =>
   typeof value === 'number' &&
   Number.isFinite(value) &&
   value >= -180 &&
   value <= 180;
 
-const getOwnerColor = (ownerId: string) => {
+const getOwnerColor = (
+  ownerId: string,
+  ownerColors: readonly string[],
+  unassignedOwnerColor: string,
+) => {
   if (ownerId === '') {
-    return UNASSIGNED_OWNER_COLOR;
+    return unassignedOwnerColor;
   }
 
   const ownerHash = [...ownerId].reduce(
@@ -36,7 +30,7 @@ const getOwnerColor = (ownerId: string) => {
     0,
   );
 
-  return OWNER_COLORS[ownerHash % OWNER_COLORS.length];
+  return ownerColors[ownerHash % ownerColors.length] ?? unassignedOwnerColor;
 };
 
 const getLocationLabel = (company: WholesalerMapCompany) =>
@@ -45,11 +39,16 @@ const getLocationLabel = (company: WholesalerMapCompany) =>
     company.address.addressState,
     company.address.addressCountry,
   ]
-    .filter((value, index, values) => value !== '' && values.indexOf(value) === index)
+    .filter(
+      (value, index, values) => value !== '' && values.indexOf(value) === index,
+    )
     .join(', ');
 
 const toWholesalerMapFeature = (
   company: WholesalerMapCompany,
+  unassignedOwnerName: string,
+  ownerColors: readonly string[],
+  unassignedOwnerColor: string,
 ): WholesalerMapFeature | null => {
   const latitude = company.address.addressLat;
   const longitude = company.address.addressLng;
@@ -71,8 +70,8 @@ const toWholesalerMapFeature = (
       companyName: company.name,
       locationLabel: getLocationLabel(company),
       ownerId,
-      ownerName: company.historicalOwner?.name ?? 'Unassigned',
-      ownerColor: getOwnerColor(ownerId),
+      ownerName: company.historicalOwner?.name ?? unassignedOwnerName,
+      ownerColor: getOwnerColor(ownerId, ownerColors, unassignedOwnerColor),
     },
   };
 };
@@ -80,6 +79,9 @@ const toWholesalerMapFeature = (
 export const normalizeWholesalerMapCompanies = (
   companies: WholesalerMapCompany[],
   selectedOwnerId: string | null,
+  unassignedOwnerName: string,
+  ownerColors: readonly string[],
+  unassignedOwnerColor: string,
 ): WholesalerMapFeatureCollection => {
   const features = companies.flatMap((company) => {
     const ownerId = company.historicalOwner?.id ?? '';
@@ -88,7 +90,12 @@ export const normalizeWholesalerMapCompanies = (
       return [];
     }
 
-    const feature = toWholesalerMapFeature(company);
+    const feature = toWholesalerMapFeature(
+      company,
+      unassignedOwnerName,
+      ownerColors,
+      unassignedOwnerColor,
+    );
 
     return feature === null ? [] : [feature];
   });
