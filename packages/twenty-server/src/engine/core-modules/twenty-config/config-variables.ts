@@ -2179,11 +2179,13 @@ export class ConfigVariables {
     type: ConfigVariableType.STRING,
   })
   @ValidateIf(
-    (env) => env.EMAILING_DOMAIN_DRIVER === EmailingDomainDriver.AWS_SES,
+    (env) =>
+      env.EMAIL_DRIVER === EmailDriver.AWS_SES ||
+      env.EMAILING_DOMAIN_DRIVER === EmailingDomainDriver.AWS_SES,
   )
   @IsAWSRegion()
   @IsNotEmpty()
-  AWS_SES_REGION: AwsRegion;
+  AWS_SES_REGION = '' as AwsRegion;
 
   @ConfigVariablesMetadata({
     group: ConfigVariablesGroup.AWS_SES_SETTINGS,
