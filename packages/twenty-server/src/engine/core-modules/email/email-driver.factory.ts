@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 
 import { type EmailDriverInterface } from 'src/engine/core-modules/email/drivers/interfaces/email-driver.interface';
 
+import { AwsSesDriver } from 'src/engine/core-modules/email/drivers/aws-ses.driver';
 import { LoggerDriver } from 'src/engine/core-modules/email/drivers/logger.driver';
 import { SmtpDriver } from 'src/engine/core-modules/email/drivers/smtp.driver';
 import { EmailDriver } from 'src/engine/core-modules/email/enums/email-driver.enum';
@@ -34,6 +35,10 @@ export class EmailDriverFactory extends DriverFactoryBase<EmailDriverInterface> 
       return `smtp|${emailConfigHash}`;
     }
 
+    if (driver === EmailDriver.AWS_SES) {
+      return `aws-ses|${this.twentyConfigService.get('AWS_SES_REGION')}`;
+    }
+
     throw new Error(`Unsupported email driver: ${driver}`);
   }
 
@@ -43,6 +48,11 @@ export class EmailDriverFactory extends DriverFactoryBase<EmailDriverInterface> 
     switch (driver) {
       case EmailDriver.LOGGER:
         return new LoggerDriver();
+
+      case EmailDriver.AWS_SES:
+        return new AwsSesDriver({
+          region: this.twentyConfigService.get('AWS_SES_REGION'),
+        });
 
       case EmailDriver.SMTP: {
         const host = this.twentyConfigService.get('EMAIL_SMTP_HOST');

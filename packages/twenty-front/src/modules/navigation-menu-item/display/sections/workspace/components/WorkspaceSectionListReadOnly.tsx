@@ -5,6 +5,7 @@ import type { NavigationMenuItem } from '~/generated-metadata/graphql';
 import { NavigationMenuItemType } from 'twenty-shared/types';
 import type { NavigationMenuItemSectionListDndKitProps } from '@/navigation-menu-item/display/sections/types/NavigationMenuItemSectionListDndKitProps';
 import { NavigationMenuItemDisplay } from '@/navigation-menu-item/display/components/NavigationMenuItemDisplay';
+import { WholesalerMapNavigationItem } from '@/wholesaler-map/components/WholesalerMapNavigationItem';
 
 const StyledList = styled.div`
   display: flex;
@@ -34,6 +35,7 @@ export const WorkspaceSectionListReadOnly = ({
 
   return (
     <StyledList>
+      <WholesalerMapNavigationItem />
       {filteredItems.map((item: NavigationMenuItem) => (
         <NavigationMenuItemDisplay
           key={item.id}

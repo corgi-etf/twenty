@@ -7,18 +7,22 @@
       "executor": "nx:run-commands",
       "options": {
         "cwd": "packages/twenty-e2e-testing",
-        "commands": [
-          "yarn playwright install",
-          "cp .env.example .env"
-        ]
+        "commands": ["yarn playwright install", "cp .env.example .env"]
       }
     },
     "test": {
       "executor": "nx:run-commands",
       "options": {
         "cwd": "packages/twenty-e2e-testing",
+        "commands": ["yarn playwright test"]
+      }
+    },
+    "test:production": {
+      "executor": "nx:run-commands",
+      "options": {
+        "cwd": "packages/twenty-e2e-testing",
         "commands": [
-          "yarn playwright test"
+          "yarn playwright test --config=playwright.production.config.ts"
         ]
       }
     },
@@ -26,27 +30,21 @@
       "executor": "nx:run-commands",
       "options": {
         "cwd": "packages/twenty-e2e-testing",
-        "commands": [
-          "yarn playwright test --ui"
-        ]
+        "commands": ["yarn playwright test --ui"]
       }
     },
     "test:debug": {
       "executor": "nx:run-commands",
       "options": {
         "cwd": "packages/twenty-e2e-testing",
-        "commands": [
-          "yarn playwright test --debug"
-        ]
+        "commands": ["yarn playwright test --debug"]
       }
     },
     "test:report": {
       "executor": "nx:run-commands",
       "options": {
         "cwd": "packages/twenty-e2e-testing",
-        "commands": [
-          "yarn playwright show-report"
-        ]
+        "commands": ["yarn playwright show-report"]
       }
     }
   }

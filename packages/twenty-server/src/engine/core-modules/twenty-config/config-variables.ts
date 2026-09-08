@@ -479,6 +479,7 @@ export class ConfigVariables {
     group: ConfigVariablesGroup.EMAIL_SETTINGS,
     description: 'Email address used as the sender for outgoing emails',
     type: ConfigVariableType.STRING,
+    isEnvOnly: true,
   })
   EMAIL_FROM_ADDRESS = 'noreply@yourdomain.com';
 
@@ -486,6 +487,7 @@ export class ConfigVariables {
     group: ConfigVariablesGroup.EMAIL_SETTINGS,
     description: 'Name used in the From header for outgoing emails',
     type: ConfigVariableType.STRING,
+    isEnvOnly: true,
   })
   EMAIL_FROM_NAME = 'Felix from Twenty';
 
@@ -494,6 +496,7 @@ export class ConfigVariables {
     description: 'Email driver to use for sending emails',
     type: ConfigVariableType.ENUM,
     options: Object.values(EmailDriver),
+    isEnvOnly: true,
   })
   @CastToUpperSnakeCase()
   EMAIL_DRIVER: EmailDriver = EmailDriver.LOGGER;
@@ -2177,13 +2180,16 @@ export class ConfigVariables {
     group: ConfigVariablesGroup.AWS_SES_SETTINGS,
     description: 'AWS region',
     type: ConfigVariableType.STRING,
+    isEnvOnly: true,
   })
   @ValidateIf(
-    (env) => env.EMAILING_DOMAIN_DRIVER === EmailingDomainDriver.AWS_SES,
+    (env) =>
+      env.EMAIL_DRIVER === EmailDriver.AWS_SES ||
+      env.EMAILING_DOMAIN_DRIVER === EmailingDomainDriver.AWS_SES,
   )
   @IsAWSRegion()
   @IsNotEmpty()
-  AWS_SES_REGION: AwsRegion;
+  AWS_SES_REGION = '' as AwsRegion;
 
   @ConfigVariablesMetadata({
     group: ConfigVariablesGroup.AWS_SES_SETTINGS,

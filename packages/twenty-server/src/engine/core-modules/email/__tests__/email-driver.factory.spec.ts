@@ -5,6 +5,8 @@ import { EmailDriver } from 'src/engine/core-modules/email/enums/email-driver.en
 import { ConfigGroupHashService } from 'src/engine/core-modules/twenty-config/services/config-group-hash.service';
 import { TwentyConfigService } from 'src/engine/core-modules/twenty-config/twenty-config.service';
 
+const AWS_SES_EMAIL_DRIVER = 'AWS_SES' as EmailDriver;
+
 describe('EmailDriverFactory', () => {
   let factory: EmailDriverFactory;
   let twentyConfigService: TwentyConfigService;
@@ -65,6 +67,23 @@ describe('EmailDriverFactory', () => {
       expect(twentyConfigService.get).toHaveBeenCalledWith('EMAIL_DRIVER');
     });
 
+    it('should return an AWS SES config key containing the configured region', () => {
+      jest
+        .spyOn(twentyConfigService, 'get')
+        .mockImplementation((key: string) => {
+          switch (key) {
+            case 'EMAIL_DRIVER':
+              return AWS_SES_EMAIL_DRIVER;
+            case 'AWS_SES_REGION':
+              return 'us-east-2';
+            default:
+              return undefined;
+          }
+        });
+
+      expect(factory['buildConfigKey']()).toBe('aws-ses|us-east-2');
+    });
+
     it('should throw error for unsupported driver', () => {
       jest.spyOn(twentyConfigService, 'get').mockReturnValue('invalid-driver');
 
@@ -112,6 +131,25 @@ describe('EmailDriverFactory', () => {
 
       expect(driver).toBeDefined();
       expect(driver.constructor.name).toBe('SmtpDriver');
+    });
+
+    it('should create an AWS SES driver using the configured region', () => {
+      jest
+        .spyOn(twentyConfigService, 'get')
+        .mockImplementation((key: string) => {
+          switch (key) {
+            case 'EMAIL_DRIVER':
+              return AWS_SES_EMAIL_DRIVER;
+            case 'AWS_SES_REGION':
+              return 'us-east-2';
+            default:
+              return undefined;
+          }
+        });
+
+      const driver = factory['createDriver']();
+
+      expect(driver.constructor.name).toBe('AwsSesDriver');
     });
 
     it('should throw error when smtp host is missing', () => {

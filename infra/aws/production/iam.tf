@@ -48,6 +48,19 @@ resource "aws_iam_role" "ecs_task" {
 
 data "aws_iam_policy_document" "ecs_task" {
   statement {
+    sid       = "SendPlatformEmail"
+    effect    = "Allow"
+    actions   = ["ses:SendEmail"]
+    resources = ["arn:aws:ses:${var.aws_region}:${var.aws_account_id}:identity/corgiinvest.com"]
+
+    condition {
+      test     = "StringEquals"
+      variable = "ses:FromAddress"
+      values   = ["noreply@corgiinvest.com"]
+    }
+  }
+
+  statement {
     sid    = "ListUploadsBucket"
     effect = "Allow"
     actions = [
@@ -111,7 +124,7 @@ resource "aws_iam_role" "github_deploy" {
   name                 = "crm-production-github-deploy"
   description          = "GitHub Actions deployment role for Corgi-ETF/twenty production"
   assume_role_policy   = data.aws_iam_policy_document.github_assume_role.json
-  max_session_duration = 3600
+  max_session_duration = 7200
 }
 
 data "aws_iam_policy_document" "github_deploy" {

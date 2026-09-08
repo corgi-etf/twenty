@@ -47,6 +47,12 @@ const MobileHomePage = lazy(() =>
   })),
 );
 
+const WholesalerMapPage = lazy(() =>
+  import('~/pages/wholesaler-map/WholesalerMapPage').then((module) => ({
+    default: module.WholesalerMapPage,
+  })),
+);
+
 const NotFound = lazy(() =>
   import('~/pages/not-found/NotFound').then((module) => ({
     default: module.NotFound,
@@ -86,6 +92,17 @@ export const createWorkspaceRouteObjects = ({
           } satisfies WorkspaceRouteObject,
         ]
       : []),
+    {
+      path: AppPath.WholesalerMapPage,
+      element: (
+        <LazyRoute>
+          <WholesalerMapPage />
+        </LazyRoute>
+      ),
+      handle: {
+        workspaceSurfaces: ['main'],
+      },
+    },
     {
       path: AppPath.Index,
       element: <RecordIndexSkeletonLoader />,
