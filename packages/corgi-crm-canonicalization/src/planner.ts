@@ -43,10 +43,11 @@ export type UnresolvedItem = {
 export type RawKeyDisposition = {
   rowKey: string;
   key: string;
-  kind: 'canonical' | 'identity' | 'ignored';
+  kind: 'canonical' | 'identity' | 'ignored' | 'duplicate';
   target: string;
   sourceValueHash: string;
   resultValueHash?: string;
+  targetValueHash?: string;
 };
 
 export type CanonicalizationPlan = {
@@ -143,11 +144,12 @@ const mergeFact = (
   accumulator: RecordAccumulator,
   name: string,
   value: unknown,
+  previousName?: string,
 ): void => {
   const text = textValue(value);
   if (!text) return;
 
-  const existing = asString(valueAt(accumulator.record, name));
+  const existing = asString(valueAt(accumulator.record, name, previousName));
   const values = accumulator.facts.get(name) ?? new Set<string>();
   for (const existingValue of existing?.split('\n').filter(Boolean) ?? []) {
     values.add(existingValue);
@@ -250,23 +252,59 @@ const emailValues = (record: CrmRecord): string[] => {
     .filter((value): value is string => !!value);
 };
 
+const phoneIdentity = (
+  normalized: NonNullable<ReturnType<typeof normalizePhone>>,
+): string => `${normalized.callingCode}${normalized.number}`;
+
+const normalizedCompositePhone = (
+  number: unknown,
+  callingCode: unknown,
+): ReturnType<typeof normalizePhone> => {
+  const numberText = asString(number);
+  const callingCodeText = asString(callingCode);
+  if (!numberText) return null;
+
+  return normalizePhone(
+    callingCodeText && !numberText.startsWith('+')
+      ? `${callingCodeText}${numberText}`
+      : numberText,
+  );
+};
+
+const compositePhoneIdentity = (
+  number: unknown,
+  callingCode: unknown,
+): string | null => {
+  const normalized = normalizedCompositePhone(number, callingCode);
+
+  return normalized ? phoneIdentity(normalized) : null;
+};
+
 const phoneValues = (record: CrmRecord): string[] => {
   const phones = record.phones as
     | {
         primaryPhoneNumber?: unknown;
-        additionalPhones?: Array<{ number?: unknown }>;
+        primaryPhoneCallingCode?: unknown;
+        additionalPhones?: Array<{
+          number?: unknown;
+          callingCode?: unknown;
+        }>;
       }
     | undefined;
 
   return [
-    phones?.primaryPhoneNumber,
-    ...(phones?.additionalPhones?.map(({ number }) => number) ?? []),
-    record.legacyPrimaryPhone,
-    ...jsonArray(record.legacySecondaryPhones),
+    normalizedCompositePhone(
+      phones?.primaryPhoneNumber,
+      phones?.primaryPhoneCallingCode,
+    ),
+    ...(phones?.additionalPhones?.map(({ number, callingCode }) =>
+      normalizedCompositePhone(number, callingCode),
+    ) ?? []),
+    normalizePhone(record.legacyPrimaryPhone),
+    ...jsonArray(record.legacySecondaryPhones).map(normalizePhone),
   ]
-    .map(normalizePhone)
     .filter((value): value is NonNullable<typeof value> => !!value)
-    .map(({ number }) => number);
+    .map(phoneIdentity);
 };
 
 const linkedinValue = (record: CrmRecord): string | null => {
@@ -459,7 +497,8 @@ const mergeLegacyContacts = (
       if (normalized.extension) {
         accumulator.residualContacts!.add(`Phone extension: ${original}`);
       }
-      const holders = owners.phones.get(normalized.number) ?? new Set<string>();
+      const identity = phoneIdentity(normalized);
+      const holders = owners.phones.get(identity) ?? new Set<string>();
       if ([...holders].some((id) => id !== person.id)) {
         accumulator.residualContacts!.add(`Phone: ${original}`);
         continue;
@@ -472,8 +511,14 @@ const mergeLegacyContacts = (
         phones.primaryPhoneCountryCode = normalized.countryCode;
         phones.primaryPhoneCallingCode = normalized.callingCode;
       } else if (
-        phones.primaryPhoneNumber !== normalized.number &&
-        !additional.some(({ number }) => number === normalized.number)
+        compositePhoneIdentity(
+          phones.primaryPhoneNumber,
+          phones.primaryPhoneCallingCode,
+        ) !== identity &&
+        !additional.some(
+          ({ number, callingCode }) =>
+            compositePhoneIdentity(number, callingCode) === identity,
+        )
       ) {
         additional.push({
           number: normalized.number,
@@ -481,7 +526,7 @@ const mergeLegacyContacts = (
           callingCode: normalized.callingCode,
         });
       }
-      addOwner(owners.phones, normalized.number, person.id);
+      addOwner(owners.phones, identity, person.id);
     }
     (phones.additionalPhones as Array<Record<string, unknown>>).sort(
       (left, right) => String(left.number).localeCompare(String(right.number)),
@@ -613,6 +658,12 @@ const rowSemanticKey = (row: StagingRow): string => {
     : row.contentKey;
 };
 
+const stagingOccurrenceKey = (row: StagingRow): string =>
+  stableUuid('stagingRow', `${row.rowKey}\0${row.record.id}`);
+
+const dispositionOccurrenceKey = (rowKey: string, key: string): string =>
+  `${rowKey}\0${key}`;
+
 const deduplicateRows = (rows: readonly StagingRow[]) => {
   const groups = new Map<string, StagingRow[]>();
   for (const row of rows) {
@@ -621,6 +672,7 @@ const deduplicateRows = (rows: readonly StagingRow[]) => {
   }
 
   const selected: StagingRow[] = [];
+  const duplicateOf = new Map<string, StagingRow>();
   const collisions: UnresolvedItem[] = [];
   for (const [semanticKey, candidates] of [...groups].sort(([left], [right]) =>
     left.localeCompare(right),
@@ -639,16 +691,19 @@ const deduplicateRows = (rows: readonly StagingRow[]) => {
       });
       continue;
     }
-    selected.push(
-      [...candidates].sort(
-        (left, right) =>
-          left.priority - right.priority ||
-          left.rowKey.localeCompare(right.rowKey),
-      )[0]!,
+    const ordered = [...candidates].sort(
+      (left, right) =>
+        left.priority - right.priority ||
+        left.rowKey.localeCompare(right.rowKey),
     );
+    const winner = ordered[0]!;
+    selected.push(winner);
+    for (const duplicate of ordered.slice(1)) {
+      duplicateOf.set(duplicate.record.id, winner);
+    }
   }
 
-  return { selected, collisions };
+  return { selected, collisions, duplicateOf };
 };
 
 const numberValue = (value: unknown): number | null => {
@@ -739,14 +794,6 @@ const EMPTY_ONLY_RAW_KEYS = new Set(
 );
 
 const COMPANY_TARGET_BY_KEY: Readonly<Record<string, string>> = {
-  address: 'company.address',
-  'street address': 'company.address',
-  'street address2': 'company.address',
-  city: 'company.address',
-  state: 'company.address',
-  'filer state': 'company.address',
-  zip: 'company.address',
-  'zip code': 'company.address',
   'firm address': 'company.address',
   'firm city': 'company.address',
   'firm state': 'company.address',
@@ -896,11 +943,35 @@ const NUMERIC_HOLDING_KEYS = new Set([
   'prior ranking',
 ]);
 
+const normalizedDispositionResult = (
+  key: string,
+  value: unknown,
+  isHolding: boolean,
+): unknown => {
+  if (COMPANY_IDENTITY_RAW_KEYS.has(key) || PERSON_IDENTITY_RAW_KEYS.has(key)) {
+    return companyNameKey(value);
+  }
+  if (isHolding && NUMERIC_HOLDING_KEYS.has(key)) return numberValue(value);
+  if (key.includes('email')) return normalizeEmail(value) ?? textValue(value);
+  if (key.includes('phone') || key === 'mobile' || key === 'landline') {
+    const normalized = normalizePhone(value);
+
+    return normalized ? phoneIdentity(normalized) : textValue(value);
+  }
+  if (key === 'linkedin') return normalizeLinkedIn(value) ?? textValue(value);
+  if (key === 'firm website' || key === 'website') {
+    return normalizeDomain(value) ?? textValue(value);
+  }
+
+  return textValue(value);
+};
+
 const dispositionForKey = (
   key: string,
   value: unknown,
   isPerson: boolean,
   isHolding: boolean,
+  includeCompany = true,
 ): Omit<RawKeyDisposition, 'rowKey' | 'key'> | null => {
   const sourceValueHash = valueHash(value);
   if (key === 'notes source confidence' || key === 'named team id') {
@@ -914,13 +985,24 @@ const dispositionForKey = (
     };
   }
   if (COMPANY_IDENTITY_RAW_KEYS.has(key)) {
-    const target =
-      isHolding && key.startsWith('filer ')
-        ? `company.identity+${HOLDING_TARGET_BY_KEY[key]}`
-        : 'company.identity';
+    const companyTarget =
+      key === 'filer id'
+        ? 'company.filerId'
+        : key === 'filer cik'
+          ? 'company.cik'
+          : key === 'filer crd'
+            ? 'company.crd'
+            : key === 'filer irs number'
+              ? 'company.irsNumber'
+              : 'company.name+company.alternateNames';
+    const targets = [
+      includeCompany ? companyTarget : undefined,
+      isHolding ? HOLDING_TARGET_BY_KEY[key] : undefined,
+    ].filter((target): target is string => !!target);
+    if (targets.length === 0) return null;
     return {
       kind: 'identity',
-      target,
+      target: targets.join('+'),
       sourceValueHash,
       resultValueHash: valueHash(companyNameKey(value)),
     };
@@ -942,21 +1024,12 @@ const dispositionForKey = (
     };
   }
   const targets = [
-    COMPANY_TARGET_BY_KEY[key],
+    includeCompany ? COMPANY_TARGET_BY_KEY[key] : undefined,
     isPerson ? PERSON_TARGET_BY_KEY[key] : undefined,
     isHolding ? HOLDING_TARGET_BY_KEY[key] : undefined,
   ].filter((target): target is string => !!target);
   if (targets.length === 0) return null;
-  const normalizedResult =
-    isHolding && NUMERIC_HOLDING_KEYS.has(key)
-      ? numberValue(value)
-      : key.includes('email')
-        ? (normalizeEmail(value) ?? textValue(value))
-        : key.includes('phone') || key === 'mobile' || key === 'landline'
-          ? (normalizePhone(value)?.number ?? textValue(value))
-          : key === 'linkedin'
-            ? (normalizeLinkedIn(value) ?? textValue(value))
-            : textValue(value);
+  const normalizedResult = normalizedDispositionResult(key, value, isHolding);
 
   return {
     kind: 'canonical',
@@ -964,6 +1037,94 @@ const dispositionForKey = (
     sourceValueHash,
     resultValueHash: valueHash(normalizedResult),
   };
+};
+
+const targetAtoms = (value: unknown): Set<string> => {
+  const atoms = new Set<string>();
+  const visit = (candidate: unknown): void => {
+    if (Array.isArray(candidate)) {
+      for (const item of candidate) visit(item);
+      return;
+    }
+    if (candidate && typeof candidate === 'object') {
+      const object = candidate as Record<string, unknown>;
+      const phone = normalizedCompositePhone(object.number, object.callingCode);
+      if (phone) atoms.add(phoneIdentity(phone));
+      for (const item of Object.values(object)) visit(item);
+      return;
+    }
+    if (typeof candidate !== 'string' && typeof candidate !== 'number') return;
+    const text = String(candidate).normalize('NFC').trim();
+    if (!text) return;
+    atoms.add(text);
+    atoms.add(text.toLowerCase().replace(/\s+/g, ' '));
+    for (const line of text.split('\n')) {
+      atoms.add(line.trim());
+      const suffix = line.includes(': ')
+        ? line.slice(line.indexOf(': ') + 2)
+        : line;
+      atoms.add(suffix.trim());
+      const normalizedName = companyNameKey(suffix);
+      if (normalizedName) atoms.add(normalizedName);
+      for (const component of suffix.split(', ')) atoms.add(component.trim());
+      const email = normalizeEmail(suffix);
+      if (email) atoms.add(email);
+      const phone = normalizePhone(suffix);
+      if (phone) atoms.add(phoneIdentity(phone));
+      const linkedIn = normalizeLinkedIn(suffix);
+      if (linkedIn) atoms.add(linkedIn);
+      const domain = normalizeDomain(suffix);
+      if (domain) atoms.add(domain);
+    }
+  };
+  visit(value);
+
+  return atoms;
+};
+
+const targetPreservesResult = (
+  targetValues: readonly unknown[],
+  expected: unknown,
+): boolean => {
+  if (expected === null || expected === undefined) return false;
+  const expectedText = String(expected).normalize('NFC').trim();
+  if (!expectedText) return false;
+  const atoms = targetAtoms(targetValues);
+  return atoms.has(expectedText) || atoms.has(expectedText.toLowerCase());
+};
+
+type DispositionContext = {
+  companyId?: string;
+  personId?: string;
+  holdingId?: string;
+};
+
+const concreteDisposition = (
+  disposition: Omit<RawKeyDisposition, 'rowKey' | 'key'>,
+  context: DispositionContext,
+): Omit<RawKeyDisposition, 'rowKey' | 'key'> | null => {
+  if (disposition.kind === 'ignored' || disposition.kind === 'duplicate') {
+    return disposition;
+  }
+
+  const concreteTargets = disposition.target.split('+').flatMap((target) => {
+    const separator = target.indexOf('.');
+    const objectName = target.slice(0, separator);
+    const field = target.slice(separator + 1);
+    const mapping =
+      objectName === 'company'
+        ? { plural: 'companies', id: context.companyId }
+        : objectName === 'person'
+          ? { plural: 'people', id: context.personId }
+          : objectName === 'holdingObservation'
+            ? { plural: 'holdingObservations', id: context.holdingId }
+            : null;
+
+    return mapping?.id ? [`${mapping.plural}/${mapping.id}.${field}`] : [];
+  });
+  if (concreteTargets.length === 0) return null;
+
+  return { ...disposition, target: concreteTargets.sort().join('|') };
 };
 
 const applyCompanyRaw = (
@@ -1042,15 +1203,11 @@ const applyCompanyRaw = (
   const currentAddress = (effectiveValue(accumulator, 'address') ??
     {}) as Record<string, unknown>;
   const rawAddress: Record<string, string | null> = {
-    addressStreet1: textValue(
-      rawValue(index, 'firm address', 'address', 'street address'),
-    ),
-    addressStreet2: textValue(rawValue(index, 'street address2')),
-    addressCity: textValue(rawValue(index, 'firm city', 'city', 'city hq')),
-    addressState: textValue(
-      rawValue(index, 'firm state', 'state', 'filer state'),
-    ),
-    addressPostcode: textValue(rawValue(index, 'firm zip', 'zip', 'zip code')),
+    addressStreet1: textValue(rawValue(index, 'firm address')),
+    addressStreet2: null,
+    addressCity: textValue(rawValue(index, 'firm city', 'city hq')),
+    addressState: textValue(rawValue(index, 'firm state')),
+    addressPostcode: textValue(rawValue(index, 'firm zip')),
   };
   const conflicts = Object.entries(rawAddress).filter(
     ([field, value]) =>
@@ -1101,10 +1258,21 @@ const applyPersonRaw = (
     accumulator,
     'streetAddress',
     rawValue(index, 'address', 'street address'),
+    'legacyAddress',
   );
-  mergeFact(accumulator, 'city', rawValue(index, 'city'));
-  mergeFact(accumulator, 'stateRegion', rawValue(index, 'state'));
-  mergeFact(accumulator, 'postalCode', rawValue(index, 'zip', 'zip code'));
+  mergeFact(accumulator, 'city', rawValue(index, 'city'), 'legacyCity');
+  mergeFact(
+    accumulator,
+    'stateRegion',
+    rawValue(index, 'state'),
+    'legacyStateRegion',
+  );
+  mergeFact(
+    accumulator,
+    'postalCode',
+    rawValue(index, 'zip', 'zip code'),
+    'legacyPostalCode',
+  );
 };
 
 const personName = (
@@ -1244,9 +1412,10 @@ const strongPersonCandidates = (
     rawValue(index, 'landline phone', 'landline'),
     rawValue(index, 'phone'),
   ]) {
-    const normalized = normalizePhone(value)?.number;
-    for (const owner of normalized
-      ? (identityOwners.phones.get(normalized) ?? [])
+    const normalized = normalizePhone(value);
+    const identity = normalized ? phoneIdentity(normalized) : null;
+    for (const owner of identity
+      ? (identityOwners.phones.get(identity) ?? [])
       : [])
       candidates.add(owner);
   }
@@ -1360,7 +1529,7 @@ const applyRawContacts = (
     const normalized = normalizePhone(value);
     if (
       !normalized ||
-      [...(owners.phones.get(normalized.number) ?? [])].some(
+      [...(owners.phones.get(phoneIdentity(normalized)) ?? [])].some(
         (id) => id !== accumulator.record.id,
       )
     ) {
@@ -1377,8 +1546,15 @@ const applyRawContacts = (
       phoneShape.primaryPhoneCountryCode = normalized.countryCode;
       phoneShape.primaryPhoneCallingCode = normalized.callingCode;
     } else if (
-      phoneShape.primaryPhoneNumber !== normalized.number &&
-      !additional.some(({ number }) => number === normalized.number)
+      compositePhoneIdentity(
+        phoneShape.primaryPhoneNumber,
+        phoneShape.primaryPhoneCallingCode,
+      ) !== phoneIdentity(normalized) &&
+      !additional.some(
+        ({ number, callingCode }) =>
+          compositePhoneIdentity(number, callingCode) ===
+          phoneIdentity(normalized),
+      )
     ) {
       additional.push({
         number: normalized.number,
@@ -1386,7 +1562,7 @@ const applyRawContacts = (
         callingCode: normalized.callingCode,
       });
     }
-    addOwner(owners.phones, normalized.number, accumulator.record.id);
+    addOwner(owners.phones, phoneIdentity(normalized), accumulator.record.id);
   }
   (phoneShape.additionalPhones as Array<Record<string, unknown>>).sort(
     (left, right) => String(left.number).localeCompare(String(right.number)),
@@ -1477,6 +1653,7 @@ export const buildCanonicalizationPlan = (
 ): CanonicalizationPlan => {
   const unresolved: UnresolvedItem[] = [];
   const dispositions: RawKeyDisposition[] = [];
+  const expectedDispositionResults = new Map<string, unknown>();
   const companyAccumulators = new Map(
     snapshot.companies.map((record) => [
       record.id,
@@ -1539,8 +1716,9 @@ export const buildCanonicalizationPlan = (
   }
 
   const rows = sourceRows(snapshot);
-  const { selected, collisions } = deduplicateRows(rows);
+  const { selected, collisions, duplicateOf } = deduplicateRows(rows);
   unresolved.push(...collisions);
+  const selectedRecordIds = new Set(selected.map(({ record }) => record.id));
   let normalizedKeyCoalesces = 0;
 
   const confidenceByCompany = new Map<string, Set<string>>();
@@ -1557,10 +1735,7 @@ export const buildCanonicalizationPlan = (
       textValue(rawValue(index, 'market value')) ||
       (!rowIsPerson && textValue(rawValue(index, 'filer name')))
     );
-    const occurrenceKey = stableUuid(
-      'stagingRow',
-      `${row.rowKey}\0${row.record.id}`,
-    );
+    const occurrenceKey = stagingOccurrenceKey(row);
     for (const [key, value] of index) {
       if (!textValue(value)) continue;
       const disposition = dispositionForKey(
@@ -1570,10 +1745,21 @@ export const buildCanonicalizationPlan = (
         rowIsHolding,
       );
       if (!disposition || EMPTY_ONLY_RAW_KEYS.has(key)) {
-        unresolved.push({ code: 'UNHANDLED_RAW_FIELD', rowKey: row.rowKey });
-        continue;
+        if (!selectedRecordIds.has(row.record.id)) {
+          unresolved.push({ code: 'UNHANDLED_RAW_FIELD', rowKey: row.rowKey });
+        }
+      } else if (duplicateOf.has(row.record.id)) {
+        const selectedRow = duplicateOf.get(row.record.id)!;
+        dispositions.push({
+          rowKey: occurrenceKey,
+          key,
+          kind: 'duplicate',
+          target: `duplicate:${stagingOccurrenceKey(selectedRow)}`,
+          sourceValueHash: disposition.sourceValueHash,
+          resultValueHash: valueHash(rowSemanticKey(row)),
+          targetValueHash: valueHash(rowSemanticKey(selectedRow)),
+        });
       }
-      dispositions.push({ rowKey: occurrenceKey, key, ...disposition });
     }
     const confidence = textValue(rawValue(index, 'notes source confidence'));
     if (companyId && confidence) {
@@ -1631,24 +1817,6 @@ export const buildCanonicalizationPlan = (
   for (const holding of snapshot.holdingObservations) {
     if (!textValue(holding.rawData)) continue;
     const rawData = parseRawData(holding.rawData);
-    const { index: holdingRawIndex } = rawIndex(rawData);
-    const dispositionRowKey = stableUuid('holdingRaw', holding.id);
-    for (const [key, value] of holdingRawIndex) {
-      if (!textValue(value)) continue;
-      const disposition = dispositionForKey(key, value, false, true);
-      if (!disposition || EMPTY_ONLY_RAW_KEYS.has(key)) {
-        unresolved.push({
-          code: 'UNHANDLED_HOLDING_RAW_FIELD',
-          rowKey: holding.id,
-        });
-      } else {
-        dispositions.push({
-          rowKey: dispositionRowKey,
-          key,
-          ...disposition,
-        });
-      }
-    }
     const companyId = asString(holding.companyId);
     if (!companyId) {
       unresolved.push({ code: 'HOLDING_COMPANY_MISSING', rowKey: holding.id });
@@ -1672,15 +1840,36 @@ export const buildCanonicalizationPlan = (
   }
   const holdingAccumulators = new Map<string, RecordAccumulator>();
   for (const [identity, holding] of holdingByIdentity) {
-    holdingAccumulators.set(
-      holding.id,
-      holdingPatch(
-        holding,
-        parseRawData(holding.rawData),
-        unresolved,
-        holding.id,
-      ),
-    );
+    const rawData = parseRawData(holding.rawData);
+    const accumulator = holdingPatch(holding, rawData, unresolved, holding.id);
+    holdingAccumulators.set(holding.id, accumulator);
+    const { index } = rawIndex(rawData);
+    const context = {
+      companyId: asString(holding.companyId) ?? undefined,
+      holdingId: holding.id,
+    };
+    for (const [key, value] of index) {
+      if (!textValue(value)) continue;
+      const symbolic = dispositionForKey(key, value, false, true, false);
+      const concrete = symbolic ? concreteDisposition(symbolic, context) : null;
+      if (!concrete || EMPTY_ONLY_RAW_KEYS.has(key)) {
+        unresolved.push({
+          code: 'UNHANDLED_HOLDING_RAW_FIELD',
+          rowKey: holding.id,
+        });
+      } else {
+        const rowKey = stableUuid('holdingRaw', holding.id);
+        dispositions.push({
+          rowKey,
+          key,
+          ...concrete,
+        });
+        expectedDispositionResults.set(
+          dispositionOccurrenceKey(rowKey, key),
+          normalizedDispositionResult(key, value, true),
+        );
+      }
+    }
     void identity;
   }
 
@@ -1749,6 +1938,7 @@ export const buildCanonicalizationPlan = (
       if (value) addOwner(regulatoryOwners, `${kind}\0${value}`, company.id);
     }
 
+    let personId: string | undefined;
     if (isPerson) {
       const person = resolvePerson(
         row,
@@ -1765,8 +1955,10 @@ export const buildCanonicalizationPlan = (
       const personAccumulator = personAccumulators.get(person.id)!;
       applyPersonRaw(personAccumulator, index);
       applyRawContacts(personAccumulator, index, personIdentityOwners);
+      personId = person.id;
     }
 
+    let holdingId: string | undefined;
     if (isHolding) {
       const productName = productNameFor(row.record);
       const holdingIdentity = holdingIdentityKey(
@@ -1804,6 +1996,30 @@ export const buildCanonicalizationPlan = (
         accumulator.data.name = `${productName} - ${textValue(rawValue(index, 'filer name')) ?? 'Holding'}`;
       }
       holdingAccumulators.set(holding.id, accumulator);
+      holdingId = holding.id;
+    }
+
+    const context = { companyId: company.id, personId, holdingId };
+    for (const [key, value] of index) {
+      if (!textValue(value)) continue;
+      const symbolic = dispositionForKey(key, value, isPerson, isHolding);
+      const concrete = symbolic ? concreteDisposition(symbolic, context) : null;
+      if (!concrete || EMPTY_ONLY_RAW_KEYS.has(key)) {
+        unresolved.push({ code: 'UNHANDLED_RAW_FIELD', rowKey: row.rowKey });
+      } else {
+        const rowKey = stagingOccurrenceKey(row);
+        dispositions.push({
+          rowKey,
+          key,
+          ...concrete,
+        });
+        if (concrete.kind !== 'ignored') {
+          expectedDispositionResults.set(
+            dispositionOccurrenceKey(rowKey, key),
+            normalizedDispositionResult(key, value, isHolding),
+          );
+        }
+      }
     }
   }
 
@@ -1811,6 +2027,63 @@ export const buildCanonicalizationPlan = (
     finalizeFacts(accumulator);
   for (const accumulator of personAccumulators.values())
     finalizeFacts(accumulator);
+
+  const canonicalRecords = new Map<string, CrmRecord>();
+  for (const [plural, accumulators] of [
+    ['companies', companyAccumulators],
+    ['people', personAccumulators],
+    ['holdingObservations', holdingAccumulators],
+  ] as const) {
+    for (const accumulator of accumulators.values()) {
+      canonicalRecords.set(`${plural}/${accumulator.record.id}`, {
+        ...accumulator.record,
+        ...accumulator.data,
+        id: accumulator.record.id,
+      });
+    }
+  }
+  const targetFallbacks: Readonly<Record<string, string>> = {
+    'holdingObservations.asOfDate': 'sourceDate',
+    'people.streetAddress': 'legacyAddress',
+    'people.city': 'legacyCity',
+    'people.stateRegion': 'legacyStateRegion',
+    'people.postalCode': 'legacyPostalCode',
+  };
+  for (const disposition of dispositions) {
+    if (disposition.kind === 'ignored' || disposition.kind === 'duplicate') {
+      continue;
+    }
+    const targetValues = disposition.target.split('|').map((target) => {
+      const fieldSeparator = target.indexOf('.', target.indexOf('/') + 1);
+      const recordKey = target.slice(0, fieldSeparator);
+      const field = target.slice(fieldSeparator + 1);
+      const record = canonicalRecords.get(recordKey);
+      const plural = recordKey.slice(0, recordKey.indexOf('/'));
+
+      const value =
+        record?.[field] ?? record?.[targetFallbacks[`${plural}.${field}`]];
+
+      return value === undefined ? null : value;
+    });
+    if (targetValues.every(isEmptyValue)) {
+      unresolved.push({
+        code: 'DISPOSITION_TARGET_EMPTY',
+        rowKey: disposition.rowKey,
+      });
+      continue;
+    }
+    const expected = expectedDispositionResults.get(
+      dispositionOccurrenceKey(disposition.rowKey, disposition.key),
+    );
+    if (!targetPreservesResult(targetValues, expected)) {
+      unresolved.push({
+        code: 'DISPOSITION_VALUE_NOT_PRESERVED',
+        rowKey: disposition.rowKey,
+      });
+      continue;
+    }
+    disposition.targetValueHash = valueHash(targetValues);
+  }
 
   const taskTargetKeys = new Set(
     snapshot.taskTargets.map(

@@ -537,3 +537,211 @@ test('trusted manifest comparison rejects a changed fresh snapshot', () => {
     /manifest/i,
   );
 });
+
+test('phone identity includes calling code for native and staged contacts', () => {
+  const input = snapshot();
+  input.people.push({
+    id: 'person-gb',
+    companyId: 'company-1',
+    name: { firstName: 'British', lastName: 'Advisor' },
+    emails: { primaryEmail: '', additionalEmails: [] },
+    phones: {
+      primaryPhoneNumber: '2079460958',
+      primaryPhoneCountryCode: 'GB',
+      primaryPhoneCallingCode: '+44',
+      additionalPhones: [],
+    },
+  });
+  input.sourceRecords = [
+    {
+      id: 'source-us-phone',
+      companyId: 'company-1',
+      sourceFile: 'people.csv',
+      sourceRow: 9,
+      rawData: JSON.stringify({
+        RIA: 'Acme Advisors',
+        'First Name': 'American',
+        'Last Name': 'Advisor',
+        'Mobile Phone': '(207) 946-0958',
+      }),
+    },
+  ];
+  input.importReviewItems = [];
+
+  const plan = buildCanonicalizationPlan(input);
+
+  assert.equal(
+    plan.unresolved.some(({ code }) => code === 'AMBIGUOUS_PERSON_IDENTITY'),
+    false,
+  );
+  assert.equal(mutationFor(plan, 'people', 'person-gb')?.data.name, undefined);
+  assert.equal(
+    plan.mutations.some(
+      ({ objectPlural, id }) =>
+        objectPlural === 'people' && id !== 'person-gb' && id !== 'person-1',
+    ),
+    true,
+  );
+});
+
+test('generic person and holding addresses never contaminate Company address', () => {
+  const input = snapshot();
+  input.sourceRecords = [
+    {
+      id: 'source-home-address',
+      companyId: 'company-1',
+      sourceFile: 'people.csv',
+      sourceRow: 10,
+      rawData: JSON.stringify({
+        RIA: 'Acme Advisors',
+        'First Name': 'Alex',
+        'Last Name': 'Smith',
+        'Email 1': 'alex@acme.example',
+        Address: '1 Home Lane',
+        City: 'Evanston',
+        State: 'IL',
+        Zip: '60201',
+      }),
+    },
+    {
+      id: 'source-filer-address',
+      companyId: 'company-1',
+      sourceFile: 'Product.csv',
+      sourceRow: 11,
+      rawData: JSON.stringify({
+        'Filer Name': 'Acme Advisors',
+        Address: '2 Filing Road',
+        City: 'Boston',
+        State: 'MA',
+        'Shares Held': '100',
+        'Market Value': '5000',
+      }),
+    },
+  ];
+  input.importReviewItems = [];
+
+  const plan = buildCanonicalizationPlan(input);
+  const companyAddress = mutationFor(plan, 'companies', 'company-1')?.data
+    .address as { addressStreet1?: string; addressCity?: string } | undefined;
+
+  assert.equal(companyAddress?.addressStreet1 ?? '', '');
+  assert.equal(companyAddress?.addressCity ?? '', '');
+  assert.equal(
+    mutationFor(plan, 'people', 'person-1')?.data.streetAddress,
+    '1 Home Lane',
+  );
+  assert.equal(
+    plan.mutations.some(
+      ({ objectPlural, data }) =>
+        objectPlural === 'holdingObservations' &&
+        data.streetAddress === '2 Filing Road',
+    ),
+    true,
+  );
+});
+
+test('recognized fields in the wrong semantic row fail closed', () => {
+  const input = snapshot();
+  input.sourceRecords = [
+    {
+      id: 'source-company-with-person-fact',
+      companyId: 'company-1',
+      sourceFile: 'firms.csv',
+      sourceRow: 12,
+      rawData: JSON.stringify({
+        'Firm Name': 'Acme Advisors',
+        Bio: 'No person identity',
+      }),
+    },
+  ];
+  input.importReviewItems = [];
+
+  assert.equal(
+    buildCanonicalizationPlan(input).unresolved.some(
+      ({ code }) => code === 'UNHANDLED_RAW_FIELD',
+    ),
+    true,
+  );
+});
+
+test('canonical dispositions name concrete targets and hash fresh values', () => {
+  const input = snapshot();
+  const first = buildCanonicalizationPlan(input);
+  const bio = first.dispositions.find(({ key }) => key === 'bio');
+
+  assert.match(String(bio?.target), /people\/person-1\.bio/);
+  assert.match(String(bio?.targetValueHash), /^[a-f0-9]{64}$/);
+});
+
+test('person address promotion preserves values that are still under pre-DDL names', () => {
+  const input = snapshot();
+  Object.assign(input.people[0]!, {
+    legacyAddress: '99 Existing Street',
+    legacyCity: 'Chicago',
+    legacyStateRegion: 'IL',
+    legacyPostalCode: '60601',
+  });
+  input.sourceRecords = [
+    {
+      id: 'source-address-update',
+      companyId: 'company-1',
+      sourceFile: 'people.csv',
+      sourceRow: 13,
+      rawData: JSON.stringify({
+        RIA: 'Acme Advisors',
+        'First Name': 'Alex',
+        'Last Name': 'Smith',
+        'Email 1': 'alex@acme.example',
+        Address: '100 New Street',
+        City: 'Evanston',
+        State: 'Illinois',
+        Zip: '60201',
+      }),
+    },
+  ];
+  input.importReviewItems = [];
+
+  const first = buildCanonicalizationPlan(input);
+  const person = mutationFor(first, 'people', 'person-1')!;
+  assert.equal(person.data.streetAddress, '100 New Street\n99 Existing Street');
+  assert.equal(person.data.city, 'Chicago\nEvanston');
+  assert.equal(person.data.stateRegion, 'IL\nIllinois');
+  assert.equal(person.data.postalCode, '60201\n60601');
+
+  Object.assign(input.people[0]!, person.data);
+  delete input.people[0]!.legacyAddress;
+  delete input.people[0]!.legacyCity;
+  delete input.people[0]!.legacyStateRegion;
+  delete input.people[0]!.legacyPostalCode;
+  assert.equal(
+    buildCanonicalizationPlan(input).mutations.some(
+      ({ objectPlural, id }) => objectPlural === 'people' && id === 'person-1',
+    ),
+    false,
+  );
+});
+
+test('a nonempty but unrelated target value does not prove raw fact preservation', () => {
+  const input = snapshot();
+  input.companies[0]!.employees = 1000;
+  input.sourceRecords = [
+    {
+      id: 'source-employee-conflict',
+      companyId: 'company-1',
+      sourceFile: 'firms.csv',
+      sourceRow: 14,
+      rawData: JSON.stringify({
+        'Firm Name': 'Acme Advisors',
+        'Firm Total Employees': '100',
+      }),
+    },
+  ];
+  input.importReviewItems = [];
+
+  assert.equal(
+    buildCanonicalizationPlan(input).unresolved.some(
+      ({ code }) => code === 'DISPOSITION_VALUE_NOT_PRESERVED',
+    ),
+    true,
+  );
+});
