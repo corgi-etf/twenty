@@ -1,8 +1,0 @@
-{
-  "name": "corgi-fetch-migration",
-  "private": true,
-  "type": "module",
-  "engines": {
-    "node": ">=24.5.0"
-  }
-}

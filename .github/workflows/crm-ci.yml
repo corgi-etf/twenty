@@ -20,7 +20,6 @@ jobs:
     env:
       # These entrypoints and their Nx build dependencies make up the production image.
       CRM_RUNTIME_PROJECTS: twenty-server,twenty-front
-      CRM_MIGRATION_PROJECT: corgi-fetch-migration
       NX_CLOUD_ACCESS_TOKEN: ''
     steps:
       - name: Check out the exact head with full history
@@ -96,27 +95,6 @@ jobs:
             --projects="${AFFECTED_RUNTIME_PROJECTS}" \
             --targets=build \
             --parallel=2
-
-      - name: Run affected Fetch migration validation
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          AFFECTED_MIGRATION_PROJECTS="$(npx nx show projects \
-            --affected \
-            --base="${{ steps.nx-shas.outputs.base }}" \
-            --head="${{ steps.nx-shas.outputs.head }}" \
-            --projects="${CRM_MIGRATION_PROJECT}")"
-
-          if grep -Fxq "${CRM_MIGRATION_PROJECT}" <<< "${AFFECTED_MIGRATION_PROJECTS}"; then
-            npx nx run-many \
-              --nxBail \
-              --projects="${CRM_MIGRATION_PROJECT}" \
-              --targets=lint,typecheck,test \
-              --parallel=3
-          else
-            echo "${CRM_MIGRATION_PROJECT} is not affected; skipping migration validation."
-          fi
 
       - name: Validate production smoke-suite discovery
         env:
