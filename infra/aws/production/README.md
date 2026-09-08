@@ -98,13 +98,12 @@ long-lived SMTP credentials. The role can call only `ses:SendEmail` through the
 verified `corgiinvest.com` identity, and only when the From address is
 `noreply@corgiinvest.com`.
 
-Do not create workspace invitations while the SES production-access request is
-pending. In the SES sandbox, arbitrary recipients are rejected even though the
-sender domain is verified. After AWS grants production access in `us-east-2`,
-first confirm the effective database-backed email configuration does not
-override the Terraform environment values, then verify delivery to the SES
-mailbox simulator and one controlled internal recipient before inviting prior
-Fetch users.
+As of 2026-09-07, SES production access in `us-east-2` is granted and healthy,
+and the `corgiinvest.com` sender identity is verified. `EMAIL_DRIVER`,
+`EMAIL_FROM_ADDRESS`, `EMAIL_FROM_NAME`, and `AWS_SES_REGION` are environment-only
+configuration, so database values cannot override the deployment settings.
+Before inviting prior Fetch users, verify delivery to the SES mailbox simulator
+and one controlled internal recipient.
 
 Keep every historical Fetch user as a Wholesaler record independently of
 invitation status. Only active, reconciled users should receive invitations;
