@@ -1,5 +1,5 @@
 import type { MinimalPlan, PlannedRecord } from './planner.ts';
-import { chunkRecords } from './batching.ts';
+import { chunkRecords, TWENTY_SAFE_BATCH_BODY_BYTES } from './batching.ts';
 import {
   assertPlanIntegrity,
   contentHash,
@@ -53,6 +53,7 @@ export type RollbackManifest = {
 export type ApplyPlanOptions = {
   resumeManifest?: RollbackManifest;
   checkpoint?: (manifest: RollbackManifest) => Promise<void>;
+  maxBatchBodyBytes?: number;
 };
 
 const buildManifest = (
@@ -217,12 +218,24 @@ export const applyPlan = async (
     throw new Error('Resume manifest contains records outside the plan');
   }
 
+  const batchesByObject = new Map<string, Record<string, unknown>[][]>();
+  for (const [objectPlural, records] of actionable) {
+    batchesByObject.set(
+      objectPlural,
+      chunkRecords(
+        records.map(({ payload }) => payload),
+        100,
+        options.maxBatchBodyBytes ?? TWENTY_SAFE_BATCH_BODY_BYTES,
+        objectPlural,
+      ),
+    );
+  }
+
   await options.checkpoint?.(
     buildManifest(plan, appliedAt, 'applying', mutations),
   );
 
-  for (const [objectPlural, records] of actionable) {
-    const batches = chunkRecords(records.map(({ payload }) => payload));
+  for (const [objectPlural, batches] of batchesByObject) {
     let next = 0;
     const worker = async () => {
       while (next < batches.length) {

@@ -232,6 +232,23 @@ test('apply rejects deterministic ID and external key collisions before writing'
   assert.deepEqual(api.batches, []);
 });
 
+test('apply rejects any oversized record before its first destination request', async () => {
+  const api = new FakeApi();
+  const plan = makePlan(2);
+  plan.records[1]!.objectPlural = 'importBatches';
+  plan.records[1]!.payload.rawData = 'x'.repeat(100);
+  const resealedPlan = sealPlan({
+    ...plan,
+    planHash: undefined,
+  }) as FrozenMigrationPlan;
+
+  await assert.rejects(
+    () => applyPlan(resealedPlan, api, undefined, { maxBatchBodyBytes: 80 }),
+    /single record.*exceeds.*byte/i,
+  );
+  assert.deepEqual(api.batches, []);
+});
+
 test('verify compares both external identity and row HMAC', async () => {
   const api = new FakeApi();
   const plan = makePlan(2);

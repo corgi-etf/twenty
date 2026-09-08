@@ -59,6 +59,34 @@ test('chunkRecords enforces the API maximum and never emits empty batches', () =
   assert.throws(() => chunkRecords(records, 101), /100/);
 });
 
+test('chunkRecords accounts for JSON array overhead and UTF-8 body bytes', () => {
+  const records = [{ value: 'é' }, { value: 'two' }];
+  const exactCombinedBytes = Buffer.byteLength(JSON.stringify(records));
+
+  assert.deepEqual(chunkRecords(records, 100, exactCombinedBytes), [records]);
+  assert.deepEqual(chunkRecords(records, 100, exactCombinedBytes - 1), [
+    [records[0]],
+    [records[1]],
+  ]);
+  assert.equal(
+    Buffer.byteLength(JSON.stringify(chunkRecords(records, 100, 18)[0])),
+    16,
+  );
+});
+
+test('chunkRecords rejects an oversized single record without truncation', () => {
+  const records = [{ id: 'large', raw: 'x'.repeat(50) }];
+  const singleRecordBodyBytes = Buffer.byteLength(JSON.stringify(records));
+
+  assert.throws(
+    () => chunkRecords(records, 100, singleRecordBodyBytes - 1),
+    /single record.*exceeds.*byte/i,
+  );
+  assert.deepEqual(chunkRecords(records, 100, singleRecordBodyBytes), [
+    records,
+  ]);
+});
+
 test('planning preserves duplicate companies and deterministically chooses email and domain holders', () => {
   const snapshot: MinimalSnapshot = {
     companies: [

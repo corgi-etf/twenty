@@ -81,13 +81,15 @@ yarn nx run corgi-fetch-migration:verify \
 
 The apply command never bootstraps schema implicitly. This keeps both mutations
 separately reviewable. It preflights the entire destination for collisions, sends
-at most two concurrent batches of at most 100 records, retries only timeouts,
-HTTP 429, and HTTP 5xx responses, and captures server-normalized hashes in the
-rollback manifest. Before its first destination write, apply durably checkpoints
-every mutation and update before-image. If interrupted, rerun the same plan and
-manifest path; rows already owned by the same migration run are reconstructed into
-the final rollback manifest instead of disappearing when their upsert is skipped.
-An incomplete checkpoint cannot be used for rollback.
+at most two concurrent batches of at most 100 records and 8 MiB of final UTF-8
+JSON, retries only timeouts, HTTP 429, and HTTP 5xx responses, and captures
+server-normalized hashes in the rollback manifest. A single record above the safe
+body limit fails before any destination request and is never truncated. Before its
+first destination write, apply durably checkpoints every mutation and update
+before-image. If interrupted, rerun the same plan and manifest path; rows already
+owned by the same migration run are reconstructed into the final rollback manifest
+instead of disappearing when their upsert is skipped. An incomplete checkpoint
+cannot be used for rollback.
 
 Rollback first verifies the manifest hash, record ownership, source HMAC, and all
 guarded field values. If any migrated record was edited after cutover, rollback
