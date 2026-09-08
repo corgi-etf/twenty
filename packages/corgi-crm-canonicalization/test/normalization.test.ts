@@ -8,6 +8,7 @@ import {
   rawAuditKey,
   normalizeEmail,
   normalizeLinkedIn,
+  normalizeKey,
   normalizeDomain,
   normalizePhone,
   stableStringify,
@@ -139,4 +140,9 @@ test('normalizers accept canonical contacts and reject unstructured residuals', 
 test('serialization rejects undefined and structured text stays lossless', () => {
   assert.throws(() => stableStringify(undefined), /undefined/);
   assert.equal(textValue(['a,b', 'c']), '["a,b","c"]');
+});
+
+test('raw key normalization handles live camelCase control keys', () => {
+  assert.equal(normalizeKey('followUpId'), 'follow up id');
+  assert.equal(normalizeKey('follow_up_id'), 'follow up id');
 });

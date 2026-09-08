@@ -126,7 +126,6 @@ const fields = (
 const CREATE_DEFINITIONS: readonly FieldDefinition[] = [
   ...fields('company', [
     ['description', 'Description'],
-    ['region', 'Region'],
     ['firmPhone', 'Firm Phone'],
     ['websiteNotes', 'Website Notes'],
     ['assetsUnderManagement', 'Assets Under Management'],
@@ -135,8 +134,12 @@ const CREATE_DEFINITIONS: readonly FieldDefinition[] = [
     ['custodians', 'Custodians'],
     ['form13f', 'Form 13F'],
     ['totalAccounts', 'Total Accounts'],
-    ['totalEmployees', 'Total Employees'],
+    ['employees', 'Employees', 'NUMBER'],
     ['ownership', 'Ownership'],
+    ['filerId', 'Filer ID'],
+    ['cik', 'CIK'],
+    ['crd', 'CRD'],
+    ['irsNumber', 'IRS Number'],
     ['accreditedInvestorFocus', 'Accredited Investor Focus'],
     ['assetClasses', 'Asset Classes'],
     ['clientPersonas', 'Client Personas'],
@@ -147,6 +150,11 @@ const CREATE_DEFINITIONS: readonly FieldDefinition[] = [
     ['platform', 'Platform'],
     ['services', 'Services'],
     ['technology', 'Technology'],
+    ['familyOfficeType', 'Family Office Type'],
+    ['familyOfficeGeneration', 'Family Office Generation'],
+    ['familyOfficeWealthOrigin', 'Family Office Wealth Origin'],
+    ['familyOfficeFocus', 'Family Office Focus'],
+    ['familyOfficeGeography', 'Family Office Geography'],
   ]),
   ...fields('person', [
     ['profile', 'Profile'],
@@ -199,13 +207,14 @@ const CREATE_DEFINITIONS: readonly FieldDefinition[] = [
     targetFieldLabel: 'Tasks',
   },
   {
-    objectName: 'leadAssignment',
-    name: 'replacementOf',
-    label: 'Replaces Assignment',
+    objectName: 'outreachActivity',
+    name: 'followUpTask',
+    label: 'Follow-up Task',
     type: 'RELATION',
-    relationTargetObjectName: 'leadAssignment',
-    targetFieldLabel: 'Replacement Assignments',
+    relationTargetObjectName: 'task',
+    targetFieldLabel: 'Outreach Activities',
   },
+  ...fields('outreachActivity', [['followUpDate', 'Follow-up Date', 'DATE']]),
 ];
 
 const objectByName = (objects: readonly MetadataObject[]) =>

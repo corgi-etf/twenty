@@ -52,6 +52,7 @@ const metadata = (): MetadataObject[] => [
     ],
   },
   { id: 'task-object', nameSingular: 'task', fields: [] },
+  { id: 'outreach-object', nameSingular: 'outreachActivity', fields: [] },
   {
     id: 'assignment-object',
     nameSingular: 'leadAssignment',
@@ -120,7 +121,7 @@ test('metadata plan renames useful fields and creates explicit business fields',
   assert.ok(
     plan.creates.some(
       ({ objectName, name }) =>
-        objectName === 'leadAssignment' && name === 'replacementOf',
+        objectName === 'outreachActivity' && name === 'followUpTask',
     ),
   );
 

@@ -232,6 +232,7 @@ export const normalizeDomain = (rawWebsite: unknown): string | null => {
 export const normalizeKey = (key: string): string =>
   key
     .trim()
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, ' ')
     .trim();
