@@ -99,16 +99,18 @@ const canonicalizedPerson = (): WorkspaceRecord => ({
     primaryEmail: 'owner@example.com',
     additionalEmails: ['sales@example.com'],
   },
-  legacyPrimaryPhone: '+1 (312) 555-010012',
-  legacySecondaryPhones: JSON.stringify(['+44 20 7946 0958']),
+  legacyPrimaryPhone: '(312) 555-0100 x55',
+  legacySecondaryPhones: JSON.stringify(['+44 20 7946 0958', 'call office']),
   phones: {
     primaryPhoneCallingCode: '+1',
-    primaryPhoneNumber: '312555010012',
+    primaryPhoneNumber: '3125550100',
     additionalPhones: [
       { callingCode: '+44', countryCode: 'GB', number: '2079460958' },
     ],
   },
-  legacyLinkedInUrl: 'linkedin.com/in/owner',
+  otherContactDetails:
+    'Phone extension: (312) 555-0100 x55\nPhone: call office',
+  legacyLinkedInUrl: 'linkedin.com/in/owner/?trk=old#profile',
   linkedinLink: {
     primaryLinkLabel: 'LinkedIn',
     primaryLinkUrl: 'https://linkedin.com/in/owner',
@@ -139,12 +141,18 @@ const canonicalizedHolding = (): WorkspaceRecord => ({
     'Avg Price': '$42.10',
     'Source Date': '2026-06-30',
     '13F': 'Q2 filing',
+    'Filer IRS Number': '12-3456789',
+    'Address Line 1': '100 Main St',
+    'Address Line 2': 'Suite 200',
   }),
   productName: 'Fund A',
   ownershipPercent: 12.5,
   averagePrice: 42.1,
   sourceDate: '2026-06-30',
   form13f: 'Q2 filing',
+  filerIrsNumber: '12-3456789',
+  addressLine1: '100 Main St',
+  addressLine2: 'Suite 200',
 });
 
 const groupedDeletedFieldNames = (
@@ -429,6 +437,12 @@ test('proves imported contact values exist in standard Twenty fields', () => {
   expect(() => assertPeopleContactValuesCanonicalized([missingPhone])).toThrow(
     /Phones does not contain every imported phone/i,
   );
+
+  const missingExtension = canonicalizedPerson();
+  missingExtension.otherContactDetails = 'Phone: call office';
+  expect(() =>
+    assertPeopleContactValuesCanonicalized([missingExtension]),
+  ).toThrow(/Phones does not contain every imported phone/i);
 
   const missingEmail = canonicalizedPerson();
   missingEmail.emails = { primaryEmail: '', additionalEmails: [] };
