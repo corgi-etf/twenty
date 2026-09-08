@@ -27,6 +27,9 @@ env:
   WORKER_TASK_FAMILY: crm-production-worker
   WORKER_CONTAINER: worker
   HEALTH_URL: https://crm.corgiinvest.com/healthz
+  PLATFORM_EMAIL_DRIVER: AWS_SES
+  PLATFORM_EMAIL_FROM_ADDRESS: noreply@corgiinvest.com
+  PLATFORM_EMAIL_FROM_NAME: Corgi CRM
   # The production database was bootstrapped with the official v2.38.1 image.
   # Never report an older application version from a fork commit whose nearest
   # reachable source tag predates that patch release.
@@ -335,6 +338,17 @@ jobs:
           DEPLOYMENT_COMPLETE=false
           ROLLBACK_RUNNING=false
           FORWARD_RECOVERY_REQUIRED=false
+          PLATFORM_EMAIL_ENVIRONMENT="$(jq -cn \
+            --arg driver "${PLATFORM_EMAIL_DRIVER}" \
+            --arg from_address "${PLATFORM_EMAIL_FROM_ADDRESS}" \
+            --arg from_name "${PLATFORM_EMAIL_FROM_NAME}" \
+            --arg region "${AWS_REGION}" \
+            '[
+              {name: "AWS_SES_REGION", value: $region},
+              {name: "EMAIL_DRIVER", value: $driver},
+              {name: "EMAIL_FROM_ADDRESS", value: $from_address},
+              {name: "EMAIL_FROM_NAME", value: $from_name}
+            ]')"
 
           service_task_definition() {
             aws ecs describe-services \
@@ -377,8 +391,21 @@ jobs:
             jq \
               --arg image "${IMAGE_REF}" \
               --arg name "${container_name}" \
-              '.taskDefinition
+              --argjson platform_email_environment "${PLATFORM_EMAIL_ENVIRONMENT}" \
+              'def with_platform_email_environment($required):
+                 ($required | map(.name)) as $required_names
+                 | [(. // [])[]
+                    | select(
+                        .name as $existing_name
+                        | ($required_names | index($existing_name) | not)
+                      )] + $required;
+               .taskDefinition
                | (.containerDefinitions[] | select(.name == $name) | .image) = $image
+               | (.containerDefinitions[]
+                  | select(.name == $name)
+                  | .environment) |= with_platform_email_environment(
+                    $platform_email_environment
+                  )
                | del(
                    .taskDefinitionArn,
                    .revision,
@@ -393,11 +420,38 @@ jobs:
               jq --slurpfile source "${described}" \
                 '. + {tags: ($source[0].tags // [])}' > "${payload}"
 
-            # Normalize the one allowed change and prove every other setting,
-            # secret selector, role, command, health check, and tag stayed equal.
-            jq --arg name "${container_name}" \
-              '.taskDefinition
+            jq -e \
+              --arg name "${container_name}" \
+              --argjson required "${PLATFORM_EMAIL_ENVIRONMENT}" \
+              '(.containerDefinitions[] | select(.name == $name)) as $container
+               | ($required | map(.name)) as $required_names
+               | ($container.environment
+                  | map(select(
+                      .name as $environment_name
+                      | $required_names | index($environment_name)
+                    ))
+                  | sort_by(.name)) == ($required | sort_by(.name))' \
+              "${payload}" >/dev/null
+
+            # Normalize the allowed image and email-environment changes while
+            # proving every other setting, secret, role, command, and tag stayed equal.
+            jq \
+              --arg name "${container_name}" \
+              --argjson platform_email_environment "${PLATFORM_EMAIL_ENVIRONMENT}" \
+              'def with_platform_email_environment($required):
+                 ($required | map(.name)) as $required_names
+                 | [(. // [])[]
+                    | select(
+                        .name as $existing_name
+                        | ($required_names | index($existing_name) | not)
+                      )] + $required;
+               .taskDefinition
                | (.containerDefinitions[] | select(.name == $name) | .image) = "__IMAGE__"
+               | (.containerDefinitions[]
+                  | select(.name == $name)
+                  | .environment) |= with_platform_email_environment(
+                    $platform_email_environment
+                  )
                | del(
                    .taskDefinitionArn,
                    .revision,
@@ -426,7 +480,9 @@ jobs:
           verify_service() {
             local service="$1"
             local expected_task_definition="$2"
+            local container_name="$3"
             local service_json="${TMP_DIR}/${service}-service.json"
+            local task_definition_json="${TMP_DIR}/${service}-task-definition.json"
 
             aws ecs wait services-stable \
               --cluster "${ECS_CLUSTER}" \
@@ -443,6 +499,22 @@ jobs:
                  and .pendingCount == 0
                  and .taskDefinition == $task_definition' \
               "${service_json}" >/dev/null
+
+            aws ecs describe-task-definition \
+              --task-definition "${expected_task_definition}" > "${task_definition_json}"
+            jq -e \
+              --arg name "${container_name}" \
+              --argjson required "${PLATFORM_EMAIL_ENVIRONMENT}" \
+              '(.taskDefinition.containerDefinitions[]
+                | select(.name == $name)) as $container
+               | ($required | map(.name)) as $required_names
+               | ($container.environment
+                  | map(select(
+                      .name as $environment_name
+                      | $required_names | index($environment_name)
+                    ))
+                  | sort_by(.name)) == ($required | sort_by(.name))' \
+              "${task_definition_json}" >/dev/null
           }
 
           verify_server_alb() {
@@ -657,7 +729,10 @@ jobs:
             --cluster "${ECS_CLUSTER}" \
             --service "${SERVER_SERVICE}" \
             --task-definition "${NEW_SERVER_ARN}" >/dev/null
-          verify_service "${SERVER_SERVICE}" "${NEW_SERVER_ARN}"
+          verify_service \
+            "${SERVER_SERVICE}" \
+            "${NEW_SERVER_ARN}" \
+            "${SERVER_CONTAINER}"
           verify_server_alb
           verify_server_health_endpoint
           verify_server_migrations "${SERVER_DEPLOY_START_MS}"
@@ -667,7 +742,10 @@ jobs:
             --cluster "${ECS_CLUSTER}" \
             --service "${WORKER_SERVICE}" \
             --task-definition "${NEW_WORKER_ARN}" >/dev/null
-          verify_service "${WORKER_SERVICE}" "${NEW_WORKER_ARN}"
+          verify_service \
+            "${WORKER_SERVICE}" \
+            "${NEW_WORKER_ARN}" \
+            "${WORKER_CONTAINER}"
 
           DEPLOYMENT_COMPLETE=true
           ROLLBACK_ARMED=false
