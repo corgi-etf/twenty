@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { parsePhoneNumberFromString } from 'libphonenumber-js';
 
 type SourceLocatedRow = {
   sourceFile?: unknown;
@@ -138,8 +139,8 @@ export const normalizeEmail = (rawEmail: unknown): string | null => {
 
 export type NormalizedPhone = {
   number: string;
-  countryCode: 'US';
-  callingCode: '+1';
+  countryCode: string;
+  callingCode: string;
   extension: string | null;
 };
 
@@ -154,21 +155,16 @@ export const normalizePhone = (rawPhone: unknown): NormalizedPhone | null => {
     ? trimmedPhone.slice(0, extensionMatch.index).trim()
     : trimmedPhone;
 
-  if (!/^[+()\d.\s-]+$/.test(withoutExtension)) return null;
-
-  const compactPhone = withoutExtension.replace(/[().\s-]/g, '');
-  const nationalNumber = compactPhone.startsWith('+1')
-    ? compactPhone.slice(2)
-    : compactPhone.length === 11 && compactPhone.startsWith('1')
-      ? compactPhone.slice(1)
-      : compactPhone;
-
-  if (!/^[2-9]\d{2}[2-9]\d{6}$/.test(nationalNumber)) return null;
+  const parsedPhone = parsePhoneNumberFromString(
+    withoutExtension,
+    withoutExtension.startsWith('+') ? undefined : 'US',
+  );
+  if (!parsedPhone?.isValid() || !parsedPhone.country) return null;
 
   return {
-    number: nationalNumber,
-    countryCode: 'US',
-    callingCode: '+1',
+    number: parsedPhone.nationalNumber,
+    countryCode: parsedPhone.country,
+    callingCode: `+${parsedPhone.countryCallingCode}`,
     extension: extensionMatch?.[1] ?? null,
   };
 };

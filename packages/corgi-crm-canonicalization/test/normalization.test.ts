@@ -135,6 +135,12 @@ test('normalizers accept canonical contacts and reject unstructured residuals', 
   assert.equal(normalizeDomain('https://user:password@example.com'), null);
   assert.equal(normalizeDomain('localhost'), null);
   assert.equal(normalizeDomain('WWW.Example.COM/path'), 'example.com');
+  assert.deepEqual(normalizePhone('+44 20 7946 0958'), {
+    number: '2079460958',
+    countryCode: 'GB',
+    callingCode: '+44',
+    extension: null,
+  });
 });
 
 test('serialization rejects undefined and structured text stays lossless', () => {

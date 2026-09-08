@@ -126,6 +126,8 @@ const fields = (
 const CREATE_DEFINITIONS: readonly FieldDefinition[] = [
   ...fields('company', [
     ['description', 'Description'],
+    ['alternateNames', 'Other Names'],
+    ['alternateAddresses', 'Other Addresses'],
     ['firmPhone', 'Firm Phone'],
     ['websiteNotes', 'Website Notes'],
     ['assetsUnderManagement', 'Assets Under Management'],
@@ -195,6 +197,7 @@ const CREATE_DEFINITIONS: readonly FieldDefinition[] = [
     ['filerIrsNumber', 'Filer IRS Number'],
     ['addressLine2', 'Address Line 2'],
     ['streetAddress', 'Street Address'],
+    ['postalCode', 'Postal Code'],
     ['filingType', 'Filing Type'],
     ['form13f', 'Form 13F'],
   ]),

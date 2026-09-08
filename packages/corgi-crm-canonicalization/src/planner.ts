@@ -40,9 +40,19 @@ export type UnresolvedItem = {
   rowKey: string;
 };
 
+export type RawKeyDisposition = {
+  rowKey: string;
+  key: string;
+  kind: 'canonical' | 'identity' | 'ignored';
+  target: string;
+  sourceValueHash: string;
+  resultValueHash?: string;
+};
+
 export type CanonicalizationPlan = {
   mutations: RecordMutation[];
   unresolved: UnresolvedItem[];
+  dispositions: RawKeyDisposition[];
   summary: {
     inputRows: number;
     semanticRows: number;
@@ -98,6 +108,37 @@ const setIfChanged = (
   }
 };
 
+const effectiveValue = (
+  accumulator: RecordAccumulator,
+  name: string,
+  previousName?: string,
+): unknown =>
+  Object.prototype.hasOwnProperty.call(accumulator.data, name)
+    ? accumulator.data[name]
+    : valueAt(accumulator.record, name, previousName);
+
+const isEmptyValue = (value: unknown): boolean =>
+  value === undefined || value === null || value === '';
+
+const setPreservingNative = (
+  accumulator: RecordAccumulator,
+  name: string,
+  value: unknown,
+  unresolved: UnresolvedItem[],
+  rowKey: string,
+  conflictCode: string,
+  previousName?: string,
+): void => {
+  const current = effectiveValue(accumulator, name, previousName);
+  if (isEmptyValue(current)) {
+    setIfChanged(accumulator, name, value, previousName);
+    return;
+  }
+  if (!valuesEqual(current, value)) {
+    unresolved.push({ code: conflictCode, rowKey });
+  }
+};
+
 const mergeFact = (
   accumulator: RecordAccumulator,
   name: string,
@@ -146,6 +187,9 @@ const stableUuid = (kind: string, key: string): string => {
 
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 };
+
+const valueHash = (value: unknown): string =>
+  createHash('sha256').update(stableStringify(value), 'utf8').digest('hex');
 
 const rawIndex = (rawData: Record<string, unknown>) => {
   const index = new Map<string, unknown>();
@@ -287,9 +331,75 @@ const nativePhoneShape = (record: CrmRecord) => {
     primaryPhoneCountryCode: asString(current?.primaryPhoneCountryCode) ?? '',
     primaryPhoneCallingCode: asString(current?.primaryPhoneCallingCode) ?? '',
     additionalPhones: Array.isArray(current?.additionalPhones)
-      ? (current.additionalPhones as Array<Record<string, unknown>>)
+      ? (current.additionalPhones as Array<Record<string, unknown>>).map(
+          (phone) => ({ ...phone }),
+        )
       : [],
   };
+};
+
+type LinkShape = {
+  primaryLinkLabel: string;
+  primaryLinkUrl: string;
+  secondaryLinks: Array<Record<string, unknown>>;
+};
+
+const nativeLinkShape = (record: CrmRecord): LinkShape => {
+  const current = record.linkedinLink as
+    | {
+        primaryLinkLabel?: unknown;
+        primaryLinkUrl?: unknown;
+        secondaryLinks?: unknown;
+      }
+    | undefined;
+
+  return {
+    primaryLinkLabel: asString(current?.primaryLinkLabel) ?? '',
+    primaryLinkUrl: asString(current?.primaryLinkUrl) ?? '',
+    secondaryLinks: Array.isArray(current?.secondaryLinks)
+      ? (current.secondaryLinks as Array<Record<string, unknown>>).map(
+          (link) => ({ ...link }),
+        )
+      : [],
+  };
+};
+
+const mergeLinkedIn = (
+  accumulator: RecordAccumulator,
+  original: string,
+  owners: ReturnType<typeof ownerIndexes>,
+): void => {
+  const normalized = normalizeLinkedIn(original);
+  if (!normalized) {
+    accumulator.residualContacts!.add(`LinkedIn: ${original}`);
+    return;
+  }
+  const holders = owners.linkedin.get(normalized) ?? new Set<string>();
+  if ([...holders].some((id) => id !== accumulator.record.id)) {
+    accumulator.residualContacts!.add(`LinkedIn: ${original}`);
+    return;
+  }
+
+  const effective = {
+    ...accumulator.record,
+    ...accumulator.data,
+    id: accumulator.record.id,
+  };
+  const link = nativeLinkShape(effective);
+  const primaryNormalized = normalizeLinkedIn(link.primaryLinkUrl);
+  const hasSecondary = link.secondaryLinks.some((secondary) =>
+    [secondary.url, secondary.primaryLinkUrl].some(
+      (value) => normalizeLinkedIn(value) === normalized,
+    ),
+  );
+  if (!link.primaryLinkUrl) {
+    link.primaryLinkLabel = 'LinkedIn';
+    link.primaryLinkUrl = normalized;
+  } else if (primaryNormalized !== normalized && !hasSecondary) {
+    link.secondaryLinks.push({ label: 'LinkedIn', url: normalized });
+  }
+  setIfChanged(accumulator, 'linkedinLink', link);
+  addOwner(owners.linkedin, normalized, accumulator.record.id);
 };
 
 const mergeLegacyContacts = (
@@ -380,32 +490,7 @@ const mergeLegacyContacts = (
 
     const originalLinkedIn = textValue(person.legacyLinkedInUrl);
     if (originalLinkedIn) {
-      const normalized = normalizeLinkedIn(originalLinkedIn);
-      if (!normalized) {
-        accumulator.residualContacts!.add(`LinkedIn: ${originalLinkedIn}`);
-      } else {
-        const link = person.linkedinLink as
-          | {
-              primaryLinkUrl?: unknown;
-              primaryLinkLabel?: unknown;
-              secondaryLinks?: unknown;
-            }
-          | undefined;
-        const holders = owners.linkedin.get(normalized) ?? new Set<string>();
-        if (
-          !asString(link?.primaryLinkUrl) &&
-          ![...holders].some((id) => id !== person.id)
-        ) {
-          setIfChanged(accumulator, 'linkedinLink', {
-            primaryLinkLabel: 'LinkedIn',
-            primaryLinkUrl: normalized,
-            secondaryLinks: [],
-          });
-          addOwner(owners.linkedin, normalized, person.id);
-        } else if ([...holders].some((id) => id !== person.id)) {
-          accumulator.residualContacts!.add(`LinkedIn: ${originalLinkedIn}`);
-        }
-      }
+      mergeLinkedIn(accumulator, originalLinkedIn, owners);
     }
   }
 
@@ -480,14 +565,64 @@ const sourceRows = (snapshot: CanonicalizationSnapshot): StagingRow[] => {
   });
 };
 
+const rowIsPerson = (index: ReadonlyMap<string, unknown>): boolean =>
+  !!(
+    textValue(rawValue(index, 'first name')) ||
+    textValue(rawValue(index, 'last name'))
+  );
+
+const rowIsHolding = (index: ReadonlyMap<string, unknown>): boolean =>
+  !!(
+    textValue(rawValue(index, 'shares held', 'shares')) ||
+    textValue(rawValue(index, 'market value')) ||
+    (!rowIsPerson(index) && textValue(rawValue(index, 'filer name')))
+  );
+
+const productNameFor = (record: CrmRecord): string =>
+  asString(record.productName) ??
+  asString(record.sourceFile)
+    ?.replace(/^.*[\\/]/, '')
+    .replace(/\.[^.]+$/, '') ??
+  'Holding';
+
+const holdingIdentityKey = (
+  companyId: string,
+  productName: string,
+  rawData: Record<string, unknown>,
+): string => {
+  const { index } = rawIndex(rawData);
+
+  return stableStringify({
+    companyId,
+    product: productName.normalize('NFC').trim().toLowerCase(),
+    filerName: companyNameKey(rawValue(index, 'filer name')),
+    filerId: companyNameKey(rawValue(index, 'filer id')),
+    cik: companyNameKey(rawValue(index, 'filer cik')),
+    crd: companyNameKey(rawValue(index, 'filer crd')),
+    asOfDate: textValue(rawValue(index, 'source date')),
+    shares: numberValue(rawValue(index, 'shares held', 'shares')),
+    marketValue: numberValue(rawValue(index, 'market value')),
+  });
+};
+
+const rowSemanticKey = (row: StagingRow): string => {
+  const { index } = rawIndex(row.rawData);
+
+  return rowIsHolding(index)
+    ? `${row.contentKey}\0${productNameFor(row.record).normalize('NFC').toLowerCase()}`
+    : row.contentKey;
+};
+
 const deduplicateRows = (rows: readonly StagingRow[]) => {
   const groups = new Map<string, StagingRow[]>();
-  for (const row of rows)
-    groups.set(row.contentKey, [...(groups.get(row.contentKey) ?? []), row]);
+  for (const row of rows) {
+    const key = rowSemanticKey(row);
+    groups.set(key, [...(groups.get(key) ?? []), row]);
+  }
 
   const selected: StagingRow[] = [];
   const collisions: UnresolvedItem[] = [];
-  for (const [contentKey, candidates] of [...groups].sort(([left], [right]) =>
+  for (const [semanticKey, candidates] of [...groups].sort(([left], [right]) =>
     left.localeCompare(right),
   )) {
     const companyIds = new Set(
@@ -500,7 +635,7 @@ const deduplicateRows = (rows: readonly StagingRow[]) => {
     if (companyIds.size > 1) {
       collisions.push({
         code: 'CONTENT_IDENTITY_COLLISION',
-        rowKey: contentKey,
+        rowKey: semanticKey,
       });
       continue;
     }
@@ -597,24 +732,239 @@ const PERSON_FACTS: ReadonlyArray<[string, string[]]> = [
   ['sportsTeams', ['person tag sports teams']],
 ];
 
-const NONEMPTY_RAW_KEYS = new Set([
-  ...`of portfolio|ownership|13f|address|avg price|bio|broker dealer|change in shares|city|city hq|designations|email 1|email 2|est age|family office type|family office generation|family office wealth source|family office focus|family office geography|filer name|filer state|filer cik|filer crd|filer id|filer irs number|finra link|firm address|firm aum|firm bd reps|firm city|firm company name|firm custodians|firm form 13f|firm form13f|firm name|firm ownership|firm phone|firm ria reps|firm state|firm tag accredited investors|firm tag asset classes|firm tag client personas|firm tag crm|firm tag custodian|firm tag fund managers|firm tag investment themes|firm tag investment vehicles|firm tag platform|firm tag services|firm tag technology|firm total accounts|firm total employees|firm type|firm website|firm zip|first name|last name|gender|landline phone|landline|licenses exams|linkedin|market value|metro area|metro|mobile phone|mobile|named team|named team id|named team website|named team site|non advisor|notes source confidence|percent change|person tag family|person tag hobbies|person tag military status|person tag school|person tag services|person tag sports teams|personal email|phone|phone type|previous broker dealer|previous ria|previous firms|prior of portfolio|prior|prior ranking|profile|qtr first owned|ranking|region|registration type|registration|ria|sec link|shares held|shares|source date|source type|state|street address|street address2|title|type of firm|website|years of experience|years experience|years with current ria|years current ria|zip|zip code`.split(
-    '|',
-  ),
-]);
-
 const EMPTY_ONLY_RAW_KEYS = new Set(
   `|connection name|disclosures|email 3|lead score|notes|person tag expertise|person tag faith based investing|person tag greek life|person tag investments|person tag role`.split(
     '|',
   ),
 );
 
-const hasUnhandledRawValue = (index: ReadonlyMap<string, unknown>): boolean =>
-  [...index].some(
-    ([key, value]) =>
-      !!textValue(value) &&
-      (!NONEMPTY_RAW_KEYS.has(key) || EMPTY_ONLY_RAW_KEYS.has(key)),
-  );
+const COMPANY_TARGET_BY_KEY: Readonly<Record<string, string>> = {
+  address: 'company.address',
+  'street address': 'company.address',
+  'street address2': 'company.address',
+  city: 'company.address',
+  state: 'company.address',
+  'filer state': 'company.address',
+  zip: 'company.address',
+  'zip code': 'company.address',
+  'firm address': 'company.address',
+  'firm city': 'company.address',
+  'firm state': 'company.address',
+  'firm zip': 'company.address',
+  'city hq': 'company.address',
+  region: 'company.geography',
+  'firm aum': 'company.assetsUnderManagement',
+  'firm bd reps': 'company.brokerDealerRepresentatives',
+  'firm ria reps': 'company.investmentAdviserRepresentatives',
+  'firm custodians': 'company.custodians',
+  'firm tag custodian': 'company.custodians',
+  'firm form 13f': 'company.form13f',
+  'firm form13f': 'company.form13f',
+  'firm total accounts': 'company.totalAccounts',
+  'firm total employees': 'company.employees',
+  'firm ownership': 'company.ownership',
+  'firm phone': 'company.firmPhone',
+  'firm type': 'company.firmType',
+  'type of firm': 'company.firmType',
+  'firm website': 'company.domainName',
+  website: 'company.domainName',
+  'firm tag accredited investors': 'company.accreditedInvestorFocus',
+  'firm tag asset classes': 'company.assetClasses',
+  'firm tag client personas': 'company.clientPersonas',
+  'firm tag crm': 'company.crmSystem',
+  'firm tag fund managers': 'company.fundManagers',
+  'firm tag investment themes': 'company.investmentThemes',
+  'firm tag investment vehicles': 'company.investmentVehicles',
+  'firm tag platform': 'company.platform',
+  'firm tag services': 'company.services',
+  'firm tag technology': 'company.technology',
+  'family office type': 'company.familyOfficeType',
+  'family office generation': 'company.familyOfficeGeneration',
+  'family office wealth source': 'company.familyOfficeWealthOrigin',
+  'family office focus': 'company.familyOfficeFocus',
+  'family office geography': 'company.familyOfficeGeography',
+};
+
+const PERSON_TARGET_BY_KEY: Readonly<Record<string, string>> = {
+  profile: 'person.profile',
+  address: 'person.streetAddress',
+  'street address': 'person.streetAddress',
+  city: 'person.city',
+  state: 'person.stateRegion',
+  zip: 'person.postalCode',
+  'zip code': 'person.postalCode',
+  gender: 'person.gender',
+  'est age': 'person.estimatedAge',
+  bio: 'person.bio',
+  'broker dealer': 'person.brokerDealer',
+  designations: 'person.designations',
+  'licenses exams': 'person.licensesAndExams',
+  'registration type': 'person.registrationType',
+  registration: 'person.registrationType',
+  'years of experience': 'person.yearsOfExperience',
+  'years experience': 'person.yearsOfExperience',
+  'years with current ria': 'person.yearsWithCurrentFirm',
+  'years current ria': 'person.yearsWithCurrentFirm',
+  'previous broker dealer': 'person.previousBrokerDealer',
+  'previous ria': 'person.previousFirm',
+  'previous firms': 'person.previousFirm',
+  'non advisor': 'person.nonAdvisor',
+  'sec link': 'person.secProfile',
+  'finra link': 'person.finraProfile',
+  'metro area': 'person.metroArea',
+  metro: 'person.metroArea',
+  'named team': 'person.teamName',
+  'named team website': 'person.teamWebsite',
+  'named team site': 'person.teamWebsite',
+  'named team id': 'person.otherContactDetails',
+  'person tag family': 'person.family',
+  'person tag hobbies': 'person.hobbies',
+  'person tag military status': 'person.militaryService',
+  'person tag school': 'person.school',
+  'person tag services': 'person.services',
+  'person tag sports teams': 'person.sportsTeams',
+  title: 'person.jobTitle',
+  'email 1': 'person.emails',
+  'email 2': 'person.emails',
+  'personal email': 'person.emails',
+  'mobile phone': 'person.phones',
+  mobile: 'person.phones',
+  'landline phone': 'person.phones',
+  landline: 'person.phones',
+  phone: 'person.phones',
+  'phone type': 'person.otherContactDetails',
+  linkedin: 'person.linkedinLink',
+};
+
+const HOLDING_TARGET_BY_KEY: Readonly<Record<string, string>> = {
+  'filer name': 'holdingObservation.filerName',
+  'filer id': 'holdingObservation.filerId',
+  'filer cik': 'holdingObservation.cik',
+  'filer crd': 'holdingObservation.crd',
+  'filer irs number': 'holdingObservation.filerIrsNumber',
+  address: 'holdingObservation.streetAddress',
+  'street address': 'holdingObservation.streetAddress',
+  'street address2': 'holdingObservation.addressLine2',
+  city: 'holdingObservation.city',
+  state: 'holdingObservation.stateRegion',
+  'filer state': 'holdingObservation.stateRegion',
+  zip: 'holdingObservation.postalCode',
+  'zip code': 'holdingObservation.postalCode',
+  'shares held': 'holdingObservation.sharesHeld',
+  shares: 'holdingObservation.sharesHeld',
+  'market value': 'holdingObservation.marketValue',
+  'of portfolio': 'holdingObservation.portfolioPercent',
+  ownership: 'holdingObservation.ownershipPercent',
+  'avg price': 'holdingObservation.averagePrice',
+  'change in shares': 'holdingObservation.shareChange',
+  'percent change': 'holdingObservation.shareChangePercent',
+  'prior of portfolio': 'holdingObservation.previousPortfolioPercent',
+  prior: 'holdingObservation.previousPortfolioPercent',
+  ranking: 'holdingObservation.ranking',
+  'prior ranking': 'holdingObservation.previousRanking',
+  'qtr first owned': 'holdingObservation.firstOwnedQuarter',
+  'source date': 'holdingObservation.asOfDate',
+  'source type': 'holdingObservation.filingType',
+  '13f': 'holdingObservation.form13f',
+};
+
+const COMPANY_IDENTITY_RAW_KEYS = new Set([
+  'firm company name',
+  'ria',
+  'firm name',
+  'filer name',
+  'filer id',
+  'filer cik',
+  'filer crd',
+  'filer irs number',
+]);
+
+const PERSON_IDENTITY_RAW_KEYS = new Set(['first name', 'last name']);
+
+const NUMERIC_HOLDING_KEYS = new Set([
+  'shares held',
+  'shares',
+  'market value',
+  'of portfolio',
+  'ownership',
+  'avg price',
+  'change in shares',
+  'percent change',
+  'prior of portfolio',
+  'prior',
+  'ranking',
+  'prior ranking',
+]);
+
+const dispositionForKey = (
+  key: string,
+  value: unknown,
+  isPerson: boolean,
+  isHolding: boolean,
+): Omit<RawKeyDisposition, 'rowKey' | 'key'> | null => {
+  const sourceValueHash = valueHash(value);
+  if (key === 'notes source confidence' || key === 'named team id') {
+    return {
+      kind: 'ignored',
+      target:
+        key === 'named team id'
+          ? 'opaque team identifier excluded; team name and website retained'
+          : 'quality commentary excluded from business records',
+      sourceValueHash,
+    };
+  }
+  if (COMPANY_IDENTITY_RAW_KEYS.has(key)) {
+    const target =
+      isHolding && key.startsWith('filer ')
+        ? `company.identity+${HOLDING_TARGET_BY_KEY[key]}`
+        : 'company.identity';
+    return {
+      kind: 'identity',
+      target,
+      sourceValueHash,
+      resultValueHash: valueHash(companyNameKey(value)),
+    };
+  }
+  if (PERSON_IDENTITY_RAW_KEYS.has(key)) {
+    if (!isPerson) return null;
+    return {
+      kind: 'identity',
+      target: 'person.name',
+      sourceValueHash,
+      resultValueHash: valueHash(companyNameKey(value)),
+    };
+  }
+  if ((key === 'source type' || key === '13f') && !isHolding) {
+    return {
+      kind: 'ignored',
+      target: 'non-holding filing marker excluded as technical classification',
+      sourceValueHash,
+    };
+  }
+  const targets = [
+    COMPANY_TARGET_BY_KEY[key],
+    isPerson ? PERSON_TARGET_BY_KEY[key] : undefined,
+    isHolding ? HOLDING_TARGET_BY_KEY[key] : undefined,
+  ].filter((target): target is string => !!target);
+  if (targets.length === 0) return null;
+  const normalizedResult =
+    isHolding && NUMERIC_HOLDING_KEYS.has(key)
+      ? numberValue(value)
+      : key.includes('email')
+        ? (normalizeEmail(value) ?? textValue(value))
+        : key.includes('phone') || key === 'mobile' || key === 'landline'
+          ? (normalizePhone(value)?.number ?? textValue(value))
+          : key === 'linkedin'
+            ? (normalizeLinkedIn(value) ?? textValue(value))
+            : textValue(value);
+
+  return {
+    kind: 'canonical',
+    target: [...new Set(targets)].sort().join('+'),
+    sourceValueHash,
+    resultValueHash: valueHash(normalizedResult),
+  };
+};
 
 const applyCompanyRaw = (
   accumulator: RecordAccumulator,
@@ -642,6 +992,16 @@ const applyCompanyRaw = (
   mergeFact(accumulator, 'cik', rawValue(index, 'filer cik'));
   mergeFact(accumulator, 'crd', rawValue(index, 'filer crd'));
   mergeFact(accumulator, 'irsNumber', rawValue(index, 'filer irs number'));
+
+  for (const alias of ['firm company name', 'ria', 'firm name', 'filer name']) {
+    const alternate = textValue(rawValue(index, alias));
+    if (
+      alternate &&
+      companyNameKey(alternate) !== companyNameKey(accumulator.record.name)
+    ) {
+      mergeFact(accumulator, 'alternateNames', alternate);
+    }
+  }
 
   const website = rawValue(index, 'firm website', 'website');
   const websiteText = textValue(website);
@@ -679,35 +1039,52 @@ const applyCompanyRaw = (
     }
   }
 
-  const currentAddress = (accumulator.data.address ??
-    accumulator.record.address ??
+  const currentAddress = (effectiveValue(accumulator, 'address') ??
     {}) as Record<string, unknown>;
-  const nextAddress = {
-    addressStreet1:
-      asString(currentAddress.addressStreet1) ??
-      textValue(rawValue(index, 'firm address', 'address', 'street address')) ??
-      '',
-    addressStreet2:
-      asString(currentAddress.addressStreet2) ??
-      textValue(rawValue(index, 'street address2')) ??
-      '',
-    addressCity:
-      asString(currentAddress.addressCity) ??
-      textValue(rawValue(index, 'firm city', 'city', 'city hq')) ??
-      '',
-    addressState:
-      asString(currentAddress.addressState) ??
-      textValue(rawValue(index, 'firm state', 'state', 'filer state')) ??
-      '',
-    addressPostcode:
-      asString(currentAddress.addressPostcode) ??
-      textValue(rawValue(index, 'firm zip', 'zip', 'zip code')) ??
-      '',
-    addressCountry: asString(currentAddress.addressCountry) ?? '',
-    addressLat: currentAddress.addressLat ?? null,
-    addressLng: currentAddress.addressLng ?? null,
+  const rawAddress: Record<string, string | null> = {
+    addressStreet1: textValue(
+      rawValue(index, 'firm address', 'address', 'street address'),
+    ),
+    addressStreet2: textValue(rawValue(index, 'street address2')),
+    addressCity: textValue(rawValue(index, 'firm city', 'city', 'city hq')),
+    addressState: textValue(
+      rawValue(index, 'firm state', 'state', 'filer state'),
+    ),
+    addressPostcode: textValue(rawValue(index, 'firm zip', 'zip', 'zip code')),
   };
-  setIfChanged(accumulator, 'address', nextAddress);
+  const conflicts = Object.entries(rawAddress).filter(
+    ([field, value]) =>
+      value &&
+      asString(currentAddress[field]) &&
+      companyNameKey(currentAddress[field]) !== companyNameKey(value),
+  );
+  if (conflicts.length > 0) {
+    const alternate = Object.values(rawAddress).filter(Boolean).join(', ');
+    if (alternate) mergeFact(accumulator, 'alternateAddresses', alternate);
+  } else {
+    const nextAddress = {
+      addressStreet1:
+        asString(currentAddress.addressStreet1) ??
+        rawAddress.addressStreet1 ??
+        '',
+      addressStreet2:
+        asString(currentAddress.addressStreet2) ??
+        rawAddress.addressStreet2 ??
+        '',
+      addressCity:
+        asString(currentAddress.addressCity) ?? rawAddress.addressCity ?? '',
+      addressState:
+        asString(currentAddress.addressState) ?? rawAddress.addressState ?? '',
+      addressPostcode:
+        asString(currentAddress.addressPostcode) ??
+        rawAddress.addressPostcode ??
+        '',
+      addressCountry: asString(currentAddress.addressCountry) ?? '',
+      addressLat: currentAddress.addressLat ?? null,
+      addressLng: currentAddress.addressLng ?? null,
+    };
+    setIfChanged(accumulator, 'address', nextAddress);
+  }
 };
 
 const applyPersonRaw = (
@@ -717,10 +1094,6 @@ const applyPersonRaw = (
   for (const [field, aliases] of PERSON_FACTS) {
     mergeFact(accumulator, field, rawValue(index, ...aliases));
   }
-  const teamReference = textValue(rawValue(index, 'named team id'));
-  if (teamReference)
-    accumulator.residualContacts!.add(`Team reference: ${teamReference}`);
-
   mergeFact(accumulator, 'jobTitle', rawValue(index, 'title'));
   const phoneType = textValue(rawValue(index, 'phone type'));
   if (phoneType) accumulator.residualContacts!.add(`Phone type: ${phoneType}`);
@@ -762,6 +1135,7 @@ const resolveCompany = (
   names: Map<string, Set<string>>,
   locations: Map<string, Set<string>>,
   regulatoryIds: Map<string, Set<string>>,
+  personCompanyAnchor?: string,
 ): { id?: string; unresolved?: string } => {
   const direct =
     asString(row.record.candidateCompanyId) ?? asString(row.record.companyId);
@@ -816,6 +1190,11 @@ const resolveCompany = (
   const nameMatches = key
     ? (names.get(key) ?? new Set<string>())
     : new Set<string>();
+  if (personCompanyAnchor) {
+    return companies.has(personCompanyAnchor)
+      ? { id: personCompanyAnchor }
+      : { unresolved: 'MISSING_PERSON_COMPANY_ANCHOR' };
+  }
   if (nameMatches.size > 0) return { unresolved: 'AMBIGUOUS_COMPANY' };
   if (!key || !textValue(name))
     return { unresolved: 'MISSING_COMPANY_IDENTITY' };
@@ -844,14 +1223,10 @@ const resolveCompany = (
   return { id };
 };
 
-const resolvePerson = (
-  row: StagingRow,
+const strongPersonCandidates = (
   index: ReadonlyMap<string, unknown>,
-  companyId: string,
-  people: Map<string, RecordAccumulator>,
   identityOwners: ReturnType<typeof ownerIndexes>,
-  companyNameOwners: Map<string, Set<string>>,
-): { id?: string; unresolved?: string } => {
+): Set<string> => {
   const candidates = new Set<string>();
   for (const value of [
     rawValue(index, 'email 1'),
@@ -880,6 +1255,19 @@ const resolvePerson = (
     ? (identityOwners.linkedin.get(linkedIn) ?? [])
     : [])
     candidates.add(owner);
+
+  return candidates;
+};
+
+const resolvePerson = (
+  row: StagingRow,
+  index: ReadonlyMap<string, unknown>,
+  companyId: string,
+  people: Map<string, RecordAccumulator>,
+  identityOwners: ReturnType<typeof ownerIndexes>,
+  companyNameOwners: Map<string, Set<string>>,
+): { id?: string; unresolved?: string } => {
+  const candidates = strongPersonCandidates(index, identityOwners);
 
   if (candidates.size === 1) {
     const id = [...candidates][0]!;
@@ -1007,32 +1395,15 @@ const applyRawContacts = (
 
   const originalLinkedIn = textValue(rawValue(index, 'linkedin'));
   if (originalLinkedIn) {
-    const normalized = normalizeLinkedIn(originalLinkedIn);
-    const current = (accumulator.data.linkedinLink ??
-      accumulator.record.linkedinLink) as
-      | { primaryLinkUrl?: unknown }
-      | undefined;
-    if (
-      !normalized ||
-      [...(owners.linkedin.get(normalized) ?? [])].some(
-        (id) => id !== accumulator.record.id,
-      )
-    ) {
-      accumulator.residualContacts!.add(`LinkedIn: ${originalLinkedIn}`);
-    } else if (!asString(current?.primaryLinkUrl)) {
-      setIfChanged(accumulator, 'linkedinLink', {
-        primaryLinkLabel: 'LinkedIn',
-        primaryLinkUrl: normalized,
-        secondaryLinks: [],
-      });
-      addOwner(owners.linkedin, normalized, accumulator.record.id);
-    }
+    mergeLinkedIn(accumulator, originalLinkedIn, owners);
   }
 };
 
 const holdingPatch = (
   record: CrmRecord,
   rawData: Record<string, unknown>,
+  unresolved: UnresolvedItem[],
+  rowKey: string,
 ): RecordAccumulator => {
   const accumulator: RecordAccumulator = { record, data: {}, facts: new Map() };
   const { index } = rawIndex(rawData);
@@ -1053,7 +1424,16 @@ const holdingPatch = (
     const value = numberValue(raw);
     if (textValue(raw) && value === null)
       throw new Error(`Invalid numeric holding field ${field}`);
-    if (value !== null) setIfChanged(accumulator, field, value);
+    if (value !== null) {
+      setPreservingNative(
+        accumulator,
+        field,
+        value,
+        unresolved,
+        rowKey,
+        'HOLDING_FIELD_CONFLICT',
+      );
+    }
   }
   const text: ReadonlyArray<[string, string[], string?]> = [
     ['filerName', ['filer name']],
@@ -1065,6 +1445,7 @@ const holdingPatch = (
     ['stateRegion', ['filer state', 'state']],
     ['streetAddress', ['street address', 'address']],
     ['addressLine2', ['street address2']],
+    ['postalCode', ['zip', 'zip code']],
     ['firstOwnedQuarter', ['qtr first owned']],
     ['filingType', ['source type']],
     ['form13f', ['13f']],
@@ -1072,7 +1453,20 @@ const holdingPatch = (
   ];
   for (const [field, aliases, previousName] of text) {
     const value = textValue(rawValue(index, ...aliases));
-    if (value) setIfChanged(accumulator, field, value, previousName);
+    if (!value) continue;
+    if (field === 'asOfDate' && !/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+      unresolved.push({ code: 'HOLDING_DATE_INVALID', rowKey });
+      continue;
+    }
+    setPreservingNative(
+      accumulator,
+      field,
+      value,
+      unresolved,
+      rowKey,
+      'HOLDING_FIELD_CONFLICT',
+      previousName,
+    );
   }
 
   return accumulator;
@@ -1082,6 +1476,7 @@ export const buildCanonicalizationPlan = (
   snapshot: CanonicalizationSnapshot,
 ): CanonicalizationPlan => {
   const unresolved: UnresolvedItem[] = [];
+  const dispositions: RawKeyDisposition[] = [];
   const companyAccumulators = new Map(
     snapshot.companies.map((record) => [
       record.id,
@@ -1153,8 +1548,32 @@ export const buildCanonicalizationPlan = (
     const companyId = asString(row.record.companyId);
     const { index, coalesces } = rawIndex(row.rawData);
     normalizedKeyCoalesces += coalesces;
-    if (hasUnhandledRawValue(index)) {
-      unresolved.push({ code: 'UNHANDLED_RAW_FIELD', rowKey: row.rowKey });
+    const rowIsPerson = !!(
+      textValue(rawValue(index, 'first name')) ||
+      textValue(rawValue(index, 'last name'))
+    );
+    const rowIsHolding = !!(
+      textValue(rawValue(index, 'shares held', 'shares')) ||
+      textValue(rawValue(index, 'market value')) ||
+      (!rowIsPerson && textValue(rawValue(index, 'filer name')))
+    );
+    const occurrenceKey = stableUuid(
+      'stagingRow',
+      `${row.rowKey}\0${row.record.id}`,
+    );
+    for (const [key, value] of index) {
+      if (!textValue(value)) continue;
+      const disposition = dispositionForKey(
+        key,
+        value,
+        rowIsPerson,
+        rowIsHolding,
+      );
+      if (!disposition || EMPTY_ONLY_RAW_KEYS.has(key)) {
+        unresolved.push({ code: 'UNHANDLED_RAW_FIELD', rowKey: row.rowKey });
+        continue;
+      }
+      dispositions.push({ rowKey: occurrenceKey, key, ...disposition });
     }
     const confidence = textValue(rawValue(index, 'notes source confidence'));
     if (companyId && confidence) {
@@ -1166,16 +1585,36 @@ export const buildCanonicalizationPlan = (
   }
 
   for (const accumulator of companyAccumulators.values()) {
+    const nativeAddress = companyAddress(accumulator.record);
+    const previousCountry = asString(accumulator.record.country);
+    const nativeCountry = asString(nativeAddress.addressCountry);
+    if (previousCountry && previousCountry !== nativeCountry) {
+      unresolved.push({
+        code: 'COUNTRY_NOT_CANONICAL',
+        rowKey: accumulator.record.id,
+      });
+    }
+    if (accumulator.record.locationIsManual === true) {
+      unresolved.push({
+        code: 'MANUAL_LOCATION_NOT_CANONICAL',
+        rowKey: accumulator.record.id,
+      });
+    }
     const description = asString(accumulator.record.fetchDescription);
     if (description) {
       const isConfidence =
         confidenceByCompany.get(accumulator.record.id)?.has(description) ??
         false;
-      setIfChanged(
-        accumulator,
-        'description',
-        isConfidence ? null : description,
-      );
+      if (!isConfidence) {
+        setPreservingNative(
+          accumulator,
+          'description',
+          description,
+          unresolved,
+          accumulator.record.id,
+          'DESCRIPTION_CONFLICT',
+        );
+      }
     }
     const website = accumulator.record.legacyWebsite;
     if (textValue(website)) {
@@ -1187,24 +1626,62 @@ export const buildCanonicalizationPlan = (
     }
   }
 
-  const holdingByContent = new Map<string, CrmRecord>();
+  const holdingByIdentity = new Map<string, CrmRecord>();
+  const holdingCompanyByContent = new Map<string, Set<string>>();
   for (const holding of snapshot.holdingObservations) {
     if (!textValue(holding.rawData)) continue;
     const rawData = parseRawData(holding.rawData);
-    const key = canonicalContentKey(rawData);
-    if (holdingByContent.has(key)) {
-      unresolved.push({ code: 'DUPLICATE_HOLDING_CONTENT', rowKey: key });
+    const { index: holdingRawIndex } = rawIndex(rawData);
+    const dispositionRowKey = stableUuid('holdingRaw', holding.id);
+    for (const [key, value] of holdingRawIndex) {
+      if (!textValue(value)) continue;
+      const disposition = dispositionForKey(key, value, false, true);
+      if (!disposition || EMPTY_ONLY_RAW_KEYS.has(key)) {
+        unresolved.push({
+          code: 'UNHANDLED_HOLDING_RAW_FIELD',
+          rowKey: holding.id,
+        });
+      } else {
+        dispositions.push({
+          rowKey: dispositionRowKey,
+          key,
+          ...disposition,
+        });
+      }
+    }
+    const companyId = asString(holding.companyId);
+    if (!companyId) {
+      unresolved.push({ code: 'HOLDING_COMPANY_MISSING', rowKey: holding.id });
       continue;
     }
-    holdingByContent.set(key, holding);
+    const identity = holdingIdentityKey(
+      companyId,
+      productNameFor(holding),
+      rawData,
+    );
+    if (holdingByIdentity.has(identity)) {
+      unresolved.push({ code: 'DUPLICATE_HOLDING_IDENTITY', rowKey: identity });
+      continue;
+    }
+    holdingByIdentity.set(identity, holding);
+    const content = canonicalContentKey(rawData);
+    holdingCompanyByContent.set(
+      content,
+      new Set([...(holdingCompanyByContent.get(content) ?? []), companyId]),
+    );
   }
   const holdingAccumulators = new Map<string, RecordAccumulator>();
-  for (const [key, holding] of holdingByContent) {
+  for (const [identity, holding] of holdingByIdentity) {
     holdingAccumulators.set(
       holding.id,
-      holdingPatch(holding, parseRawData(holding.rawData)),
+      holdingPatch(
+        holding,
+        parseRawData(holding.rawData),
+        unresolved,
+        holding.id,
+      ),
     );
-    void key;
+    void identity;
   }
 
   const orderedRows = [...selected].sort((left, right) => {
@@ -1223,15 +1700,16 @@ export const buildCanonicalizationPlan = (
   });
   for (const row of orderedRows) {
     const { index } = rawIndex(row.rawData);
-    const isPerson = !!(
-      textValue(rawValue(index, 'first name')) ||
-      textValue(rawValue(index, 'last name'))
-    );
-    const isHolding = !!(
-      textValue(rawValue(index, 'shares held')) ||
-      textValue(rawValue(index, 'market value')) ||
-      (!isPerson && textValue(rawValue(index, 'filer name')))
-    );
+    const isPerson = rowIsPerson(index);
+    const isHolding = rowIsHolding(index);
+    const strongPeople = isPerson
+      ? strongPersonCandidates(index, personIdentityOwners)
+      : new Set<string>();
+    const anchoredPerson =
+      strongPeople.size === 1
+        ? personAccumulators.get([...strongPeople][0]!)?.record
+        : undefined;
+    const personCompanyAnchor = asString(anchoredPerson?.companyId);
     const company = resolveCompany(
       row,
       index,
@@ -1240,6 +1718,7 @@ export const buildCanonicalizationPlan = (
       nameOwners,
       locationOwners,
       regulatoryOwners,
+      personCompanyAnchor ?? undefined,
     );
     if (!company.id) {
       unresolved.push({ code: company.unresolved!, rowKey: row.rowKey });
@@ -1289,29 +1768,38 @@ export const buildCanonicalizationPlan = (
     }
 
     if (isHolding) {
-      const existing = holdingByContent.get(row.contentKey);
-      const holdingIdentity = stableStringify({
-        product:
-          asString(row.record.sourceFile)?.replace(/^.*[\\/]/, '') ?? null,
-        filerId: textValue(rawValue(index, 'filer id')),
-        cik: textValue(rawValue(index, 'filer cik')),
-        crd: textValue(rawValue(index, 'filer crd')),
-        date: textValue(rawValue(index, 'source date')),
-        shares: textValue(rawValue(index, 'shares held')),
-        value: textValue(rawValue(index, 'market value')),
-      });
+      const productName = productNameFor(row.record);
+      const holdingIdentity = holdingIdentityKey(
+        company.id,
+        productName,
+        row.rawData,
+      );
+      const existing = holdingByIdentity.get(holdingIdentity);
+      if (
+        !existing &&
+        [...(holdingCompanyByContent.get(row.contentKey) ?? [])].some(
+          (id) => id !== company.id,
+        )
+      ) {
+        unresolved.push({
+          code: 'HOLDING_COMPANY_CONFLICT',
+          rowKey: row.rowKey,
+        });
+        continue;
+      }
       const holding = existing ?? {
         id: stableUuid('holdingObservation', holdingIdentity),
         companyId: company.id,
       };
-      const accumulator = holdingPatch(holding, row.rawData);
+      const accumulator = holdingPatch(
+        holding,
+        row.rawData,
+        unresolved,
+        row.rowKey,
+      );
       if (!existing) {
         accumulator.data.id = holding.id;
         accumulator.data.companyId = company.id;
-        const productName =
-          asString(row.record.sourceFile)
-            ?.replace(/^.*[\\/]/, '')
-            .replace(/\.[^.]+$/, '') ?? 'Holding';
         accumulator.data.productName = productName;
         accumulator.data.name = `${productName} - ${textValue(rawValue(index, 'filer name')) ?? 'Holding'}`;
       }
@@ -1402,15 +1890,32 @@ export const buildCanonicalizationPlan = (
           code: 'OUTREACH_TASK_UNRESOLVED',
           rowKey: activity.id,
         });
-      } else if (activity.followUpTaskId !== [...tasks][0]) {
-        data.followUpTaskId = [...tasks][0];
+      } else {
+        const taskId = [...tasks][0]!;
+        if (asString(activity.followUpTaskId)) {
+          if (activity.followUpTaskId !== taskId) {
+            unresolved.push({
+              code: 'OUTREACH_RELATION_CONFLICT',
+              rowKey: activity.id,
+            });
+          }
+        } else {
+          data.followUpTaskId = taskId;
+        }
       }
     }
     if (followUpDate) {
       const date = /^\d{4}-\d{2}-\d{2}/.exec(followUpDate)?.[0];
       if (!date)
         unresolved.push({ code: 'OUTREACH_DATE_INVALID', rowKey: activity.id });
-      else if (activity.followUpDate !== date) data.followUpDate = date;
+      else if (asString(activity.followUpDate)) {
+        if (activity.followUpDate !== date) {
+          unresolved.push({
+            code: 'OUTREACH_DATE_CONFLICT',
+            rowKey: activity.id,
+          });
+        }
+      } else data.followUpDate = date;
     }
     if (Object.keys(data).length > 0) {
       additionalMutations.push({
@@ -1478,6 +1983,11 @@ export const buildCanonicalizationPlan = (
   return {
     mutations,
     unresolved,
+    dispositions: dispositions.sort(
+      (left, right) =>
+        left.rowKey.localeCompare(right.rowKey) ||
+        left.key.localeCompare(right.key),
+    ),
     summary: {
       inputRows: rows.length,
       semanticRows: selected.length,

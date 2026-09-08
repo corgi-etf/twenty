@@ -9,7 +9,9 @@ import {
 } from '../src/planner.ts';
 import {
   assertCanonicalizationComplete,
+  assertReconciliationManifest,
   buildReconciliationReport,
+  createReconciliationManifest,
 } from '../src/reconciliation.ts';
 
 const snapshot = (): CanonicalizationSnapshot => ({
@@ -206,7 +208,7 @@ test('promotes business facts, merges native contacts, and backfills relations',
   assert.equal(plan.summary.duplicateRows, 1);
 
   const company = mutationFor(plan, 'companies', 'company-1');
-  assert.equal(company?.data.description, null);
+  assert.equal(company?.data.description, undefined);
   assert.equal(company?.data.assetsUnderManagement, '$1,200,000');
   assert.equal(company?.data.geography, 'Midwest');
   assert.equal(
@@ -347,4 +349,191 @@ test('reconciliation report exposes only aggregate evidence and blocks incomplet
   assert.ok(report.remainingMutations > 0);
   assert.equal(JSON.stringify(report).includes('alex@acme.example'), false);
   assert.throws(() => assertCanonicalizationComplete(input), /incomplete/i);
+});
+
+test('every nonempty raw key has one exact disposition and unknown keys fail closed', () => {
+  const input = snapshot();
+  const plan = buildCanonicalizationPlan(input);
+  const nonemptyKeyCount = [
+    ...input.sourceRecords,
+    ...input.importReviewItems,
+    ...input.holdingObservations,
+  ].reduce(
+    (total, record) =>
+      total +
+      Object.values(
+        JSON.parse(String(record.rawData)) as Record<string, unknown>,
+      ).filter((value) => String(value ?? '').trim() !== '').length,
+    0,
+  );
+
+  assert.equal(plan.dispositions.length, nonemptyKeyCount);
+  assert.equal(
+    new Set(plan.dispositions.map(({ rowKey, key }) => `${rowKey}\0${key}`))
+      .size,
+    plan.dispositions.length,
+  );
+
+  input.sourceRecords[0]!.rawData = JSON.stringify({
+    ...(JSON.parse(String(input.sourceRecords[0]!.rawData)) as Record<
+      string,
+      unknown
+    >),
+    'Unexpected Field': 'must not disappear',
+  });
+  assert.equal(
+    buildCanonicalizationPlan(input).unresolved.some(
+      ({ code }) => code === 'UNHANDLED_RAW_FIELD',
+    ),
+    true,
+  );
+});
+
+test('native business values are preserved and conflicting staging values fail closed', () => {
+  const input = snapshot();
+  input.companies[0]!.description = 'User-authored description';
+  input.companies[0]!.fetchDescription = 'Different imported description';
+  input.holdingObservations[0]!.averagePrice = 999;
+  input.outreachActivities[0]!.followUpTaskId = 'different-task';
+  input.outreachActivities[0]!.followUpDate = '2026-06-16';
+
+  const plan = buildCanonicalizationPlan(input);
+
+  assert.equal(
+    plan.unresolved.some(({ code }) => code === 'DESCRIPTION_CONFLICT'),
+    true,
+  );
+  assert.equal(
+    plan.unresolved.some(({ code }) => code === 'HOLDING_FIELD_CONFLICT'),
+    true,
+  );
+  assert.equal(
+    plan.unresolved.some(({ code }) => code === 'OUTREACH_RELATION_CONFLICT'),
+    true,
+  );
+  assert.equal(
+    plan.unresolved.some(({ code }) => code === 'OUTREACH_DATE_CONFLICT'),
+    true,
+  );
+  assert.equal(
+    mutationFor(plan, 'companies', 'company-1')?.data.description,
+    undefined,
+  );
+  assert.equal(
+    mutationFor(plan, 'holdingObservations', 'holding-1')?.data.averagePrice,
+    undefined,
+  );
+  assert.equal(
+    mutationFor(plan, 'outreachActivities', 'activity-1')?.data.followUpTaskId,
+    undefined,
+  );
+});
+
+test('strong person identity anchors an otherwise ambiguous company name', () => {
+  const input = snapshot();
+  input.companies.push({ id: 'company-2', name: 'Acme Advisors' });
+  input.sourceRecords = [];
+  input.importReviewItems = [
+    {
+      id: 'review-person-anchor',
+      reviewStatus: 'pending',
+      sourceFile: 'people.csv',
+      sourceRow: 7,
+      rawData: JSON.stringify({
+        RIA: 'Acme Advisors',
+        'First Name': 'Alex',
+        'Last Name': 'Smith',
+        'Email 1': 'alex@acme.example',
+      }),
+    },
+  ];
+
+  const plan = buildCanonicalizationPlan(input);
+
+  assert.equal(
+    plan.unresolved.some(({ code }) => code === 'AMBIGUOUS_COMPANY'),
+    false,
+  );
+  assert.equal(
+    plan.mutations.some(
+      ({ objectPlural, id }) =>
+        objectPlural === 'companies' && id === 'company-2',
+    ),
+    false,
+  );
+});
+
+test('identical holdings from different products retain distinct identities', () => {
+  const input = snapshot();
+  const rawData = JSON.stringify({
+    'Filer Name': 'Acme Advisors',
+    'Shares Held': '100',
+    'Market Value': '5000',
+    'Source Date': '2026-06-30',
+  });
+  input.sourceRecords = [];
+  input.importReviewItems = [
+    {
+      id: 'holding-a',
+      companyId: 'company-1',
+      sourceFile: 'Product A.csv',
+      sourceRow: 1,
+      rawData,
+    },
+    {
+      id: 'holding-b',
+      companyId: 'company-1',
+      sourceFile: 'Product B.csv',
+      sourceRow: 1,
+      rawData,
+    },
+  ];
+  input.holdingObservations = [];
+
+  const holdings = buildCanonicalizationPlan(input).mutations.filter(
+    ({ objectPlural }) => objectPlural === 'holdingObservations',
+  );
+
+  assert.equal(holdings.length, 2);
+  assert.notEqual(holdings[0]?.id, holdings[1]?.id);
+});
+
+test('alternate LinkedIn links preserve existing secondary links', () => {
+  const input = snapshot();
+  input.people[0]!.linkedinLink = {
+    primaryLinkLabel: 'LinkedIn',
+    primaryLinkUrl: 'https://linkedin.com/in/current',
+    secondaryLinks: [{ label: 'Portfolio', url: 'https://example.com/alex' }],
+  };
+
+  const person = mutationFor(
+    buildCanonicalizationPlan(input),
+    'people',
+    'person-1',
+  );
+  const links = person?.data.linkedinLink as {
+    primaryLinkUrl: string;
+    secondaryLinks: Array<{ label: string; url: string }>;
+  };
+
+  assert.equal(links.primaryLinkUrl, 'https://linkedin.com/in/current');
+  assert.deepEqual(links.secondaryLinks, [
+    { label: 'Portfolio', url: 'https://example.com/alex' },
+    { label: 'LinkedIn', url: 'https://linkedin.com/in/alex' },
+  ]);
+});
+
+test('trusted manifest comparison rejects a changed fresh snapshot', () => {
+  const report = buildReconciliationReport(snapshot());
+  const manifest = createReconciliationManifest(report);
+
+  assert.doesNotThrow(() => assertReconciliationManifest(report, manifest));
+  assert.throws(
+    () =>
+      assertReconciliationManifest(
+        { ...report, businessContentHash: '0'.repeat(64) },
+        manifest,
+      ),
+    /manifest/i,
+  );
 });

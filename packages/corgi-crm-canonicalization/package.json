@@ -4,5 +4,8 @@
   "type": "module",
   "engines": {
     "node": ">=24.5.0"
+  },
+  "dependencies": {
+    "libphonenumber-js": "^1.11.5"
   }
 }
