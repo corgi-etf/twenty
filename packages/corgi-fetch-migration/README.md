@@ -53,6 +53,10 @@ TWENTY_API_KEY            Twenty Admin API key (bootstrap/apply/verify/rollback)
 Keep the same HMAC key for every plan of this source. Changing it intentionally
 marks every source row as changed.
 
+Every record HMAC also includes the global transform-contract version. Bump that
+version whenever a schema mapping, normalization rule, or output payload changes;
+otherwise an unchanged source row could incorrectly skip the new transform.
+
 ## Runbook
 
 Choose an encrypted state directory outside the checkout and take a destination
@@ -72,7 +76,7 @@ yarn nx run corgi-fetch-migration:apply \
   --args="--plan $CORGI_MIGRATION_STATE_DIR/plan.json --manifest-out $CORGI_MIGRATION_STATE_DIR/rollback.json --confirm APPLY_FETCH_MIGRATION"
 
 yarn nx run corgi-fetch-migration:verify \
-  --args="--plan $CORGI_MIGRATION_STATE_DIR/plan.json"
+  --args="--plan $CORGI_MIGRATION_STATE_DIR/plan.json --manifest $CORGI_MIGRATION_STATE_DIR/rollback.json"
 ```
 
 The apply command never bootstraps schema implicitly. This keeps both mutations

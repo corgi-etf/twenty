@@ -10,6 +10,7 @@ import {
   sourceRowHmac,
 } from '../src/integrity.ts';
 import { buildPlan, type MinimalSnapshot } from '../src/planner.ts';
+import { migrationSourceHmac } from '../src/transform-contract.ts';
 
 test('deterministicId returns a stable RFC 4122 version 5 UUID per source key', () => {
   const id = deterministicId('company', 'legacy-123');
@@ -27,6 +28,15 @@ test('canonicalJson and HMAC are insensitive to object key ordering', () => {
   assert.equal(
     sourceRowHmac({ b: 2, a: 1 }, 'test-key'),
     sourceRowHmac({ a: 1, b: 2 }, 'test-key'),
+  );
+});
+
+test('migration source HMAC changes when only the transform contract changes', () => {
+  const sourceRow = { id: 'source-1', name: 'Same source row' };
+
+  assert.notEqual(
+    migrationSourceHmac(sourceRow, 'key', 'transform-v1'),
+    migrationSourceHmac(sourceRow, 'key', 'transform-v2'),
   );
 });
 

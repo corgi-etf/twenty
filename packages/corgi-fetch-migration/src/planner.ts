@@ -1,5 +1,5 @@
 import { deterministicId } from './deterministic-id.ts';
-import { sourceRowHmac } from './integrity.ts';
+import { migrationSourceHmac } from './transform-contract.ts';
 
 export type SourceCompany = {
   id: string;
@@ -339,7 +339,7 @@ const provenance = (
   id: deterministicId(kind, sourceId),
   legacyFetchId: sourceId,
   migrationRunId,
-  sourceRowHmac: sourceRowHmac(sourceProjection, hmacKey),
+  sourceRowHmac: migrationSourceHmac(sourceProjection, hmacKey),
   ...('created_at' in row ? { sourceCreatedAt: row.created_at ?? null } : {}),
   ...('updated_at' in row ? { sourceUpdatedAt: row.updated_at ?? null } : {}),
 });

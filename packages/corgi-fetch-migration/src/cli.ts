@@ -239,8 +239,15 @@ const main = async () => {
     return;
   }
   if (command === 'verify') {
+    const manifestPath = option('--manifest');
     process.stdout.write(
-      `${JSON.stringify(await verifyPlan(plan, client()))}\n`,
+      `${JSON.stringify(
+        await verifyPlan(
+          plan,
+          client(),
+          manifestPath ? await readManifest(manifestPath) : undefined,
+        ),
+      )}\n`,
     );
     return;
   }

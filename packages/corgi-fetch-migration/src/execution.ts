@@ -160,7 +160,10 @@ export const applyPlan = async (
       const currentWasCreatedByRun =
         current?.migrationRunId === plan.migrationRunId;
 
-      if (current?.sourceRowHmac === record.payload.sourceRowHmac) {
+      if (
+        current?.sourceRowHmac === record.payload.sourceRowHmac &&
+        currentWasCreatedByRun
+      ) {
         if (previousMutation) {
           mutations.push(structuredClone(previousMutation));
           previousMutations.delete(mutationKey);
@@ -271,8 +274,31 @@ export const applyPlan = async (
 export const verifyPlan = async (
   plan: FrozenMigrationPlan,
   api: MigrationApi,
+  manifest?: RollbackManifest,
 ): Promise<{ verified: number }> => {
   assertPlanIntegrity(plan);
+
+  const manifestMutations = new Map<string, ManifestMutation>();
+  if (manifest) {
+    assertManifestIntegrity(manifest);
+    if (manifest.status !== 'complete') {
+      throw new Error('Cannot verify with an incomplete migration manifest');
+    }
+    if (
+      manifest.planHash !== plan.planHash ||
+      manifest.migrationRunId !== plan.migrationRunId
+    ) {
+      throw new Error(
+        'Verification manifest does not match the migration plan',
+      );
+    }
+    for (const mutation of manifest.mutations) {
+      manifestMutations.set(
+        `${mutation.objectPlural}:${mutation.id}`,
+        mutation,
+      );
+    }
+  }
 
   for (const objectPlural of new Set(
     plan.records.map((record) => record.objectPlural),
@@ -288,13 +314,38 @@ export const verifyPlan = async (
       if (
         !current ||
         current.legacyFetchId !== record.payload.legacyFetchId ||
+        current.migrationRunId !== plan.migrationRunId ||
         current.sourceRowHmac !== record.payload.sourceRowHmac
       ) {
         throw new Error(
           `Migration verification failed for ${record.objectPlural}/${record.targetId}`,
         );
       }
+
+      if (manifest) {
+        const mutation = manifestMutations.get(
+          `${record.objectPlural}:${record.targetId}`,
+        );
+        if (!mutation) {
+          throw new Error(
+            `Migration manifest omitted ${record.objectPlural}/${record.targetId}`,
+          );
+        }
+        const projection = Object.fromEntries(
+          mutation.guardedFields.map((key) => [key, current[key] ?? null]),
+        );
+        if (contentHash(projection) !== mutation.appliedPayloadHash) {
+          throw new Error(
+            `Migration payload verification failed for ${record.objectPlural}/${record.targetId}`,
+          );
+        }
+        manifestMutations.delete(`${record.objectPlural}:${record.targetId}`);
+      }
     }
+  }
+
+  if (manifestMutations.size > 0) {
+    throw new Error('Migration manifest contains records outside the plan');
   }
 
   return { verified: plan.records.length };

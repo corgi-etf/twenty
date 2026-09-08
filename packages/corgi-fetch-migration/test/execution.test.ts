@@ -10,6 +10,7 @@ import {
   type MigrationApi,
 } from '../src/execution.ts';
 import { sealPlan } from '../src/integrity.ts';
+import { migrationSourceHmac } from '../src/transform-contract.ts';
 
 class FakeApi implements MigrationApi {
   records = new Map<string, ExistingRecord>();
@@ -244,6 +245,71 @@ test('verify compares both external identity and row HMAC', async () => {
 
   api.records.get('companies:id-1')!.sourceRowHmac = 'drifted';
   await assert.rejects(() => verifyPlan(plan, api), /verification.*id-1/i);
+});
+
+test('transform-only changes are reapplied when the contract version changes', async () => {
+  const api = new FakeApi();
+  const sourceRow = { id: 'source-0', name: 'Unchanged source' };
+  const makeVersionedPlan = (
+    transformVersion: string,
+    transformedName: string,
+  ): FrozenMigrationPlan => {
+    const body = {
+      formatVersion: 1 as const,
+      migrationRunId: 'run-1',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      records: [
+        {
+          objectPlural: 'companies',
+          sourceId: sourceRow.id,
+          targetId: 'id-0',
+          payload: {
+            id: 'id-0',
+            legacyFetchId: sourceRow.id,
+            migrationRunId: 'run-1',
+            sourceRowHmac: migrationSourceHmac(
+              sourceRow,
+              'key',
+              transformVersion,
+            ),
+            name: transformedName,
+          },
+        },
+      ],
+      warnings: [],
+      invitationPlan: [],
+    };
+
+    return sealPlan(body);
+  };
+
+  await applyPlan(makeVersionedPlan('transform-v1', 'Old transform'), api);
+  api.batches = [];
+  const manifest = await applyPlan(
+    makeVersionedPlan('transform-v2', 'New transform'),
+    api,
+  );
+
+  assert.equal(api.batches.length, 1);
+  assert.equal(api.records.get('companies:id-0')?.name, 'New transform');
+  assert.equal(manifest.mutations[0]?.action, 'created');
+});
+
+test('manifest-backed verify rejects migration ownership and payload drift', async () => {
+  const api = new FakeApi();
+  const plan = makePlan(1);
+  const manifest = await applyPlan(plan, api);
+  const record = api.records.get('companies:id-0')!;
+
+  record.name = 'edited after apply';
+  await assert.rejects(() => verifyPlan(plan, api, manifest), /payload.*id-0/i);
+
+  record.name = 'Company 0';
+  record.migrationRunId = 'some-other-run';
+  await assert.rejects(
+    () => verifyPlan(plan, api, manifest),
+    /verification.*id-0/i,
+  );
 });
 
 test('rollback reverses creations but refuses to overwrite post-migration changes', async () => {
