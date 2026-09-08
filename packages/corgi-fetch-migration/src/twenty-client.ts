@@ -7,8 +7,63 @@ export type TwentyClientTiming = {
   fallbackRateLimitWaitMs?: number;
 };
 
+type OpenApiSchema = {
+  type?: string;
+  $ref?: string;
+  oneOf?: OpenApiSchema[];
+  items?: OpenApiSchema;
+  properties?: Record<string, OpenApiSchema>;
+};
+
+type CoreOpenApiDocument = {
+  components?: { schemas?: Record<string, OpenApiSchema> };
+};
+
 import type { MetadataField, MetadataObject } from './schema-bootstrap.ts';
 import type { FieldDefinition, ObjectDefinition } from './schema.ts';
+
+const responseSchemaName = (objectName: string): string =>
+  `${objectName.charAt(0).toUpperCase()}${objectName.slice(1)}ForResponse`;
+
+const referencedSchemaName = (schema: OpenApiSchema): string | undefined => {
+  const reference =
+    schema.$ref ??
+    schema.items?.$ref ??
+    schema.oneOf?.find((candidate) => candidate.$ref)?.$ref;
+
+  return reference?.match(/^#\/components\/schemas\/(.+)$/)?.[1];
+};
+
+const projectRelationTargets = (
+  objects: MetadataObject[],
+  document: CoreOpenApiDocument,
+): void => {
+  const schemas = document.components?.schemas ?? {};
+  const objectIdByResponseSchema = new Map(
+    objects.map((object) => [
+      responseSchemaName(object.nameSingular),
+      object.id,
+    ]),
+  );
+
+  for (const object of objects) {
+    const properties =
+      schemas[responseSchemaName(object.nameSingular)]?.properties;
+
+    for (const field of object.fields ?? []) {
+      if (field.type !== 'RELATION' || field.relationTargetObjectMetadataId) {
+        continue;
+      }
+
+      const targetSchema = properties?.[field.name]
+        ? referencedSchemaName(properties[field.name])
+        : undefined;
+      field.relationTargetObjectMetadataId = targetSchema
+        ? objectIdByResponseSchema.get(targetSchema)
+        : undefined;
+    }
+  }
+};
 
 export class TwentyApiError extends Error {
   readonly status?: number;
@@ -290,6 +345,17 @@ export class TwentyClient {
         throw new Error('Twenty metadata pagination omitted endCursor');
       }
     } while (cursor);
+
+    if (
+      objects.some((object) =>
+        object.fields?.some(({ type }) => type === 'RELATION'),
+      )
+    ) {
+      const openApi = await this.request<CoreOpenApiDocument>(
+        '/rest/open-api/core',
+      );
+      projectRelationTargets(objects, openApi);
+    }
 
     return objects;
   }

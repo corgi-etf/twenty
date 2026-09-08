@@ -302,3 +302,79 @@ test('Twenty relation metadata payload includes the required target field icon',
     type: 'MANY_TO_ONE',
   });
 });
+
+test('Twenty metadata listing projects relation targets from core OpenAPI', async () => {
+  const requestedPaths: string[] = [];
+  const metadataFetch: typeof fetch = async (input) => {
+    const url = new URL(input.toString());
+    requestedPaths.push(url.pathname);
+
+    if (url.pathname === '/rest/metadata/objects') {
+      return Response.json({
+        data: [
+          {
+            id: 'company-id',
+            nameSingular: 'company',
+            namePlural: 'companies',
+            fields: [
+              {
+                id: 'owner-field-id',
+                name: 'historicalOwner',
+                type: 'RELATION',
+                isUnique: false,
+                settings: { relationType: 'MANY_TO_ONE' },
+              },
+            ],
+          },
+          {
+            id: 'wholesaler-id',
+            nameSingular: 'wholesaler',
+            namePlural: 'wholesalers',
+            fields: [],
+          },
+        ],
+        pageInfo: { hasNextPage: false, endCursor: null },
+      });
+    }
+
+    if (url.pathname === '/rest/open-api/core') {
+      return Response.json({
+        components: {
+          schemas: {
+            CompanyForResponse: {
+              properties: {
+                historicalOwner: {
+                  type: 'object',
+                  oneOf: [
+                    {
+                      $ref: '#/components/schemas/WholesalerForResponse',
+                    },
+                  ],
+                },
+              },
+            },
+          },
+        },
+      });
+    }
+
+    return new Response('not found', { status: 404 });
+  };
+  const client = new TwentyClient(
+    'https://crm.example',
+    'secret',
+    metadataFetch,
+    1,
+  );
+
+  const objects = await client.listMetadataObjects();
+
+  assert.deepEqual(requestedPaths, [
+    '/rest/metadata/objects',
+    '/rest/open-api/core',
+  ]);
+  assert.equal(
+    objects[0]?.fields?.[0]?.relationTargetObjectMetadataId,
+    'wholesaler-id',
+  );
+});

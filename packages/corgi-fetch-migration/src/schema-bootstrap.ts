@@ -4,7 +4,15 @@ import type {
   ObjectDefinition,
 } from './schema.ts';
 
-export type MetadataField = { id: string; name: string; type: string };
+export type MetadataField = {
+  id: string;
+  name: string;
+  type: string;
+  isUnique?: boolean;
+  options?: Array<Record<string, unknown>> | null;
+  settings?: { relationType?: string } | null;
+  relationTargetObjectMetadataId?: string | null;
+};
 export type MetadataObject = {
   id: string;
   nameSingular: string;
@@ -20,6 +28,68 @@ export type MetadataApi = {
     objectId: string,
     targetObjectId?: string,
   ): Promise<void>;
+};
+
+const normalizedOptions = (
+  options: Array<Record<string, unknown>> | null | undefined,
+): Array<Record<string, unknown>> =>
+  (options ?? [])
+    .map(({ id, value, label, position, color }) => ({
+      ...(id !== undefined ? { id } : {}),
+      ...(value !== undefined ? { value } : {}),
+      ...(label !== undefined ? { label } : {}),
+      ...(position !== undefined ? { position } : {}),
+      ...(color !== undefined ? { color } : {}),
+    }))
+    .sort((left, right) =>
+      JSON.stringify(left).localeCompare(JSON.stringify(right)),
+    );
+
+const assertFieldCompatible = (
+  definition: FieldDefinition,
+  existing: MetadataField,
+  objectsByName: ReadonlyMap<string, MetadataObject>,
+): void => {
+  const fieldName = `${definition.objectName}.${definition.name}`;
+
+  if (existing.type !== definition.type) {
+    throw new Error(
+      `Metadata collision: ${fieldName} is ${existing.type}, expected ${definition.type}`,
+    );
+  }
+
+  if (Boolean(existing.isUnique) !== Boolean(definition.isUnique)) {
+    throw new Error(
+      `Metadata collision: ${fieldName} isUnique=${Boolean(existing.isUnique)}, expected ${Boolean(definition.isUnique)}`,
+    );
+  }
+
+  if (
+    JSON.stringify(normalizedOptions(existing.options)) !==
+    JSON.stringify(normalizedOptions(definition.options))
+  ) {
+    throw new Error(`Metadata collision: ${fieldName} options differ`);
+  }
+
+  if (!definition.relation) return;
+
+  if (existing.settings?.relationType !== definition.relation.type) {
+    throw new Error(
+      `Metadata collision: ${fieldName} cardinality is ${existing.settings?.relationType ?? 'unknown'}, expected ${definition.relation.type}`,
+    );
+  }
+
+  const targetObject = objectsByName.get(definition.relation.targetObjectName);
+  if (!targetObject) {
+    throw new Error(
+      `Metadata relation target ${definition.relation.targetObjectName} does not exist`,
+    );
+  }
+  if (existing.relationTargetObjectMetadataId !== targetObject.id) {
+    throw new Error(
+      `Metadata collision: ${fieldName} target is ${existing.relationTargetObjectMetadataId ?? 'unknown'}, expected ${targetObject.id}`,
+    );
+  }
 };
 
 export const bootstrapSchema = async (
@@ -44,10 +114,8 @@ export const bootstrapSchema = async (
     const existingField = existingObject?.fields?.find(
       ({ name }) => name === definition.name,
     );
-    if (existingField && existingField.type !== definition.type) {
-      throw new Error(
-        `Metadata collision: ${definition.objectName}.${definition.name} is ${existingField.type}, expected ${definition.type}`,
-      );
+    if (existingField) {
+      assertFieldCompatible(definition, existingField, objectByName());
     }
   }
 
@@ -91,6 +159,12 @@ export const bootstrapSchema = async (
         id: `created:${definition.name}`,
         name: definition.name,
         type: definition.type,
+        isUnique: definition.isUnique ?? false,
+        options: definition.options ?? null,
+        settings: definition.relation
+          ? { relationType: definition.relation.type }
+          : null,
+        relationTargetObjectMetadataId: targetObjectId ?? null,
       },
     ];
     fieldsCreated += 1;
