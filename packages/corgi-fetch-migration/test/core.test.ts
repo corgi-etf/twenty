@@ -463,6 +463,73 @@ test('phone transform emits only validated US components and retains every raw v
   assert.equal(people.get('ambiguous')?.legacyPrimaryPhone, '555-0100');
 });
 
+test('link transform emits only absolute HTTP URLs and retains every raw value', () => {
+  const plan = buildPlan(
+    {
+      companies: [{ id: 'company', name: 'Company' }],
+      contacts: [
+        {
+          id: 'absolute',
+          company_id: 'company',
+          linkedin: 'https://linkedin.com/in/valid',
+        },
+        {
+          id: 'scheme-less',
+          company_id: 'company',
+          linkedin: 'www.linkedin.com/in/valid',
+        },
+        {
+          id: 'invalid-protocol',
+          company_id: 'company',
+          linkedin: 'javascript:alert(1)',
+        },
+        {
+          id: 'serialized-object',
+          company_id: 'company',
+          linkedin: '[object Object]',
+        },
+        {
+          id: 'object',
+          company_id: 'company',
+          linkedin: { url: 'https://linkedin.com/in/nested' },
+        },
+      ],
+    },
+    { migrationRunId: 'run', hmacKey: 'key' },
+  );
+  const people = new Map(
+    plan.records
+      .filter(({ objectPlural }) => objectPlural === 'people')
+      .map((record) => [record.sourceId, record.payload]),
+  );
+
+  assert.deepEqual(people.get('absolute')?.linkedinLink, {
+    primaryLinkLabel: 'LinkedIn',
+    primaryLinkUrl: 'https://linkedin.com/in/valid',
+    secondaryLinks: [],
+  });
+  assert.deepEqual(people.get('scheme-less')?.linkedinLink, {
+    primaryLinkLabel: 'LinkedIn',
+    primaryLinkUrl: 'https://www.linkedin.com/in/valid',
+    secondaryLinks: [],
+  });
+  assert.equal(people.get('invalid-protocol')?.linkedinLink, undefined);
+  assert.equal(people.get('serialized-object')?.linkedinLink, undefined);
+  assert.equal(people.get('object')?.linkedinLink, undefined);
+  assert.equal(
+    people.get('invalid-protocol')?.legacyLinkedInUrl,
+    'javascript:alert(1)',
+  );
+  assert.equal(
+    people.get('serialized-object')?.legacyLinkedInUrl,
+    '[object Object]',
+  );
+  assert.equal(
+    people.get('object')?.legacyLinkedInUrl,
+    '{"url":"https://linkedin.com/in/nested"}',
+  );
+});
+
 test('auth reconciliation invites only active matched users and reports identity gaps', () => {
   const plan = buildPlan(
     {

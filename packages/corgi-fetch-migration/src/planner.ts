@@ -31,7 +31,7 @@ export type SourceContact = {
   secondary_emails?: unknown;
   phone?: string | null;
   secondary_phones?: unknown;
-  linkedin?: string | null;
+  linkedin?: unknown;
   address?: string | null;
   city?: string | null;
   state_region?: string | null;
@@ -245,6 +245,39 @@ const sortById = <T extends { id: string }>(rows: readonly T[]): T[] =>
 
 const jsonText = (value: unknown): string | null =>
   value === undefined || value === null ? null : JSON.stringify(value);
+
+const legacyText = (value: unknown): string | null => {
+  if (value === undefined || value === null) return null;
+  if (typeof value === 'string') return value.trim() ? value : null;
+
+  return JSON.stringify(value) ?? String(value);
+};
+
+const normalizeAbsoluteHttpUrl = (rawUrl: unknown): string | null => {
+  if (typeof rawUrl !== 'string' || !rawUrl.trim()) return null;
+
+  const trimmedUrl = rawUrl.trim();
+  const candidate = /^(?:www\.)?linkedin\.com(?:[/?#]|$)/i.test(trimmedUrl)
+    ? `https://${trimmedUrl}`
+    : trimmedUrl;
+
+  try {
+    const parsedUrl = new URL(candidate);
+
+    if (
+      !['http:', 'https:'].includes(parsedUrl.protocol) ||
+      !parsedUrl.hostname ||
+      parsedUrl.username ||
+      parsedUrl.password
+    ) {
+      return null;
+    }
+
+    return parsedUrl.href;
+  } catch {
+    return null;
+  }
+};
 
 const normalizeUsPhone = (
   rawPhone: string,
@@ -493,6 +526,7 @@ export const buildPlan = (
       legacyEmail: email || null,
       jobTitle: row.title ?? null,
       legacyPrimaryPhone: row.phone?.trim() ? row.phone : null,
+      legacyLinkedInUrl: legacyText(row.linkedin),
       legacySecondaryEmails: jsonText(row.secondary_emails),
       legacySecondaryPhones: jsonText(row.secondary_phones),
       legacyAddress: row.address ?? null,
@@ -510,10 +544,12 @@ export const buildPlan = (
     const normalizedPhone = row.phone ? normalizeUsPhone(row.phone) : null;
 
     if (normalizedPhone) payload.phones = normalizedPhone;
-    if (row.linkedin?.trim()) {
+    const normalizedLinkedInUrl = normalizeAbsoluteHttpUrl(row.linkedin);
+
+    if (normalizedLinkedInUrl) {
       payload.linkedinLink = {
         primaryLinkLabel: 'LinkedIn',
-        primaryLinkUrl: row.linkedin.trim(),
+        primaryLinkUrl: normalizedLinkedInUrl,
         secondaryLinks: [],
       };
     }

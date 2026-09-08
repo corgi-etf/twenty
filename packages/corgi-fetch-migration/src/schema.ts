@@ -218,6 +218,7 @@ export const buildMigrationSchema = (
     }),
     field('person', 'legacyEmail', 'Legacy Email'),
     field('person', 'legacyPrimaryPhone', 'Legacy Primary Phone'),
+    field('person', 'legacyLinkedInUrl', 'Legacy LinkedIn URL'),
     field('person', 'legacySecondaryEmails', 'Legacy Secondary Emails'),
     field('person', 'legacySecondaryPhones', 'Legacy Secondary Phones'),
     field('person', 'legacyAddress', 'Legacy Address'),
