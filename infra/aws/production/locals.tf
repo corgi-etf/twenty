@@ -35,6 +35,7 @@ locals {
     { name = "STORAGE_S3_NAME", value = aws_s3_bucket.uploads.id },
     { name = "IS_MULTIWORKSPACE_ENABLED", value = "false" },
     { name = "IS_CONFIG_VARIABLES_IN_DB_ENABLED", value = "true" },
+    { name = "IS_EMAIL_VERIFICATION_REQUIRED", value = "true" },
     { name = "SIGN_IN_PREFILLED", value = "false" },
     { name = "IS_WORKSPACE_CREATION_LIMITED_TO_SERVER_ADMINS", value = "true" },
   ]

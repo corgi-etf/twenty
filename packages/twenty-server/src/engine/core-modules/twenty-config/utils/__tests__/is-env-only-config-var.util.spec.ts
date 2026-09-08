@@ -7,12 +7,10 @@ describe('isEnvOnlyConfigVar', () => {
     'EMAIL_FROM_ADDRESS',
     'EMAIL_FROM_NAME',
     'AWS_SES_REGION',
-  ])(
-    'keeps deployment-owned email setting %s out of database config',
-    (key) => {
-      expect(isEnvOnlyConfigVar(key)).toBe(true);
-    },
-  );
+    'IS_EMAIL_VERIFICATION_REQUIRED',
+  ])('keeps deployment-owned setting %s out of database config', (key) => {
+    expect(isEnvOnlyConfigVar(key)).toBe(true);
+  });
 
   it('keeps unrelated SMTP settings database-configurable', () => {
     expect(isEnvOnlyConfigVar('EMAIL_SMTP_HOST')).toBe(false);

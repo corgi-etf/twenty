@@ -30,6 +30,7 @@ env:
   PLATFORM_EMAIL_DRIVER: AWS_SES
   PLATFORM_EMAIL_FROM_ADDRESS: noreply@corgiinvest.com
   PLATFORM_EMAIL_FROM_NAME: Corgi CRM
+  EMAIL_VERIFICATION_REQUIRED: 'true'
   # The production database was bootstrapped with the official v2.38.1 image.
   # Never report an older application version from a fork commit whose nearest
   # reachable source tag predates that patch release.
@@ -352,16 +353,21 @@ jobs:
           DEPLOYMENT_COMPLETE=false
           ROLLBACK_RUNNING=false
           FORWARD_RECOVERY_REQUIRED=false
-          PLATFORM_EMAIL_ENVIRONMENT="$(jq -cn \
+          REQUIRED_DEPLOYMENT_ENVIRONMENT="$(jq -cn \
             --arg driver "${PLATFORM_EMAIL_DRIVER}" \
             --arg from_address "${PLATFORM_EMAIL_FROM_ADDRESS}" \
             --arg from_name "${PLATFORM_EMAIL_FROM_NAME}" \
             --arg region "${AWS_REGION}" \
+            --arg email_verification_required "${EMAIL_VERIFICATION_REQUIRED}" \
             '[
               {name: "AWS_SES_REGION", value: $region},
               {name: "EMAIL_DRIVER", value: $driver},
               {name: "EMAIL_FROM_ADDRESS", value: $from_address},
-              {name: "EMAIL_FROM_NAME", value: $from_name}
+              {name: "EMAIL_FROM_NAME", value: $from_name},
+              {
+                name: "IS_EMAIL_VERIFICATION_REQUIRED",
+                value: $email_verification_required
+              }
             ]')"
 
           service_task_definition() {
@@ -405,8 +411,8 @@ jobs:
             jq \
               --arg image "${IMAGE_REF}" \
               --arg name "${container_name}" \
-              --argjson platform_email_environment "${PLATFORM_EMAIL_ENVIRONMENT}" \
-              'def with_platform_email_environment($required):
+              --argjson required_environment "${REQUIRED_DEPLOYMENT_ENVIRONMENT}" \
+              'def with_required_environment($required):
                  ($required | map(.name)) as $required_names
                  | [(. // [])[]
                     | select(
@@ -417,8 +423,8 @@ jobs:
                | (.containerDefinitions[] | select(.name == $name) | .image) = $image
                | (.containerDefinitions[]
                   | select(.name == $name)
-                  | .environment) |= with_platform_email_environment(
-                    $platform_email_environment
+                  | .environment) |= with_required_environment(
+                    $required_environment
                   )
                | del(
                    .taskDefinitionArn,
@@ -436,7 +442,7 @@ jobs:
 
             jq -e \
               --arg name "${container_name}" \
-              --argjson required "${PLATFORM_EMAIL_ENVIRONMENT}" \
+              --argjson required "${REQUIRED_DEPLOYMENT_ENVIRONMENT}" \
               '(.containerDefinitions[] | select(.name == $name)) as $container
                | ($required | map(.name)) as $required_names
                | ($container.environment
@@ -447,12 +453,12 @@ jobs:
                   | sort_by(.name)) == ($required | sort_by(.name))' \
               "${payload}" >/dev/null
 
-            # Normalize the allowed image and email-environment changes while
+            # Normalize the allowed image and required-environment changes while
             # proving every other setting, secret, role, command, and tag stayed equal.
             jq \
               --arg name "${container_name}" \
-              --argjson platform_email_environment "${PLATFORM_EMAIL_ENVIRONMENT}" \
-              'def with_platform_email_environment($required):
+              --argjson required_environment "${REQUIRED_DEPLOYMENT_ENVIRONMENT}" \
+              'def with_required_environment($required):
                  ($required | map(.name)) as $required_names
                  | [(. // [])[]
                     | select(
@@ -463,8 +469,8 @@ jobs:
                | (.containerDefinitions[] | select(.name == $name) | .image) = "__IMAGE__"
                | (.containerDefinitions[]
                   | select(.name == $name)
-                  | .environment) |= with_platform_email_environment(
-                    $platform_email_environment
+                  | .environment) |= with_required_environment(
+                    $required_environment
                   )
                | del(
                    .taskDefinitionArn,
@@ -518,7 +524,7 @@ jobs:
               --task-definition "${expected_task_definition}" > "${task_definition_json}"
             jq -e \
               --arg name "${container_name}" \
-              --argjson required "${PLATFORM_EMAIL_ENVIRONMENT}" \
+              --argjson required "${REQUIRED_DEPLOYMENT_ENVIRONMENT}" \
               '(.taskDefinition.containerDefinitions[]
                 | select(.name == $name)) as $container
                | ($required | map(.name)) as $required_names
