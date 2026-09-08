@@ -324,11 +324,12 @@ const provenance = (
   sourceId: string,
   migrationRunId: string,
   hmacKey: string,
+  sourceProjection: unknown = row,
 ) => ({
   id: deterministicId(kind, sourceId),
   legacyFetchId: sourceId,
   migrationRunId,
-  sourceRowHmac: sourceRowHmac(row, hmacKey),
+  sourceRowHmac: sourceRowHmac(sourceProjection, hmacKey),
   ...('created_at' in row ? { sourceCreatedAt: row.created_at ?? null } : {}),
   ...('updated_at' in row ? { sourceUpdatedAt: row.updated_at ?? null } : {}),
 });
@@ -461,6 +462,11 @@ export const buildPlan = (
         row.id,
         options.migrationRunId,
         options.hmacKey,
+        {
+          company: row,
+          location: location ?? null,
+          tags: companyTagNames,
+        },
       ),
       name: row.name,
       normalizedName: row.normalized_name ?? null,

@@ -123,6 +123,41 @@ test('planning preserves duplicate companies and deterministically chooses email
   assert.deepEqual(reversed, plan);
 });
 
+test('company row HMAC includes location and tag projections that drive its payload', () => {
+  const baseSnapshot = {
+    companies: [{ id: 'company', name: 'Company' }],
+    contacts: [],
+    companyLocations: [
+      { company_id: 'company', latitude: 41.88, longitude: -87.63 },
+    ],
+    tags: [{ id: 'tag', name: 'RIA' }],
+    companyTags: [{ company_id: 'company', tag_id: 'tag' }],
+  };
+  const options = { migrationRunId: 'run', hmacKey: 'key' };
+  const companyHmac = (snapshot: typeof baseSnapshot) =>
+    buildPlan(snapshot, options).records.find(
+      ({ objectPlural }) => objectPlural === 'companies',
+    )?.payload.sourceRowHmac;
+
+  const original = companyHmac(baseSnapshot);
+  assert.notEqual(
+    companyHmac({
+      ...baseSnapshot,
+      companyLocations: [
+        { company_id: 'company', latitude: 34.05, longitude: -118.24 },
+      ],
+    }),
+    original,
+  );
+  assert.notEqual(
+    companyHmac({
+      ...baseSnapshot,
+      tags: [{ id: 'tag', name: 'Broker Dealer' }],
+    }),
+    original,
+  );
+});
+
 test('planning transforms every Fetch relationship into ordered Twenty records', () => {
   const plan = buildPlan(
     {
