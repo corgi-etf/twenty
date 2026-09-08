@@ -4,7 +4,9 @@ import { WHOLESALER_MAP_DATA_CONTRACT } from '@/wholesaler-map/constants/Wholesa
 
 type GetWholesalerMapAccessArgs = {
   canReadCompanyRecords: boolean;
+  canReadWholesalerRecords: boolean;
   readableCompanyFieldNames: string[];
+  readableWholesalerFieldNames: string[];
 };
 
 export type WholesalerMapAccess = {
@@ -22,9 +24,14 @@ export const getWholesalerMapAccess = (
     WHOLESALER_MAP_DATA_CONTRACT.companyAddressFieldName,
   ].every((fieldName) => readableFieldNames.has(fieldName));
   const canViewMap = args.canReadCompanyRecords && hasRequiredFields;
-  const hasWholesalerRelation = readableFieldNames.has(
-    WHOLESALER_MAP_DATA_CONTRACT.wholesalerRelationFieldName,
-  );
+  const hasWholesalerRelation =
+    readableFieldNames.has(
+      WHOLESALER_MAP_DATA_CONTRACT.wholesalerRelationFieldName,
+    ) &&
+    args.canReadWholesalerRecords &&
+    args.readableWholesalerFieldNames.includes(
+      WHOLESALER_MAP_DATA_CONTRACT.wholesalerNameFieldName,
+    );
 
   if (!canViewMap) {
     return {

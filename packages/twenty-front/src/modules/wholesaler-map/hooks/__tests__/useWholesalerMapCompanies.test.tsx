@@ -1,4 +1,4 @@
-import { renderHook, waitFor } from '@testing-library/react';
+import { act, renderHook, waitFor } from '@testing-library/react';
 
 import { WHOLESALER_MAP_DATA_CONTRACT } from '@/wholesaler-map/constants/WholesalerMapDataContract';
 import { useWholesalerMapCompanies } from '@/wholesaler-map/hooks/useWholesalerMapCompanies';
@@ -32,7 +32,7 @@ describe('useWholesalerMapCompanies', () => {
       records: [],
       loading: false,
       error: undefined,
-      hasNextPage: true,
+      hasNextPage: false,
       fetchMoreRecords: mockFetchMoreRecords,
       totalCount: 400,
     } as never);
@@ -55,6 +55,23 @@ describe('useWholesalerMapCompanies', () => {
   });
 
   it('loads the next page until the query reports completion', async () => {
+    let resolveFetchMore: ((value: { data: object }) => void) | undefined;
+
+    mockFetchMoreRecords.mockImplementationOnce(
+      () =>
+        new Promise<{ data: object }>((resolve) => {
+          resolveFetchMore = resolve;
+        }),
+    );
+    mockUseFindManyRecords.mockReturnValue({
+      records: [],
+      loading: false,
+      error: undefined,
+      hasNextPage: true,
+      fetchMoreRecords: mockFetchMoreRecords,
+      totalCount: 400,
+    } as never);
+
     const { rerender } = renderHook(() => useWholesalerMapCompanies());
 
     await waitFor(() => expect(mockFetchMoreRecords).toHaveBeenCalledTimes(1));
@@ -69,7 +86,46 @@ describe('useWholesalerMapCompanies', () => {
     } as never);
     rerender();
 
+    await act(async () => {
+      resolveFetchMore?.({ data: {} });
+    });
+
     await waitFor(() => expect(mockFetchMoreRecords).toHaveBeenCalledTimes(1));
+  });
+
+  it('stops auto-pagination and surfaces a second-page failure until retry', async () => {
+    const paginationError = new Error('Second page failed');
+
+    mockFetchMoreRecords
+      .mockRejectedValueOnce(paginationError)
+      .mockRejectedValueOnce(paginationError);
+
+    const mockRefetch = jest.fn().mockResolvedValue({ data: {} });
+
+    mockUseFindManyRecords.mockReturnValue({
+      records: [{ id: 'company-1' }],
+      loading: false,
+      error: undefined,
+      hasNextPage: true,
+      fetchMoreRecords: mockFetchMoreRecords,
+      refetch: mockRefetch,
+      totalCount: 400,
+    } as never);
+
+    const { result, rerender } = renderHook(() => useWholesalerMapCompanies());
+
+    await waitFor(() => expect(result.current.error).toBe(paginationError));
+
+    rerender();
+    expect(mockFetchMoreRecords).toHaveBeenCalledTimes(1);
+    expect(result.current.isLoadingAllCompanies).toBe(false);
+
+    await act(async () => {
+      await result.current.refetch();
+    });
+
+    expect(mockRefetch).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(mockFetchMoreRecords).toHaveBeenCalledTimes(2));
   });
 
   it('does not query or paginate without map read access', () => {
@@ -86,5 +142,31 @@ describe('useWholesalerMapCompanies', () => {
       expect.objectContaining({ skip: true }),
     );
     expect(mockFetchMoreRecords).not.toHaveBeenCalled();
+  });
+
+  it('queries Companies without owner fields when Wholesaler reads are restricted', () => {
+    mockUseWholesalerMapAccess.mockReturnValue({
+      canViewMap: true,
+      hasWholesalerRelation: false,
+      recordGqlFields: {
+        id: true,
+        name: true,
+        address: true,
+      },
+      objectMetadataItem: { id: 'company-metadata-id' } as never,
+    });
+
+    renderHook(() => useWholesalerMapCompanies());
+
+    expect(mockUseFindManyRecords).toHaveBeenCalledWith(
+      expect.objectContaining({
+        recordGqlFields: {
+          id: true,
+          name: true,
+          address: true,
+        },
+        skip: false,
+      }),
+    );
   });
 });

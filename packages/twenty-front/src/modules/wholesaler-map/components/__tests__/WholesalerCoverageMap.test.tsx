@@ -1,6 +1,6 @@
 import { i18n } from '@lingui/core';
 import { I18nProvider } from '@lingui/react';
-import { render, screen } from '@testing-library/react';
+import { act, render, screen } from '@testing-library/react';
 
 import { WholesalerCoverageMap } from '@/wholesaler-map/components/WholesalerCoverageMap';
 
@@ -31,6 +31,19 @@ const mockOn = jest.fn(
     }
   },
 );
+const mockOff = jest.fn(
+  (
+    eventName: string,
+    layerOrHandler: string | ((...args: never[]) => void),
+  ) => {
+    const eventKey =
+      typeof layerOrHandler === 'string'
+        ? `${eventName}:${layerOrHandler}`
+        : eventName;
+
+    mapEventHandlers.delete(eventKey);
+  },
+);
 const mockMap = {
   addControl: mockAddControl,
   addLayer: mockAddLayer,
@@ -39,6 +52,7 @@ const mockMap = {
   getCanvas: mockGetCanvas,
   getSource: mockGetSource,
   on: mockOn,
+  off: mockOff,
   remove: mockRemove,
 };
 
@@ -87,13 +101,20 @@ describe('WholesalerCoverageMap', () => {
     mapEventHandlers.clear();
   });
 
-  it('renders one clustered GeoJSON source and accessible map canvas', () => {
+  it('exposes readiness only after the source and layers are initialized', () => {
     renderMap();
 
-    mapEventHandlers.get('load')?.();
+    expect(
+      screen.queryByTestId('wholesaler-coverage-map-ready'),
+    ).not.toBeInTheDocument();
+
+    act(() => mapEventHandlers.get('load')?.());
 
     expect(
       screen.getByRole('img', { name: /lead coverage by wholesaler/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByTestId('wholesaler-coverage-map-ready'),
     ).toBeInTheDocument();
     expect(mockAddSource).toHaveBeenCalledWith('wholesaler-leads', {
       type: 'geojson',
@@ -114,11 +135,36 @@ describe('WholesalerCoverageMap', () => {
     const onCompanySelect = jest.fn();
 
     renderMap(onCompanySelect);
-    mapEventHandlers.get('load')?.();
+    act(() => mapEventHandlers.get('load')?.());
     mapEventHandlers.get('click:unclustered-leads')?.({
       features: [{ properties: { companyId: 'company-1' } }],
     } as never);
 
     expect(onCompanySelect).toHaveBeenCalledWith('company-1');
+  });
+
+  it('surfaces asynchronous MapLibre errors and removes every listener', () => {
+    const { unmount } = renderMap();
+
+    act(() => mapEventHandlers.get('load')?.());
+    act(() => mapEventHandlers.get('error')?.());
+
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      'The interactive map could not load',
+    );
+    expect(
+      screen.queryByTestId('wholesaler-coverage-map-ready'),
+    ).not.toBeInTheDocument();
+
+    unmount();
+
+    expect(mockOff).toHaveBeenCalledWith('load', expect.any(Function));
+    expect(mockOff).toHaveBeenCalledWith('error', expect.any(Function));
+    expect(mockOff).toHaveBeenCalledWith(
+      'click',
+      'unclustered-leads',
+      expect.any(Function),
+    );
+    expect(mockRemove).toHaveBeenCalledTimes(1);
   });
 });

@@ -6,6 +6,7 @@ export const WHOLESALER_MAP_DATA_CONTRACT = {
   companyAddressFieldName: 'address',
   wholesalerRelationFieldName: 'historicalOwner',
   wholesalerObjectNameSingular: 'wholesaler',
+  wholesalerNameFieldName: 'name',
   pageSize: 200,
   styleUrl: 'https://tiles.openfreemap.org/styles/liberty',
 } as const;

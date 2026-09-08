@@ -33,6 +33,12 @@ const StyledMapContainer = styled.div`
   }
 `;
 
+const StyledMapCanvas = styled.div`
+  height: 100%;
+  min-height: 360px;
+  width: 100%;
+`;
+
 const StyledMapError = styled.div`
   align-items: center;
   background: ${themeCssVariables.background.secondary};
@@ -67,11 +73,15 @@ export const WholesalerCoverageMap = ({
   // oxlint-disable-next-line twenty/no-state-useref
   const onCompanySelectRef = useRef(onCompanySelect);
   const [hasMapError, setHasMapError] = useState(false);
+  const [isMapReady, setIsMapReady] = useState(false);
 
   featureCollectionRef.current = featureCollection;
   onCompanySelectRef.current = onCompanySelect;
 
   useEffect(() => {
+    isMapReadyRef.current = false;
+    setIsMapReady(false);
+
     if (containerRef.current === null || mapRef.current !== null) {
       return;
     }
@@ -100,79 +110,88 @@ export const WholesalerCoverageMap = ({
       }),
     );
 
-    map.on('load', () => {
-      map.addSource(SOURCE_ID, {
-        type: 'geojson',
-        data: featureCollectionRef.current,
-        cluster: true,
-        clusterMaxZoom: 14,
-        clusterRadius: 50,
-      });
-      map.addLayer({
-        id: CLUSTER_LAYER_ID,
-        type: 'circle',
-        source: SOURCE_ID,
-        filter: ['has', 'point_count'],
-        paint: {
-          'circle-color': [
-            'step',
-            ['get', 'point_count'],
-            theme.color.blue9,
-            100,
-            theme.color.green9,
-            750,
-            theme.color.orange9,
-          ],
-          'circle-radius': [
-            'step',
-            ['get', 'point_count'],
-            17,
-            100,
-            23,
-            750,
-            30,
-          ],
-          'circle-stroke-color': theme.font.color.inverted,
-          'circle-stroke-width': 1,
-        },
-      });
-      map.addLayer({
-        id: CLUSTER_COUNT_LAYER_ID,
-        type: 'symbol',
-        source: SOURCE_ID,
-        filter: ['has', 'point_count'],
-        layout: {
-          'text-field': ['get', 'point_count_abbreviated'],
-          'text-size': 12,
-        },
-        paint: {
-          'text-color': theme.font.color.inverted,
-        },
-      });
-      map.addLayer({
-        id: UNCLUSTERED_LAYER_ID,
-        type: 'circle',
-        source: SOURCE_ID,
-        filter: ['!', ['has', 'point_count']],
-        paint: {
-          'circle-color': ['get', 'ownerColor'],
-          'circle-opacity': 0.9,
-          'circle-radius': 6,
-          'circle-stroke-color': theme.font.color.inverted,
-          'circle-stroke-width': 1,
-        },
-      });
-      isMapReadyRef.current = true;
-    });
-
-    map.on('click', UNCLUSTERED_LAYER_ID, (event: MapLayerMouseEvent) => {
+    const handleMapError = () => {
+      isMapReadyRef.current = false;
+      setIsMapReady(false);
+      setHasMapError(true);
+    };
+    const handleLoad = () => {
+      try {
+        map.addSource(SOURCE_ID, {
+          type: 'geojson',
+          data: featureCollectionRef.current,
+          cluster: true,
+          clusterMaxZoom: 14,
+          clusterRadius: 50,
+        });
+        map.addLayer({
+          id: CLUSTER_LAYER_ID,
+          type: 'circle',
+          source: SOURCE_ID,
+          filter: ['has', 'point_count'],
+          paint: {
+            'circle-color': [
+              'step',
+              ['get', 'point_count'],
+              theme.color.blue9,
+              100,
+              theme.color.green9,
+              750,
+              theme.color.orange9,
+            ],
+            'circle-radius': [
+              'step',
+              ['get', 'point_count'],
+              17,
+              100,
+              23,
+              750,
+              30,
+            ],
+            'circle-stroke-color': theme.font.color.inverted,
+            'circle-stroke-width': 1,
+          },
+        });
+        map.addLayer({
+          id: CLUSTER_COUNT_LAYER_ID,
+          type: 'symbol',
+          source: SOURCE_ID,
+          filter: ['has', 'point_count'],
+          layout: {
+            'text-field': ['get', 'point_count_abbreviated'],
+            'text-size': 12,
+          },
+          paint: {
+            'text-color': theme.font.color.inverted,
+          },
+        });
+        map.addLayer({
+          id: UNCLUSTERED_LAYER_ID,
+          type: 'circle',
+          source: SOURCE_ID,
+          filter: ['!', ['has', 'point_count']],
+          paint: {
+            'circle-color': ['get', 'ownerColor'],
+            'circle-opacity': 0.9,
+            'circle-radius': 6,
+            'circle-stroke-color': theme.font.color.inverted,
+            'circle-stroke-width': 1,
+          },
+        });
+        isMapReadyRef.current = true;
+        setIsMapReady(true);
+      } catch {
+        handleMapError();
+      }
+    };
+    const handleUnclusteredClick = (event: MapLayerMouseEvent) => {
       const companyId = event.features?.[0]?.properties?.companyId;
 
       if (isNonEmptyString(companyId)) {
         onCompanySelectRef.current(companyId);
       }
-    });
-    map.on('click', CLUSTER_LAYER_ID, (event: MapLayerMouseEvent) => {
+    };
+    const handleClusterClick = (event: MapLayerMouseEvent) => {
       const clusterFeature = event.features?.[0];
       const clusterId = Number(clusterFeature?.properties?.cluster_id);
       const coordinates =
@@ -195,19 +214,33 @@ export const WholesalerCoverageMap = ({
           zoom,
         });
       });
-    });
+    };
+    const handleMouseEnter = () => {
+      map.getCanvas().style.cursor = 'pointer';
+    };
+    const handleMouseLeave = () => {
+      map.getCanvas().style.cursor = '';
+    };
 
+    map.on('load', handleLoad);
+    map.on('error', handleMapError);
+    map.on('click', UNCLUSTERED_LAYER_ID, handleUnclusteredClick);
+    map.on('click', CLUSTER_LAYER_ID, handleClusterClick);
     for (const layerId of [CLUSTER_LAYER_ID, UNCLUSTERED_LAYER_ID]) {
-      map.on('mouseenter', layerId, () => {
-        map.getCanvas().style.cursor = 'pointer';
-      });
-      map.on('mouseleave', layerId, () => {
-        map.getCanvas().style.cursor = '';
-      });
+      map.on('mouseenter', layerId, handleMouseEnter);
+      map.on('mouseleave', layerId, handleMouseLeave);
     }
 
     return () => {
       isMapReadyRef.current = false;
+      map.off('load', handleLoad);
+      map.off('error', handleMapError);
+      map.off('click', UNCLUSTERED_LAYER_ID, handleUnclusteredClick);
+      map.off('click', CLUSTER_LAYER_ID, handleClusterClick);
+      for (const layerId of [CLUSTER_LAYER_ID, UNCLUSTERED_LAYER_ID]) {
+        map.off('mouseenter', layerId, handleMouseEnter);
+        map.off('mouseleave', layerId, handleMouseLeave);
+      }
       map.remove();
       mapRef.current = null;
     };
@@ -237,8 +270,12 @@ export const WholesalerCoverageMap = ({
     <StyledMapContainer
       aria-label={t`Lead coverage by wholesaler. The adjacent list contains the same companies.`}
       data-testid="wholesaler-coverage-map"
-      ref={containerRef}
       role="img"
-    />
+    >
+      <StyledMapCanvas
+        data-testid={isMapReady ? 'wholesaler-coverage-map-ready' : undefined}
+        ref={containerRef}
+      />
+    </StyledMapContainer>
   );
 };
