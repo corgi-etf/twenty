@@ -1,5 +1,5 @@
-import { createHash } from 'node:crypto';
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { createHash, randomUUID } from 'node:crypto';
+import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 
 import {
@@ -385,15 +385,23 @@ export const createTwentyRestCanonicalizationApi = ({
 
     async writeCheckpoint(checkpoint) {
       assertCheckpoint(checkpoint);
-      const temporaryPath = `${checkpointFilePath}.tmp`;
+      const temporaryPath = `${checkpointFilePath}.tmp-${randomUUID()}`;
       const payload = JSON.stringify(
         { sha256: checkpointHash(checkpoint), checkpoint },
         null,
         2,
       );
       await mkdir(dirname(checkpointFilePath), { recursive: true });
-      await writeFile(temporaryPath, `${payload}\n`, 'utf8');
-      await rename(temporaryPath, checkpointFilePath);
+      try {
+        await writeFile(temporaryPath, `${payload}\n`, {
+          encoding: 'utf8',
+          flag: 'wx',
+        });
+        await rename(temporaryPath, checkpointFilePath);
+      } catch (error) {
+        await unlink(temporaryPath).catch(() => undefined);
+        throw error;
+      }
     },
   };
 };
