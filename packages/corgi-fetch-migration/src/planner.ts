@@ -27,7 +27,7 @@ export type SourceContact = {
   first_name?: string | null;
   last_name?: string | null;
   title?: string | null;
-  email?: string | null;
+  email?: unknown;
   secondary_emails?: unknown;
   phone?: string | null;
   secondary_phones?: unknown;
@@ -253,6 +253,16 @@ const legacyText = (value: unknown): string | null => {
   return JSON.stringify(value) ?? String(value);
 };
 
+const normalizeEmail = (rawEmail: unknown): string | null => {
+  if (typeof rawEmail !== 'string') return null;
+
+  const email = rawEmail.trim().toLowerCase();
+
+  return email.length <= 255 && /^[^\s@"]{1,64}@[^\s@]{1,255}$/u.test(email)
+    ? email
+    : null;
+};
+
 const normalizeAbsoluteHttpUrl = (rawUrl: unknown): string | null => {
   if (typeof rawUrl !== 'string' || !rawUrl.trim()) return null;
 
@@ -399,7 +409,7 @@ export const buildPlan = (
   recordCollisions(
     'PERSON_EMAIL_COLLISION',
     contacts,
-    (row) => (row as SourceContact).email ?? '',
+    (row) => normalizeEmail((row as SourceContact).email) ?? '',
   );
 
   const canonicalIdByValue = <T extends { id: string }>(
@@ -441,7 +451,7 @@ export const buildPlan = (
   );
   const emailHolder = canonicalIdByValue(
     contactsByCanonicalPriority,
-    (row) => row.email?.trim().toLowerCase() ?? '',
+    (row) => normalizeEmail(row.email) ?? '',
   );
 
   const companyRecords: PlannedRecord[] = companies.map((row) => {
@@ -515,7 +525,7 @@ export const buildPlan = (
     };
   });
   const peopleRecords: PlannedRecord[] = contacts.map((row) => {
-    const email = row.email?.trim().toLowerCase() ?? '';
+    const email = normalizeEmail(row.email) ?? '';
     const payload: Record<string, unknown> = {
       ...provenance(
         row,
@@ -529,7 +539,7 @@ export const buildPlan = (
         lastName: row.last_name ?? '',
       },
       companyId: deterministicId('company', row.company_id),
-      legacyEmail: email || null,
+      legacyEmail: legacyText(row.email),
       jobTitle: row.title ?? null,
       legacyPrimaryPhone: row.phone?.trim() ? row.phone : null,
       legacyLinkedInUrl: legacyText(row.linkedin),
@@ -545,7 +555,7 @@ export const buildPlan = (
     };
 
     if (email && emailHolder.get(email) === row.id) {
-      payload.emails = { primaryEmail: email, additionalEmails: [] };
+      payload.emails = { primaryEmail: email, additionalEmails: null };
     }
     const normalizedPhone = row.phone ? normalizeUsPhone(row.phone) : null;
 

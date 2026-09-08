@@ -103,10 +103,10 @@ test('planning preserves duplicate companies and deterministically chooses email
   assert.equal(companies[1]!.payload.domainName, undefined);
   assert.deepEqual(people[0]!.payload.emails, {
     primaryEmail: 'same@example.com',
-    additionalEmails: [],
+    additionalEmails: null,
   });
   assert.equal(people[1]!.payload.emails, undefined);
-  assert.equal(people[1]!.payload.legacyEmail, 'same@example.com');
+  assert.equal(people[1]!.payload.legacyEmail, 'SAME@example.com');
   assert.deepEqual(plan.warnings.map(({ code }) => code).sort(), [
     'COMPANY_DOMAIN_COLLISION',
     'COMPANY_NAME_COLLISION',
@@ -434,8 +434,62 @@ test('duplicate email canonical holder prefers primary and richer contacts befor
     people.find(({ sourceId }) => sourceId === 'z')!.payload.emails,
     {
       primaryEmail: 'same@example.com',
-      additionalEmails: [],
+      additionalEmails: null,
     },
+  );
+});
+
+test('email transform emits the Twenty composite only for validated scalar values', () => {
+  const longLocalPart = 'a'.repeat(65);
+  const plan = buildPlan(
+    {
+      companies: [{ id: 'company', name: 'Company' }],
+      contacts: [
+        {
+          id: 'valid',
+          company_id: 'company',
+          email: '  Valid.Person+tag@Example.COM  ',
+        },
+        {
+          id: 'serialized-object',
+          company_id: 'company',
+          email: '[object object]',
+        },
+        {
+          id: 'object',
+          company_id: 'company',
+          email: { address: 'nested@example.com' },
+        },
+        {
+          id: 'too-long-local-part',
+          company_id: 'company',
+          email: `${longLocalPart}@example.com`,
+        },
+      ],
+    },
+    { migrationRunId: 'run', hmacKey: 'key' },
+  );
+  const people = new Map(
+    plan.records
+      .filter(({ objectPlural }) => objectPlural === 'people')
+      .map((record) => [record.sourceId, record.payload]),
+  );
+
+  assert.deepEqual(people.get('valid')?.emails, {
+    primaryEmail: 'valid.person+tag@example.com',
+    additionalEmails: null,
+  });
+  assert.equal(people.get('serialized-object')?.emails, undefined);
+  assert.equal(people.get('object')?.emails, undefined);
+  assert.equal(people.get('too-long-local-part')?.emails, undefined);
+  assert.equal(
+    people.get('valid')?.legacyEmail,
+    '  Valid.Person+tag@Example.COM  ',
+  );
+  assert.equal(people.get('serialized-object')?.legacyEmail, '[object object]');
+  assert.equal(
+    people.get('object')?.legacyEmail,
+    '{"address":"nested@example.com"}',
   );
 });
 
