@@ -102,13 +102,29 @@ export const canonicalRowKey = (row: SourceLocatedRow): string =>
         typeof row.sourceSheet === 'string'
           ? row.sourceSheet.normalize('NFC').trim()
           : null,
-      sourceRow:
-        typeof row.sourceRow === 'number' || typeof row.sourceRow === 'string'
-          ? Number.parseInt(String(row.sourceRow), 10)
-          : null,
+      sourceRow: normalizeSourceRow(row.sourceRow),
       contentKey: canonicalContentKey(row.rawData),
     }),
   );
+
+const normalizeSourceRow = (sourceRow: unknown): number | null => {
+  if (sourceRow === null || sourceRow === undefined || sourceRow === '') {
+    return null;
+  }
+  if (
+    (typeof sourceRow !== 'number' && typeof sourceRow !== 'string') ||
+    (typeof sourceRow === 'string' && !/^-?\d+$/.test(sourceRow.trim()))
+  ) {
+    throw new Error('CRM sourceRow must be a safe integer');
+  }
+
+  const numericSourceRow = Number(sourceRow);
+  if (!Number.isSafeInteger(numericSourceRow)) {
+    throw new Error('CRM sourceRow must be a safe integer');
+  }
+
+  return numericSourceRow;
+};
 
 export const normalizeEmail = (rawEmail: unknown): string | null => {
   if (typeof rawEmail !== 'string') return null;

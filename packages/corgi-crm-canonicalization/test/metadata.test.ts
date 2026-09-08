@@ -97,7 +97,19 @@ test('metadata plan renames useful fields and creates explicit business fields',
   assert.ok(
     plan.creates.some(
       ({ objectName, name }) =>
+        objectName === 'company' && name === 'websiteNotes',
+    ),
+  );
+  assert.ok(
+    plan.creates.some(
+      ({ objectName, name }) =>
         objectName === 'holdingObservation' && name === 'averagePrice',
+    ),
+  );
+  assert.ok(
+    plan.creates.some(
+      ({ objectName, name }) =>
+        objectName === 'holdingObservation' && name === 'form13f',
     ),
   );
   assert.ok(
@@ -176,4 +188,26 @@ test('metadata planning is idempotent after fields are neutralized', () => {
   }
 
   assert.deepEqual(buildMetadataPlan(objects), { renames: [], creates: [] });
+});
+
+test('live REST relation settings are recognized on interrupted reruns', () => {
+  const objects = metadata();
+  objects
+    .find(({ nameSingular }) => nameSingular === 'task')
+    ?.fields.push({
+      id: 'task-wholesaler',
+      name: 'wholesaler',
+      label: 'Wholesaler',
+      type: 'RELATION',
+      settings: { relationTargetObjectMetadataId: 'wholesaler-object' },
+    });
+
+  const plan = buildMetadataPlan(objects);
+
+  assert.equal(
+    plan.creates.some(
+      ({ objectName, name }) => objectName === 'task' && name === 'wholesaler',
+    ),
+    false,
+  );
 });

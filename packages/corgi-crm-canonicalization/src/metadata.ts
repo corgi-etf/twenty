@@ -4,6 +4,7 @@ export type MetadataField = {
   label: string;
   type: string;
   relationTargetObjectMetadataId?: string | null;
+  settings?: { relationTargetObjectMetadataId?: string | null } | null;
 };
 
 export type MetadataObject = {
@@ -127,7 +128,7 @@ const CREATE_DEFINITIONS: readonly FieldDefinition[] = [
     ['description', 'Description'],
     ['region', 'Region'],
     ['firmPhone', 'Firm Phone'],
-    ['unformattedWebsite', 'Website (Unformatted)'],
+    ['websiteNotes', 'Website Notes'],
     ['assetsUnderManagement', 'Assets Under Management'],
     ['brokerDealerRepresentatives', 'Broker-Dealer Representatives'],
     ['investmentAdviserRepresentatives', 'Investment Adviser Representatives'],
@@ -170,6 +171,7 @@ const CREATE_DEFINITIONS: readonly FieldDefinition[] = [
     ['hobbies', 'Hobbies'],
     ['militaryService', 'Military Service'],
     ['school', 'School'],
+    ['sportsTeams', 'Sports Teams'],
     ['services', 'Services'],
     ['otherContactDetails', 'Other Contact Details'],
   ]),
@@ -184,6 +186,9 @@ const CREATE_DEFINITIONS: readonly FieldDefinition[] = [
     ['previousRanking', 'Previous Ranking', 'NUMBER'],
     ['filerIrsNumber', 'Filer IRS Number'],
     ['addressLine2', 'Address Line 2'],
+    ['streetAddress', 'Street Address'],
+    ['filingType', 'Filing Type'],
+    ['form13f', 'Form 13F'],
   ]),
   {
     objectName: 'task',
@@ -219,7 +224,9 @@ const assertCompatible = (
   }
   if (
     expectedRelationTargetId !== undefined &&
-    field.relationTargetObjectMetadataId !== expectedRelationTargetId
+    (field.relationTargetObjectMetadataId ??
+      field.settings?.relationTargetObjectMetadataId) !==
+      expectedRelationTargetId
   ) {
     throw new Error(
       `${objectName}.${definition.name} points to an incompatible relation target`,

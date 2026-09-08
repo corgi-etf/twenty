@@ -104,6 +104,12 @@ test('row keys canonicalize source location without collapsing different rows', 
       rawData,
     }),
   );
+  for (const sourceRow of ['9abc', '9.5', '9e2', Number.MAX_SAFE_INTEGER + 1]) {
+    assert.throws(
+      () => canonicalRowKey({ sourceFile: 'leads.csv', sourceRow, rawData }),
+      /safe integer/,
+    );
+  }
 });
 
 test('normalizers accept canonical contacts and reject unstructured residuals', () => {
