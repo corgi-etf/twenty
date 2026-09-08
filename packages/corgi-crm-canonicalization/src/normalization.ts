@@ -8,6 +8,9 @@ type SourceLocatedRow = {
 };
 
 const normalizeForSerialization = (value: unknown): unknown => {
+  if (value === undefined) {
+    throw new Error('Cannot serialize undefined');
+  }
   if (Array.isArray(value)) {
     return value.map(normalizeForSerialization);
   }
@@ -31,19 +34,79 @@ export const stableStringify = (value: unknown): string =>
 const sha256 = (value: string): string =>
   createHash('sha256').update(value, 'utf8').digest('hex');
 
+export const parseRawData = (rawData: unknown): Record<string, unknown> => {
+  let parsed = rawData;
+
+  if (typeof rawData === 'string') {
+    try {
+      parsed = JSON.parse(rawData) as unknown;
+    } catch {
+      throw new Error('CRM row rawData must contain valid JSON');
+    }
+  }
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error('CRM row rawData must be a JSON object');
+  }
+
+  return parsed as Record<string, unknown>;
+};
+
+const normalizeSemanticValue = (value: unknown): unknown => {
+  if (typeof value === 'string') {
+    return value.normalize('NFC').replace(/\r\n?/g, '\n').trim();
+  }
+  if (Array.isArray(value)) return value.map(normalizeSemanticValue);
+  if (value !== null && typeof value === 'object') {
+    return canonicalizeRawObject(value as Record<string, unknown>);
+  }
+
+  return value;
+};
+
+const canonicalizeRawObject = (
+  rawData: Record<string, unknown>,
+): Record<string, unknown> => {
+  const entries = new Map<string, unknown>();
+
+  for (const [rawKey, rawValue] of Object.entries(rawData)) {
+    const key = normalizeKey(rawKey).normalize('NFC');
+    const value = normalizeSemanticValue(rawValue);
+    if (
+      entries.has(key) &&
+      stableStringify(entries.get(key)) !== stableStringify(value)
+    ) {
+      throw new Error(`Canonical rawData key collision for ${key}`);
+    }
+    entries.set(key, value);
+  }
+
+  return Object.fromEntries(
+    [...entries].sort(([left], [right]) => left.localeCompare(right)),
+  );
+};
+
+export const rawAuditKey = (rawData: unknown): string =>
+  sha256(typeof rawData === 'string' ? rawData : stableStringify(rawData));
+
 export const canonicalContentKey = (rawData: unknown): string =>
-  sha256(stableStringify(rawData));
+  sha256(stableStringify(canonicalizeRawObject(parseRawData(rawData))));
 
 export const canonicalRowKey = (row: SourceLocatedRow): string =>
   sha256(
     stableStringify({
-      sourceFile: typeof row.sourceFile === 'string' ? row.sourceFile : null,
-      sourceSheet: typeof row.sourceSheet === 'string' ? row.sourceSheet : null,
+      sourceFile:
+        typeof row.sourceFile === 'string'
+          ? row.sourceFile.normalize('NFC').trim()
+          : null,
+      sourceSheet:
+        typeof row.sourceSheet === 'string'
+          ? row.sourceSheet.normalize('NFC').trim()
+          : null,
       sourceRow:
         typeof row.sourceRow === 'number' || typeof row.sourceRow === 'string'
-          ? row.sourceRow
+          ? Number.parseInt(String(row.sourceRow), 10)
           : null,
-      rawData: row.rawData,
+      contentKey: canonicalContentKey(row.rawData),
     }),
   );
 
@@ -61,14 +124,19 @@ export type NormalizedPhone = {
   number: string;
   countryCode: 'US';
   callingCode: '+1';
+  extension: string | null;
 };
 
 export const normalizePhone = (rawPhone: unknown): NormalizedPhone | null => {
   if (typeof rawPhone !== 'string') return null;
 
-  const withoutExtension = rawPhone
-    .trim()
-    .replace(/[\s,;]*(?:(?:ext(?:ension)?\.?|x|#)\s*\d+)\s*$/i, '');
+  const trimmedPhone = rawPhone.trim();
+  const extensionMatch = trimmedPhone.match(
+    /[\s,;]*(?:(?:ext(?:ension)?\.?|x|#)\s*(\d+))\s*$/i,
+  );
+  const withoutExtension = extensionMatch
+    ? trimmedPhone.slice(0, extensionMatch.index).trim()
+    : trimmedPhone;
 
   if (!/^[+()\d.\s-]+$/.test(withoutExtension)) return null;
 
@@ -81,7 +149,12 @@ export const normalizePhone = (rawPhone: unknown): NormalizedPhone | null => {
 
   if (!/^[2-9]\d{2}[2-9]\d{6}$/.test(nationalNumber)) return null;
 
-  return { number: nationalNumber, countryCode: 'US', callingCode: '+1' };
+  return {
+    number: nationalNumber,
+    countryCode: 'US',
+    callingCode: '+1',
+    extension: extensionMatch?.[1] ?? null,
+  };
 };
 
 export const normalizeLinkedIn = (rawUrl: unknown): string | null => {
@@ -107,6 +180,9 @@ export const normalizeLinkedIn = (rawUrl: unknown): string | null => {
 
     parsedUrl.protocol = 'https:';
     parsedUrl.hostname = hostname;
+    parsedUrl.search = '';
+    parsedUrl.hash = '';
+    parsedUrl.pathname = parsedUrl.pathname.replace(/\/+$/, '');
 
     return parsedUrl.href.replace(/\/$/, '');
   } catch {
@@ -125,10 +201,13 @@ export const normalizeDomain = (rawWebsite: unknown): string | null => {
     );
 
     if (!['http:', 'https:'].includes(parsedUrl.protocol)) return null;
+    if (parsedUrl.username || parsedUrl.password) return null;
 
     const hostname = parsedUrl.hostname.toLowerCase().replace(/^www\./, '');
 
-    return hostname || null;
+    return hostname.includes('.') && /^[a-z0-9.-]+$/i.test(hostname)
+      ? hostname
+      : null;
   } catch {
     return null;
   }
@@ -148,11 +227,7 @@ export const textValue = (value: unknown): string | null => {
     return String(value);
   }
   if (Array.isArray(value)) {
-    const values = value
-      .map(textValue)
-      .filter((item): item is string => !!item);
-
-    return values.length > 0 ? values.join(', ') : null;
+    return value.length > 0 ? stableStringify(value) : null;
   }
 
   return stableStringify(value);

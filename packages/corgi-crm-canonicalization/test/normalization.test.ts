@@ -4,10 +4,14 @@ import { test } from 'node:test';
 import {
   canonicalContentKey,
   canonicalRowKey,
+  parseRawData,
+  rawAuditKey,
   normalizeEmail,
   normalizeLinkedIn,
+  normalizeDomain,
   normalizePhone,
   stableStringify,
+  textValue,
 } from '../src/normalization.ts';
 
 test('stable serialization and row keys ignore object insertion order', () => {
@@ -55,6 +59,53 @@ test('content keys collapse duplicate rows while row keys retain location', () =
   );
 });
 
+test('live TEXT raw data is parsed before semantic hashing', () => {
+  const left = '{"First Name":" Jos\u00e9 ","RIA":"Acme\\r\\nAdvisors"}';
+  const right = '{ "ria": "Acme\\nAdvisors", "first_name": "José" }';
+
+  assert.deepEqual(parseRawData(left), {
+    'First Name': ' José ',
+    RIA: 'Acme\r\nAdvisors',
+  });
+  assert.equal(canonicalContentKey(left), canonicalContentKey(right));
+  assert.notEqual(rawAuditKey(left), rawAuditKey(right));
+  assert.throws(() => parseRawData('[]'), /JSON object/);
+  assert.throws(() => parseRawData('not-json'), /valid JSON/);
+});
+
+test('row keys canonicalize source location without collapsing different rows', () => {
+  const rawData = '{"RIA":"Acme"}';
+
+  assert.equal(
+    canonicalRowKey({
+      sourceFile: ' leads.csv ',
+      sourceSheet: ' Sheet 1 ',
+      sourceRow: '009',
+      rawData,
+    }),
+    canonicalRowKey({
+      sourceFile: 'leads.csv',
+      sourceSheet: 'Sheet 1',
+      sourceRow: 9,
+      rawData,
+    }),
+  );
+  assert.notEqual(
+    canonicalRowKey({
+      sourceFile: 'leads.csv',
+      sourceSheet: 'Sheet 1',
+      sourceRow: 9,
+      rawData,
+    }),
+    canonicalRowKey({
+      sourceFile: 'leads.csv',
+      sourceSheet: 'Sheet 1',
+      sourceRow: 10,
+      rawData,
+    }),
+  );
+});
+
 test('normalizers accept canonical contacts and reject unstructured residuals', () => {
   assert.equal(normalizeEmail('  Person@Example.COM '), 'person@example.com');
   assert.equal(normalizeEmail('not an email'), null);
@@ -62,6 +113,7 @@ test('normalizers accept canonical contacts and reject unstructured residuals', 
     number: '3125550198',
     countryCode: 'US',
     callingCode: '+1',
+    extension: '55',
   });
   assert.equal(normalizePhone('call the office'), null);
   assert.equal(
@@ -69,4 +121,16 @@ test('normalizers accept canonical contacts and reject unstructured residuals', 
     'https://linkedin.com/in/example',
   );
   assert.equal(normalizeLinkedIn('example'), null);
+  assert.equal(
+    normalizeLinkedIn('https://www.linkedin.com/in/example/?trk=abc#bio'),
+    'https://linkedin.com/in/example',
+  );
+  assert.equal(normalizeDomain('https://user:password@example.com'), null);
+  assert.equal(normalizeDomain('localhost'), null);
+  assert.equal(normalizeDomain('WWW.Example.COM/path'), 'example.com');
+});
+
+test('serialization rejects undefined and structured text stays lossless', () => {
+  assert.throws(() => stableStringify(undefined), /undefined/);
+  assert.equal(textValue(['a,b', 'c']), '["a,b","c"]');
 });
