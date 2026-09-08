@@ -1,23 +1,29 @@
+import { styled } from '@linaria/react';
 import { useLingui } from '@lingui/react/macro';
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AppPath, CoreObjectNameSingular } from 'twenty-shared/types';
 import { getAppPath, isDefined } from 'twenty-shared/utils';
 import { IconMap } from 'twenty-ui/icon';
-import { useTheme } from 'twenty-ui/theme-constants';
 
 import { RecordIndexEmptyStateNotShared } from '@/object-record/record-index/components/RecordIndexEmptyStateNotShared';
 import { PageCardHeader } from '@/ui/layout/page/components/PageCardHeader';
 import { PageCardLayout } from '@/ui/layout/page/components/PageCardLayout';
 import { PageTitle } from '@/ui/utilities/page-title/components/PageTitle';
 import { WholesalerMapContent } from '@/wholesaler-map/components/WholesalerMapContent';
+import { WHOLESALER_COVERAGE_MAP_COLORS } from '@/wholesaler-map/constants/WholesalerCoverageMapColors';
 import { useWholesalerMapCompanies } from '@/wholesaler-map/hooks/useWholesalerMapCompanies';
 import { getWholesalerMapOwnerOptions } from '@/wholesaler-map/utils/getWholesalerMapOwnerOptions';
 import { normalizeWholesalerMapCompanies } from '@/wholesaler-map/utils/normalizeWholesalerMapCompanies';
 
+const StyledPageHeading = styled.h1`
+  color: inherit;
+  font: inherit;
+  margin: 0;
+`;
+
 export const WholesalerMapPage = () => {
   const { t } = useLingui();
-  const theme = useTheme();
   const navigate = useNavigate();
   const [selectedOwnerId, setSelectedOwnerId] = useState<string | null>(null);
   const {
@@ -30,35 +36,16 @@ export const WholesalerMapPage = () => {
     totalCount,
   } = useWholesalerMapCompanies();
   const unassignedOwnerName = t`Unassigned`;
-  const ownerColors = useMemo(
-    () => [
-      theme.color.blue9,
-      theme.color.red9,
-      theme.color.orange9,
-      theme.color.green9,
-      theme.color.sky9,
-      theme.color.purple9,
-      theme.color.yellow9,
-      theme.color.turquoise9,
-    ],
-    [theme],
-  );
   const featureCollection = useMemo(
     () =>
       normalizeWholesalerMapCompanies(
         records,
         selectedOwnerId,
         unassignedOwnerName,
-        ownerColors,
-        theme.color.gray9,
+        WHOLESALER_COVERAGE_MAP_COLORS.owners,
+        WHOLESALER_COVERAGE_MAP_COLORS.unassignedOwner,
       ),
-    [
-      records,
-      selectedOwnerId,
-      unassignedOwnerName,
-      ownerColors,
-      theme.color.gray9,
-    ],
+    [records, selectedOwnerId, unassignedOwnerName],
   );
   const ownerOptions = useMemo(
     () => getWholesalerMapOwnerOptions(records, unassignedOwnerName),
@@ -80,7 +67,7 @@ export const WholesalerMapPage = () => {
   const header = (
     <PageCardHeader
       icon={<IconMap size={16} />}
-      title={t`Wholesaler coverage`}
+      title={<StyledPageHeading>{t`Wholesaler coverage`}</StyledPageHeading>}
     />
   );
 

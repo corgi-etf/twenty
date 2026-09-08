@@ -3,6 +3,7 @@ import { I18nProvider } from '@lingui/react';
 import { act, render, screen } from '@testing-library/react';
 
 import { WholesalerCoverageMap } from '@/wholesaler-map/components/WholesalerCoverageMap';
+import { WHOLESALER_COVERAGE_MAP_COLORS } from '@/wholesaler-map/constants/WholesalerCoverageMapColors';
 
 const mockSetData = jest.fn();
 const mockAddSource = jest.fn();
@@ -83,7 +84,7 @@ const featureCollection = {
         locationLabel: 'Chicago, IL, US',
         ownerId: 'owner-1',
         ownerName: 'Alex Morgan',
-        ownerColor: 'blue',
+        ownerColor: WHOLESALER_COVERAGE_MAP_COLORS.clusterLow,
       },
     },
   ],
@@ -132,6 +133,28 @@ describe('WholesalerCoverageMap', () => {
     );
     expect(mockAddLayer).toHaveBeenCalledWith(
       expect.objectContaining({ id: 'unclustered-leads' }),
+    );
+
+    const clusterLayer = mockAddLayer.mock.calls.find(
+      ([layer]) => layer.id === 'lead-clusters',
+    )?.[0];
+    const clusterCountLayer = mockAddLayer.mock.calls.find(
+      ([layer]) => layer.id === 'lead-cluster-count',
+    )?.[0];
+    const unclusteredLayer = mockAddLayer.mock.calls.find(
+      ([layer]) => layer.id === 'unclustered-leads',
+    )?.[0];
+    const mapLibreSafeColor = /^#[\da-f]{6}$/i;
+
+    expect(clusterLayer.paint['circle-color'][2]).toMatch(mapLibreSafeColor);
+    expect(clusterLayer.paint['circle-color'][4]).toMatch(mapLibreSafeColor);
+    expect(clusterLayer.paint['circle-color'][6]).toMatch(mapLibreSafeColor);
+    expect(clusterLayer.paint['circle-stroke-color']).toMatch(
+      mapLibreSafeColor,
+    );
+    expect(clusterCountLayer.paint['text-color']).toMatch(mapLibreSafeColor);
+    expect(unclusteredLayer.paint['circle-stroke-color']).toMatch(
+      mapLibreSafeColor,
     );
   });
 
