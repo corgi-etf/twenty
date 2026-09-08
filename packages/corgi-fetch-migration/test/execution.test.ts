@@ -107,7 +107,116 @@ test('apply is idempotent, batches at 100, and uses no more than two requests co
   api.batches = [];
   const secondManifest = await applyPlan(plan, api);
   assert.deepEqual(api.batches, []);
-  assert.deepEqual(secondManifest.mutations, []);
+  assert.equal(secondManifest.mutations.length, 250);
+  assert.ok(
+    secondManifest.mutations.every(({ action }) => action === 'created'),
+  );
+});
+
+test('apply checkpoints rollback coverage before writes and resumes an interrupted run', async () => {
+  const api = new FakeApi();
+  const plan = makePlan(2);
+  let checkpoint: Awaited<ReturnType<typeof applyPlan>> | undefined;
+  let shouldFail = true;
+  const batchUpsert = api.batchUpsert.bind(api);
+  api.batchUpsert = async (objectPlural, records) => {
+    await batchUpsert(objectPlural, records);
+    if (shouldFail) throw new Error('simulated interruption after write');
+  };
+
+  await assert.rejects(
+    () =>
+      applyPlan(plan, api, new Date('2026-02-01T00:00:00Z'), {
+        checkpoint: async (manifest) => {
+          checkpoint = structuredClone(manifest);
+        },
+      }),
+    /simulated interruption/,
+  );
+  assert.equal(checkpoint?.status, 'applying');
+  assert.equal(checkpoint?.mutations.length, 2);
+
+  shouldFail = false;
+  const resumed = await applyPlan(plan, api, undefined, {
+    resumeManifest: checkpoint,
+  });
+  assert.equal(resumed.status, 'complete');
+  assert.equal(resumed.mutations.length, 2);
+  assert.ok(
+    resumed.mutations.every(({ appliedPayloadHash }) => appliedPayloadHash),
+  );
+  assert.deepEqual(await rollback(resumed, api), { rolledBack: 2 });
+});
+
+test('rollback refuses an incomplete apply checkpoint', async () => {
+  const api = new FakeApi();
+  const plan = makePlan(1);
+  let checkpoint: Awaited<ReturnType<typeof applyPlan>> | undefined;
+  api.batchUpsert = async () => {
+    throw new Error('simulated interruption');
+  };
+
+  await assert.rejects(() =>
+    applyPlan(plan, api, undefined, {
+      checkpoint: async (manifest) => {
+        checkpoint = structuredClone(manifest);
+      },
+    }),
+  );
+  await assert.rejects(() => rollback(checkpoint!, api), /incomplete/i);
+});
+
+test('resume retains the original before-image for an interrupted update', async () => {
+  const api = new FakeApi();
+  const plan = makePlan(1);
+  api.records.set('companies:id-0', {
+    id: 'id-0',
+    legacyFetchId: 'source-0',
+    migrationRunId: 'older-run',
+    sourceRowHmac: 'older-hash',
+    name: 'Original name',
+  });
+  let checkpoint: Awaited<ReturnType<typeof applyPlan>> | undefined;
+  const batchUpsert = api.batchUpsert.bind(api);
+  api.batchUpsert = async (objectPlural, records) => {
+    await batchUpsert(objectPlural, records);
+    throw new Error('simulated interruption after update');
+  };
+
+  await assert.rejects(() =>
+    applyPlan(plan, api, undefined, {
+      checkpoint: async (manifest) => {
+        checkpoint = structuredClone(manifest);
+      },
+    }),
+  );
+  api.batchUpsert = batchUpsert;
+
+  const resumed = await applyPlan(plan, api, undefined, {
+    resumeManifest: checkpoint,
+  });
+  assert.equal(resumed.mutations[0]?.action, 'updated');
+  assert.equal(resumed.mutations[0]?.before?.name, 'Original name');
+  await rollback(resumed, api);
+  assert.equal(api.records.get('companies:id-0')?.name, 'Original name');
+});
+
+test('apply reconstructs changed records already created by the same run', async () => {
+  const api = new FakeApi();
+  const plan = makePlan(1);
+  api.records.set('companies:id-0', {
+    id: 'id-0',
+    legacyFetchId: 'source-0',
+    migrationRunId: 'run-1',
+    sourceRowHmac: 'hash-from-earlier-plan',
+    name: 'Earlier transformed value',
+  });
+
+  const manifest = await applyPlan(plan, api);
+  assert.equal(manifest.mutations[0]?.action, 'created');
+  assert.equal(manifest.mutations[0]?.before, undefined);
+  await rollback(manifest, api);
+  assert.equal(api.records.size, 0);
 });
 
 test('apply rejects deterministic ID and external key collisions before writing', async () => {

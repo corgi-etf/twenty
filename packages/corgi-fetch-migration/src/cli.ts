@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { execFileSync } from 'node:child_process';
-import { readFile, stat, writeFile } from 'node:fs/promises';
+import { readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import { isAbsolute, relative, resolve } from 'node:path';
 
 import {
@@ -91,10 +91,25 @@ const readManifest = async (path: string): Promise<RollbackManifest> => {
   const manifest = JSON.parse(
     await readFile(assertExternalStatePath(path), 'utf8'),
   ) as RollbackManifest;
-  if (manifest.formatVersion !== 1 || !Array.isArray(manifest.mutations)) {
+  if (
+    manifest.formatVersion !== 1 ||
+    !['applying', 'complete'].includes(manifest.status) ||
+    !Array.isArray(manifest.mutations)
+  ) {
     throw new Error('Unsupported or malformed rollback manifest');
   }
   return manifest;
+};
+
+const readManifestIfPresent = async (
+  path: string,
+): Promise<RollbackManifest | undefined> => {
+  try {
+    return await readManifest(path);
+  } catch (error) {
+    if (isMissingFileError(error)) return undefined;
+    throw error;
+  }
 };
 
 const writePrivateJson = async (path: string, value: unknown) => {
@@ -109,19 +124,21 @@ const writePrivateJson = async (path: string, value: unknown) => {
   );
 };
 
-const assertNewStatePath = async (path: string): Promise<string> => {
+const writePrivateJsonAtomically = async (path: string, value: unknown) => {
   const externalPath = assertExternalStatePath(path);
+  const temporaryPath = `${externalPath}.${process.pid}.tmp`;
 
   try {
-    await stat(externalPath);
-    throw new Error(
-      `Refusing to overwrite existing migration state: ${externalPath}`,
-    );
+    await writeFile(temporaryPath, `${JSON.stringify(value, null, 2)}\n`, {
+      encoding: 'utf8',
+      flag: 'wx',
+      mode: 0o600,
+    });
+    await rename(temporaryPath, externalPath);
   } catch (error) {
-    if (!isMissingFileError(error)) throw error;
+    await unlink(temporaryPath).catch(() => undefined);
+    throw error;
   }
-
-  return externalPath;
 };
 
 const client = () =>
@@ -203,11 +220,19 @@ const main = async () => {
     if (requiredOption('--confirm') !== 'APPLY_FETCH_MIGRATION') {
       throw new Error('Apply confirmation phrase is incorrect');
     }
-    const manifestPath = await assertNewStatePath(
+    const manifestPath = assertExternalStatePath(
       requiredOption('--manifest-out'),
     );
-    const manifest = await applyPlan(plan as FrozenMigrationPlan, client());
-    await writePrivateJson(manifestPath, manifest);
+    const manifest = await applyPlan(
+      plan as FrozenMigrationPlan,
+      client(),
+      undefined,
+      {
+        resumeManifest: await readManifestIfPresent(manifestPath),
+        checkpoint: (checkpoint) =>
+          writePrivateJsonAtomically(manifestPath, checkpoint),
+      },
+    );
     process.stdout.write(
       `${JSON.stringify({ applied: manifest.mutations.length, manifestHash: manifest.manifestHash })}\n`,
     );

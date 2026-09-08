@@ -42,6 +42,7 @@ export type ManifestMutation = {
 
 export type RollbackManifest = {
   formatVersion: 1;
+  status: 'applying' | 'complete';
   migrationRunId: string;
   planHash: string;
   appliedAt: string;
@@ -49,12 +50,68 @@ export type RollbackManifest = {
   manifestHash: string;
 };
 
+export type ApplyPlanOptions = {
+  resumeManifest?: RollbackManifest;
+  checkpoint?: (manifest: RollbackManifest) => Promise<void>;
+};
+
+const buildManifest = (
+  plan: FrozenMigrationPlan,
+  appliedAt: string,
+  status: RollbackManifest['status'],
+  mutations: ManifestMutation[],
+): RollbackManifest => {
+  const body = {
+    formatVersion: 1 as const,
+    status,
+    migrationRunId: plan.migrationRunId,
+    planHash: plan.planHash,
+    appliedAt,
+    mutations,
+  };
+
+  return {
+    ...body,
+    manifestHash: sourceRowHmac(body, plan.planHash),
+  };
+};
+
+const assertManifestIntegrity = (manifest: RollbackManifest): void => {
+  const { manifestHash, ...body } = manifest;
+
+  if (sourceRowHmac(body, manifest.planHash) !== manifestHash) {
+    throw new Error('Rollback manifest hash mismatch');
+  }
+};
+
 export const applyPlan = async (
   plan: FrozenMigrationPlan,
   api: MigrationApi,
   now = new Date(),
+  options: ApplyPlanOptions = {},
 ): Promise<RollbackManifest> => {
   assertPlanIntegrity(plan);
+
+  const resumeManifest = options.resumeManifest;
+  if (resumeManifest) {
+    assertManifestIntegrity(resumeManifest);
+    if (
+      resumeManifest.planHash !== plan.planHash ||
+      resumeManifest.migrationRunId !== plan.migrationRunId
+    ) {
+      throw new Error('Resume manifest does not match the migration plan');
+    }
+  }
+
+  const appliedAt = resumeManifest?.appliedAt ?? now.toISOString();
+  const previousMutations = new Map<string, ManifestMutation>();
+  for (const mutation of resumeManifest?.mutations ?? []) {
+    const key = `${mutation.objectPlural}:${mutation.id}`;
+    if (previousMutations.has(key)) {
+      throw new Error(`Resume manifest contains duplicate mutation ${key}`);
+    }
+    previousMutations.set(key, mutation);
+  }
 
   const groups = new Map<string, PlannedRecord[]>();
   for (const record of plan.records) {
@@ -98,34 +155,68 @@ export const applyPlan = async (
 
       const current = foundById ?? foundByLegacyId;
       const guardedFields = Object.keys(record.payload).sort();
+      const mutationKey = `${objectPlural}:${record.targetId}`;
+      const previousMutation = previousMutations.get(mutationKey);
+      const currentWasCreatedByRun =
+        current?.migrationRunId === plan.migrationRunId;
 
       if (current?.sourceRowHmac === record.payload.sourceRowHmac) {
+        if (previousMutation) {
+          mutations.push(structuredClone(previousMutation));
+          previousMutations.delete(mutationKey);
+        } else if (currentWasCreatedByRun) {
+          mutations.push({
+            objectPlural,
+            id: record.targetId,
+            sourceRowHmac: recordHmac(record),
+            appliedPayloadHash: '',
+            guardedFields,
+            action: 'created',
+          });
+        }
         continue;
+      }
+
+      if (previousMutation?.action === 'updated' && !current) {
+        throw new Error(
+          `Updated record disappeared during resume for ${objectPlural}/${record.targetId}`,
+        );
       }
 
       actionable.set(objectPlural, [
         ...(actionable.get(objectPlural) ?? []),
         record,
       ]);
-      mutations.push({
-        objectPlural,
-        id: record.targetId,
-        sourceRowHmac: recordHmac(record),
-        appliedPayloadHash: '',
-        guardedFields,
-        action: current ? 'updated' : 'created',
-        ...(current
-          ? {
-              before: Object.fromEntries(
-                guardedFields
-                  .filter((key) => key !== 'id')
-                  .map((key) => [key, current[key] ?? null]),
-              ),
-            }
-          : {}),
-      });
+      mutations.push(
+        previousMutation ?? {
+          objectPlural,
+          id: record.targetId,
+          sourceRowHmac: recordHmac(record),
+          appliedPayloadHash: '',
+          guardedFields,
+          action: current && !currentWasCreatedByRun ? 'updated' : 'created',
+          ...(current && !currentWasCreatedByRun
+            ? {
+                before: Object.fromEntries(
+                  guardedFields
+                    .filter((key) => key !== 'id')
+                    .map((key) => [key, current[key] ?? null]),
+                ),
+              }
+            : {}),
+        },
+      );
+      previousMutations.delete(mutationKey);
     }
   }
+
+  if (previousMutations.size > 0) {
+    throw new Error('Resume manifest contains records outside the plan');
+  }
+
+  await options.checkpoint?.(
+    buildManifest(plan, appliedAt, 'applying', mutations),
+  );
 
   for (const [objectPlural, records] of actionable) {
     const batches = chunkRecords(records.map(({ payload }) => payload));
@@ -171,18 +262,10 @@ export const applyPlan = async (
     }
   }
 
-  const body = {
-    formatVersion: 1 as const,
-    migrationRunId: plan.migrationRunId,
-    planHash: plan.planHash,
-    appliedAt: now.toISOString(),
-    mutations,
-  };
+  const manifest = buildManifest(plan, appliedAt, 'complete', mutations);
+  await options.checkpoint?.(manifest);
 
-  return {
-    ...body,
-    manifestHash: sourceRowHmac(body, plan.planHash),
-  };
+  return manifest;
 };
 
 export const verifyPlan = async (
@@ -221,9 +304,9 @@ export const rollback = async (
   manifest: RollbackManifest,
   api: MigrationApi,
 ): Promise<{ rolledBack: number }> => {
-  const { manifestHash, ...body } = manifest;
-  if (sourceRowHmac(body, manifest.planHash) !== manifestHash) {
-    throw new Error('Rollback manifest hash mismatch');
+  assertManifestIntegrity(manifest);
+  if (manifest.status !== 'complete') {
+    throw new Error('Cannot roll back an incomplete migration apply');
   }
 
   const currentByMutation = new Map<ManifestMutation, ExistingRecord>();

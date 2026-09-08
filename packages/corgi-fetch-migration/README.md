@@ -8,7 +8,8 @@ core REST APIs.
 The safe default is `plan`: it reads and transforms data, prints aggregate counts,
 and performs no writes. Plans and rollback manifests contain CRM data and must be
 stored at an absolute path outside the Git worktree. Files are created with mode
-`0600` and existing files are never overwritten.
+`0600`; apply atomically checkpoints and resumes its manifest at the requested
+path.
 
 ## Data mapping
 
@@ -78,7 +79,11 @@ The apply command never bootstraps schema implicitly. This keeps both mutations
 separately reviewable. It preflights the entire destination for collisions, sends
 at most two concurrent batches of at most 100 records, retries only timeouts,
 HTTP 429, and HTTP 5xx responses, and captures server-normalized hashes in the
-rollback manifest. A rerun skips rows whose source HMAC already matches.
+rollback manifest. Before its first destination write, apply durably checkpoints
+every mutation and update before-image. If interrupted, rerun the same plan and
+manifest path; rows already owned by the same migration run are reconstructed into
+the final rollback manifest instead of disappearing when their upsert is skipped.
+An incomplete checkpoint cannot be used for rollback.
 
 Rollback first verifies the manifest hash, record ownership, source HMAC, and all
 guarded field values. If any migrated record was edited after cutover, rollback
