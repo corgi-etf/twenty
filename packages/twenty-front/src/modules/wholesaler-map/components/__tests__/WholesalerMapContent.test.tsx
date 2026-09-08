@@ -55,6 +55,7 @@ type ContentFixtureProps = {
   isLoading?: boolean;
   loadError?: Error | null;
   onOwnerChange?: (ownerId: string | null) => void;
+  selectedOwnerId?: string | null;
 };
 
 const ContentFixture = ({
@@ -62,6 +63,7 @@ const ContentFixture = ({
   isLoading = false,
   loadError = null,
   onOwnerChange = jest.fn(),
+  selectedOwnerId = null,
 }: ContentFixtureProps) => (
   <WholesalerMapContent
     featureCollection={currentFeatureCollection}
@@ -72,7 +74,7 @@ const ContentFixture = ({
     onOwnerChange={onOwnerChange}
     onRetry={jest.fn()}
     ownerOptions={[{ value: 'owner-1', label: 'Alex Morgan' }]}
-    selectedOwnerId={null}
+    selectedOwnerId={selectedOwnerId}
     totalCompanyCount={1}
   />
 );
@@ -100,6 +102,29 @@ describe('WholesalerMapContent', () => {
     const onOwnerChange = jest.fn();
 
     renderContent(<ContentFixture onOwnerChange={onOwnerChange} />);
+    fireEvent.click(screen.getByRole('button', { name: 'All wholesalers' }));
+
+    expect(onOwnerChange).toHaveBeenCalledWith(null);
+  });
+
+  it('keeps the clear filter available for an owner without mapped leads', () => {
+    const onOwnerChange = jest.fn();
+
+    renderContent(
+      <ContentFixture
+        currentFeatureCollection={{
+          type: 'FeatureCollection',
+          features: [],
+        }}
+        onOwnerChange={onOwnerChange}
+        selectedOwnerId="owner-1"
+      />,
+    );
+
+    expect(screen.getByText('No mapped leads')).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: 'Wholesaler' }),
+    ).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'All wholesalers' }));
 
     expect(onOwnerChange).toHaveBeenCalledWith(null);

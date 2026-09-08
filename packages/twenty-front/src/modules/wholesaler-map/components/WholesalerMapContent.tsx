@@ -163,16 +163,17 @@ export const WholesalerMapContent = ({
   }
 
   const mappedLeadCount = featureCollection.features.length;
+  const emptyState = (
+    <StyledState>
+      <strong>{t`No mapped leads`}</strong>
+      <span>
+        {t`Add latitude and longitude to a company address to show it here.`}
+      </span>
+    </StyledState>
+  );
 
-  if (mappedLeadCount === 0) {
-    return (
-      <StyledState>
-        <strong>{t`No mapped leads`}</strong>
-        <span>
-          {t`Add latitude and longitude to a company address to show it here.`}
-        </span>
-      </StyledState>
-    );
+  if (mappedLeadCount === 0 && selectedOwnerId === null) {
+    return emptyState;
   }
 
   return (
@@ -202,32 +203,36 @@ export const WholesalerMapContent = ({
           </StyledFilter>
         )}
       </StyledToolbar>
-      <StyledMapAndList>
-        <WholesalerCoverageMap
-          featureCollection={featureCollection}
-          onCompanySelect={onCompanySelect}
-        />
-        <StyledLeadList aria-label={t`Mapped leads`}>
-          <StyledLeadListHeading>{t`Mapped leads`}</StyledLeadListHeading>
-          <StyledLeadListItems>
-            {featureCollection.features.map(({ properties }) => (
-              <li key={properties.companyId}>
-                <StyledLeadButton
-                  onClick={() => onCompanySelect(properties.companyId)}
-                  type="button"
-                >
-                  <StyledLeadName>{properties.companyName}</StyledLeadName>
-                  <StyledLeadMeta>
-                    {properties.locationLabel || t`Location available`}
-                    {' · '}
-                    {properties.ownerName}
-                  </StyledLeadMeta>
-                </StyledLeadButton>
-              </li>
-            ))}
-          </StyledLeadListItems>
-        </StyledLeadList>
-      </StyledMapAndList>
+      {mappedLeadCount === 0 ? (
+        emptyState
+      ) : (
+        <StyledMapAndList>
+          <WholesalerCoverageMap
+            featureCollection={featureCollection}
+            onCompanySelect={onCompanySelect}
+          />
+          <StyledLeadList aria-label={t`Mapped leads`}>
+            <StyledLeadListHeading>{t`Mapped leads`}</StyledLeadListHeading>
+            <StyledLeadListItems>
+              {featureCollection.features.map(({ properties }) => (
+                <li key={properties.companyId}>
+                  <StyledLeadButton
+                    onClick={() => onCompanySelect(properties.companyId)}
+                    type="button"
+                  >
+                    <StyledLeadName>{properties.companyName}</StyledLeadName>
+                    <StyledLeadMeta>
+                      {properties.locationLabel || t`Location available`}
+                      {' · '}
+                      {properties.ownerName}
+                    </StyledLeadMeta>
+                  </StyledLeadButton>
+                </li>
+              ))}
+            </StyledLeadListItems>
+          </StyledLeadList>
+        </StyledMapAndList>
+      )}
     </StyledContent>
   );
 };
