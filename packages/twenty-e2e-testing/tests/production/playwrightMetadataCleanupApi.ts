@@ -39,6 +39,43 @@ export const createPlaywrightMetadataCleanupApi = ({
   const restUrl = (path: string) =>
     new URL(`/rest/${path}`, backendBaseUrl).toString();
   const headers = { Origin: origin };
+  const listRecords = async (
+    objectNamePlural: string,
+  ): Promise<WorkspaceRecord[]> => {
+    const records: WorkspaceRecord[] = [];
+    let cursor: string | undefined;
+
+    do {
+      const query = new URLSearchParams({ limit: '100', depth: '0' });
+      if (cursor) query.set('starting_after', cursor);
+      const response = await page.request.get(
+        `${restUrl(objectNamePlural)}?${query.toString()}`,
+        { headers },
+      );
+      await assertSuccessfulResponse(
+        response,
+        `List ${objectNamePlural} records`,
+      );
+      const body = (await response.json()) as RecordListResponse;
+      const pageRecords = body.data?.[objectNamePlural];
+      if (!Array.isArray(pageRecords)) {
+        throw new Error(
+          `List ${objectNamePlural} response omitted data.${objectNamePlural}`,
+        );
+      }
+      records.push(...(pageRecords as WorkspaceRecord[]));
+      cursor = body.pageInfo?.hasNextPage
+        ? (body.pageInfo.endCursor ?? undefined)
+        : undefined;
+      if (body.pageInfo?.hasNextPage && !cursor) {
+        throw new Error(
+          `${objectNamePlural} pagination omitted its end cursor`,
+        );
+      }
+    } while (cursor);
+
+    return records;
+  };
 
   return {
     async listMetadataObjects() {
@@ -70,40 +107,27 @@ export const createPlaywrightMetadataCleanupApi = ({
       return objects;
     },
 
-    async listRecords(objectNamePlural) {
-      const records: WorkspaceRecord[] = [];
-      let cursor: string | undefined;
+    listRecords,
 
-      do {
-        const query = new URLSearchParams({ limit: '100', depth: '0' });
-        if (cursor) query.set('starting_after', cursor);
-        const response = await page.request.get(
-          `${restUrl(objectNamePlural)}?${query.toString()}`,
-          { headers },
-        );
-        await assertSuccessfulResponse(
-          response,
-          `List ${objectNamePlural} records`,
-        );
-        const body = (await response.json()) as RecordListResponse;
-        const pageRecords = body.data?.[objectNamePlural];
-        if (!Array.isArray(pageRecords)) {
-          throw new Error(
-            `List ${objectNamePlural} response omitted data.${objectNamePlural}`,
-          );
-        }
-        records.push(...(pageRecords as WorkspaceRecord[]));
-        cursor = body.pageInfo?.hasNextPage
-          ? (body.pageInfo.endCursor ?? undefined)
-          : undefined;
-        if (body.pageInfo?.hasNextPage && !cursor) {
-          throw new Error(
-            `${objectNamePlural} pagination omitted its end cursor`,
-          );
-        }
-      } while (cursor);
+    async assertCanonicalizationComplete() {
+      const { assertCanonicalizationComplete } =
+        await import('../../../corgi-crm-canonicalization/src/reconciliation.ts');
 
-      return records;
+      assertCanonicalizationComplete({
+        companies: await listRecords('companies'),
+        people: await listRecords('people'),
+        sourceRecords: await listRecords('sourceRecords'),
+        importReviewItems: await listRecords('importReviewItems'),
+        holdingObservations: await listRecords('holdingObservations'),
+        tasks: await listRecords('tasks'),
+        taskTargets: await listRecords('taskTargets'),
+        wholesalers: await listRecords('wholesalers'),
+        leadAssignments: await listRecords('leadAssignments'),
+        outreachActivities: await listRecords('outreachActivities'),
+        archivedOutreachActivities: await listRecords(
+          'archivedOutreachActivities',
+        ),
+      });
     },
 
     async deleteMetadataObject(id) {

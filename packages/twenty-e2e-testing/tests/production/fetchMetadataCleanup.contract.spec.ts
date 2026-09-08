@@ -171,13 +171,7 @@ const groupedDeletedFieldNames = (
 class FakeMetadataCleanupApi implements MetadataCleanupApi {
   objects = metadataFixture();
   records: Record<string, WorkspaceRecord[]> = {
-    importReviewItems: [
-      {
-        id: 'review-1',
-        reviewStatus: 'accepted',
-        candidateCompanyId: 'company-1',
-      },
-    ],
+    importReviewItems: [],
     salesTeams: [],
     teamMemberships: [],
     people: [canonicalizedPerson()],
@@ -188,6 +182,8 @@ class FakeMetadataCleanupApi implements MetadataCleanupApi {
   deletedObjectIds: string[] = [];
   deletedFieldIds: string[] = [];
   updatedFields: Array<{ id: string; name: string; label: string }> = [];
+  reconciliationChecks = 0;
+  reconciliationError?: Error;
 
   async listMetadataObjects() {
     return structuredClone(this.objects);
@@ -195,6 +191,11 @@ class FakeMetadataCleanupApi implements MetadataCleanupApi {
 
   async listRecords(objectNamePlural: string) {
     return structuredClone(this.records[objectNamePlural] ?? []);
+  }
+
+  async assertCanonicalizationComplete() {
+    this.reconciliationChecks += 1;
+    if (this.reconciliationError) throw this.reconciliationError;
   }
 
   async deleteMetadataObject(id: string) {
@@ -370,6 +371,7 @@ test('applies once and a second run is an idempotent no-op', async () => {
   expect(firstPlan.fieldsToDelete).toHaveLength(64);
   expect(firstPlan.fieldsToRename).toHaveLength(9);
   expect(firstMutationCount).toBe(79);
+  expect(api.reconciliationChecks).toBe(1);
   expect(secondPlan).toEqual({
     objectsToDelete: [],
     fieldsToDelete: [],
@@ -421,6 +423,21 @@ test('blocks before mutation when empty-only migration objects have records', as
     /non-empty migration-only object salesTeam/i,
   );
   expect(api.deletedObjectIds).toEqual([]);
+});
+
+test('blocks before mutation when aggregate reconciliation is incomplete', async () => {
+  const api = new FakeMetadataCleanupApi();
+  api.reconciliationError = new Error(
+    'Canonicalization has unresolved records: SOURCE_ROW_UNRESOLVED=1',
+  );
+
+  await expect(runFetchMetadataCleanup(api)).rejects.toThrow(
+    /SOURCE_ROW_UNRESOLVED=1/,
+  );
+  expect(api.reconciliationChecks).toBe(1);
+  expect(api.deletedObjectIds).toEqual([]);
+  expect(api.deletedFieldIds).toEqual([]);
+  expect(api.updatedFields).toEqual([]);
 });
 
 test('proves imported contact values exist in standard Twenty fields', () => {

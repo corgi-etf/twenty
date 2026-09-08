@@ -176,6 +176,7 @@ export type WorkspaceRecord = Record<string, unknown> & { id: string };
 export type MetadataCleanupApi = {
   listMetadataObjects(): Promise<MetadataObject[]>;
   listRecords(objectNamePlural: string): Promise<WorkspaceRecord[]>;
+  assertCanonicalizationComplete(): Promise<void>;
   deleteMetadataObject(id: string): Promise<void>;
   deleteMetadataField(id: string): Promise<void>;
   updateMetadataField(
@@ -966,6 +967,13 @@ export const runFetchMetadataCleanup = async (
     assertHoldingRawDataCanonicalized(
       await api.listRecords('holdingObservations'),
     );
+  }
+  if (
+    plan.objectsToDelete.length > 0 ||
+    plan.fieldsToDelete.length > 0 ||
+    plan.fieldsToRename.length > 0
+  ) {
+    await api.assertCanonicalizationComplete();
   }
 
   for (const object of plan.objectsToDelete) {
