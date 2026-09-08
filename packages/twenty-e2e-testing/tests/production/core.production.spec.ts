@@ -78,25 +78,33 @@ test('loads the authenticated workspace and wholesaler coverage map', async ({
       ?.match(/^([\d,]+) mapped leads/)?.[1]
       .replaceAll(',', '') ?? 0,
   );
+  const mappedLeadList = page.getByRole('complementary', {
+    name: 'Mapped leads',
+  });
+  const mappedLeadButtons = mappedLeadList.getByRole('button');
+  const mappedWholesalerName = (await mappedLeadButtons.allTextContents())
+    .map((leadText) => leadText.split(' · ').at(-1)?.trim())
+    .find(
+      (ownerName) =>
+        ownerName !== undefined &&
+        ownerName.length > 0 &&
+        ownerName !== 'Unassigned',
+    );
 
   await expect(page.getByText('Wholesaler', { exact: true })).toBeVisible();
+  expect(mappedWholesalerName).toBeTruthy();
   await page.getByText('All wholesalers', { exact: true }).click();
 
-  const wholesalerOption = page
-    .getByRole('option')
-    .filter({ hasNotText: 'Unassigned' })
-    .first();
+  const wholesalerOption = page.getByRole('option', {
+    name: mappedWholesalerName ?? '',
+    exact: true,
+  });
 
   await expect(wholesalerOption).toBeVisible();
-  const wholesalerName = (await wholesalerOption.textContent())?.trim();
-
-  expect(wholesalerName).toBeTruthy();
-  expect(wholesalerName).not.toBe('Unassigned');
   await wholesalerOption.click();
   await expect(
-    page.getByText(wholesalerName ?? '', { exact: true }).first(),
+    page.getByText(mappedWholesalerName ?? '', { exact: true }).first(),
   ).toBeVisible();
-  await expect(mappedCount).not.toHaveText(allWholesalersCountText ?? '');
   await expect(mappedCount).toContainText(/^[1-9][\d,]* mapped leads/);
 
   const selectedWholesalerCountText = await mappedCount.textContent();
@@ -107,13 +115,28 @@ test('loads the authenticated workspace and wholesaler coverage map', async ({
   );
 
   expect(selectedWholesalerCount).toBeGreaterThan(0);
-  expect(selectedWholesalerCount).toBeLessThan(allWholesalersCount);
+  expect(selectedWholesalerCount).toBeLessThanOrEqual(allWholesalersCount);
+  await expect
+    .poll(async () => {
+      const visibleLeadTexts = await mappedLeadButtons.allTextContents();
+
+      return (
+        visibleLeadTexts.length > 0 &&
+        visibleLeadTexts.every((leadText) =>
+          leadText.trim().endsWith(mappedWholesalerName ?? ''),
+        )
+      );
+    })
+    .toBe(true);
 
   await page
-    .getByRole('complementary', { name: 'Mapped leads' })
-    .getByRole('button')
+    .getByText(mappedWholesalerName ?? '', { exact: true })
     .first()
     .click();
+  await page.getByRole('option', { name: 'All wholesalers' }).click();
+  await expect(mappedCount).toHaveText(allWholesalersCountText ?? '');
+
+  await mappedLeadButtons.first().click();
   await page.waitForURL(/\/object\/company\/[a-f0-9-]+/);
 });
 

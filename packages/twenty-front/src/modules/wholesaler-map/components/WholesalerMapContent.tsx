@@ -191,11 +191,11 @@ export const WholesalerMapContent = ({
           <StyledFilter>
             <Select<string | null>
               dropdownId="wholesaler-map-owner-filter"
-              emptyOption={{ label: t`All wholesalers`, value: null }}
               fullWidth
               label={t`Wholesaler`}
               onChange={onOwnerChange}
               options={ownerOptions}
+              pinnedOption={{ label: t`All wholesalers`, value: null }}
               value={selectedOwnerId}
               withSearchInput
             />

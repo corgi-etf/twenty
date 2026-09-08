@@ -1,12 +1,27 @@
 import { i18n } from '@lingui/core';
 import { I18nProvider } from '@lingui/react';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { type ReactNode } from 'react';
 
 import { WholesalerMapContent } from '@/wholesaler-map/components/WholesalerMapContent';
 
 jest.mock('@/ui/input/components/Select', () => ({
-  Select: ({ label }: { label: string }) => <button>{label}</button>,
+  Select: ({
+    label,
+    onChange,
+    pinnedOption,
+  }: {
+    label: string;
+    onChange: (value: null) => void;
+    pinnedOption: { label: string; value: null };
+  }) => (
+    <>
+      <button>{label}</button>
+      <button onClick={() => onChange(pinnedOption.value)}>
+        {pinnedOption.label}
+      </button>
+    </>
+  ),
 }));
 jest.mock('@/wholesaler-map/components/WholesalerCoverageMap', () => ({
   WholesalerCoverageMap: () => (
@@ -39,12 +54,14 @@ type ContentFixtureProps = {
   currentFeatureCollection?: typeof featureCollection;
   isLoading?: boolean;
   loadError?: Error | null;
+  onOwnerChange?: (ownerId: string | null) => void;
 };
 
 const ContentFixture = ({
   currentFeatureCollection = featureCollection,
   isLoading = false,
   loadError = null,
+  onOwnerChange = jest.fn(),
 }: ContentFixtureProps) => (
   <WholesalerMapContent
     featureCollection={currentFeatureCollection}
@@ -52,7 +69,7 @@ const ContentFixture = ({
     isLoading={isLoading}
     loadError={loadError}
     onCompanySelect={jest.fn()}
-    onOwnerChange={jest.fn()}
+    onOwnerChange={onOwnerChange}
     onRetry={jest.fn()}
     ownerOptions={[{ value: 'owner-1', label: 'Alex Morgan' }]}
     selectedOwnerId={null}
@@ -77,6 +94,15 @@ describe('WholesalerMapContent', () => {
     expect(
       screen.getByRole('button', { name: /northstar capital/i }),
     ).toHaveTextContent('Chicago, IL, US');
+  });
+
+  it('provides a pinned option that clears the selected wholesaler', () => {
+    const onOwnerChange = jest.fn();
+
+    renderContent(<ContentFixture onOwnerChange={onOwnerChange} />);
+    fireEvent.click(screen.getByRole('button', { name: 'All wholesalers' }));
+
+    expect(onOwnerChange).toHaveBeenCalledWith(null);
   });
 
   it('renders explicit loading, failure, and empty states', () => {
