@@ -91,6 +91,7 @@ export class ConfigVariables {
     group: ConfigVariablesGroup.ADVANCED_SETTINGS,
     description: 'Require email verification for user accounts',
     type: ConfigVariableType.BOOLEAN,
+    isEnvOnly: true,
   })
   @IsOptional()
   IS_EMAIL_VERIFICATION_REQUIRED = false;
