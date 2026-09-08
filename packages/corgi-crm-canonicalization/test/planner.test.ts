@@ -7,6 +7,10 @@ import {
   type CanonicalizationSnapshot,
   type CrmRecord,
 } from '../src/planner.ts';
+import {
+  assertCanonicalizationComplete,
+  buildReconciliationReport,
+} from '../src/reconciliation.ts';
 
 const snapshot = (): CanonicalizationSnapshot => ({
   companies: [
@@ -328,4 +332,19 @@ test('a fully applied plan produces zero mutations on its second run', () => {
   const second = buildCanonicalizationPlan(input);
   assertPlanCanApply(second);
   assert.deepEqual(second.mutations, []);
+  const report = assertCanonicalizationComplete(input);
+  assert.equal(report.stagingRows, 3);
+  assert.equal(report.coveredRows, 3);
+  assert.equal(report.verifiedArchivedActivities, 1);
+  assert.match(report.rowCoverageHash, /^[a-f0-9]{64}$/);
+  assert.deepEqual(report.remainingMutationsByObject, {});
+});
+
+test('reconciliation report exposes only aggregate evidence and blocks incomplete data', () => {
+  const input = snapshot();
+  const report = buildReconciliationReport(input);
+
+  assert.ok(report.remainingMutations > 0);
+  assert.equal(JSON.stringify(report).includes('alex@acme.example'), false);
+  assert.throws(() => assertCanonicalizationComplete(input), /incomplete/i);
 });
