@@ -217,6 +217,7 @@ export const buildMigrationSchema = (
       options: tagOptions,
     }),
     field('person', 'legacyEmail', 'Legacy Email'),
+    field('person', 'legacyPrimaryPhone', 'Legacy Primary Phone'),
     field('person', 'legacySecondaryEmails', 'Legacy Secondary Emails'),
     field('person', 'legacySecondaryPhones', 'Legacy Secondary Phones'),
     field('person', 'legacyAddress', 'Legacy Address'),

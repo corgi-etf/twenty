@@ -323,11 +323,12 @@ test('planning transforms every Fetch relationship into ordered Twenty records',
     deterministicId('company', 'company-1'),
   );
   assert.deepEqual(person.payload.phones, {
-    primaryPhoneNumber: '+13125550100',
+    primaryPhoneNumber: '3125550100',
     primaryPhoneCountryCode: 'US',
     primaryPhoneCallingCode: '+1',
     additionalPhones: [],
   });
+  assert.equal(person.payload.legacyPrimaryPhone, '+13125550100');
   const taskTarget = plan.records.find(
     ({ objectPlural }) => objectPlural === 'taskTargets',
   )!;
@@ -401,6 +402,65 @@ test('duplicate email canonical holder prefers primary and richer contacts befor
       additionalEmails: [],
     },
   );
+});
+
+test('phone transform emits only validated US components and retains every raw value', () => {
+  const plan = buildPlan(
+    {
+      companies: [{ id: 'company', name: 'Company' }],
+      contacts: [
+        { id: 'plain', company_id: 'company', phone: '3102535000' },
+        {
+          id: 'punctuated',
+          company_id: 'company',
+          phone: '(312) 555-0100 ext. 42',
+        },
+        { id: 'plus-one', company_id: 'company', phone: '+1 415 555 0100' },
+        {
+          id: 'international',
+          company_id: 'company',
+          phone: '+44 20 7946 0958',
+        },
+        { id: 'ambiguous', company_id: 'company', phone: '555-0100' },
+      ],
+    },
+    { migrationRunId: 'run', hmacKey: 'key' },
+  );
+  const people = new Map(
+    plan.records
+      .filter(({ objectPlural }) => objectPlural === 'people')
+      .map((record) => [record.sourceId, record.payload]),
+  );
+
+  assert.deepEqual(people.get('plain')?.phones, {
+    primaryPhoneNumber: '3102535000',
+    primaryPhoneCountryCode: 'US',
+    primaryPhoneCallingCode: '+1',
+    additionalPhones: [],
+  });
+  assert.deepEqual(people.get('punctuated')?.phones, {
+    primaryPhoneNumber: '3125550100',
+    primaryPhoneCountryCode: 'US',
+    primaryPhoneCallingCode: '+1',
+    additionalPhones: [],
+  });
+  assert.deepEqual(people.get('plus-one')?.phones, {
+    primaryPhoneNumber: '4155550100',
+    primaryPhoneCountryCode: 'US',
+    primaryPhoneCallingCode: '+1',
+    additionalPhones: [],
+  });
+  assert.equal(people.get('international')?.phones, undefined);
+  assert.equal(people.get('ambiguous')?.phones, undefined);
+  assert.equal(
+    people.get('punctuated')?.legacyPrimaryPhone,
+    '(312) 555-0100 ext. 42',
+  );
+  assert.equal(
+    people.get('international')?.legacyPrimaryPhone,
+    '+44 20 7946 0958',
+  );
+  assert.equal(people.get('ambiguous')?.legacyPrimaryPhone, '555-0100');
 });
 
 test('auth reconciliation invites only active matched users and reports identity gaps', () => {

@@ -246,6 +246,37 @@ const sortById = <T extends { id: string }>(rows: readonly T[]): T[] =>
 const jsonText = (value: unknown): string | null =>
   value === undefined || value === null ? null : JSON.stringify(value);
 
+const normalizeUsPhone = (
+  rawPhone: string,
+): {
+  primaryPhoneNumber: string;
+  primaryPhoneCountryCode: 'US';
+  primaryPhoneCallingCode: '+1';
+  additionalPhones: [];
+} | null => {
+  const withoutExtension = rawPhone
+    .trim()
+    .replace(/[\s,;]*(?:(?:ext(?:ension)?\.?|x|#)\s*\d+)\s*$/i, '');
+
+  if (!/^[+()\d.\s-]+$/.test(withoutExtension)) return null;
+
+  const compactPhone = withoutExtension.replace(/[().\s-]/g, '');
+  const nationalNumber = compactPhone.startsWith('+1')
+    ? compactPhone.slice(2)
+    : compactPhone.length === 11 && compactPhone.startsWith('1')
+      ? compactPhone.slice(1)
+      : compactPhone;
+
+  if (!/^[2-9]\d{2}[2-9]\d{6}$/.test(nationalNumber)) return null;
+
+  return {
+    primaryPhoneNumber: nationalNumber,
+    primaryPhoneCountryCode: 'US',
+    primaryPhoneCallingCode: '+1',
+    additionalPhones: [],
+  };
+};
+
 const tagValue = (name: string): string =>
   name
     .normalize('NFKD')
@@ -461,6 +492,7 @@ export const buildPlan = (
       companyId: deterministicId('company', row.company_id),
       legacyEmail: email || null,
       jobTitle: row.title ?? null,
+      legacyPrimaryPhone: row.phone?.trim() ? row.phone : null,
       legacySecondaryEmails: jsonText(row.secondary_emails),
       legacySecondaryPhones: jsonText(row.secondary_phones),
       legacyAddress: row.address ?? null,
@@ -475,14 +507,9 @@ export const buildPlan = (
     if (email && emailHolder.get(email) === row.id) {
       payload.emails = { primaryEmail: email, additionalEmails: [] };
     }
-    if (row.phone?.trim()) {
-      payload.phones = {
-        primaryPhoneNumber: row.phone.trim(),
-        primaryPhoneCountryCode: row.phone.trim().startsWith('+1') ? 'US' : '',
-        primaryPhoneCallingCode: row.phone.trim().startsWith('+1') ? '+1' : '',
-        additionalPhones: [],
-      };
-    }
+    const normalizedPhone = row.phone ? normalizeUsPhone(row.phone) : null;
+
+    if (normalizedPhone) payload.phones = normalizedPhone;
     if (row.linkedin?.trim()) {
       payload.linkedinLink = {
         primaryLinkLabel: 'LinkedIn',

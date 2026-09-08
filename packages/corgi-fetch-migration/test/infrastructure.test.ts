@@ -72,6 +72,15 @@ test('schema declares every migration object and unique provenance fields', () =
     ),
     true,
   );
+  assert.equal(
+    schema.fields.some(
+      ({ objectName, name, type }) =>
+        objectName === 'person' &&
+        name === 'legacyPrimaryPhone' &&
+        type === 'TEXT',
+    ),
+    true,
+  );
 });
 
 test('schema rejects tags that collapse to the same Twenty option value', () => {
