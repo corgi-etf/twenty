@@ -20,6 +20,8 @@ type FieldDefinition = {
   type: string;
   relationTargetObjectName?: string;
   targetFieldLabel?: string;
+  targetFieldIcon?: string;
+  relationType?: 'MANY_TO_ONE';
 };
 
 export type MetadataRename = {
@@ -208,6 +210,8 @@ const CREATE_DEFINITIONS: readonly FieldDefinition[] = [
     type: 'RELATION',
     relationTargetObjectName: 'wholesaler',
     targetFieldLabel: 'Tasks',
+    targetFieldIcon: 'IconChecklist',
+    relationType: 'MANY_TO_ONE',
   },
   {
     objectName: 'outreachActivity',
@@ -216,6 +220,8 @@ const CREATE_DEFINITIONS: readonly FieldDefinition[] = [
     type: 'RELATION',
     relationTargetObjectName: 'task',
     targetFieldLabel: 'Outreach Activities',
+    targetFieldIcon: 'IconPhoneCall',
+    relationType: 'MANY_TO_ONE',
   },
   ...fields('outreachActivity', [['followUpDate', 'Follow-up Date', 'DATE']]),
 ];
@@ -316,8 +322,60 @@ export const buildMetadataPlan = (
       type: definition.type,
       relationTargetObjectMetadataId: relationTarget?.id,
       targetFieldLabel: definition.targetFieldLabel,
+      targetFieldIcon: definition.targetFieldIcon,
+      relationType: definition.relationType,
     });
   }
 
   return { renames, creates };
+};
+
+const relationTargetId = (field: MetadataField): string | null | undefined =>
+  field.relationTargetObjectMetadataId ??
+  field.settings?.relationTargetObjectMetadataId;
+
+export const assertManagedMetadataConverged = (
+  objects: readonly MetadataObject[],
+): void => {
+  const remaining = buildMetadataPlan(objects);
+  if (remaining.renames.length || remaining.creates.length) {
+    throw new Error('Metadata canonicalization did not converge');
+  }
+  const objectsByName = objectByName(objects);
+  for (const definition of RENAME_DEFINITIONS) {
+    const object = objectsByName.get(definition.objectName);
+    const field = object?.fields.find(({ name }) => name === definition.name);
+    if (!field) continue;
+    if (field.label !== definition.label) {
+      throw new Error(
+        `${definition.objectName}.${definition.name} has an incompatible label`,
+      );
+    }
+  }
+  for (const definition of CREATE_DEFINITIONS) {
+    const object = objectsByName.get(definition.objectName);
+    const field = object?.fields.find(({ name }) => name === definition.name);
+    if (!field || field.label !== definition.label) {
+      throw new Error(
+        `${definition.objectName}.${definition.name} has an incompatible label`,
+      );
+    }
+    if (!definition.relationTargetObjectName) continue;
+
+    const target = objectsByName.get(definition.relationTargetObjectName);
+    if (
+      !target ||
+      relationTargetId(field) !== target.id ||
+      !target.fields.some(
+        (candidate) =>
+          candidate.type === 'RELATION' &&
+          candidate.label === definition.targetFieldLabel &&
+          relationTargetId(candidate) === object?.id,
+      )
+    ) {
+      throw new Error(
+        `${definition.objectName}.${definition.name} relation did not converge`,
+      );
+    }
+  }
 };
