@@ -143,6 +143,79 @@ test('REST pagination uses authenticated Origin shapes and disposes responses', 
   assert.equal(second.disposed, true);
 });
 
+test('metadata relation targets are projected from the core OpenAPI response', async () => {
+  const request = new FakeRequest();
+  const metadataResponse = new FakeResponse(200, {
+    data: [
+      {
+        id: 'task-object',
+        nameSingular: 'task',
+        fields: [
+          {
+            id: 'task-wholesaler',
+            name: 'wholesaler',
+            label: 'Wholesaler',
+            type: 'RELATION',
+            settings: { relationType: 'MANY_TO_ONE' },
+          },
+        ],
+      },
+      {
+        id: 'wholesaler-object',
+        nameSingular: 'wholesaler',
+        fields: [
+          {
+            id: 'wholesaler-tasks',
+            name: 'tasks',
+            label: 'Tasks',
+            type: 'RELATION',
+            settings: { relationType: 'ONE_TO_MANY' },
+          },
+        ],
+      },
+    ],
+    pageInfo: { hasNextPage: false },
+  });
+  const openApiResponse = new FakeResponse(200, {
+    components: {
+      schemas: {
+        TaskForResponse: {
+          properties: {
+            wholesaler: {
+              $ref: '#/components/schemas/WholesalerForResponse',
+            },
+          },
+        },
+        WholesalerForResponse: {
+          properties: {
+            tasks: {
+              items: { $ref: '#/components/schemas/TaskForResponse' },
+            },
+          },
+        },
+      },
+    },
+  });
+  request.responses.push(metadataResponse, openApiResponse);
+
+  const objects = await createApi(request).listMetadataObjects();
+
+  assert.equal(
+    objects[0]?.fields[0]?.relationTargetObjectMetadataId,
+    'wholesaler-object',
+  );
+  assert.equal(
+    objects[1]?.fields[0]?.relationTargetObjectMetadataId,
+    'task-object',
+  );
+  assert.equal(
+    request.calls[1]?.url,
+    'https://api.crm.corgiinvest.com/rest/open-api/core',
+  );
+  assert.equal(metadataResponse.disposed, true);
+  assert.equal(openApiResponse.disposed, true);
+});
+
 test('relation metadata uses the exact Twenty relationCreationPayload', async () => {
   const request = new FakeRequest();
   request.responses.push(new FakeResponse(201));

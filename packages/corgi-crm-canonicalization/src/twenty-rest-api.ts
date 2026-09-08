@@ -7,7 +7,11 @@ import {
   type CanonicalizationApi,
   type CanonicalizationCheckpoint,
 } from './execution.ts';
-import type { MetadataCreate, MetadataObject } from './metadata.ts';
+import type {
+  MetadataCreate,
+  MetadataField,
+  MetadataObject,
+} from './metadata.ts';
 import type { CanonicalizationSnapshot, CrmRecord } from './planner.ts';
 import {
   createCanonicalizationRequestGate,
@@ -41,6 +45,17 @@ type MetadataListResponse = {
 type RecordListResponse = {
   data?: Record<string, unknown>;
   pageInfo?: { hasNextPage?: boolean; endCursor?: string | null };
+};
+
+type OpenApiSchema = {
+  $ref?: string;
+  oneOf?: OpenApiSchema[];
+  items?: OpenApiSchema;
+  properties?: Record<string, OpenApiSchema>;
+};
+
+type CoreOpenApiDocument = {
+  components?: { schemas?: Record<string, OpenApiSchema> };
 };
 
 export const CANONICALIZATION_MAX_BODY_BYTES = 8 * 1024 * 1024;
@@ -117,6 +132,49 @@ const assertBodyWithinLimit = (operation: string, value: unknown): void => {
   }
 };
 
+const responseSchemaName = (objectName: string): string =>
+  `${objectName.charAt(0).toUpperCase()}${objectName.slice(1)}ForResponse`;
+
+const referencedSchemaName = (schema: OpenApiSchema): string | undefined => {
+  const reference =
+    schema.$ref ??
+    schema.items?.$ref ??
+    schema.oneOf?.find((candidate) => candidate.$ref)?.$ref;
+
+  return reference?.match(/^#\/components\/schemas\/(.+)$/)?.[1];
+};
+
+const relationTargetId = (field: MetadataField): string | null | undefined =>
+  field.relationTargetObjectMetadataId ??
+  field.settings?.relationTargetObjectMetadataId;
+
+const projectRelationTargets = (
+  objects: MetadataObject[],
+  document: CoreOpenApiDocument,
+): void => {
+  const schemas = document.components?.schemas ?? {};
+  const objectIdByResponseSchema = new Map(
+    objects.map((object) => [
+      responseSchemaName(object.nameSingular),
+      object.id,
+    ]),
+  );
+  for (const object of objects) {
+    const properties =
+      schemas[responseSchemaName(object.nameSingular)]?.properties;
+    for (const field of object.fields) {
+      if (field.type !== 'RELATION' || relationTargetId(field)) continue;
+      const targetSchema = properties?.[field.name]
+        ? referencedSchemaName(properties[field.name])
+        : undefined;
+      const targetId = targetSchema
+        ? objectIdByResponseSchema.get(targetSchema)
+        : undefined;
+      if (targetId) field.relationTargetObjectMetadataId = targetId;
+    }
+  }
+};
+
 export const createTwentyRestCanonicalizationApi = ({
   request,
   backendBaseUrl,
@@ -167,6 +225,24 @@ export const createTwentyRestCanonicalizationApi = ({
           throw new Error('Metadata pagination omitted its cursor');
         }
       } while (cursor);
+
+      if (
+        objects.some((object) =>
+          object.fields.some(
+            (field) => field.type === 'RELATION' && !relationTargetId(field),
+          ),
+        )
+      ) {
+        const response = await pacedRequest(() =>
+          request.get(restUrl('open-api/core'), { headers }),
+        );
+        await assertSuccessfulResponse(response, 'Get core OpenAPI');
+        const document = await disposeAfterJson<CoreOpenApiDocument>(
+          response,
+          'Core OpenAPI',
+        );
+        projectRelationTargets(objects, document);
+      }
 
       return objects;
     },
