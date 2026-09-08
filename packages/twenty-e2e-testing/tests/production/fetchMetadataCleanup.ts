@@ -101,7 +101,7 @@ const PRESERVED_FIELDS = {
     'previousRanking',
     'form13f',
     'filerIrsNumber',
-    'addressLine1',
+    'streetAddress',
     'addressLine2',
   ],
 } as const satisfies Record<SurvivingMigratedObjectName, readonly string[]>;
@@ -137,15 +137,6 @@ const RETAINED_FIELD_RENAMES = [
 ] as const;
 
 const EMPTY_ONLY_OBJECT_NAMES = ['salesTeam', 'teamMembership'] as const;
-const RESOLVED_REVIEW_STATUSES = new Set([
-  'accepted',
-  'approved',
-  'completed',
-  'dismissed',
-  'ignored',
-  'rejected',
-  'resolved',
-]);
 const FORBIDDEN_METADATA_PATTERN =
   /fetch|legacy|migration|import\s*batch|source\s*row|hmac|raw\s*data/i;
 
@@ -176,7 +167,10 @@ export type WorkspaceRecord = Record<string, unknown> & { id: string };
 export type MetadataCleanupApi = {
   listMetadataObjects(): Promise<MetadataObject[]>;
   listRecords(objectNamePlural: string): Promise<WorkspaceRecord[]>;
-  assertCanonicalizationComplete(): Promise<void>;
+  assertCanonicalizationComplete(): Promise<MetadataCleanupPreflightEvidence>;
+  assertNoWorkflowReferences(plan: MetadataCleanupPlan): Promise<void>;
+  readCleanupJournal(): Promise<MetadataCleanupJournal | undefined>;
+  writeCleanupJournal(journal: MetadataCleanupJournal): Promise<void>;
   deleteMetadataObject(id: string): Promise<void>;
   deleteMetadataField(id: string): Promise<void>;
   updateMetadataField(
@@ -201,6 +195,37 @@ export type MetadataCleanupPlan = {
     name: string;
     label: string;
   }>;
+};
+
+export type MetadataCleanupOperation = {
+  key: string;
+  kind: 'delete-object' | 'delete-field' | 'rename-field';
+  id: string;
+  target: string;
+};
+
+export type MetadataCleanupJournal = {
+  schemaVersion: 1;
+  status: 'planned' | 'running' | 'complete';
+  operations: MetadataCleanupOperation[];
+  completedOperationKeys: string[];
+  preflightEvidence: MetadataCleanupPreflightEvidence;
+};
+
+export type MetadataCleanupPreflightEvidence = {
+  rowCoverageHash: string;
+  businessContentHash: string;
+  sourceRecordCount: number;
+  importReviewItemCount: number;
+  companyCount: number;
+  peopleCount: number;
+  taskCount: number;
+  taskTargetCount: number;
+  wholesalerCount: number;
+  leadAssignmentCount: number;
+  outreachActivityCount: number;
+  holdingObservationCount: number;
+  archivedOutreachActivityCount: number;
 };
 
 const getObjectByName = (objects: MetadataObject[]) => {
@@ -684,6 +709,23 @@ export const assertCompanyValuesCanonicalized = (
       );
     }
 
+    const address = (company.address ?? {}) as Record<string, unknown>;
+    const sourceCountry = trimmedString(company.country);
+    if (
+      sourceCountry &&
+      trimmedString(address.addressCountry)?.toLocaleLowerCase() !==
+        sourceCountry.toLocaleLowerCase()
+    ) {
+      throw new Error(
+        `company ${company.id} cleanup blocked: Source Country is not preserved in Address`,
+      );
+    }
+    if (company.locationIsManual === true) {
+      throw new Error(
+        `company ${company.id} cleanup blocked: a manual location marker still requires canonicalization`,
+      );
+    }
+
     const legacyWebsite = trimmedString(company.legacyWebsite);
     if (legacyWebsite) {
       const domainName = (company.domainName ?? {}) as Record<string, unknown>;
@@ -729,116 +771,6 @@ export const assertCompanyValuesCanonicalized = (
   }
 };
 
-const HOLDING_RAW_FIELD_BY_NORMALIZED_KEY: Record<string, string[]> = {
-  product: ['productName'],
-  productname: ['productName'],
-  filer: ['filerName'],
-  filername: ['filerName'],
-  filerid: ['filerId'],
-  filerirsnumber: ['filerIrsNumber'],
-  cik: ['cik'],
-  crd: ['crd'],
-  city: ['city'],
-  state: ['stateRegion'],
-  stateregion: ['stateRegion'],
-  address: ['addressLine1'],
-  addressline1: ['addressLine1'],
-  addressline2: ['addressLine2'],
-  shares: ['sharesHeld'],
-  sharesheld: ['sharesHeld'],
-  marketvalue: ['marketValue'],
-  portfolio: ['portfolioPercent'],
-  portfoliopercent: ['portfolioPercent'],
-  percentofportfolio: ['portfolioPercent'],
-  ownership: ['ownershipPercent'],
-  ownershippercent: ['ownershipPercent'],
-  percentownership: ['ownershipPercent'],
-  avgprice: ['averagePrice'],
-  averageprice: ['averagePrice'],
-  changeinshares: ['shareChange'],
-  sharechange: ['shareChange'],
-  percentchange: ['shareChangePercent'],
-  sharechangepercent: ['shareChangePercent'],
-  priorofportfolio: ['previousPortfolioPercent'],
-  priorportfoliopercent: ['previousPortfolioPercent'],
-  priorpercentofportfolio: ['previousPortfolioPercent'],
-  qtrfirstowned: ['firstOwnedQuarter'],
-  firstownedquarter: ['firstOwnedQuarter'],
-  ranking: ['ranking'],
-  priorranking: ['previousRanking'],
-  previousranking: ['previousRanking'],
-  sourcedate: ['sourceDate', 'asOfDate'],
-  asofdate: ['sourceDate', 'asOfDate'],
-  '13f': ['form13f'],
-  form13f: ['form13f'],
-};
-
-const normalizedRawKey = (value: string): string =>
-  value
-    .toLocaleLowerCase()
-    .replace(/%/g, ' percent ')
-    .replace(/[^a-z0-9]+/g, '');
-
-const comparableValue = (value: unknown): string | undefined => {
-  if (value === null || value === undefined || value === '') return undefined;
-  if (typeof value === 'number' || typeof value === 'boolean')
-    return String(value);
-  if (typeof value !== 'string') return JSON.stringify(value);
-  const trimmed = value.trim();
-  if (!trimmed) return undefined;
-  const numeric = Number(trimmed.replace(/[$,%\s]/g, ''));
-  return Number.isFinite(numeric)
-    ? String(numeric)
-    : trimmed.toLocaleLowerCase();
-};
-
-export const assertHoldingRawDataCanonicalized = (
-  holdings: WorkspaceRecord[],
-): void => {
-  for (const holding of holdings) {
-    if (
-      holding.rawData === null ||
-      holding.rawData === undefined ||
-      holding.rawData === ''
-    ) {
-      continue;
-    }
-    let rawData: unknown = holding.rawData;
-    if (typeof rawData === 'string') {
-      try {
-        rawData = JSON.parse(rawData);
-      } catch {
-        throw new Error(
-          `holdingObservation ${holding.id} cleanup blocked: rawData is invalid JSON`,
-        );
-      }
-    }
-    if (!rawData || typeof rawData !== 'object' || Array.isArray(rawData)) {
-      throw new Error(
-        `holdingObservation ${holding.id} cleanup blocked: rawData is not an object`,
-      );
-    }
-
-    for (const [rawKey, rawValue] of Object.entries(rawData)) {
-      const comparableRawValue = comparableValue(rawValue);
-      if (comparableRawValue === undefined) continue;
-      const targetFields =
-        HOLDING_RAW_FIELD_BY_NORMALIZED_KEY[normalizedRawKey(rawKey)];
-      if (
-        !targetFields ||
-        !targetFields.some(
-          (fieldName) =>
-            comparableValue(holding[fieldName]) === comparableRawValue,
-        )
-      ) {
-        throw new Error(
-          `holdingObservation ${holding.id} cleanup blocked: rawData field ${rawKey} is not canonicalized`,
-        );
-      }
-    }
-  }
-};
-
 const assertCleanupObjectRecordsAreSafe = async (
   api: MetadataCleanupApi,
   plan: MetadataCleanupPlan,
@@ -856,62 +788,7 @@ const assertCleanupObjectRecordsAreSafe = async (
       );
     }
   }
-
-  const reviewObject = cleanupObjectByName.get('importReviewItem');
-  if (!reviewObject) return;
-  const reviewItems = await api.listRecords(reviewObject.namePlural);
-  const unresolvedCount = reviewItems.filter((item) => {
-    const status = trimmedString(item.reviewStatus)?.toLocaleLowerCase();
-    if (
-      !status ||
-      status === 'pending' ||
-      !RESOLVED_REVIEW_STATUSES.has(status)
-    ) {
-      return true;
-    }
-    return (
-      ['accepted', 'approved', 'completed', 'resolved'].includes(status) &&
-      !trimmedString(item.candidateCompanyId)
-    );
-  }).length;
-
-  if (unresolvedCount > 0) {
-    throw new Error(
-      `Refusing to delete Import Review Items: ${unresolvedCount} unresolved row(s) must be canonicalized first`,
-    );
-  }
 };
-
-const hasPersonContactFields = (plan: MetadataCleanupPlan): boolean =>
-  plan.fieldsToDelete.some(
-    ({ objectNameSingular, fieldName }) =>
-      objectNameSingular === 'person' &&
-      [
-        'legacyEmail',
-        'legacyPrimaryPhone',
-        'legacyLinkedInUrl',
-        'legacySecondaryEmails',
-        'legacySecondaryPhones',
-      ].includes(fieldName),
-  );
-
-const hasCompanyCanonicalizationFields = (plan: MetadataCleanupPlan): boolean =>
-  plan.fieldsToDelete.some(
-    ({ objectNameSingular, fieldName }) =>
-      objectNameSingular === 'company' &&
-      [
-        'fetchDescription',
-        'fetchNotes',
-        'legacyOwnerId',
-        'legacyWebsite',
-      ].includes(fieldName),
-  );
-
-const hasHoldingRawDataField = (plan: MetadataCleanupPlan): boolean =>
-  plan.fieldsToDelete.some(
-    ({ objectNameSingular, fieldName }) =>
-      objectNameSingular === 'holdingObservation' && fieldName === 'rawData',
-  );
 
 const assertCleanupComplete = (objects: MetadataObject[]): void => {
   if (
@@ -943,50 +820,125 @@ const assertCleanupComplete = (objects: MetadataObject[]): void => {
   }
 };
 
+const cleanupOperations = (
+  plan: MetadataCleanupPlan,
+): MetadataCleanupOperation[] => [
+  ...plan.objectsToDelete.map(({ id, nameSingular }) => ({
+    key: `delete-object:${id}`,
+    kind: 'delete-object' as const,
+    id,
+    target: nameSingular,
+  })),
+  ...plan.fieldsToDelete.map(({ id, objectNameSingular, fieldName }) => ({
+    key: `delete-field:${id}`,
+    kind: 'delete-field' as const,
+    id,
+    target: `${objectNameSingular}.${fieldName}`,
+  })),
+  ...plan.fieldsToRename.map(({ id, objectNameSingular, oldName, name }) => ({
+    key: `rename-field:${id}`,
+    kind: 'rename-field' as const,
+    id,
+    target: `${objectNameSingular}.${oldName}->${name}`,
+  })),
+];
+
+const assertResumeJournalMatchesPlan = (
+  journal: MetadataCleanupJournal,
+  operations: MetadataCleanupOperation[],
+): void => {
+  const originalOperations = new Map(
+    journal.operations.map((operation) => [operation.key, operation]),
+  );
+  if (originalOperations.size !== journal.operations.length) {
+    throw new Error('Cleanup resume journal contains duplicate operations');
+  }
+  for (const key of journal.completedOperationKeys) {
+    if (!originalOperations.has(key)) {
+      throw new Error('Cleanup resume journal contains an unknown checkpoint');
+    }
+  }
+  for (const operation of operations) {
+    const original = originalOperations.get(operation.key);
+    if (!original || JSON.stringify(original) !== JSON.stringify(operation)) {
+      throw new Error(
+        `Cleanup resume plan contains unexpected operation ${operation.key}`,
+      );
+    }
+  }
+};
+
 export const runFetchMetadataCleanup = async (
   api: MetadataCleanupApi,
 ): Promise<MetadataCleanupPlan> => {
   const plan = buildFetchMetadataCleanupPlan(await api.listMetadataObjects());
+  const operations = cleanupOperations(plan);
+  const previousJournal = await api.readCleanupJournal();
+  const isResume = previousJournal?.status === 'running';
+  let preflightEvidence = previousJournal?.preflightEvidence;
 
-  await assertCleanupObjectRecordsAreSafe(api, plan);
-  if (hasPersonContactFields(plan)) {
-    assertPeopleContactValuesCanonicalized(await api.listRecords('people'));
+  if (isResume) {
+    assertResumeJournalMatchesPlan(previousJournal, operations);
+  } else {
+    if (previousJournal?.status === 'complete' && operations.length > 0) {
+      throw new Error(
+        'Completed cleanup journal conflicts with current metadata',
+      );
+    }
+    await assertCleanupObjectRecordsAreSafe(api, plan);
+    if (operations.length > 0) {
+      preflightEvidence = await api.assertCanonicalizationComplete();
+    }
   }
-  if (hasCompanyCanonicalizationFields(plan)) {
-    const sourceRecordObject = plan.objectsToDelete.find(
-      ({ nameSingular }) => nameSingular === 'sourceRecord',
-    );
-    assertCompanyValuesCanonicalized(
-      await api.listRecords('companies'),
-      sourceRecordObject
-        ? await api.listRecords(sourceRecordObject.namePlural)
-        : [],
-    );
-  }
-  if (hasHoldingRawDataField(plan)) {
-    assertHoldingRawDataCanonicalized(
-      await api.listRecords('holdingObservations'),
-    );
-  }
-  if (
-    plan.objectsToDelete.length > 0 ||
-    plan.fieldsToDelete.length > 0 ||
-    plan.fieldsToRename.length > 0
-  ) {
-    await api.assertCanonicalizationComplete();
-  }
+  if (operations.length > 0) await api.assertNoWorkflowReferences(plan);
+
+  const journal: MetadataCleanupJournal =
+    isResume && previousJournal
+      ? structuredClone(previousJournal)
+      : {
+          schemaVersion: 1,
+          status: operations.length > 0 ? 'running' : 'complete',
+          operations,
+          completedOperationKeys: [],
+          preflightEvidence: preflightEvidence ?? {
+            rowCoverageHash: '',
+            businessContentHash: '',
+            sourceRecordCount: 0,
+            importReviewItemCount: 0,
+            companyCount: 0,
+            peopleCount: 0,
+            taskCount: 0,
+            taskTargetCount: 0,
+            wholesalerCount: 0,
+            leadAssignmentCount: 0,
+            outreachActivityCount: 0,
+            holdingObservationCount: 0,
+            archivedOutreachActivityCount: 0,
+          },
+        };
+  await api.writeCleanupJournal(journal);
+
+  const recordCompletedOperation = async (key: string): Promise<void> => {
+    if (!journal.completedOperationKeys.includes(key)) {
+      journal.completedOperationKeys.push(key);
+    }
+    await api.writeCleanupJournal(journal);
+  };
 
   for (const object of plan.objectsToDelete) {
     await api.deleteMetadataObject(object.id);
+    await recordCompletedOperation(`delete-object:${object.id}`);
   }
   for (const field of plan.fieldsToDelete) {
     await api.deleteMetadataField(field.id);
+    await recordCompletedOperation(`delete-field:${field.id}`);
   }
   for (const field of plan.fieldsToRename) {
     await api.updateMetadataField(field.id, {
       name: field.name,
       label: field.label,
     });
+    await recordCompletedOperation(`rename-field:${field.id}`);
   }
 
   const postconditionObjects = await api.listMetadataObjects();
@@ -999,6 +951,9 @@ export const runFetchMetadataCleanup = async (
   ) {
     throw new Error('Fetch metadata cleanup postcondition failed');
   }
+
+  journal.status = 'complete';
+  await api.writeCleanupJournal(journal);
 
   return plan;
 };
