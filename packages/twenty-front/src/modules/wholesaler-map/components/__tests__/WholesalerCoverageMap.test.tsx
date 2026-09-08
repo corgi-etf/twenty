@@ -9,7 +9,11 @@ const mockAddSource = jest.fn();
 const mockAddLayer = jest.fn();
 const mockAddControl = jest.fn();
 const mockGetCanvas = jest.fn(() => ({ style: { cursor: '' } }));
-const mockGetSource = jest.fn(() => ({ setData: mockSetData }));
+const mockGetClusterExpansionZoom = jest.fn().mockResolvedValue(8);
+const mockGetSource = jest.fn(() => ({
+  getClusterExpansionZoom: mockGetClusterExpansionZoom,
+  setData: mockSetData,
+}));
 const mockRemove = jest.fn();
 const mockEaseTo = jest.fn();
 const mapEventHandlers = new Map<string, (...args: never[]) => void>();
@@ -166,5 +170,29 @@ describe('WholesalerCoverageMap', () => {
       expect.any(Function),
     );
     expect(mockRemove).toHaveBeenCalledTimes(1);
+  });
+
+  it('surfaces cluster expansion failures without an unhandled rejection', async () => {
+    mockGetClusterExpansionZoom.mockRejectedValueOnce(
+      new Error('Cluster expansion failed'),
+    );
+    renderMap();
+    act(() => mapEventHandlers.get('load')?.());
+
+    await act(async () => {
+      mapEventHandlers.get('click:lead-clusters')?.({
+        features: [
+          {
+            geometry: { type: 'Point', coordinates: [-87.6298, 41.8781] },
+            properties: { cluster_id: 1 },
+          },
+        ],
+      } as never);
+      await Promise.resolve();
+    });
+
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      'The interactive map could not load',
+    );
   });
 });
