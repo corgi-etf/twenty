@@ -181,6 +181,7 @@ jobs:
         uses: aws-actions/configure-aws-credentials@61815dcd50bd041e203e49132bacad1fd04d2708 # v5.1.1
         with:
           role-to-assume: ${{ env.AWS_ROLE_ARN }}
+          role-duration-seconds: 7200
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Verify AWS deployment preconditions
