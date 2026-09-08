@@ -8,10 +8,9 @@ import {
   runCanonicalization,
 } from '../../../corgi-crm-canonicalization/src/execution.ts';
 import type { ReconciliationManifest } from '../../../corgi-crm-canonicalization/src/reconciliation.ts';
+import { CANONICALIZATION_APPROVED_ORIGIN } from '../../../corgi-crm-canonicalization/src/twenty-rest-api.ts';
 import { createPlaywrightCanonicalizationApi } from './playwrightCanonicalizationApi.ts';
 import { requireProductionEnvironment } from './requireProductionEnvironment.ts';
-
-const APPROVED_ORIGIN = 'https://crm.corgiinvest.com';
 
 const requiredRunPath = (variableName: string): string => {
   const runnerTemp = process.env.RUNNER_TEMP;
@@ -53,7 +52,10 @@ test('runs the guarded CRM canonicalization maintenance operation', async ({
 
   const { BACKEND_BASE_URL, FRONTEND_BASE_URL } =
     requireProductionEnvironment();
-  if (FRONTEND_BASE_URL !== APPROVED_ORIGIN) {
+  if (
+    FRONTEND_BASE_URL !== CANONICALIZATION_APPROVED_ORIGIN ||
+    BACKEND_BASE_URL !== CANONICALIZATION_APPROVED_ORIGIN
+  ) {
     throw new Error('Production canonicalization origin is not approved');
   }
   const mode = process.env.CRM_CANONICALIZATION_MODE ?? 'dry-run';
@@ -69,7 +71,7 @@ test('runs the guarded CRM canonicalization maintenance operation', async ({
   });
   const result = await runCanonicalization(api, {
     origin: FRONTEND_BASE_URL,
-    expectedOrigin: APPROVED_ORIGIN,
+    expectedOrigin: CANONICALIZATION_APPROVED_ORIGIN,
     mode,
     confirmation: process.env.CRM_CANONICALIZATION_CONFIRMATION,
     expectedManifest: expectedManifest(),

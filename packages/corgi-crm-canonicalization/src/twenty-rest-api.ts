@@ -59,6 +59,7 @@ type CoreOpenApiDocument = {
 };
 
 export const CANONICALIZATION_MAX_BODY_BYTES = 8 * 1024 * 1024;
+export const CANONICALIZATION_APPROVED_ORIGIN = 'https://crm.corgiinvest.com';
 
 const assertSuccessfulResponse = async (
   response: CanonicalizationResponse,
@@ -188,7 +189,23 @@ export const createTwentyRestCanonicalizationApi = ({
   checkpointFilePath: string;
   requestGate?: ReturnType<typeof createCanonicalizationRequestGate>;
 }): CanonicalizationApi => {
-  const origin = new URL(frontendBaseUrl).origin;
+  let frontendOrigin = '';
+  let backendOrigin = '';
+  try {
+    frontendOrigin = new URL(frontendBaseUrl).origin;
+    backendOrigin = new URL(backendBaseUrl).origin;
+  } catch {
+    throw new Error('Canonicalization endpoint origin is invalid');
+  }
+  if (
+    frontendBaseUrl !== frontendOrigin ||
+    backendBaseUrl !== backendOrigin ||
+    frontendOrigin !== CANONICALIZATION_APPROVED_ORIGIN ||
+    backendOrigin !== CANONICALIZATION_APPROVED_ORIGIN
+  ) {
+    throw new Error('Canonicalization endpoint origin is not approved');
+  }
+  const origin = frontendOrigin;
   const restUrl = (path: string) =>
     new URL(`/rest/${path}`, backendBaseUrl).toString();
   const headers = { Origin: origin };

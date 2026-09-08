@@ -107,7 +107,7 @@ const manifest = {
 const createApi = (request: FakeRequest, checkpointFilePath = '/unused') =>
   createTwentyRestCanonicalizationApi({
     request,
-    backendBaseUrl: 'https://api.crm.corgiinvest.com',
+    backendBaseUrl: 'https://crm.corgiinvest.com',
     frontendBaseUrl: 'https://crm.corgiinvest.com',
     checkpointFilePath,
     requestGate: immediateGate,
@@ -133,7 +133,7 @@ test('REST pagination uses authenticated Origin shapes and disposes responses', 
   );
   assert.equal(
     request.calls[0]?.url,
-    'https://api.crm.corgiinvest.com/rest/people?limit=100&depth=0',
+    'https://crm.corgiinvest.com/rest/people?limit=100&depth=0',
   );
   assert.match(request.calls[1]?.url ?? '', /starting_after=cursor-1/);
   assert.deepEqual(request.calls[0]?.options.headers, {
@@ -210,7 +210,7 @@ test('metadata relation targets are projected from the core OpenAPI response', a
   );
   assert.equal(
     request.calls[1]?.url,
-    'https://api.crm.corgiinvest.com/rest/open-api/core',
+    'https://crm.corgiinvest.com/rest/open-api/core',
   );
   assert.equal(metadataResponse.disposed, true);
   assert.equal(openApiResponse.disposed, true);
@@ -234,7 +234,7 @@ test('relation metadata uses the exact Twenty relationCreationPayload', async ()
 
   assert.deepEqual(request.calls[0], {
     method: 'POST',
-    url: 'https://api.crm.corgiinvest.com/rest/metadata/fields',
+    url: 'https://crm.corgiinvest.com/rest/metadata/fields',
     options: {
       headers: { Origin: 'https://crm.corgiinvest.com' },
       data: {
@@ -265,7 +265,7 @@ test('record batches use upsert and reject count or byte overflow before request
   await api.upsertBatch('taskTargets', records);
   assert.deepEqual(request.calls[0], {
     method: 'POST',
-    url: 'https://api.crm.corgiinvest.com/rest/batch/taskTargets?upsert=true&depth=0',
+    url: 'https://crm.corgiinvest.com/rest/batch/taskTargets?upsert=true&depth=0',
     options: {
       headers: { Origin: 'https://crm.corgiinvest.com' },
       data: records,
@@ -279,6 +279,30 @@ test('record batches use upsert and reject count or byte overflow before request
     /body is too large/,
   );
   assert.equal(request.calls.length, 1);
+});
+
+test('hostile and noncanonical endpoints fail before any request', () => {
+  for (const [frontendBaseUrl, backendBaseUrl] of [
+    ['https://lookalike.example', 'https://crm.corgiinvest.com'],
+    ['https://crm.corgiinvest.com', 'https://lookalike.example'],
+    ['https://crm.corgiinvest.com/path', 'https://crm.corgiinvest.com'],
+    ['https://crm.corgiinvest.com', 'https://crm.corgiinvest.com?query=1'],
+    ['https://crm.corgiinvest.com/', 'https://crm.corgiinvest.com'],
+  ]) {
+    const request = new FakeRequest();
+    assert.throws(
+      () =>
+        createTwentyRestCanonicalizationApi({
+          request,
+          backendBaseUrl,
+          frontendBaseUrl,
+          checkpointFilePath: '/unused',
+          requestGate: immediateGate,
+        }),
+      /origin is not approved/,
+    );
+    assert.equal(request.calls.length, 0);
+  }
 });
 
 test('HTTP errors are status-only and never echo a response body', async () => {
