@@ -12,7 +12,22 @@ jest.mock('@/wholesaler-map/hooks/useWholesalerMapCompanies', () => ({
   useWholesalerMapCompanies: () => mockUseWholesalerMapCompanies(),
 }));
 jest.mock('@/wholesaler-map/components/WholesalerMapContent', () => ({
-  WholesalerMapContent: () => <div>Wholesaler map content</div>,
+  WholesalerMapContent: ({
+    featureCollection,
+  }: {
+    featureCollection: {
+      features: Array<{ properties: { ownerColor: string } }>;
+    };
+  }) => (
+    <div>
+      Wholesaler map content
+      {featureCollection.features.length > 0 && (
+        <span data-testid="owner-color">
+          {featureCollection.features[0].properties.ownerColor}
+        </span>
+      )}
+    </div>
+  ),
 }));
 jest.mock('@/ui/layout/page/components/PageCardLayout', () => ({
   PageCardLayout: ({
@@ -29,7 +44,7 @@ jest.mock('@/ui/layout/page/components/PageCardLayout', () => ({
   ),
 }));
 jest.mock('@/ui/layout/page/components/PageCardHeader', () => ({
-  PageCardHeader: ({ title }: { title: ReactNode }) => <h1>{title}</h1>,
+  PageCardHeader: ({ title }: { title: ReactNode }) => <div>{title}</div>,
 }));
 jest.mock('@/ui/utilities/page-title/components/PageTitle', () => ({
   PageTitle: () => null,
@@ -72,6 +87,37 @@ describe('WholesalerMapPage', () => {
       screen.getByRole('heading', { name: 'Wholesaler coverage' }),
     ).toBeInTheDocument();
     expect(screen.getByText('Wholesaler map content')).toBeInTheDocument();
+  });
+
+  it('normalizes mapped owners with a MapLibre-compatible color', () => {
+    mockUseWholesalerMapCompanies.mockReturnValue({
+      canViewMap: true,
+      error: undefined,
+      hasWholesalerRelation: true,
+      isLoadingAllCompanies: false,
+      records: [
+        {
+          id: 'company-1',
+          name: 'Northstar Capital',
+          address: {
+            addressCity: 'Chicago',
+            addressState: 'IL',
+            addressCountry: 'US',
+            addressLat: 41.8781,
+            addressLng: -87.6298,
+          },
+          historicalOwner: { id: 'owner-1', name: 'Alex Morgan' },
+        },
+      ],
+      refetch: jest.fn(),
+      totalCount: 1,
+    });
+
+    renderPage();
+
+    expect(screen.getByTestId('owner-color')).toHaveTextContent(
+      /^#[\da-f]{6}$/i,
+    );
   });
 
   it('shows the standard permission fallback when Company map data is hidden', () => {

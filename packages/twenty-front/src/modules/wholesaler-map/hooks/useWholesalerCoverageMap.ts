@@ -5,7 +5,6 @@ import {
   MapLibreMap,
   NavigationControl,
 } from 'maplibre-gl';
-import { useTheme } from 'twenty-ui/theme-constants';
 
 import { WHOLESALER_COVERAGE_MAP_IDS } from '@/wholesaler-map/constants/WholesalerCoverageMapConstants';
 import { WHOLESALER_MAP_DATA_CONTRACT } from '@/wholesaler-map/constants/WholesalerMapDataContract';
@@ -24,7 +23,6 @@ export const useWholesalerCoverageMap = ({
   featureCollection,
   onCompanySelect,
 }: UseWholesalerCoverageMapArgs) => {
-  const theme = useTheme();
   // MapLibre owns mutable resources outside React's render lifecycle.
   // oxlint-disable-next-line twenty/no-state-useref
   const mapRef = useRef<MapLibreMap | null>(null);
@@ -83,11 +81,7 @@ export const useWholesalerCoverageMap = ({
     const handleLoad = () => {
       try {
         addWholesalerCoverageMapLayers({
-          clusterHighColor: theme.color.orange9,
-          clusterLowColor: theme.color.blue9,
-          clusterMediumColor: theme.color.green9,
           featureCollection: featureCollectionRef.current,
-          invertedTextColor: theme.font.color.inverted,
           map,
         });
         isMapReadyRef.current = true;
@@ -113,7 +107,7 @@ export const useWholesalerCoverageMap = ({
       map.remove();
       mapRef.current = null;
     };
-  }, [containerRef, theme]);
+  }, [containerRef]);
 
   useEffect(() => {
     if (!isMapReadyRef.current) {

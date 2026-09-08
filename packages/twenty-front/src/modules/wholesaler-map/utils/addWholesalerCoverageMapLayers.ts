@@ -1,23 +1,16 @@
 import { type MapLibreMap } from 'maplibre-gl';
 
+import { WHOLESALER_COVERAGE_MAP_COLORS } from '@/wholesaler-map/constants/WholesalerCoverageMapColors';
 import { WHOLESALER_COVERAGE_MAP_IDS } from '@/wholesaler-map/constants/WholesalerCoverageMapConstants';
 import { type WholesalerMapFeatureCollection } from '@/wholesaler-map/types/WholesalerMapCompany';
 
 type AddWholesalerCoverageMapLayersArgs = {
-  clusterHighColor: string;
-  clusterLowColor: string;
-  clusterMediumColor: string;
   featureCollection: WholesalerMapFeatureCollection;
-  invertedTextColor: string;
   map: MapLibreMap;
 };
 
 export const addWholesalerCoverageMapLayers = ({
-  clusterHighColor,
-  clusterLowColor,
-  clusterMediumColor,
   featureCollection,
-  invertedTextColor,
   map,
 }: AddWholesalerCoverageMapLayersArgs) => {
   map.addSource(WHOLESALER_COVERAGE_MAP_IDS.source, {
@@ -36,14 +29,14 @@ export const addWholesalerCoverageMapLayers = ({
       'circle-color': [
         'step',
         ['get', 'point_count'],
-        clusterLowColor,
+        WHOLESALER_COVERAGE_MAP_COLORS.clusterLow,
         100,
-        clusterMediumColor,
+        WHOLESALER_COVERAGE_MAP_COLORS.clusterMedium,
         750,
-        clusterHighColor,
+        WHOLESALER_COVERAGE_MAP_COLORS.clusterHigh,
       ],
       'circle-radius': ['step', ['get', 'point_count'], 17, 100, 23, 750, 30],
-      'circle-stroke-color': invertedTextColor,
+      'circle-stroke-color': WHOLESALER_COVERAGE_MAP_COLORS.invertedText,
       'circle-stroke-width': 1,
     },
   });
@@ -57,7 +50,7 @@ export const addWholesalerCoverageMapLayers = ({
       'text-size': 12,
     },
     paint: {
-      'text-color': invertedTextColor,
+      'text-color': WHOLESALER_COVERAGE_MAP_COLORS.invertedText,
     },
   });
   map.addLayer({
@@ -69,7 +62,7 @@ export const addWholesalerCoverageMapLayers = ({
       'circle-color': ['get', 'ownerColor'],
       'circle-opacity': 0.9,
       'circle-radius': 6,
-      'circle-stroke-color': invertedTextColor,
+      'circle-stroke-color': WHOLESALER_COVERAGE_MAP_COLORS.invertedText,
       'circle-stroke-width': 1,
     },
   });
