@@ -1,5 +1,12 @@
 export type FetchLike = typeof fetch;
 
+export type TwentyClientTiming = {
+  now?: () => number;
+  sleep?: (delayMs: number) => Promise<void>;
+  maxRateLimitWaitMs?: number;
+  fallbackRateLimitWaitMs?: number;
+};
+
 import type { MetadataField, MetadataObject } from './schema-bootstrap.ts';
 import type { FieldDefinition, ObjectDefinition } from './schema.ts';
 
@@ -17,25 +24,80 @@ export class TwentyClient {
   readonly apiKey: string;
   readonly fetchImpl: FetchLike;
   readonly maxAttempts: number;
+  readonly now: () => number;
+  readonly sleep: (delayMs: number) => Promise<void>;
+  readonly maxRateLimitWaitMs: number;
+  readonly fallbackRateLimitWaitMs: number;
+  private rateLimitResumeAtMs = 0;
 
   constructor(
     baseUrl: string,
     apiKey: string,
     fetchImpl: FetchLike = fetch,
     maxAttempts = 4,
+    timing: TwentyClientTiming = {},
   ) {
     this.baseUrl = baseUrl;
     this.apiKey = apiKey;
     this.fetchImpl = fetchImpl;
     this.maxAttempts = maxAttempts;
+    this.now = timing.now ?? Date.now;
+    this.sleep =
+      timing.sleep ??
+      ((delayMs) => new Promise((resolve) => setTimeout(resolve, delayMs)));
+    this.maxRateLimitWaitMs = timing.maxRateLimitWaitMs ?? 5 * 60_000;
+    this.fallbackRateLimitWaitMs = timing.fallbackRateLimitWaitMs ?? 60_000;
+  }
+
+  private retryAfterMs(headers: Headers): number {
+    const retryAfter = headers.get('retry-after');
+
+    if (retryAfter) {
+      const seconds = Number(retryAfter);
+      if (Number.isFinite(seconds) && seconds >= 0) {
+        return Math.max(1_000, Math.ceil(seconds * 1_000));
+      }
+
+      const retryAt = Date.parse(retryAfter);
+      if (Number.isFinite(retryAt)) {
+        return Math.max(1_000, retryAt - this.now());
+      }
+    }
+
+    const resetAtSeconds = Number(headers.get('x-ratelimit-reset'));
+    if (Number.isFinite(resetAtSeconds) && resetAtSeconds > 0) {
+      return Math.max(1_000, resetAtSeconds * 1_000 - this.now());
+    }
+
+    return this.fallbackRateLimitWaitMs;
+  }
+
+  private async waitForRateLimitGate(
+    deadlineMs: number,
+    path: string,
+  ): Promise<void> {
+    const delayMs = Math.max(0, this.rateLimitResumeAtMs - this.now());
+    if (delayMs === 0) return;
+    if (this.now() + delayMs > deadlineMs) {
+      throw new TwentyApiError(
+        `Twenty API rate-limit wait exceeded for ${path}`,
+        429,
+      );
+    }
+
+    await this.sleep(delayMs);
   }
 
   async request<T>(_path: string, _init: RequestInit = {}): Promise<T> {
     const path = _path;
     const init = _init;
     let lastError: unknown;
+    let transientAttempts = 0;
+    const rateLimitDeadlineMs = this.now() + this.maxRateLimitWaitMs;
 
-    for (let attempt = 1; attempt <= this.maxAttempts; attempt += 1) {
+    while (transientAttempts < this.maxAttempts) {
+      await this.waitForRateLimitGate(rateLimitDeadlineMs, path);
+
       try {
         const signal = init.signal
           ? AbortSignal.any([init.signal, AbortSignal.timeout(30_000)])
@@ -53,8 +115,6 @@ export class TwentyClient {
             },
           },
         );
-        const retryable = response.status === 429 || response.status >= 500;
-
         if (!response.ok) {
           const body = (await response.text()).slice(0, 500);
           const error = new TwentyApiError(
@@ -62,13 +122,25 @@ export class TwentyClient {
             response.status,
           );
 
-          if (!retryable || attempt === this.maxAttempts) throw error;
+          if (response.status === 429) {
+            const delayMs = this.retryAfterMs(response.headers);
+            if (this.now() + delayMs > rateLimitDeadlineMs) throw error;
+
+            lastError = error;
+            this.rateLimitResumeAtMs = Math.max(
+              this.rateLimitResumeAtMs,
+              this.now() + delayMs,
+            );
+            await this.waitForRateLimitGate(rateLimitDeadlineMs, path);
+            continue;
+          }
+
+          if (response.status < 500) throw error;
+
+          transientAttempts += 1;
+          if (transientAttempts >= this.maxAttempts) throw error;
           lastError = error;
-          const retryAfter = Number(response.headers.get('retry-after'));
-          const delay = Number.isFinite(retryAfter)
-            ? Math.min(retryAfter * 1_000, 5_000)
-            : Math.min(50 * 2 ** (attempt - 1), 1_000);
-          await new Promise((resolve) => setTimeout(resolve, delay));
+          await this.sleep(Math.min(50 * 2 ** (transientAttempts - 1), 1_000));
           continue;
         }
 
@@ -83,14 +155,13 @@ export class TwentyClient {
         if (
           !isTimeout ||
           error instanceof TwentyApiError ||
-          attempt === this.maxAttempts
+          transientAttempts + 1 >= this.maxAttempts
         ) {
           throw error;
         }
         lastError = error;
-        await new Promise((resolve) =>
-          setTimeout(resolve, 50 * 2 ** (attempt - 1)),
-        );
+        transientAttempts += 1;
+        await this.sleep(50 * 2 ** (transientAttempts - 1));
       }
     }
 

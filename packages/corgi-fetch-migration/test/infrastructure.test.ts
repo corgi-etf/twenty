@@ -191,6 +191,84 @@ test('Twenty client retries only timeout, 429, and 5xx responses', async () => {
   assert.equal(attempts, 1);
 });
 
+test('Twenty client honors Retry-After across repeated 429 responses', async () => {
+  let attempts = 0;
+  let now = Date.parse('2026-09-08T00:00:00Z');
+  const delays: number[] = [];
+  const rateLimitedFetch: typeof fetch = async () => {
+    attempts += 1;
+
+    if (attempts === 1) {
+      return new Response('rate limited', {
+        status: 429,
+        headers: { 'retry-after': '60' },
+      });
+    }
+    if (attempts === 2) {
+      return new Response('still limited', {
+        status: 429,
+        headers: {
+          'retry-after': new Date(now + 2_000).toUTCString(),
+        },
+      });
+    }
+
+    return new Response('{"ok":true}', {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    });
+  };
+  const client = new TwentyClient(
+    'https://crm.example',
+    'secret',
+    rateLimitedFetch,
+    1,
+    {
+      now: () => now,
+      sleep: async (delay) => {
+        delays.push(delay);
+        now += delay;
+      },
+      maxRateLimitWaitMs: 180_000,
+    },
+  );
+
+  assert.deepEqual(await client.request('/rest/tasks'), { ok: true });
+  assert.equal(attempts, 3);
+  assert.deepEqual(delays, [60_000, 2_000]);
+});
+
+test('Twenty client bounds 429 waits and uses the server window fallback', async () => {
+  let attempts = 0;
+  let now = 0;
+  const delays: number[] = [];
+  const alwaysLimitedFetch: typeof fetch = async () => {
+    attempts += 1;
+    return new Response('rate limited', { status: 429 });
+  };
+  const client = new TwentyClient(
+    'https://crm.example',
+    'secret',
+    alwaysLimitedFetch,
+    1,
+    {
+      now: () => now,
+      sleep: async (delay) => {
+        delays.push(delay);
+        now += delay;
+      },
+      maxRateLimitWaitMs: 90_000,
+    },
+  );
+
+  await assert.rejects(
+    () => client.request('/rest/tasks'),
+    (error: unknown) => error instanceof TwentyApiError && error.status === 429,
+  );
+  assert.equal(attempts, 2);
+  assert.deepEqual(delays, [60_000]);
+});
+
 test('Twenty relation metadata payload includes the required target field icon', async () => {
   let requestBody: Record<string, unknown> | undefined;
   const captureFetch: typeof fetch = async (_input, init) => {
