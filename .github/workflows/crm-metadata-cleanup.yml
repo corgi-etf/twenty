@@ -49,7 +49,8 @@ permissions:
   id-token: write
 
 concurrency:
-  group: crm-production-metadata-cleanup
+  # Serialize the irreversible cleanup with every production deployment.
+  group: crm-production-deploy
   cancel-in-progress: false
 
 env:
@@ -181,6 +182,80 @@ jobs:
 
       - name: Install the Chromium test browser
         run: npx playwright install --with-deps chromium
+
+      - name: Configure immediate AWS deployment inspection
+        uses: aws-actions/configure-aws-credentials@61815dcd50bd041e203e49132bacad1fd04d2708 # v5.1.1
+        with:
+          role-to-assume: ${{ env.AWS_ROLE_ARN }}
+          role-duration-seconds: 3600
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Recheck every live task immediately before cleanup
+        shell: bash
+        env:
+          DEPLOYED_SHA: ${{ inputs.deployed_sha }}
+        run: |
+          set -euo pipefail
+          EXPECTED_DIGEST="$(aws ecr describe-images \
+            --repository-name "${ECR_REPOSITORY}" \
+            --image-ids "imageTag=git-${DEPLOYED_SHA}" \
+            --query 'imageDetails[0].imageDigest' \
+            --output text)"
+          [[ "${EXPECTED_DIGEST}" == sha256:* ]]
+
+          assert_stable_service_tasks() {
+            local service="$1"
+            local container="$2"
+            local service_json="${RUNNER_TEMP}/${service}-service.json"
+            local tasks_json="${RUNNER_TEMP}/${service}-tasks.json"
+            local task_arns
+            local desired
+
+            aws ecs describe-services \
+              --cluster "${ECS_CLUSTER}" \
+              --services "${service}" > "${service_json}"
+            jq -e '
+              (.failures | length) == 0 and
+              (.services | length) == 1 and
+              .services[0].status == "ACTIVE" and
+              .services[0].desiredCount > 0 and
+              .services[0].runningCount == .services[0].desiredCount and
+              .services[0].pendingCount == 0 and
+              ([.services[0].deployments[] | select(.status == "PRIMARY")] | length) == 1 and
+              ([.services[0].deployments[] | select(.status == "ACTIVE")] | length) == 0
+            ' "${service_json}" >/dev/null
+            desired="$(jq -r '.services[0].desiredCount' "${service_json}")"
+
+            task_arns="$(aws ecs list-tasks \
+              --cluster "${ECS_CLUSTER}" \
+              --service-name "${service}" \
+              --desired-status RUNNING \
+              --query 'taskArns' \
+              --output text)"
+            # shellcheck disable=SC2086
+            aws ecs describe-tasks \
+              --cluster "${ECS_CLUSTER}" \
+              --tasks ${task_arns} > "${tasks_json}"
+            jq -e \
+              --arg container "${container}" \
+              --arg digest "${EXPECTED_DIGEST}" \
+              --argjson desired "${desired}" '
+                (.failures | length) == 0 and
+                (.tasks | length) == $desired and
+                all(.tasks[]; .lastStatus == "RUNNING") and
+                all(
+                  .tasks[];
+                  ([.containers[] | select(
+                    .name == $container and
+                    .lastStatus == "RUNNING" and
+                    .imageDigest == $digest
+                  )] | length) == 1
+                )
+              ' "${tasks_json}" >/dev/null
+          }
+
+          assert_stable_service_tasks "${SERVER_SERVICE}" "${SERVER_CONTAINER}"
+          assert_stable_service_tasks "${WORKER_SERVICE}" "${WORKER_CONTAINER}"
 
       - name: Run fail-closed production metadata cleanup
         env:

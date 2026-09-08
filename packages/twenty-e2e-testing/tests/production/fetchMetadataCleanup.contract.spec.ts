@@ -687,6 +687,28 @@ test('blocks before mutation when a workflow references cleanup metadata', () =>
       plan,
     ),
   ).not.toThrow();
+  expect(() =>
+    assertNoWorkflowReferences(
+      [
+        {
+          id: 'workflow-version-3',
+          trigger: { filters: [{ fieldName: 'COUNTRY' }] },
+        },
+      ],
+      plan,
+    ),
+  ).toThrow(/workflow workflow-version-3 references cleanup metadata country/i);
+  expect(() =>
+    assertNoWorkflowReferences(
+      [
+        {
+          id: 'workflow-version-4',
+          description: 'A country-specific sales workflow',
+        },
+      ],
+      plan,
+    ),
+  ).not.toThrow();
 });
 
 test('requires the audited counts, hashes, and exact legacy relationships', () => {

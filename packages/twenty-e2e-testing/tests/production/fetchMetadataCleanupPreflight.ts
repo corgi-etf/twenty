@@ -383,12 +383,23 @@ export const assertAuditedCanonicalizationSnapshot = (
   );
 };
 
-const nestedStrings = (value: unknown): string[] => {
-  if (typeof value === 'string') return [value];
-  if (Array.isArray(value)) return value.flatMap(nestedStrings);
+const WORKFLOW_REFERENCE_PATH = /trigger|steps?|filters?|actions?/i;
+
+const referenceStrings = (
+  value: unknown,
+  isReferencePath = false,
+): string[] => {
+  if (typeof value === 'string') return isReferencePath ? [value] : [];
+  if (Array.isArray(value))
+    return value.flatMap((item) => referenceStrings(item, isReferencePath));
   if (!value || typeof value !== 'object') return [];
 
-  return Object.values(value).flatMap(nestedStrings);
+  return Object.entries(value).flatMap(([key, item]) =>
+    referenceStrings(
+      item,
+      isReferencePath || WORKFLOW_REFERENCE_PATH.test(key),
+    ),
+  );
 };
 
 export const assertNoWorkflowReferences = (
@@ -398,28 +409,26 @@ export const assertNoWorkflowReferences = (
   const exactIds = [
     ...plan.objectsToDelete.map(({ id }) => id),
     ...plan.fieldsToDelete.map(({ id }) => id),
+    ...plan.fieldsToRename.map(({ id }) => id),
   ];
   const exactNames = [
     ...plan.objectsToDelete.flatMap(({ nameSingular, namePlural }) => [
       nameSingular,
       namePlural,
     ]),
-    ...plan.fieldsToDelete
-      .filter(({ fieldName }) =>
-        /fetch|legacy|migration|sourceRow|rawData|hmac/i.test(fieldName),
-      )
-      .map(({ fieldName }) => fieldName),
+    ...plan.fieldsToDelete.map(({ fieldName }) => fieldName),
     ...plan.fieldsToRename.map(({ oldName }) => oldName),
   ];
 
   for (const workflow of workflows) {
-    for (const value of nestedStrings(workflow)) {
+    for (const value of referenceStrings(workflow)) {
       const reference = exactIds.find((id) => value.includes(id));
       const nameReference = exactNames.find(
         (name) =>
-          value === name ||
+          value.toLocaleLowerCase() === name.toLocaleLowerCase() ||
           new RegExp(
             `(^|[^A-Za-z0-9_])${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}([^A-Za-z0-9_]|$)`,
+            'i',
           ).test(value),
       );
       if (reference || nameReference) {
