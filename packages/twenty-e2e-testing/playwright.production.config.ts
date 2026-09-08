@@ -28,6 +28,10 @@ export default defineConfig({
   },
   projects: [
     {
+      name: 'production-contracts',
+      testMatch: /.*\.contract\.spec\.ts/,
+    },
+    {
       name: 'production-authentication',
       testMatch: /.*\.production\.setup\.ts/,
     },
@@ -41,6 +45,7 @@ export default defineConfig({
           'production-user.json',
         ),
       },
+      testIgnore: /.*\.contract\.spec\.ts/,
       dependencies: ['production-authentication'],
     },
   ],

@@ -1,0 +1,78 @@
+name: Manual CRM migration metadata cleanup
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: >-
+          Type PERMANENTLY_DELETE_FETCH_METADATA_FROM_CRM_CORGIINVEST_COM
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: crm-production-metadata-cleanup
+  cancel-in-progress: false
+
+jobs:
+  cleanup:
+    name: Permanently remove migration-only CRM metadata
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment: production
+    steps:
+      - name: Check out the exact workflow revision
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - name: Validate the permanent-cleanup confirmation
+        shell: bash
+        env:
+          REQUESTED_CONFIRMATION: ${{ inputs.confirmation }}
+          REQUIRED_CONFIRMATION: PERMANENTLY_DELETE_FETCH_METADATA_FROM_CRM_CORGIINVEST_COM
+        run: |
+          set -euo pipefail
+          if [[ "${REQUESTED_CONFIRMATION}" != "${REQUIRED_CONFIRMATION}" ]]; then
+            echo "The exact permanent-cleanup confirmation was not provided." >&2
+            exit 1
+          fi
+
+      - name: Install Node and Yarn dependencies
+        uses: ./.github/actions/crm-yarn-install
+
+      - name: Install the Chromium test browser
+        run: npx playwright install --with-deps chromium
+
+      - name: Run fail-closed production metadata cleanup
+        env:
+          FRONTEND_BASE_URL: https://crm.corgiinvest.com
+          BACKEND_BASE_URL: https://crm.corgiinvest.com
+          CRM_E2E_LOGIN: ${{ secrets.CRM_E2E_LOGIN }}
+          CRM_E2E_PASSWORD: ${{ secrets.CRM_E2E_PASSWORD }}
+          CRM_E2E_WORKSPACE_NAME: ${{ secrets.CRM_E2E_WORKSPACE_NAME }}
+          CRM_METADATA_CLEANUP_ENABLED: 'true'
+          CRM_METADATA_CLEANUP_CONFIRMATION: ${{ inputs.confirmation }}
+        run: >-
+          npx nx test:production twenty-e2e-testing --
+          tests/production/fetchMetadataCleanup.maintenance.spec.ts
+          --project=production-chromium
+
+      - name: Record required one-time workflow retirement
+        if: success()
+        shell: bash
+        run: |
+          {
+            echo '## One-time cleanup completed'
+            echo
+            echo 'Remove this workflow and the Fetch-named maintenance helpers in the immediate follow-up commit.'
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Upload failure evidence
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: crm-metadata-cleanup-failures-${{ github.run_attempt }}
+          path: packages/twenty-e2e-testing/run_results/production/
+          if-no-files-found: ignore
+          retention-days: 7
