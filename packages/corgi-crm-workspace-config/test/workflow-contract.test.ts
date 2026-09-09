@@ -10,13 +10,32 @@ const discoveryWorkflowPath = new URL(
   '../../../.github/workflows/crm-territory-identity-discovery.yml',
   import.meta.url,
 );
+const bootstrapWorkflowPath = new URL(
+  '../../../.github/workflows/crm-workspace-metadata-bootstrap.yml',
+  import.meta.url,
+);
+const appWorkflowPath = new URL(
+  '../../../.github/workflows/corgi-crm-app-production.yml',
+  import.meta.url,
+);
+const bootstrapSpecPath = new URL(
+  '../../twenty-e2e-testing/tests/production/workspaceMetadataBootstrap.maintenance.spec.ts',
+  import.meta.url,
+);
 const discoverySpecPath = new URL(
   '../../twenty-e2e-testing/tests/production/workspaceTerritoryIdentityDiscovery.maintenance.spec.ts',
   import.meta.url,
 );
+const workspaceConfigSpecPath = new URL(
+  '../../twenty-e2e-testing/tests/production/workspaceConfiguration.maintenance.spec.ts',
+  import.meta.url,
+);
 
 test('workspace configuration requires the exact deployed workflow revision', async () => {
-  const workflow = await readFile(workflowPath, 'utf8');
+  const [workflow, workspaceConfigSpec] = await Promise.all([
+    readFile(workflowPath, 'utf8'),
+    readFile(workspaceConfigSpecPath, 'utf8'),
+  ]);
 
   assert.match(
     workflow,
@@ -44,6 +63,59 @@ test('workspace configuration requires the exact deployed workflow revision', as
       ),
     );
   }
+  assert.match(workflow, /crm-territory-member-identities-/);
+  assert.match(workflow, /CRM_TERRITORY_IDENTITY_ARTIFACT_PATH/);
+  assert.match(workflow, /\.head_sha == \$deployed_sha/);
+  assert.match(
+    workspaceConfigSpec,
+    /assertCompletedTerritoryIdentityDiscovery/,
+  );
+});
+
+test('metadata bootstrap is exact-SHA, metadata-only, and precedes app preflight', async () => {
+  const [bootstrapWorkflow, bootstrapSpec, appWorkflow] = await Promise.all([
+    readFile(bootstrapWorkflowPath, 'utf8'),
+    readFile(bootstrapSpecPath, 'utf8'),
+    readFile(appWorkflowPath, 'utf8'),
+  ]);
+
+  assert.match(
+    bootstrapWorkflow,
+    /\[\[ "\$\{DEPLOYED_SHA\}" == "\$\{GITHUB_SHA\}" \]\]/,
+  );
+  assert.match(
+    bootstrapWorkflow,
+    /Verify the completed metadata-cleanup workflow lineage/,
+  );
+  assert.match(
+    bootstrapWorkflow,
+    /workspaceMetadataBootstrap\.maintenance\.spec\.ts/,
+  );
+  assert.match(bootstrapWorkflow, /crm-workspace-metadata-bootstrap-/);
+  assert.doesNotMatch(
+    bootstrapSpec,
+    /runWorkspaceConfiguration|listCompanies|listWholesalers|conditionalPatch|createView|updateView|deleteView|Navigation/,
+  );
+  assert.match(bootstrapSpec, /createTwentyWorkspaceMetadataBootstrapApi/);
+  assert.match(bootstrapSpec, /runWorkspaceMetadataBootstrap/);
+
+  const bootstrapLineagePosition = appWorkflow.indexOf(
+    'Verify exact-SHA metadata bootstrap lineage',
+  );
+  const bootstrapEvidencePosition = appWorkflow.indexOf(
+    'Verify metadata bootstrap before app preflight',
+  );
+  const appPreflightPosition = appWorkflow.indexOf(
+    'Verify the authenticated production workspace',
+  );
+  const appInstallPosition = appWorkflow.indexOf(
+    'Publish the private Corgi CRM app',
+  );
+  assert.ok(bootstrapLineagePosition > 0);
+  assert.ok(bootstrapEvidencePosition > bootstrapLineagePosition);
+  assert.ok(appPreflightPosition > bootstrapEvidencePosition);
+  assert.ok(appInstallPosition > appPreflightPosition);
+  assert.match(appWorkflow, /\.head_sha == \$deployed_sha/);
 });
 
 test('territory identity discovery is read-only and bound to the exact live revision', async () => {
@@ -56,6 +128,8 @@ test('territory identity discovery is read-only and bound to the exact live revi
     workflow,
     /\[\[ "\$\{DEPLOYED_SHA\}" == "\$\{GITHUB_SHA\}" \]\]/,
   );
+  assert.match(workflow, /Verify exact-SHA app install lineage/);
+  assert.match(workflow, /\.head_sha == \$deployed_sha/);
   assert.match(workflow, /environment: production/);
   assert.match(workflow, /CRM_E2E_LOGIN: \$\{\{ secrets\.CRM_E2E_LOGIN \}\}/);
   assert.match(workflow, /CRM_TERRITORY_IDENTITY_DISCOVERY_ENABLED: 'true'/);

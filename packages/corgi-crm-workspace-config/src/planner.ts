@@ -79,17 +79,32 @@ const FOLLOW_UP_VIEW_FIELD_NAMES = [
 ] as const;
 
 const QUICK_LOG_SCALAR_FIELD_DEFINITIONS = [
-  { name: 'activityType', type: 'TEXT' },
-  { name: 'outcome', type: 'TEXT' },
-  { name: 'notes', type: 'TEXT' },
-  { name: 'occurredAt', type: 'DATE_TIME' },
-  { name: 'followUpDate', type: 'DATE' },
+  { name: 'activityType', label: 'Activity Type', type: 'TEXT' },
+  { name: 'outcome', label: 'Outcome', type: 'TEXT' },
+  { name: 'notes', label: 'Notes', type: 'TEXT' },
+  { name: 'occurredAt', label: 'Occurred At', type: 'DATE_TIME' },
+  { name: 'followUpDate', label: 'Follow-up Date', type: 'DATE' },
 ] as const;
 
 const QUICK_LOG_RELATION_FIELD_DEFINITIONS = [
-  { name: 'company', targetObjectName: 'company' },
-  { name: 'contact', targetObjectName: 'person' },
-  { name: 'wholesaler', targetObjectName: 'wholesaler' },
+  {
+    name: 'company',
+    label: 'Company',
+    targetObjectName: 'company',
+    targetFieldLabel: 'Outreach Activities',
+  },
+  {
+    name: 'contact',
+    label: 'Contact',
+    targetObjectName: 'person',
+    targetFieldLabel: 'Outreach Activities',
+  },
+  {
+    name: 'wholesaler',
+    label: 'Wholesaler',
+    targetObjectName: 'wholesaler',
+    targetFieldLabel: 'Outreach Activities',
+  },
 ] as const;
 
 const companyViewFieldSize = (fieldName: string): number =>
@@ -240,7 +255,7 @@ export type WholesalerTerritoryPlan = {
   mutations: WholesalerTerritoryMutation[];
 };
 
-type MetadataFieldCreate = {
+export type MetadataFieldCreate = {
   objectMetadataId: string;
   name: string;
   label: string;
@@ -253,7 +268,7 @@ type MetadataFieldCreate = {
   };
 };
 
-type MetadataFieldUpdate = {
+export type MetadataFieldUpdate = {
   id: string;
   label: string;
 };
@@ -322,6 +337,11 @@ export type WorkspaceConfigPlan = {
   metadataFieldsToUpdate: MetadataFieldUpdate[];
   layout: WorkspaceLayoutPlan | null;
 };
+
+export type WorkspaceMetadataBootstrapPlan = Pick<
+  WorkspaceConfigPlan,
+  'metadataFieldsToCreate' | 'metadataFieldsToUpdate'
+>;
 
 const stableStringify = (value: unknown): string => {
   if (Array.isArray(value)) {
@@ -725,14 +745,12 @@ const selectFollowUpView = ({
   return managedView;
 };
 
-export const buildWorkspaceConfigPlan = (
+export const buildWorkspaceMetadataBootstrapPlan = (
   snapshot: WorkspaceConfigSnapshot,
-): WorkspaceConfigPlan => {
+): WorkspaceMetadataBootstrapPlan => {
   const objectsByName = uniqueObjectMap(snapshot.objects);
   const company = objectsByName.get('company')!;
   const companyFields = uniqueFieldMap(company);
-  const person = objectsByName.get('person')!;
-  const personFields = uniqueFieldMap(person);
   const metadataFieldsToCreate: MetadataFieldCreate[] = [];
   const metadataFieldsToUpdate: MetadataFieldUpdate[] = [];
 
@@ -804,28 +822,48 @@ export const buildWorkspaceConfigPlan = (
   for (const definition of QUICK_LOG_SCALAR_FIELD_DEFINITIONS) {
     const field = outreachFields.get(definition.name);
     if (!field) {
-      throw new Error(
-        `Required quick-log field outreachActivity.${definition.name} is missing`,
-      );
+      metadataFieldsToCreate.push({
+        objectMetadataId: outreachActivity.id,
+        ...definition,
+      });
+      continue;
     }
     if (field.type !== definition.type) {
       throw new Error(
         `Outreach Activity ${definition.name} must be ${definition.type}, found ${field.type}`,
       );
     }
+    if (field.label !== definition.label) {
+      metadataFieldsToUpdate.push({ id: field.id, label: definition.label });
+    }
   }
   for (const definition of QUICK_LOG_RELATION_FIELD_DEFINITIONS) {
     const field = outreachFields.get(definition.name);
     if (!field) {
-      throw new Error(
-        `Required quick-log field outreachActivity.${definition.name} is missing`,
-      );
+      metadataFieldsToCreate.push({
+        objectMetadataId: outreachActivity.id,
+        name: definition.name,
+        label: definition.label,
+        type: 'RELATION',
+        relationCreationPayload: {
+          targetObjectMetadataId: objectsByName.get(
+            definition.targetObjectName,
+          )!.id,
+          targetFieldLabel: definition.targetFieldLabel,
+          targetFieldIcon: 'IconLink',
+          type: 'MANY_TO_ONE',
+        },
+      });
+      continue;
     }
     validateManyToOneRelation({
       field,
       sourceFieldName: `Outreach Activity ${definition.name}`,
       targetObject: objectsByName.get(definition.targetObjectName)!,
     });
+    if (field.label !== definition.label) {
+      metadataFieldsToUpdate.push({ id: field.id, label: definition.label });
+    }
   }
 
   const workspaceMemberRelation = wholesalerFields.get('workspaceMember');
@@ -878,13 +916,24 @@ export const buildWorkspaceConfigPlan = (
     }
   }
 
-  if (metadataFieldsToCreate.length > 0) {
-    return {
-      metadataFieldsToCreate,
-      metadataFieldsToUpdate,
-      layout: null,
-    };
+  return { metadataFieldsToCreate, metadataFieldsToUpdate };
+};
+
+export const buildWorkspaceConfigPlan = (
+  snapshot: WorkspaceConfigSnapshot,
+): WorkspaceConfigPlan => {
+  const metadataPlan = buildWorkspaceMetadataBootstrapPlan(snapshot);
+  if (metadataPlan.metadataFieldsToCreate.length > 0) {
+    return { ...metadataPlan, layout: null };
   }
+
+  const objectsByName = uniqueObjectMap(snapshot.objects);
+  const company = objectsByName.get('company')!;
+  const companyFields = uniqueFieldMap(company);
+  const person = objectsByName.get('person')!;
+  const personFields = uniqueFieldMap(person);
+  const outreachActivity = objectsByName.get('outreachActivity')!;
+  const outreachFields = uniqueFieldMap(outreachActivity);
 
   for (const fieldName of VISIBLE_COMPANY_FIELD_NAMES) {
     if (!companyFields.has(fieldName)) {
@@ -1275,8 +1324,7 @@ export const buildWorkspaceConfigPlan = (
     .map(({ id }) => id);
 
   return {
-    metadataFieldsToCreate,
-    metadataFieldsToUpdate,
+    ...metadataPlan,
     layout: {
       visibleCompanyFieldNames: [...VISIBLE_COMPANY_FIELD_NAMES],
       visiblePersonFieldNames: [...VISIBLE_PERSON_FIELD_NAMES],

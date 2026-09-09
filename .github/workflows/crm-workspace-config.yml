@@ -35,6 +35,14 @@ on:
         description: Immutable workspace member UUID approved for Nash's Florida territory
         required: true
         type: string
+      identity_discovery_run_id:
+        description: Successful territory identity discovery workflow run ID
+        required: true
+        type: string
+      identity_discovery_run_attempt:
+        description: Successful territory identity discovery workflow attempt number
+        required: true
+        type: string
       cleanup_run_id:
         description: Successful metadata-cleanup workflow run ID
         required: true
@@ -100,6 +108,8 @@ jobs:
           GRACE_WORKSPACE_MEMBER_ID: ${{ inputs.grace_workspace_member_id }}
           KELLY_WORKSPACE_MEMBER_ID: ${{ inputs.kelly_workspace_member_id }}
           NASH_WORKSPACE_MEMBER_ID: ${{ inputs.nash_workspace_member_id }}
+          IDENTITY_RUN_ID: ${{ inputs.identity_discovery_run_id }}
+          IDENTITY_RUN_ATTEMPT: ${{ inputs.identity_discovery_run_attempt }}
           CLEANUP_RUN_ID: ${{ inputs.cleanup_run_id }}
           CLEANUP_RUN_ATTEMPT: ${{ inputs.cleanup_run_attempt }}
           RESUME_RUN_ID: ${{ inputs.resume_run_id }}
@@ -117,6 +127,8 @@ jobs:
           [[ "${GRACE_WORKSPACE_MEMBER_ID}" != "${KELLY_WORKSPACE_MEMBER_ID}" ]]
           [[ "${GRACE_WORKSPACE_MEMBER_ID}" != "${NASH_WORKSPACE_MEMBER_ID}" ]]
           [[ "${KELLY_WORKSPACE_MEMBER_ID}" != "${NASH_WORKSPACE_MEMBER_ID}" ]]
+          [[ "${IDENTITY_RUN_ID}" =~ ^[1-9][0-9]*$ ]]
+          [[ "${IDENTITY_RUN_ATTEMPT}" =~ ^[1-9][0-9]*$ ]]
           [[ "${CLEANUP_RUN_ID}" =~ ^[1-9][0-9]*$ ]]
           [[ "${CLEANUP_RUN_ATTEMPT}" =~ ^[1-9][0-9]*$ ]]
           if [[ -n "${RESUME_RUN_ID}" || -n "${RESUME_ATTEMPT}" ]]; then
@@ -185,6 +197,40 @@ jobs:
           git merge-base --is-ancestor "${DEPLOYED_SHA}" "${cleanup_head_sha}"
           git merge-base --is-ancestor "${cleanup_head_sha}" "${GITHUB_SHA}"
 
+      - name: Verify exact-SHA territory identity discovery lineage
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          IDENTITY_RUN_ID: ${{ inputs.identity_discovery_run_id }}
+          IDENTITY_RUN_ATTEMPT: ${{ inputs.identity_discovery_run_attempt }}
+          DEPLOYED_SHA: ${{ inputs.deployed_sha }}
+        run: |
+          set -euo pipefail
+          workflow_json="${RUNNER_TEMP}/identity-workflow.json"
+          run_json="${RUNNER_TEMP}/identity-run.json"
+          gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/crm-territory-identity-discovery.yml" > "${workflow_json}"
+          gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${IDENTITY_RUN_ID}/attempts/${IDENTITY_RUN_ATTEMPT}" > "${run_json}"
+          workflow_id="$(jq -r '.id' "${workflow_json}")"
+          jq -e '
+            .name == "Manual CRM territory identity discovery" and
+            .path == ".github/workflows/crm-territory-identity-discovery.yml" and
+            .state == "active" and (.id | type == "number")
+          ' "${workflow_json}" >/dev/null
+          jq -e \
+            --arg repository "${GITHUB_REPOSITORY}" \
+            --arg run_id "${IDENTITY_RUN_ID}" \
+            --argjson run_attempt "${IDENTITY_RUN_ATTEMPT}" \
+            --arg workflow_id "${workflow_id}" \
+            --arg deployed_sha "${DEPLOYED_SHA}" '
+              (.id | tostring) == $run_id and .run_attempt == $run_attempt and
+              (.workflow_id | tostring) == $workflow_id and
+              .name == "Manual CRM territory identity discovery" and
+              .event == "workflow_dispatch" and .head_branch == "main" and
+              .head_repository.full_name == $repository and
+              .head_sha == $deployed_sha and
+              .status == "completed" and .conclusion == "success"
+            ' "${run_json}" >/dev/null
+
       - name: Configure read-only AWS deployment inspection
         uses: aws-actions/configure-aws-credentials@61815dcd50bd041e203e49132bacad1fd04d2708 # v5.1.1
         with:
@@ -247,6 +293,14 @@ jobs:
           path: ${{ runner.temp }}/crm-cleanup-prerequisite
           github-token: ${{ github.token }}
           run-id: ${{ inputs.cleanup_run_id }}
+
+      - name: Download the PII-safe territory identity mapping
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: crm-territory-member-identities-${{ inputs.identity_discovery_run_id }}-${{ inputs.identity_discovery_run_attempt }}
+          path: ${{ runner.temp }}/crm-territory-identity-discovery
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.identity_discovery_run_id }}
 
       - name: Restore the durable workspace-config checkpoint
         if: inputs.resume_run_id != ''
@@ -352,6 +406,7 @@ jobs:
           CRM_GRACE_WORKSPACE_MEMBER_ID: ${{ inputs.grace_workspace_member_id }}
           CRM_KELLY_WORKSPACE_MEMBER_ID: ${{ inputs.kelly_workspace_member_id }}
           CRM_NASH_WORKSPACE_MEMBER_ID: ${{ inputs.nash_workspace_member_id }}
+          CRM_TERRITORY_IDENTITY_ARTIFACT_PATH: ${{ runner.temp }}/crm-territory-identity-discovery/workspace-member-identities.json
           CRM_METADATA_CLEANUP_JOURNAL_PATH: ${{ runner.temp }}/crm-cleanup-prerequisite/metadata-cleanup-journal.json
           CRM_WORKSPACE_CONFIG_CHECKPOINT_PATH: ${{ runner.temp }}/crm-workspace-config/checkpoint.json
         run: >-

@@ -11,8 +11,17 @@ on:
         description: Exact 40-character SHA deployed to both CRM services
         required: true
         type: string
+      metadata_bootstrap_run_id:
+        description: Successful metadata-bootstrap workflow run ID
+        required: true
+        type: string
+      metadata_bootstrap_run_attempt:
+        description: Successful metadata-bootstrap workflow attempt number
+        required: true
+        type: string
 
 permissions:
+  actions: read
   contents: read
   id-token: write
 
@@ -52,12 +61,57 @@ jobs:
         env:
           CONFIRMATION: ${{ inputs.confirmation }}
           DEPLOYED_SHA: ${{ inputs.deployed_sha }}
+          BOOTSTRAP_RUN_ID: ${{ inputs.metadata_bootstrap_run_id }}
+          BOOTSTRAP_RUN_ATTEMPT: ${{ inputs.metadata_bootstrap_run_attempt }}
         run: |
           set -euo pipefail
           [[ "${CONFIRMATION}" == "PUBLISH_AND_INSTALL_CORGI_CRM_APP" ]]
           [[ "${DEPLOYED_SHA}" =~ ^[0-9a-f]{40}$ ]]
           [[ "${DEPLOYED_SHA}" == "${GITHUB_SHA}" ]]
+          [[ "${BOOTSTRAP_RUN_ID}" =~ ^[1-9][0-9]*$ ]]
+          [[ "${BOOTSTRAP_RUN_ATTEMPT}" =~ ^[1-9][0-9]*$ ]]
           git cat-file -e "${DEPLOYED_SHA}^{commit}"
+
+      - name: Verify exact-SHA metadata bootstrap lineage
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BOOTSTRAP_RUN_ID: ${{ inputs.metadata_bootstrap_run_id }}
+          BOOTSTRAP_RUN_ATTEMPT: ${{ inputs.metadata_bootstrap_run_attempt }}
+        run: |
+          set -euo pipefail
+          workflow_json="${RUNNER_TEMP}/metadata-bootstrap-workflow.json"
+          run_json="${RUNNER_TEMP}/metadata-bootstrap-run.json"
+          gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/crm-workspace-metadata-bootstrap.yml" > "${workflow_json}"
+          gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${BOOTSTRAP_RUN_ID}/attempts/${BOOTSTRAP_RUN_ATTEMPT}" > "${run_json}"
+          workflow_id="$(jq -r '.id' "${workflow_json}")"
+          jq -e '
+            .name == "Manual CRM workspace metadata bootstrap" and
+            .path == ".github/workflows/crm-workspace-metadata-bootstrap.yml" and
+            .state == "active" and (.id | type == "number")
+          ' "${workflow_json}" >/dev/null
+          jq -e \
+            --arg repository "${GITHUB_REPOSITORY}" \
+            --arg run_id "${BOOTSTRAP_RUN_ID}" \
+            --argjson run_attempt "${BOOTSTRAP_RUN_ATTEMPT}" \
+            --arg workflow_id "${workflow_id}" \
+            --arg deployed_sha "${{ inputs.deployed_sha }}" '
+              (.id | tostring) == $run_id and .run_attempt == $run_attempt and
+              (.workflow_id | tostring) == $workflow_id and
+              .name == "Manual CRM workspace metadata bootstrap" and
+              .event == "workflow_dispatch" and .head_branch == "main" and
+              .head_repository.full_name == $repository and
+              .head_sha == $deployed_sha and
+              .status == "completed" and .conclusion == "success"
+            ' "${run_json}" >/dev/null
+
+      - name: Download PII-free metadata bootstrap evidence
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: crm-workspace-metadata-bootstrap-${{ inputs.metadata_bootstrap_run_id }}-${{ inputs.metadata_bootstrap_run_attempt }}
+          path: ${{ runner.temp }}/crm-workspace-metadata-bootstrap
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.metadata_bootstrap_run_id }}
 
       - name: Read the app version from the approved revision
         id: app
@@ -148,6 +202,21 @@ jobs:
 
           assert_stable_service_tasks "${SERVER_SERVICE}" "${SERVER_CONTAINER}"
           assert_stable_service_tasks "${WORKER_SERVICE}" "${WORKER_CONTAINER}"
+
+      - name: Verify metadata bootstrap before app preflight
+        env:
+          FRONTEND_BASE_URL: ${{ env.CORGI_CRM_API_URL }}
+          BACKEND_BASE_URL: ${{ env.CORGI_CRM_API_URL }}
+          CRM_E2E_LOGIN: ${{ secrets.CRM_E2E_LOGIN }}
+          CRM_E2E_PASSWORD: ${{ secrets.CRM_E2E_PASSWORD }}
+          CRM_E2E_WORKSPACE_NAME: ${{ secrets.CRM_E2E_WORKSPACE_NAME }}
+          CRM_WORKSPACE_METADATA_PREREQUISITE_ENABLED: 'true'
+          CRM_DEPLOYED_SHA: ${{ inputs.deployed_sha }}
+          CRM_WORKSPACE_METADATA_BOOTSTRAP_ARTIFACT_PATH: ${{ runner.temp }}/crm-workspace-metadata-bootstrap/bootstrap.json
+        run: >-
+          npx nx test:production twenty-e2e-testing --
+          tests/production/workspaceMetadataBootstrapPrerequisite.production.spec.ts
+          --project=production-chromium
 
       - name: Acquire a short-lived deployment API key
         env:

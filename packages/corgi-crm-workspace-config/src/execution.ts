@@ -4,17 +4,21 @@ import {
   buildTerritoryProjectionPlan,
   buildWholesalerTerritoryPlan,
   buildWorkspaceConfigPlan,
+  buildWorkspaceMetadataBootstrapPlan,
   type CompanyTerritoryRecord,
   type WholesalerTerritoryAssignment,
   type WholesalerTerritoryRecord,
   type WorkspaceConfigPlan,
   type WorkspaceConfigSnapshot,
   type WorkspaceLayoutPlan,
+  type WorkspaceMetadataBootstrapPlan,
   workspaceConfigOperationCount,
 } from './planner.ts';
 
 export const APPLY_WORKSPACE_CONFIG_CONFIRMATION =
   'APPLY_TERRITORY_FIRST_CRM_CONFIGURATION';
+export const BOOTSTRAP_WORKSPACE_METADATA_CONFIRMATION =
+  'BOOTSTRAP_TERRITORY_CRM_METADATA';
 
 export type WorkspaceConfigCheckpoint = {
   schemaVersion: 2;
@@ -86,6 +90,25 @@ export type WorkspaceConfigApi = {
   writeCheckpoint(checkpoint: WorkspaceConfigCheckpoint): Promise<void>;
 };
 
+export type WorkspaceMetadataBootstrapApi = {
+  listWorkspaceConfigSnapshot(): Promise<WorkspaceConfigSnapshot>;
+  createMetadataField(
+    input: WorkspaceMetadataBootstrapPlan['metadataFieldsToCreate'][number],
+  ): Promise<void>;
+  updateMetadataFieldLabel(id: string, label: string): Promise<void>;
+};
+
+export type WorkspaceMetadataBootstrapOptions = {
+  origin: string;
+  expectedOrigin: string;
+  confirmation: string;
+};
+
+export type WorkspaceMetadataBootstrapResult = {
+  metadataMutations: number;
+  metadataContractHash: string;
+};
+
 export type WorkspaceConfigRunOptions = {
   origin: string;
   expectedOrigin: string;
@@ -122,6 +145,25 @@ const stableStringify = (value: unknown): string => {
 
 const operationHash = (value: unknown): string =>
   createHash('sha256').update(stableStringify(value), 'utf8').digest('hex');
+
+export const WORKSPACE_METADATA_BOOTSTRAP_CONTRACT_HASH = operationHash({
+  schemaVersion: 1,
+  fields: [
+    'company.stateRegion:TEXT:State',
+    'company.postalCode:TEXT:ZIP Code',
+    'company.historicalOwner:RELATION:MANY_TO_ONE:wholesaler:Wholesaler',
+    'wholesaler.territory:TEXT:Territory',
+    'wholesaler.workspaceMember:RELATION:MANY_TO_ONE:workspaceMember:Workspace Member:Wholesaler Profiles',
+    'outreachActivity.activityType:TEXT:Activity Type',
+    'outreachActivity.outcome:TEXT:Outcome',
+    'outreachActivity.notes:TEXT:Notes',
+    'outreachActivity.occurredAt:DATE_TIME:Occurred At',
+    'outreachActivity.followUpDate:DATE:Follow-up Date',
+    'outreachActivity.company:RELATION:MANY_TO_ONE:company:Company',
+    'outreachActivity.contact:RELATION:MANY_TO_ONE:person:Contact',
+    'outreachActivity.wholesaler:RELATION:MANY_TO_ONE:wholesaler:Wholesaler',
+  ],
+});
 
 const HASH_PATTERN = /^[a-f0-9]{64}$/;
 
@@ -191,6 +233,64 @@ const assertRunGate = (options: WorkspaceConfigRunOptions): void => {
       'Expected workspace configuration company count is invalid',
     );
   }
+};
+
+const assertMetadataBootstrapGate = (
+  options: WorkspaceMetadataBootstrapOptions,
+): void => {
+  let origin = '';
+  let expectedOrigin = '';
+  try {
+    origin = new URL(options.origin).origin;
+    expectedOrigin = new URL(options.expectedOrigin).origin;
+  } catch {
+    throw new Error('Workspace metadata bootstrap origin is invalid');
+  }
+  if (
+    options.origin !== origin ||
+    options.expectedOrigin !== expectedOrigin ||
+    origin !== expectedOrigin ||
+    origin !== 'https://crm.corgiinvest.com'
+  ) {
+    throw new Error('Workspace metadata bootstrap origin is not approved');
+  }
+  if (options.confirmation !== BOOTSTRAP_WORKSPACE_METADATA_CONFIRMATION) {
+    throw new Error('Workspace metadata bootstrap confirmation is invalid');
+  }
+};
+
+export const runWorkspaceMetadataBootstrap = async (
+  api: WorkspaceMetadataBootstrapApi,
+  options: WorkspaceMetadataBootstrapOptions,
+): Promise<WorkspaceMetadataBootstrapResult> => {
+  assertMetadataBootstrapGate(options);
+  const initialPlan = buildWorkspaceMetadataBootstrapPlan(
+    await api.listWorkspaceConfigSnapshot(),
+  );
+  let metadataMutations = 0;
+  for (const input of initialPlan.metadataFieldsToCreate) {
+    await api.createMetadataField(input);
+    metadataMutations += 1;
+  }
+  for (const update of initialPlan.metadataFieldsToUpdate) {
+    await api.updateMetadataFieldLabel(update.id, update.label);
+    metadataMutations += 1;
+  }
+
+  const verificationPlan = buildWorkspaceMetadataBootstrapPlan(
+    await api.listWorkspaceConfigSnapshot(),
+  );
+  if (
+    verificationPlan.metadataFieldsToCreate.length > 0 ||
+    verificationPlan.metadataFieldsToUpdate.length > 0
+  ) {
+    throw new Error('Workspace metadata bootstrap did not converge');
+  }
+
+  return {
+    metadataMutations,
+    metadataContractHash: WORKSPACE_METADATA_BOOTSTRAP_CONTRACT_HASH,
+  };
 };
 
 const recordCompletedOperation = async (

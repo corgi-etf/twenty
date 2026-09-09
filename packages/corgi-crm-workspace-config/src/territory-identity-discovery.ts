@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import {
   lstat,
   mkdir,
+  readFile,
   realpath,
   rename,
   unlink,
@@ -187,4 +188,52 @@ export const writeTerritoryIdentityArtifact = async (
     await unlink(temporaryPath).catch(() => undefined);
     throw error;
   }
+};
+
+export const assertCompletedTerritoryIdentityDiscovery = async ({
+  artifactPath,
+  expectedWorkspaceMemberIds,
+}: {
+  artifactPath: string;
+  expectedWorkspaceMemberIds: TerritoryIdentityArtifact['workspaceMemberIds'];
+}): Promise<TerritoryIdentityArtifact> => {
+  let value: unknown;
+  try {
+    value = JSON.parse(await readFile(artifactPath, 'utf8'));
+  } catch {
+    throw new Error('Territory identity artifact is invalid JSON');
+  }
+  const artifact = value as TerritoryIdentityArtifact;
+  const workspaceMemberIds = {
+    Grace: artifact?.workspaceMemberIds?.Grace,
+    Kelly: artifact?.workspaceMemberIds?.Kelly,
+    Nash: artifact?.workspaceMemberIds?.Nash,
+  };
+  if (
+    Object.keys(artifact ?? {})
+      .sort()
+      .join(',') !== 'aggregateIdentityHash,workspaceMemberIds' ||
+    Object.keys(artifact?.workspaceMemberIds ?? {})
+      .sort()
+      .join(',') !== 'Grace,Kelly,Nash' ||
+    !Object.values(workspaceMemberIds).every((workspaceMemberId) =>
+      WORKSPACE_MEMBER_ID_PATTERN.test(workspaceMemberId),
+    ) ||
+    new Set(Object.values(workspaceMemberIds)).size !== 3 ||
+    artifact.aggregateIdentityHash !==
+      aggregateIdentityHash(workspaceMemberIds) ||
+    TERRITORY_IDENTITY_LABELS.some(
+      (label) =>
+        workspaceMemberIds[label] !== expectedWorkspaceMemberIds[label],
+    )
+  ) {
+    throw new Error(
+      'Territory identity artifact does not match approved workspace member inputs',
+    );
+  }
+
+  return {
+    workspaceMemberIds,
+    aggregateIdentityHash: artifact.aggregateIdentityHash,
+  };
 };

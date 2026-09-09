@@ -14,6 +14,7 @@ import {
   assertWorkspaceConfigCheckpoint,
   type WorkspaceConfigApi,
   type WorkspaceConfigCheckpoint,
+  type WorkspaceMetadataBootstrapApi,
 } from './execution.ts';
 import type {
   CompanyTerritoryRecord,
@@ -968,5 +969,32 @@ export const createTwentyTerritoryIdentityDiscoveryApi = ({
       frontendOrigin,
       requestGate,
     }),
+  };
+};
+
+export const createTwentyWorkspaceMetadataBootstrapApi = ({
+  request,
+  backendBaseUrl,
+  frontendBaseUrl,
+  requestGate = createWorkspaceConfigRequestGate(),
+}: {
+  request: WorkspaceConfigRequestContext;
+  backendBaseUrl: string;
+  frontendBaseUrl: string;
+  requestGate?: ReturnType<typeof createWorkspaceConfigRequestGate>;
+}): WorkspaceMetadataBootstrapApi => {
+  const api = createTwentyWorkspaceConfigApi({
+    request,
+    backendBaseUrl,
+    frontendBaseUrl,
+    checkpointFilePath: '',
+    requestGate,
+  });
+
+  return {
+    listWorkspaceConfigSnapshot: () => api.listWorkspaceConfigSnapshot(),
+    createMetadataField: (input) => api.createMetadataField(input),
+    updateMetadataFieldLabel: (id, label) =>
+      api.updateMetadataFieldLabel(id, label),
   };
 };

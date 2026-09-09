@@ -9,6 +9,7 @@ import {
   assertWorkspaceConfigTenant,
   createTwentyTerritoryIdentityDiscoveryApi,
   createTwentyWorkspaceConfigApi,
+  createTwentyWorkspaceMetadataBootstrapApi,
   createWorkspaceConfigRequestGate,
   preflightWorkspaceConfigCheckpoint,
   type WorkspaceConfigRequestContext,
@@ -428,6 +429,23 @@ test('territory identity discovery API exposes only the read-only wholesaler que
     ['GET'],
   );
   assert.match(request.calls[0]!.url, /\/rest\/wholesalers\?.*depth=1/);
+});
+
+test('metadata bootstrap API exposes no record or layout mutations', () => {
+  const request = new FakeRequest();
+  const api = createTwentyWorkspaceMetadataBootstrapApi({
+    request,
+    backendBaseUrl: 'https://crm.corgiinvest.com',
+    frontendBaseUrl: 'https://crm.corgiinvest.com',
+    requestGate: immediateGate,
+  });
+
+  assert.deepEqual(Object.keys(api), [
+    'listWorkspaceConfigSnapshot',
+    'createMetadataField',
+    'updateMetadataFieldLabel',
+  ]);
+  assert.deepEqual(request.calls, []);
 });
 
 test('writes and validates a PII-free integrity-protected checkpoint', async () => {

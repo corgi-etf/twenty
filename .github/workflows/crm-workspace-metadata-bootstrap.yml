@@ -1,0 +1,217 @@
+name: Manual CRM workspace metadata bootstrap
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: Type BOOTSTRAP_TERRITORY_CRM_METADATA
+        required: true
+        type: string
+      deployed_sha:
+        description: Exact 40-character SHA currently deployed to both CRM services
+        required: true
+        type: string
+      company_count:
+        description: Exact Company count from the completed canonicalization cleanup
+        required: true
+        type: number
+      row_coverage_sha256:
+        description: Exact row coverage SHA-256 from the completed cleanup
+        required: true
+        type: string
+      business_content_sha256:
+        description: Exact business content SHA-256 from the completed cleanup
+        required: true
+        type: string
+      cleanup_run_id:
+        description: Successful metadata-cleanup workflow run ID
+        required: true
+        type: string
+      cleanup_run_attempt:
+        description: Successful metadata-cleanup workflow attempt number
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+  id-token: write
+
+concurrency:
+  group: crm-production-deploy
+  cancel-in-progress: false
+
+env:
+  AWS_ACCOUNT_ID: '182018075072'
+  AWS_REGION: us-east-2
+  AWS_ROLE_ARN: arn:aws:iam::182018075072:role/crm-production-github-deploy
+  ECS_CLUSTER: crm-production
+  ECR_REPOSITORY: crm-production-twenty
+  SERVER_SERVICE: crm-production-server
+  SERVER_CONTAINER: server
+  WORKER_SERVICE: crm-production-worker
+  WORKER_CONTAINER: worker
+
+jobs:
+  bootstrap:
+    name: Guard, bootstrap, and verify CRM metadata
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment: production
+    env:
+      DEPLOYED_SHA: ${{ inputs.deployed_sha }}
+    steps:
+      - name: Check out the exact bootstrap revision
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          fetch-depth: 0
+
+      - name: Validate the guarded bootstrap inputs
+        shell: bash
+        env:
+          CONFIRMATION: ${{ inputs.confirmation }}
+          COMPANY_COUNT: ${{ inputs.company_count }}
+          ROW_COVERAGE_SHA256: ${{ inputs.row_coverage_sha256 }}
+          BUSINESS_CONTENT_SHA256: ${{ inputs.business_content_sha256 }}
+          CLEANUP_RUN_ID: ${{ inputs.cleanup_run_id }}
+          CLEANUP_RUN_ATTEMPT: ${{ inputs.cleanup_run_attempt }}
+        run: |
+          set -euo pipefail
+          [[ "${CONFIRMATION}" == "BOOTSTRAP_TERRITORY_CRM_METADATA" ]]
+          [[ "${DEPLOYED_SHA}" =~ ^[0-9a-f]{40}$ ]]
+          [[ "${DEPLOYED_SHA}" == "${GITHUB_SHA}" ]]
+          [[ "${COMPANY_COUNT}" =~ ^[1-9][0-9]*$ ]]
+          [[ "${ROW_COVERAGE_SHA256}" =~ ^[0-9a-f]{64}$ ]]
+          [[ "${BUSINESS_CONTENT_SHA256}" =~ ^[0-9a-f]{64}$ ]]
+          [[ "${CLEANUP_RUN_ID}" =~ ^[1-9][0-9]*$ ]]
+          [[ "${CLEANUP_RUN_ATTEMPT}" =~ ^[1-9][0-9]*$ ]]
+          git cat-file -e "${DEPLOYED_SHA}^{commit}"
+
+      - name: Verify the completed metadata-cleanup workflow lineage
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CLEANUP_RUN_ID: ${{ inputs.cleanup_run_id }}
+          CLEANUP_RUN_ATTEMPT: ${{ inputs.cleanup_run_attempt }}
+        run: |
+          set -euo pipefail
+          workflow_json="${RUNNER_TEMP}/cleanup-workflow.json"
+          run_json="${RUNNER_TEMP}/cleanup-run.json"
+          gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/crm-metadata-cleanup.yml" > "${workflow_json}"
+          gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${CLEANUP_RUN_ID}/attempts/${CLEANUP_RUN_ATTEMPT}" > "${run_json}"
+          workflow_id="$(jq -r '.id' "${workflow_json}")"
+          jq -e '
+            .name == "Manual CRM migration metadata cleanup" and
+            .path == ".github/workflows/crm-metadata-cleanup.yml" and
+            .state == "active" and (.id | type == "number")
+          ' "${workflow_json}" >/dev/null
+          jq -e \
+            --arg repository "${GITHUB_REPOSITORY}" \
+            --arg run_id "${CLEANUP_RUN_ID}" \
+            --argjson run_attempt "${CLEANUP_RUN_ATTEMPT}" \
+            --arg workflow_id "${workflow_id}" '
+              (.id | tostring) == $run_id and
+              .run_attempt == $run_attempt and
+              (.workflow_id | tostring) == $workflow_id and
+              .name == "Manual CRM migration metadata cleanup" and
+              .event == "workflow_dispatch" and .head_branch == "main" and
+              .head_repository.full_name == $repository and
+              .status == "completed" and .conclusion == "success" and
+              (.head_sha | type == "string" and test("^[0-9a-f]{40}$"))
+            ' "${run_json}" >/dev/null
+          cleanup_sha="$(jq -r '.head_sha' "${run_json}")"
+          git cat-file -e "${cleanup_sha}^{commit}"
+          git merge-base --is-ancestor "${DEPLOYED_SHA}" "${cleanup_sha}"
+          git merge-base --is-ancestor "${cleanup_sha}" "${GITHUB_SHA}"
+
+      - name: Download the completed metadata-cleanup journal
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: crm-metadata-cleanup-${{ inputs.cleanup_run_id }}-${{ inputs.cleanup_run_attempt }}
+          path: ${{ runner.temp }}/crm-cleanup-prerequisite
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.cleanup_run_id }}
+
+      - name: Install Node and Yarn dependencies
+        uses: ./.github/actions/crm-yarn-install
+
+      - name: Install the Chromium authentication browser
+        run: npx playwright install --with-deps chromium
+
+      - name: Configure immediate AWS deployment inspection
+        uses: aws-actions/configure-aws-credentials@61815dcd50bd041e203e49132bacad1fd04d2708 # v5.1.1
+        with:
+          role-to-assume: ${{ env.AWS_ROLE_ARN }}
+          role-duration-seconds: 2700
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Prove every live task uses the exact bootstrap revision
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$(aws sts get-caller-identity --query Account --output text)" == "${AWS_ACCOUNT_ID}" ]]
+          digest="$(aws ecr describe-images --repository-name "${ECR_REPOSITORY}" --image-ids "imageTag=git-${DEPLOYED_SHA}" --query 'imageDetails[0].imageDigest' --output text)"
+          [[ "${digest}" == sha256:* ]]
+          for service_container in "${SERVER_SERVICE}:${SERVER_CONTAINER}" "${WORKER_SERVICE}:${WORKER_CONTAINER}"; do
+            service="${service_container%%:*}"
+            container="${service_container##*:}"
+            service_json="${RUNNER_TEMP}/${service}.json"
+            aws ecs describe-services --cluster "${ECS_CLUSTER}" --services "${service}" > "${service_json}"
+            jq -e '
+              (.failures | length) == 0 and (.services | length) == 1 and
+              .services[0].status == "ACTIVE" and .services[0].desiredCount > 0 and
+              .services[0].runningCount == .services[0].desiredCount and
+              .services[0].pendingCount == 0 and
+              ([.services[0].deployments[] | select(.status == "PRIMARY")] | length) == 1 and
+              ([.services[0].deployments[] | select(.status == "ACTIVE")] | length) == 0
+            ' "${service_json}" >/dev/null
+            task_definition="$(jq -r '.services[0].taskDefinition' "${service_json}")"
+            image="$(aws ecs describe-task-definition --task-definition "${task_definition}" --query "taskDefinition.containerDefinitions[?name=='${container}'].image | [0]" --output text)"
+            [[ "${image}" == "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPOSITORY}@${digest}" ]]
+            desired="$(jq -r '.services[0].desiredCount' "${service_json}")"
+            task_arns="$(aws ecs list-tasks --cluster "${ECS_CLUSTER}" --service-name "${service}" --desired-status RUNNING --query 'taskArns' --output text)"
+            [[ -n "${task_arns}" && "${task_arns}" != "None" ]]
+            tasks_json="${RUNNER_TEMP}/${service}-tasks.json"
+            # shellcheck disable=SC2086
+            aws ecs describe-tasks --cluster "${ECS_CLUSTER}" --tasks ${task_arns} > "${tasks_json}"
+            jq -e \
+              --arg container "${container}" \
+              --arg digest "${digest}" \
+              --argjson desired "${desired}" '
+                (.failures | length) == 0 and (.tasks | length) == $desired and
+                all(.tasks[]; .lastStatus == "RUNNING") and
+                all(.tasks[]; ([.containers[] | select(
+                  .name == $container and .lastStatus == "RUNNING" and
+                  .imageDigest == $digest
+                )] | length) == 1)
+              ' "${tasks_json}" >/dev/null
+          done
+
+      - name: Bootstrap and verify the metadata-only contract
+        env:
+          FRONTEND_BASE_URL: https://crm.corgiinvest.com
+          BACKEND_BASE_URL: https://crm.corgiinvest.com
+          CRM_E2E_LOGIN: ${{ secrets.CRM_E2E_LOGIN }}
+          CRM_E2E_PASSWORD: ${{ secrets.CRM_E2E_PASSWORD }}
+          CRM_E2E_WORKSPACE_NAME: ${{ secrets.CRM_E2E_WORKSPACE_NAME }}
+          CRM_WORKSPACE_METADATA_BOOTSTRAP_ENABLED: 'true'
+          CRM_WORKSPACE_METADATA_BOOTSTRAP_CONFIRMATION: ${{ inputs.confirmation }}
+          CRM_DEPLOYED_SHA: ${{ inputs.deployed_sha }}
+          CRM_WORKSPACE_CONFIG_COMPANY_COUNT: ${{ inputs.company_count }}
+          CRM_CANONICALIZATION_ROW_COVERAGE_SHA256: ${{ inputs.row_coverage_sha256 }}
+          CRM_CANONICALIZATION_BUSINESS_CONTENT_SHA256: ${{ inputs.business_content_sha256 }}
+          CRM_METADATA_CLEANUP_JOURNAL_PATH: ${{ runner.temp }}/crm-cleanup-prerequisite/metadata-cleanup-journal.json
+          CRM_WORKSPACE_METADATA_BOOTSTRAP_ARTIFACT_PATH: ${{ runner.temp }}/crm-workspace-metadata-bootstrap/bootstrap.json
+        run: >-
+          npx nx test:production twenty-e2e-testing --
+          tests/production/workspaceMetadataBootstrap.maintenance.spec.ts
+          --project=production-chromium
+
+      - name: Upload PII-free metadata bootstrap evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: crm-workspace-metadata-bootstrap-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/crm-workspace-metadata-bootstrap/bootstrap.json
+          if-no-files-found: error
+          retention-days: 7

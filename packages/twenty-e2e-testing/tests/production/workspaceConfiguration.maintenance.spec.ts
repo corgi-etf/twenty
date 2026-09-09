@@ -6,6 +6,7 @@ import {
 } from '../../../corgi-crm-workspace-config/src/execution.ts';
 import { assertCompletedMetadataCleanup } from '../../../corgi-crm-workspace-config/src/cleanup-prerequisite.ts';
 import { buildApprovedWholesalerTerritoryAssignments } from '../../../corgi-crm-workspace-config/src/planner.ts';
+import { assertCompletedTerritoryIdentityDiscovery } from '../../../corgi-crm-workspace-config/src/territory-identity-discovery.ts';
 import {
   assertWorkspaceConfigTenant,
   createTwentyWorkspaceConfigApi,
@@ -54,6 +55,16 @@ test('applies the territory-first workspace configuration', async ({
         'CRM_NASH_WORKSPACE_MEMBER_ID',
       ),
     });
+  await assertCompletedTerritoryIdentityDiscovery({
+    artifactPath: requiredEnvironmentValue(
+      'CRM_TERRITORY_IDENTITY_ARTIFACT_PATH',
+    ),
+    expectedWorkspaceMemberIds: {
+      Grace: wholesalerTerritoryAssignments[0]!.workspaceMemberId,
+      Kelly: wholesalerTerritoryAssignments[1]!.workspaceMemberId,
+      Nash: wholesalerTerritoryAssignments[2]!.workspaceMemberId,
+    },
+  });
   await assertCompletedMetadataCleanup({
     journalPath: requiredEnvironmentValue('CRM_METADATA_CLEANUP_JOURNAL_PATH'),
     expectedCompanyCount,

@@ -5,18 +5,26 @@ existing `Wholesaler` object, which was created before this app.
 
 ## Installation order
 
-1. Apply the workspace configuration that idempotently creates the
-   `wholesaler.workspaceMember` relation (`Workspace Member`, `MANY_TO_ONE`).
-2. Run the guarded `corgi-crm-app-production.yml` workflow from the exact commit
-   deployed to both production services.
-3. The manifest defaults `CORGI_CRM_WORKSPACE_ID` to the approved Corgi CRM
+1. Run `crm-workspace-metadata-bootstrap.yml` from the exact SHA deployed to
+   both CRM services. Supply its exact successful run and attempt to step 2.
+2. Run `corgi-crm-app-production.yml` from that same exact SHA. It verifies the
+   bootstrap evidence before its schema preflight, then publishes, installs,
+   and reconciles the app-created WorkspaceMember links.
+3. Run `crm-territory-identity-discovery.yml` from the same SHA and supply the
+   successful app-install run and attempt. This read-only phase emits only the
+   three immutable WorkspaceMember UUIDs and an aggregate hash.
+4. Run `crm-workspace-config.yml` from the same SHA, supplying all three UUIDs
+   explicitly plus the discovery run and attempt. The workflow rejects UUIDs
+   that differ from the PII-safe discovery artifact before any mutation.
+5. The manifest defaults `CORGI_CRM_WORKSPACE_ID` to the approved Corgi CRM
    workspace. Do not publish or install this tenant-specific app elsewhere.
 
 The post-install function reconciles all existing WorkspaceMembers. The
 `workspaceMember.created` trigger keeps future members synchronized. Both paths
 reuse a case-insensitive email match, create a deterministic record ID from the
 WorkspaceMember ID when no match exists, and fail closed on ambiguous matches.
-They do not allocate leads.
+They default the custom `wholesalerRole` field (displayed as “Role”) and do not
+allocate leads.
 
 The production workflow verifies the live ECS image digest, authenticated
 workspace, required schema, installed version, active database trigger, and

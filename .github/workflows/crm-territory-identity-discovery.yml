@@ -2,6 +2,15 @@ name: Manual CRM territory identity discovery
 
 on:
   workflow_dispatch:
+    inputs:
+      app_install_run_id:
+        description: Successful Corgi CRM app production workflow run ID
+        required: true
+        type: string
+      app_install_run_attempt:
+        description: Successful Corgi CRM app production workflow attempt number
+        required: true
+        type: string
 
 permissions:
   actions: read
@@ -44,6 +53,41 @@ jobs:
           [[ "${DEPLOYED_SHA}" =~ ^[0-9a-f]{40}$ ]]
           [[ "${DEPLOYED_SHA}" == "${GITHUB_SHA}" ]]
           git cat-file -e "${DEPLOYED_SHA}^{commit}"
+
+      - name: Verify exact-SHA app install lineage
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          APP_RUN_ID: ${{ inputs.app_install_run_id }}
+          APP_RUN_ATTEMPT: ${{ inputs.app_install_run_attempt }}
+        run: |
+          set -euo pipefail
+          [[ "${APP_RUN_ID}" =~ ^[1-9][0-9]*$ ]]
+          [[ "${APP_RUN_ATTEMPT}" =~ ^[1-9][0-9]*$ ]]
+          workflow_json="${RUNNER_TEMP}/app-workflow.json"
+          run_json="${RUNNER_TEMP}/app-run.json"
+          gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/corgi-crm-app-production.yml" > "${workflow_json}"
+          gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${APP_RUN_ID}/attempts/${APP_RUN_ATTEMPT}" > "${run_json}"
+          workflow_id="$(jq -r '.id' "${workflow_json}")"
+          jq -e '
+            .name == "Publish and install Corgi CRM app in production" and
+            .path == ".github/workflows/corgi-crm-app-production.yml" and
+            .state == "active" and (.id | type == "number")
+          ' "${workflow_json}" >/dev/null
+          jq -e \
+            --arg repository "${GITHUB_REPOSITORY}" \
+            --arg run_id "${APP_RUN_ID}" \
+            --argjson run_attempt "${APP_RUN_ATTEMPT}" \
+            --arg workflow_id "${workflow_id}" \
+            --arg deployed_sha "${DEPLOYED_SHA}" '
+              (.id | tostring) == $run_id and .run_attempt == $run_attempt and
+              (.workflow_id | tostring) == $workflow_id and
+              .name == "Publish and install Corgi CRM app in production" and
+              .event == "workflow_dispatch" and .head_branch == "main" and
+              .head_repository.full_name == $repository and
+              .head_sha == $deployed_sha and
+              .status == "completed" and .conclusion == "success"
+            ' "${run_json}" >/dev/null
 
       - name: Install Node and Yarn dependencies
         uses: ./.github/actions/crm-yarn-install

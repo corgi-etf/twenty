@@ -6,6 +6,7 @@ import { test } from 'node:test';
 
 import type { WholesalerTerritoryRecord } from '../src/planner.ts';
 import {
+  assertCompletedTerritoryIdentityDiscovery,
   buildTerritoryIdentityArtifact,
   preflightTerritoryIdentityArtifact,
   runTerritoryIdentityDiscovery,
@@ -179,6 +180,20 @@ test('writes only the approved PII-safe artifact beneath RUNNER_TEMP', async () 
       'aggregateIdentityHash,workspaceMemberIds',
     );
     assert.doesNotMatch(serializedArtifact, /Hopper|Example|@|wholesaler-/);
+    assert.deepEqual(
+      await assertCompletedTerritoryIdentityDiscovery({
+        artifactPath,
+        expectedWorkspaceMemberIds: identities,
+      }),
+      artifact,
+    );
+    await assert.rejects(
+      assertCompletedTerritoryIdentityDiscovery({
+        artifactPath,
+        expectedWorkspaceMemberIds: { ...identities, Nash: identities.Grace },
+      }),
+      /does not match approved workspace member inputs/,
+    );
 
     await assert.rejects(
       preflightTerritoryIdentityArtifact({

@@ -3,9 +3,12 @@ import { test } from 'node:test';
 
 import {
   APPLY_WORKSPACE_CONFIG_CONFIRMATION,
+  BOOTSTRAP_WORKSPACE_METADATA_CONFIRMATION,
+  runWorkspaceMetadataBootstrap,
   runWorkspaceConfiguration,
   type WorkspaceConfigApi,
   type WorkspaceConfigCheckpoint,
+  type WorkspaceMetadataBootstrapApi,
 } from '../src/execution.ts';
 import {
   buildApprovedWholesalerTerritoryAssignments,
@@ -41,7 +44,23 @@ const fixture = (): WorkspaceConfigSnapshot => {
               ? 'Workspace Member'
               : name === 'historicalOwner'
                 ? 'Wholesaler'
-                : name,
+                : name === 'activityType'
+                  ? 'Activity Type'
+                  : name === 'followUpDate'
+                    ? 'Follow-up Date'
+                    : name === 'occurredAt'
+                      ? 'Occurred At'
+                      : name === 'company'
+                        ? 'Company'
+                        : name === 'contact'
+                          ? 'Contact'
+                          : name === 'wholesaler'
+                            ? 'Wholesaler'
+                            : name === 'notes'
+                              ? 'Notes'
+                              : name === 'outcome'
+                                ? 'Outcome'
+                                : name,
     type,
   });
   const companyFields = [
@@ -483,6 +502,122 @@ test('rejects an unapproved origin and confirmation before reading data', async 
       expectedCompanyCount: 1,
       confirmation: 'wrong',
       wholesalerTerritoryAssignments,
+    }),
+    /confirmation/i,
+  );
+  assert.deepEqual(api.events, []);
+});
+
+class BootstrapFakeApi implements WorkspaceMetadataBootstrapApi {
+  snapshot = fixture();
+  events: string[] = [];
+
+  constructor() {
+    for (const object of this.snapshot.objects) {
+      if (object.nameSingular === 'company') {
+        object.fields = object.fields.filter(
+          ({ name }) => !['stateRegion', 'postalCode'].includes(name),
+        );
+      }
+      if (object.nameSingular === 'wholesaler') object.fields = [];
+      if (object.nameSingular === 'workspaceMember') object.fields = [];
+      if (object.nameSingular === 'outreachActivity') object.fields = [];
+    }
+  }
+
+  async listWorkspaceConfigSnapshot() {
+    this.events.push('snapshot');
+
+    return structuredClone(this.snapshot);
+  }
+
+  async createMetadataField(
+    input: Parameters<WorkspaceMetadataBootstrapApi['createMetadataField']>[0],
+  ): Promise<void> {
+    this.events.push(`metadata-create:${input.name}`);
+    const source = this.snapshot.objects.find(
+      ({ id }) => id === input.objectMetadataId,
+    )!;
+    const sourceId = `${source.nameSingular}-${input.name}-bootstrap-id`;
+    const inverseId = `${sourceId}-inverse`;
+    source.fields.push({
+      id: sourceId,
+      name: input.name,
+      label: input.label,
+      type: input.type,
+      ...(input.relationCreationPayload
+        ? {
+            relationTargetObjectMetadataId:
+              input.relationCreationPayload.targetObjectMetadataId,
+            relationTargetFieldMetadataId: inverseId,
+            settings: { relationType: input.relationCreationPayload.type },
+          }
+        : {}),
+    });
+    if (input.relationCreationPayload) {
+      const target = this.snapshot.objects.find(
+        ({ id }) =>
+          id === input.relationCreationPayload?.targetObjectMetadataId,
+      )!;
+      target.fields.push({
+        id: inverseId,
+        name: `${source.nameSingular}${input.name}Inverse`,
+        label: input.relationCreationPayload.targetFieldLabel,
+        icon: input.relationCreationPayload.targetFieldIcon,
+        type: 'RELATION',
+        relationTargetObjectMetadataId: source.id,
+        relationTargetFieldMetadataId: sourceId,
+        settings: { relationType: 'ONE_TO_MANY' },
+      });
+    }
+  }
+
+  async updateMetadataFieldLabel(id: string, label: string): Promise<void> {
+    this.events.push(`metadata-update:${id}`);
+    const field = this.snapshot.objects
+      .flatMap(({ fields }) => fields)
+      .find((candidate) => candidate.id === id)!;
+    field.label = label;
+  }
+}
+
+test('metadata bootstrap converges from no quick-log or member relation and is idempotent', async () => {
+  const api = new BootstrapFakeApi();
+  const options = {
+    origin: 'https://crm.corgiinvest.com',
+    expectedOrigin: 'https://crm.corgiinvest.com',
+    confirmation: BOOTSTRAP_WORKSPACE_METADATA_CONFIRMATION,
+  };
+
+  const first = await runWorkspaceMetadataBootstrap(api, options);
+  assert.equal(first.metadataMutations, 12);
+  assert.match(first.metadataContractHash, /^[0-9a-f]{64}$/);
+  assert.equal(api.events.filter((event) => event === 'snapshot').length, 2);
+  assert.equal(
+    api.events.filter((event) => event.startsWith('metadata-create:')).length,
+    12,
+  );
+  assert.equal(
+    api.snapshot.objects
+      .find(({ nameSingular }) => nameSingular === 'wholesaler')!
+      .fields.find(({ name }) => name === 'workspaceMember')?.settings
+      ?.relationType,
+    'MANY_TO_ONE',
+  );
+
+  api.events = [];
+  const second = await runWorkspaceMetadataBootstrap(api, options);
+  assert.equal(second.metadataMutations, 0);
+  assert.deepEqual(api.events, ['snapshot', 'snapshot']);
+});
+
+test('metadata bootstrap rejects an unapproved gate before any API call', async () => {
+  const api = new BootstrapFakeApi();
+  await assert.rejects(
+    runWorkspaceMetadataBootstrap(api, {
+      origin: 'https://crm.corgiinvest.com',
+      expectedOrigin: 'https://crm.corgiinvest.com',
+      confirmation: 'wrong',
     }),
     /confirmation/i,
   );

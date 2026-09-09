@@ -21,7 +21,24 @@ const object = (
   fields: fieldNames.map(([name, type]) => ({
     id: `${nameSingular}-${name}-field-id`,
     name,
-    label: name,
+    label:
+      name === 'activityType'
+        ? 'Activity Type'
+        : name === 'followUpDate'
+          ? 'Follow-up Date'
+          : name === 'occurredAt'
+            ? 'Occurred At'
+            : name === 'company'
+              ? 'Company'
+              : name === 'contact'
+                ? 'Contact'
+                : name === 'wholesaler'
+                  ? 'Wholesaler'
+                  : name === 'notes'
+                    ? 'Notes'
+                    : name === 'outcome'
+                      ? 'Outcome'
+                      : name,
     type,
   })),
 });
@@ -715,10 +732,19 @@ test('requires the exact quick-log scalar field types before planning mutations'
     missingActivityType.objects[6]!.fields.filter(
       ({ name }) => name !== 'activityType',
     );
-  assert.throws(
-    () => buildWorkspaceConfigPlan(missingActivityType),
-    /quick-log.*activityType.*missing/i,
+  const bootstrapPlan = buildWorkspaceConfigPlan(missingActivityType);
+  assert.deepEqual(
+    bootstrapPlan.metadataFieldsToCreate.find(
+      ({ name }) => name === 'activityType',
+    ),
+    {
+      objectMetadataId: 'outreachActivity-object-id',
+      name: 'activityType',
+      label: 'Activity Type',
+      type: 'TEXT',
+    },
   );
+  assert.equal(bootstrapPlan.layout, null);
 });
 
 test('requires exact quick-log MANY_TO_ONE relation targets and cardinality', () => {
