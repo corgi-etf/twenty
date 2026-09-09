@@ -19,7 +19,7 @@ export const WholesalerMapNavigationItem = () => {
     <NavigationDrawerItem
       active={location.pathname === AppPath.WholesalerMapPage}
       Icon={IconMap}
-      label={t`Wholesaler coverage`}
+      label={t`Territory map`}
       to={AppPath.WholesalerMapPage}
       triggerEvent="CLICK"
     />

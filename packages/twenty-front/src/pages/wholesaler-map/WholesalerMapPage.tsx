@@ -67,14 +67,14 @@ export const WholesalerMapPage = () => {
   const header = (
     <PageCardHeader
       icon={<IconMap size={16} />}
-      title={<StyledPageHeading>{t`Wholesaler coverage`}</StyledPageHeading>}
+      title={<StyledPageHeading>{t`Territory map`}</StyledPageHeading>}
     />
   );
 
   if (!canViewMap) {
     return (
       <>
-        <PageTitle title={t`Wholesaler coverage | Twenty`} />
+        <PageTitle title={t`Territory map | Twenty`} />
         <PageCardLayout header={header}>
           <RecordIndexEmptyStateNotShared />
         </PageCardLayout>
@@ -84,7 +84,7 @@ export const WholesalerMapPage = () => {
 
   return (
     <>
-      <PageTitle title={t`Wholesaler coverage | Twenty`} />
+      <PageTitle title={t`Territory map | Twenty`} />
       <PageCardLayout header={header}>
         <WholesalerMapContent
           featureCollection={featureCollection}

@@ -35,7 +35,6 @@ export const WorkspaceSectionListReadOnly = ({
 
   return (
     <StyledList>
-      <WholesalerMapNavigationItem />
       {filteredItems.map((item: NavigationMenuItem) => (
         <NavigationMenuItemDisplay
           key={item.id}
@@ -48,6 +47,7 @@ export const WorkspaceSectionListReadOnly = ({
           readOnly
         />
       ))}
+      <WholesalerMapNavigationItem />
     </StyledList>
   );
 };

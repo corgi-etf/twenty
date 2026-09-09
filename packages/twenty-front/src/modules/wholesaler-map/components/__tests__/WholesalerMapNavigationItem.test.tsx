@@ -47,9 +47,10 @@ describe('WholesalerMapNavigationItem', () => {
 
     renderNavigationItem();
 
-    expect(
-      screen.getByRole('link', { name: 'Wholesaler coverage' }),
-    ).toHaveAttribute('href', '/wholesalers/map');
+    expect(screen.getByRole('link', { name: 'Territory map' })).toHaveAttribute(
+      'href',
+      '/wholesalers/map',
+    );
     expect(screen.getByRole('link')).toHaveAttribute('aria-current', 'page');
   });
 
