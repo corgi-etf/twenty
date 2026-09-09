@@ -138,12 +138,14 @@ const fixture = (): WorkspaceConfigSnapshot => {
         key: 'INDEX',
         icon: 'IconTable',
         position: 0,
+        visibility: 'WORKSPACE',
+        createdByUserWorkspaceId: null,
         viewFields: companyFields.map((metadataField, position) => ({
           id: `company-view-field-${position}`,
           fieldMetadataId: metadataField.id,
           isVisible: position < 8,
           position,
-          size: 150,
+          size: metadataField.name === 'address' ? 250 : 150,
         })),
         viewFilters: [],
         viewSorts: [
@@ -164,12 +166,19 @@ const fixture = (): WorkspaceConfigSnapshot => {
         key: null,
         icon: 'IconChecklist',
         position: 2,
+        visibility: 'WORKSPACE',
+        createdByUserWorkspaceId: null,
         viewFields: outreachFields.map((metadataField, position) => ({
           id: `outreach-view-field-${position}`,
           fieldMetadataId: metadataField.id,
           isVisible: true,
           position,
-          size: 150,
+          size:
+            metadataField.name === 'company'
+              ? 210
+              : metadataField.name === 'notes'
+                ? 250
+                : 150,
         })),
         viewFilters: [
           {

@@ -493,6 +493,8 @@ export const createTwentyWorkspaceConfigApi = ({
               key
               icon
               position
+              visibility
+              createdByUserWorkspaceId
               viewFields {
                 id
                 fieldMetadataId

@@ -81,6 +81,8 @@ const snapshot = (): WorkspaceConfigSnapshot => {
         key: 'INDEX',
         icon: 'IconTable',
         position: 0,
+        visibility: 'WORKSPACE',
+        createdByUserWorkspaceId: null,
         viewFields: companyViewFields,
         viewFilters: [],
         viewSorts: [
@@ -101,6 +103,8 @@ const snapshot = (): WorkspaceConfigSnapshot => {
         key: null,
         icon: 'IconUserCircle',
         position: 2,
+        visibility: 'WORKSPACE',
+        createdByUserWorkspaceId: null,
         viewFields: [],
         viewFilters: [
           {
@@ -403,6 +407,8 @@ test('rejects incompatible metadata and ambiguous outreach Follow-ups views', ()
     key: null,
     icon: 'IconChecklist',
     position: 2,
+    visibility: 'WORKSPACE',
+    createdByUserWorkspaceId: null,
     viewFields: [],
     viewFilters: [],
     viewSorts: [],
@@ -414,6 +420,106 @@ test('rejects incompatible metadata and ambiguous outreach Follow-ups views', ()
   assert.throws(
     () => buildWorkspaceConfigPlan(ambiguousFollowUps),
     /ambiguous/i,
+  );
+
+  const privateFollowUps = structuredClone(ambiguousFollowUps);
+  privateFollowUps.views = [
+    privateFollowUps.views[0]!,
+    {
+      ...emptyView('private-follow-up'),
+      visibility: 'UNLISTED',
+      createdByUserWorkspaceId: 'another-user-workspace-id',
+    },
+  ];
+  assert.throws(
+    () => buildWorkspaceConfigPlan(privateFollowUps),
+    /workspace table/i,
+  );
+
+  const kanbanFollowUps = structuredClone(privateFollowUps);
+  kanbanFollowUps.views[1]!.visibility = 'WORKSPACE';
+  kanbanFollowUps.views[1]!.type = 'KANBAN';
+  assert.throws(
+    () => buildWorkspaceConfigPlan(kanbanFollowUps),
+    /workspace table/i,
+  );
+});
+
+test('converges company and Follow-ups column widths', () => {
+  const value = snapshot();
+  value.objects[0]!.fields.push(
+    {
+      id: 'company-stateRegion-field-id',
+      name: 'stateRegion',
+      label: 'State',
+      type: 'TEXT',
+    },
+    {
+      id: 'company-postalCode-field-id',
+      name: 'postalCode',
+      label: 'ZIP Code',
+      type: 'TEXT',
+    },
+  );
+  addWorkspaceMemberRelation(value);
+  const outreachActivity = value.objects[6]!;
+  value.views.push({
+    id: 'existing-follow-up-view-id',
+    universalIdentifier: 'existing-follow-up-view-universal-id',
+    name: 'Follow-ups',
+    objectMetadataId: outreachActivity.id,
+    type: 'TABLE',
+    key: null,
+    icon: 'IconChecklist',
+    position: 8,
+    visibility: 'WORKSPACE',
+    createdByUserWorkspaceId: null,
+    viewFields: outreachActivity.fields.map((field, position) => ({
+      id: `existing-follow-up-field-${position}`,
+      fieldMetadataId: field.id,
+      isVisible: true,
+      position,
+      size: 99,
+    })),
+    viewFilters: [],
+    viewSorts: [],
+  });
+
+  const plan = buildWorkspaceConfigPlan(value);
+  assert.ok(plan.layout);
+  assert.deepEqual(plan.layout.viewUpdates, [
+    { id: 'existing-follow-up-view-id', update: { position: 2 } },
+  ]);
+  assert.deepEqual(
+    plan.layout.viewFieldUpdates
+      .filter(
+        ({ id, update }) =>
+          id.startsWith('existing-follow-up-field-') &&
+          update.size !== undefined,
+      )
+      .map(({ id, update }) => ({ id, size: update.size })),
+    outreachActivity.fields
+      .filter((field) =>
+        [
+          'company',
+          'contact',
+          'wholesaler',
+          'outcome',
+          'followUpDate',
+          'occurredAt',
+          'notes',
+        ].includes(field.name),
+      )
+      .map((field) => ({
+        id: `existing-follow-up-field-${outreachActivity.fields.indexOf(field)}`,
+        size:
+          field.name === 'company' ? 210 : field.name === 'notes' ? 250 : 150,
+      })),
+  );
+  assert.ok(
+    plan.layout.viewFieldUpdates.some(
+      ({ id, update }) => id === 'company-view-field-2' && update.size === 250,
+    ),
   );
 });
 

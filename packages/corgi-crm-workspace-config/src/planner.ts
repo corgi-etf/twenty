@@ -58,6 +58,16 @@ const FOLLOW_UP_VIEW_FIELD_NAMES = [
   'notes',
 ] as const;
 
+const companyViewFieldSize = (fieldName: string): number =>
+  fieldName === 'address' ? 250 : 150;
+
+const followUpViewFieldSize = (fieldName: string): number => {
+  if (fieldName === 'company') return 210;
+  if (fieldName === 'notes') return 250;
+
+  return 150;
+};
+
 export type WorkspaceMetadataField = {
   id: string;
   name: string;
@@ -111,6 +121,8 @@ export type WorkspaceView = {
   key?: string | null;
   icon: string;
   position: number;
+  visibility: string;
+  createdByUserWorkspaceId?: string | null;
   viewFields: WorkspaceViewField[];
   viewFilters: WorkspaceViewFilter[];
   viewSorts: WorkspaceViewSort[];
@@ -186,7 +198,7 @@ export type WorkspaceLayoutPlan = {
   }>;
   viewUpdates: Array<{
     id: string;
-    update: { name?: string; icon?: string };
+    update: { name?: string; icon?: string; position?: number };
   }>;
   viewFieldsToCreate: Array<{
     id?: string;
@@ -198,7 +210,7 @@ export type WorkspaceLayoutPlan = {
   }>;
   viewFieldUpdates: Array<{
     id: string;
-    update: { isVisible: boolean; position?: number };
+    update: { isVisible: boolean; position?: number; size?: number };
   }>;
   viewFiltersToCreate: Array<{
     id: string;
@@ -408,7 +420,7 @@ const createFollowUpViewPlan = ({
       viewId: MANAGED_FOLLOW_UP_VIEW_ID,
       isVisible: true,
       position,
-      size: position === 0 ? 210 : 150,
+      size: followUpViewFieldSize(field.name),
     })),
     filter: {
       id: MANAGED_FOLLOW_UP_FILTER_ID,
@@ -433,15 +445,31 @@ const selectFollowUpView = ({
   views: WorkspaceView[];
   outreachActivity: WorkspaceMetadataObject;
 }): WorkspaceView | undefined => {
-  const managed = views.filter(
-    (view) =>
-      view.id === MANAGED_FOLLOW_UP_VIEW_ID &&
-      view.objectMetadataId === outreachActivity.id,
+  const managedIdViews = views.filter(
+    (view) => view.id === MANAGED_FOLLOW_UP_VIEW_ID,
   );
-  if (managed.length > 1) {
+  if (managedIdViews.length > 1) {
     throw new Error('Duplicate managed Follow-ups views are ambiguous');
   }
-  if (managed.length === 1) return managed[0];
+  if (
+    managedIdViews[0] &&
+    managedIdViews[0].objectMetadataId !== outreachActivity.id
+  ) {
+    throw new Error('Managed Follow-ups view ID belongs to another object');
+  }
+  const managed = managedIdViews.filter(
+    (view) => view.objectMetadataId === outreachActivity.id,
+  );
+  if (managed.length === 1) {
+    const [managedView] = managed;
+    if (
+      managedView.type !== 'TABLE' ||
+      managedView.visibility !== 'WORKSPACE'
+    ) {
+      throw new Error('Managed Follow-ups view is not a workspace table');
+    }
+    return managedView;
+  }
   const namedViews = views.filter(
     (view) =>
       view.objectMetadataId === outreachActivity.id &&
@@ -450,7 +478,14 @@ const selectFollowUpView = ({
   if (namedViews.length > 1) {
     throw new Error('Duplicate Follow-ups views are ambiguous');
   }
-  return namedViews[0];
+  const [namedView] = namedViews;
+  if (
+    namedView &&
+    (namedView.type !== 'TABLE' || namedView.visibility !== 'WORKSPACE')
+  ) {
+    throw new Error('Existing Follow-ups view is not a workspace table');
+  }
+  return namedView;
 };
 
 export const buildWorkspaceConfigPlan = (
@@ -570,6 +605,12 @@ export const buildWorkspaceConfigPlan = (
       position,
     ]),
   );
+  const desiredCompanySizeByFieldId = new Map(
+    VISIBLE_COMPANY_FIELD_NAMES.map((name) => [
+      companyFields.get(name)!.id,
+      companyViewFieldSize(name),
+    ]),
+  );
   const existingCompanyViewFieldByMetadataId = new Map<
     string,
     WorkspaceViewField
@@ -595,25 +636,33 @@ export const buildWorkspaceConfigPlan = (
     const existing = existingCompanyViewFieldByMetadataId.get(field.id);
     if (!existing) {
       if (shouldBeVisible) {
+        const desiredSize = desiredCompanySizeByFieldId.get(field.id)!;
         viewFieldsToCreate.push({
           fieldMetadataId: field.id,
           viewId: companyIndexView.id,
           isVisible: true,
           position: desiredPosition,
-          size: field.name === 'address' ? 250 : 150,
+          size: desiredSize,
         });
       }
       continue;
     }
     if (
       existing.isVisible !== shouldBeVisible ||
-      (shouldBeVisible && existing.position !== desiredPosition)
+      (shouldBeVisible &&
+        (existing.position !== desiredPosition ||
+          existing.size !== desiredCompanySizeByFieldId.get(field.id)))
     ) {
       viewFieldUpdates.push({
         id: existing.id,
         update: {
           isVisible: shouldBeVisible,
-          ...(shouldBeVisible ? { position: desiredPosition } : {}),
+          ...(shouldBeVisible
+            ? {
+                position: desiredPosition,
+                size: desiredCompanySizeByFieldId.get(field.id),
+              }
+            : {}),
         },
       });
     }
@@ -674,6 +723,12 @@ export const buildWorkspaceConfigPlan = (
         position,
       ]),
     );
+    const desiredOutreachSizeByFieldId = new Map(
+      FOLLOW_UP_VIEW_FIELD_NAMES.map((name) => [
+        outreachFields.get(name)!.id,
+        followUpViewFieldSize(name),
+      ]),
+    );
     const existingByFieldId = new Map<string, WorkspaceViewField>();
     const outreachFieldIds = new Set(
       outreachActivity.fields.map(({ id }) => id),
@@ -693,25 +748,33 @@ export const buildWorkspaceConfigPlan = (
       const existing = existingByFieldId.get(field.id);
       if (!existing) {
         if (shouldBeVisible) {
+          const desiredSize = desiredOutreachSizeByFieldId.get(field.id)!;
           viewFieldsToCreate.push({
             fieldMetadataId: field.id,
             viewId: followUpViewId,
             isVisible: true,
             position: desiredPosition,
-            size: field.name === 'notes' ? 250 : 150,
+            size: desiredSize,
           });
         }
         continue;
       }
       if (
         existing.isVisible !== shouldBeVisible ||
-        (shouldBeVisible && existing.position !== desiredPosition)
+        (shouldBeVisible &&
+          (existing.position !== desiredPosition ||
+            existing.size !== desiredOutreachSizeByFieldId.get(field.id)))
       ) {
         viewFieldUpdates.push({
           id: existing.id,
           update: {
             isVisible: shouldBeVisible,
-            ...(shouldBeVisible ? { position: desiredPosition } : {}),
+            ...(shouldBeVisible
+              ? {
+                  position: desiredPosition,
+                  size: desiredOutreachSizeByFieldId.get(field.id),
+                }
+              : {}),
           },
         });
       }
@@ -721,7 +784,8 @@ export const buildWorkspaceConfigPlan = (
   if (
     followUpView &&
     (followUpView.name !== 'Follow-ups' ||
-      followUpView.icon !== 'IconChecklist')
+      followUpView.icon !== 'IconChecklist' ||
+      followUpView.position !== 2)
   ) {
     viewUpdates.push({
       id: followUpView.id,
@@ -730,6 +794,7 @@ export const buildWorkspaceConfigPlan = (
         ...(followUpView.icon !== 'IconChecklist'
           ? { icon: 'IconChecklist' }
           : {}),
+        ...(followUpView.position !== 2 ? { position: 2 } : {}),
       },
     });
   }

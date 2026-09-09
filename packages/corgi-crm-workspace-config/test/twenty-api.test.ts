@@ -164,6 +164,27 @@ test('loads metadata, views, navigation, and companies without exposing a write'
   assert.match(request.calls[2]!.url, /\/rest\/companies\?/);
 });
 
+test('loads view visibility and creator ownership for safe adoption', async () => {
+  const request = new FakeRequest();
+  request.responses.push(
+    response({ data: { objects: [] }, pageInfo: { hasNextPage: false } }),
+    response({ data: { getViews: [], navigationMenuItems: [] } }),
+  );
+  const api = createTwentyWorkspaceConfigApi({
+    request,
+    backendBaseUrl: 'https://crm.corgiinvest.com',
+    frontendBaseUrl: 'https://crm.corgiinvest.com',
+    checkpointFilePath: join(tmpdir(), 'unused-view-contract.json'),
+    requestGate: immediateGate,
+  });
+
+  await api.listWorkspaceConfigSnapshot();
+
+  const query = String((request.calls[1]?.data as { query?: unknown }).query);
+  assert.match(query, /\bvisibility\b/);
+  assert.match(query, /\bcreatedByUserWorkspaceId\b/);
+});
+
 test('projects relation targets and creates the exact wholesaler relation payload', async () => {
   const request = new FakeRequest();
   request.responses.push(
