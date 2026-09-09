@@ -158,6 +158,7 @@ test('dates normalize losslessly without inventing invalid calendar values', () 
   assert.equal(normalizeDate('2026-06-30'), '2026-06-30');
   assert.equal(normalizeDate('2026-06-30T00:00:00.000Z'), '2026-06-30');
   assert.equal(normalizeDate('06/30/2026'), '2026-06-30');
+  assert.equal(normalizeDate('June 30, 2026'), '2026-06-30');
   assert.equal(normalizeDate('2026-02-30'), null);
   assert.equal(normalizeDate('not reported'), null);
 });
