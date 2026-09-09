@@ -46,7 +46,6 @@ const EXACT_COUNTS = {
   matchingSourceCountries: 305,
   manualLocations: 0,
   nonManualLocations: 2185,
-  unsetManualLocations: 6,
   companyTaskTargets: 159,
   personTaskTargets: 150,
   wholesalerTasks: 159,
@@ -244,6 +243,26 @@ export const assertAuditedCanonicalizationSnapshot = (
     matchingSourceCountries.length,
     EXACT_COUNTS.matchingSourceCountries,
   );
+  const expectedUnsetManualLocations =
+    expected.companyCount -
+    EXACT_COUNTS.manualLocations -
+    EXACT_COUNTS.nonManualLocations;
+  if (expectedUnsetManualLocations < 0) {
+    throw new Error(
+      'CRM cleanup baseline mismatch: approved company count is smaller than the audited location cohorts',
+    );
+  }
+  const invalidLocationMarkers = snapshot.companies.filter(
+    ({ locationIsManual }) =>
+      locationIsManual !== true &&
+      locationIsManual !== false &&
+      locationIsManual != null,
+  );
+  if (invalidLocationMarkers.length > 0) {
+    throw new Error(
+      `CRM cleanup blocked: company.locationIsManual must be boolean or nullish; received ${invalidLocationMarkers.length} invalid values`,
+    );
+  }
   assertCount(
     'manual locations',
     snapshot.companies.filter(
@@ -263,7 +282,7 @@ export const assertAuditedCanonicalizationSnapshot = (
     snapshot.companies.filter(
       ({ locationIsManual }) => locationIsManual == null,
     ).length,
-    EXACT_COUNTS.unsetManualLocations,
+    expectedUnsetManualLocations,
   );
 
   const reviewStatuses = snapshot.importReviewItems.map((record) =>
