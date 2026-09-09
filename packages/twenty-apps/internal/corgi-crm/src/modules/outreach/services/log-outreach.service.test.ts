@@ -2,7 +2,6 @@ import { describe, expect, it, vi } from 'vitest';
 
 import {
   logOutreach,
-  parseLogCommand,
 } from 'src/modules/outreach/services/log-outreach.service';
 import { type OutreachRepository } from 'src/modules/outreach/types';
 
@@ -13,41 +12,19 @@ const repository = (): OutreachRepository => ({
   listActivities: vi.fn().mockResolvedValue([]),
 });
 
-describe('parseLogCommand', () => {
-  it('parses the fast pipe syntax', () => {
-    expect(
-      parseLogCommand('/log call | Acme Holdings | connected | renewal chat'),
-    ).toEqual({
-      activityType: 'call',
-      companyQuery: 'Acme Holdings',
-      outcome: 'connected',
-      notes: 'renewal chat',
-    });
-  });
-
-  it('parses explicit fields including an optional contact and follow-up date', () => {
-    expect(
-      parseLogCommand(
-        '/log type=meeting; company=Acme; contact=Jane Doe; outcome=interested; notes=Send deck; followup=2026-09-12',
-      ),
-    ).toEqual({
-      activityType: 'meeting',
-      companyQuery: 'Acme',
-      contactQuery: 'Jane Doe',
-      outcome: 'interested',
-      notes: 'Send deck',
-      followUpDate: '2026-09-12',
-    });
-  });
-});
-
 describe('logOutreach', () => {
   it('writes one activity linked to the authenticated wholesaler', async () => {
     const repo = repository();
 
     await expect(
       logOutreach({
-        text: '/log call | Acme | connected | renewal chat',
+        input: {
+          activityId: 'activity-from-update-42',
+          activityType: 'phone_call',
+          companyQuery: 'Acme',
+          outcome: 'connected',
+          notes: 'renewal chat',
+        },
         wholesalerId: 'wholesaler-1',
         now: new Date('2026-09-09T16:30:00.000Z'),
         repository: repo,
@@ -58,10 +35,11 @@ describe('logOutreach', () => {
       companyName: 'Acme',
     });
     expect(repo.createActivity).toHaveBeenCalledWith({
-      name: 'call · Acme · 2026-09-09T16:30:00.000Z',
+      id: 'activity-from-update-42',
+      name: 'Phone call · Connected',
       companyId: 'company-1',
       wholesalerId: 'wholesaler-1',
-      activityType: 'call',
+      activityType: 'phone_call',
       outcome: 'connected',
       notes: 'renewal chat',
       occurredAt: '2026-09-09T16:30:00.000Z',
@@ -77,7 +55,12 @@ describe('logOutreach', () => {
 
     await expect(
       logOutreach({
-        text: '/log call | Acme | connected',
+        input: {
+          activityId: 'activity-from-update-42',
+          activityType: 'phone_call',
+          companyQuery: 'Acme',
+          outcome: 'connected',
+        },
         wholesalerId: 'wholesaler-1',
         now: new Date('2026-09-09T16:30:00.000Z'),
         repository: repo,
@@ -90,5 +73,23 @@ describe('logOutreach', () => {
       ],
     });
     expect(repo.createActivity).not.toHaveBeenCalled();
+  });
+
+  it('rejects unsupported domain taxonomy before any CRM lookup', async () => {
+    const repo = repository();
+    await expect(
+      logOutreach({
+        input: {
+          activityId: 'activity-from-update-42',
+          activityType: 'cold_call' as never,
+          companyQuery: 'Acme',
+          outcome: 'maybe' as never,
+        },
+        wholesalerId: 'wholesaler-1',
+        now: new Date('2026-09-09T16:30:00.000Z'),
+        repository: repo,
+      }),
+    ).rejects.toThrow(/unsupported activity type/i);
+    expect(repo.findCompanies).not.toHaveBeenCalled();
   });
 });
