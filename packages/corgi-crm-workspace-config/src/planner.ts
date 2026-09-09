@@ -884,13 +884,23 @@ export const buildWorkspaceMetadataBootstrapPlan = (
     const targetObjectMetadataId = relationTargetObjectMetadataId(
       workspaceMemberRelation,
     );
-    const inverseRelation =
-      workspaceMemberRelation.relationTargetFieldMetadataId
-        ? workspaceMember.fields.find(
-            ({ id }) =>
-              id === workspaceMemberRelation.relationTargetFieldMetadataId,
-          )
-        : undefined;
+    let inverseRelation: WorkspaceMetadataField | undefined;
+    if (workspaceMemberRelation.relationTargetFieldMetadataId) {
+      inverseRelation = workspaceMember.fields.find(
+        ({ id }) =>
+          id === workspaceMemberRelation.relationTargetFieldMetadataId,
+      );
+    } else {
+      const structuralCandidates = workspaceMember.fields.filter(
+        (field) =>
+          field.type === 'RELATION' &&
+          field.settings?.relationType === 'ONE_TO_MANY' &&
+          relationTargetObjectMetadataId(field) === wholesaler.id,
+      );
+      if (structuralCandidates.length === 1) {
+        [inverseRelation] = structuralCandidates;
+      }
+    }
     const inverseTargetObjectMetadataId =
       inverseRelation?.relationTargetObjectMetadataId ??
       inverseRelation?.settings?.relationTargetObjectMetadataId;
@@ -901,6 +911,9 @@ export const buildWorkspaceMetadataBootstrapPlan = (
       inverseRelation?.type !== 'RELATION' ||
       inverseRelation.settings?.relationType !== 'ONE_TO_MANY' ||
       inverseTargetObjectMetadataId !== wholesaler.id ||
+      (inverseRelation.relationTargetFieldMetadataId != null &&
+        inverseRelation.relationTargetFieldMetadataId !==
+          workspaceMemberRelation.id) ||
       inverseRelation.label !== 'Wholesaler Profiles' ||
       inverseRelation.icon !== 'IconUser'
     ) {
