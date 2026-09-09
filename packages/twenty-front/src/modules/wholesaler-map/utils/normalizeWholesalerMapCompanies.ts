@@ -6,13 +6,13 @@ import {
 } from '@/wholesaler-map/types/WholesalerMapCompany';
 import { normalizeWholesalerMapFilterValue } from '@/wholesaler-map/utils/normalizeWholesalerMapFilterValue';
 
-const isValidLatitude = (value: number | null): value is number =>
+const isValidLatitude = (value: number | null | undefined): value is number =>
   typeof value === 'number' &&
   Number.isFinite(value) &&
   value >= -90 &&
   value <= 90;
 
-const isValidLongitude = (value: number | null): value is number =>
+const isValidLongitude = (value: number | null | undefined): value is number =>
   typeof value === 'number' &&
   Number.isFinite(value) &&
   value >= -180 &&
@@ -36,14 +36,14 @@ const getOwnerColor = (
 };
 
 const getLocationLabel = (company: WholesalerMapCompany) => {
-  const city = company.address.addressCity.trim();
+  const city = company.address?.addressCity?.trim() ?? '';
   const stateAndPostcode = [
-    company.address.addressState.trim(),
-    company.address.addressPostcode.trim(),
+    company.address?.addressState?.trim() ?? '',
+    company.address?.addressPostcode?.trim() ?? '',
   ]
     .filter((value) => value !== '')
     .join(' ');
-  const country = company.address.addressCountry.trim();
+  const country = company.address?.addressCountry?.trim() ?? '';
 
   return [city, stateAndPostcode, country]
     .filter(
@@ -53,7 +53,7 @@ const getLocationLabel = (company: WholesalerMapCompany) => {
 };
 
 const matchesLocationFilter = (
-  fieldValue: string,
+  fieldValue: string | null | undefined,
   selectedValue: string | null,
 ) =>
   selectedValue === null ||
@@ -68,9 +68,9 @@ const matchesFilters = (
 
   return (
     (filters.ownerId === null || ownerId === filters.ownerId) &&
-    matchesLocationFilter(company.address.addressState, filters.state) &&
-    matchesLocationFilter(company.address.addressPostcode, filters.postcode) &&
-    matchesLocationFilter(company.address.addressCountry, filters.country)
+    matchesLocationFilter(company.address?.addressState, filters.state) &&
+    matchesLocationFilter(company.address?.addressPostcode, filters.postcode) &&
+    matchesLocationFilter(company.address?.addressCountry, filters.country)
   );
 };
 
@@ -80,8 +80,8 @@ const toWholesalerMapFeature = (
   ownerColors: readonly string[],
   unassignedOwnerColor: string,
 ): WholesalerMapFeature | null => {
-  const latitude = company.address.addressLat;
-  const longitude = company.address.addressLng;
+  const latitude = company.address?.addressLat;
+  const longitude = company.address?.addressLng;
 
   if (!isValidLatitude(latitude) || !isValidLongitude(longitude)) {
     return null;

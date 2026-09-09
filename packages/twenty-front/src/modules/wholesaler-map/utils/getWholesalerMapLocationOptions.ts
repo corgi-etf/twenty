@@ -19,7 +19,7 @@ const DOMESTIC_COUNTRY_VALUES = new Set([
   'UNITED STATES OF AMERICA',
 ]);
 
-const toSortedOptions = (values: string[]) => {
+const toSortedOptions = (values: Array<string | null | undefined>) => {
   const labelsByNormalizedValue = new Map<string, string>();
 
   for (const value of values) {
@@ -43,7 +43,7 @@ const toSortedOptions = (values: string[]) => {
     .sort((left, right) => left.label.localeCompare(right.label));
 };
 
-const toCountryOptions = (values: string[]) =>
+const toCountryOptions = (values: Array<string | null | undefined>) =>
   toSortedOptions(values).sort((left, right) => {
     const leftIsDomestic = DOMESTIC_COUNTRY_VALUES.has(left.value);
     const rightIsDomestic = DOMESTIC_COUNTRY_VALUES.has(right.value);
@@ -59,12 +59,12 @@ export const getWholesalerMapLocationOptions = (
   companies: WholesalerMapCompany[],
 ): LocationOptions => ({
   countryOptions: toCountryOptions(
-    companies.map(({ address }) => address.addressCountry),
+    companies.map(({ address }) => address?.addressCountry),
   ),
   postcodeOptions: toSortedOptions(
-    companies.map(({ address }) => address.addressPostcode),
+    companies.map(({ address }) => address?.addressPostcode),
   ),
   stateOptions: toSortedOptions(
-    companies.map(({ address }) => address.addressState),
+    companies.map(({ address }) => address?.addressState),
   ),
 });

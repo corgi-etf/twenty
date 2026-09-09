@@ -194,4 +194,87 @@ describe('normalizeWholesalerMapCompanies', () => {
       ).features.map(({ properties }) => properties.companyId),
     ).toEqual(['company-2']);
   });
+
+  it('formats a mapped company when individual address fields are null or undefined', () => {
+    const company = createCompany({
+      address: {
+        addressCity: null,
+        addressState: undefined,
+        addressPostcode: null,
+        addressCountry: 'US',
+        addressLat: 41.8781,
+        addressLng: -87.6298,
+      },
+    });
+
+    const result = normalizeWholesalerMapCompanies(
+      [company],
+      { country: 'US', ownerId: null, postcode: null, state: null },
+      'Unassigned',
+      ['blue', 'red'],
+      'gray',
+    );
+
+    expect(result.features[0]?.properties.locationLabel).toBe('US');
+  });
+
+  it('formats an empty location when every address label subfield is nullish', () => {
+    const company = createCompany({
+      address: {
+        addressCity: undefined,
+        addressState: null,
+        addressPostcode: undefined,
+        addressCountry: null,
+        addressLat: 41.8781,
+        addressLng: -87.6298,
+      },
+    });
+
+    expect(
+      normalizeWholesalerMapCompanies(
+        [company],
+        { country: null, ownerId: null, postcode: null, state: null },
+        'Unassigned',
+        ['blue', 'red'],
+        'gray',
+      ).features[0]?.properties.locationLabel,
+    ).toBe('');
+  });
+
+  it.each([{ address: null }, { address: undefined }, { address: {} }])(
+    'ignores a company with a null or partial address %#',
+    ({ address }) => {
+      expect(
+        normalizeWholesalerMapCompanies(
+          [createCompany({ address })],
+          { country: null, ownerId: null, postcode: null, state: null },
+          'Unassigned',
+          ['blue', 'red'],
+          'gray',
+        ).features,
+      ).toEqual([]);
+    },
+  );
+
+  it('does not match a location filter against a missing address subfield', () => {
+    const company = createCompany({
+      address: {
+        addressState: null,
+        addressPostcode: undefined,
+        addressCountry: 'US',
+        addressLat: 41.8781,
+        addressLng: -87.6298,
+      },
+    });
+
+    expect(
+      normalizeWholesalerMapCompanies(
+        [company],
+        { country: 'US', ownerId: null, postcode: null, state: 'IL' },
+        'Unassigned',
+        ['blue', 'red'],
+        'gray',
+      ).features,
+    ).toEqual([]);
+  });
 });

@@ -1,7 +1,11 @@
 import { type WholesalerMapCompany } from '@/wholesaler-map/types/WholesalerMapCompany';
 import { getWholesalerMapLocationOptions } from '@/wholesaler-map/utils/getWholesalerMapLocationOptions';
 
-const createCompany = (state: string, postcode: string, country: string) =>
+const createCompany = (
+  state: string | null | undefined,
+  postcode: string | null | undefined,
+  country: string | null | undefined,
+) =>
   ({
     address: {
       addressState: state,
@@ -32,5 +36,20 @@ describe('getWholesalerMapLocationOptions', () => {
       { label: 'US', value: 'US' },
       { label: 'CA', value: 'CA' },
     ]);
+  });
+
+  it('ignores null subfields and null or partial addresses', () => {
+    const options = getWholesalerMapLocationOptions([
+      createCompany(null, undefined, 'US'),
+      createCompany('IL', '60601', null),
+      { address: null } as WholesalerMapCompany,
+      { address: { addressState: 'IL' } } as WholesalerMapCompany,
+    ]);
+
+    expect(options).toEqual({
+      countryOptions: [{ label: 'US', value: 'US' }],
+      postcodeOptions: [{ label: '60601', value: '60601' }],
+      stateOptions: [{ label: 'IL', value: 'IL' }],
+    });
   });
 });

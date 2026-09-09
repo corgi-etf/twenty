@@ -6,7 +6,20 @@ export type WholesalerMapOwner = {
   name: string;
 };
 
-export type WholesalerMapCompany = Company & {
+export type WholesalerMapAddress = {
+  __typename?: 'Address';
+  addressStreet1?: string | null;
+  addressStreet2?: string | null;
+  addressCity?: string | null;
+  addressState?: string | null;
+  addressPostcode?: string | null;
+  addressCountry?: string | null;
+  addressLat?: number | null;
+  addressLng?: number | null;
+};
+
+export type WholesalerMapCompany = Omit<Company, 'address'> & {
+  address?: WholesalerMapAddress | null;
   historicalOwner?: WholesalerMapOwner | null;
 };
 
