@@ -136,7 +136,14 @@ test('loads the authenticated workspace and territory map', async ({
   await page.getByRole('option', { name: 'All wholesalers' }).click();
   await expect(mappedCount).toHaveText(allWholesalersCountText ?? '');
 
+  const mapUrl = page.url();
   await mappedLeadButtons.first().click();
+  await expect(page).toHaveURL(mapUrl);
+  const selectedCompanyDetails = page.getByTestId('territory-company-details');
+  await expect(selectedCompanyDetails).toBeVisible();
+  await selectedCompanyDetails
+    .getByRole('button', { name: 'Open full company record' })
+    .click();
   await page.waitForURL(/\/object\/company\/[a-f0-9-]+/);
 });
 
