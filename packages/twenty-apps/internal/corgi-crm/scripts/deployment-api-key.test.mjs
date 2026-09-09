@@ -3,12 +3,20 @@ import { describe, it } from 'node:test';
 
 import {
   createDeploymentApiKey,
+  deleteEphemeralDeploymentRole,
+  deploymentRoleIdentity,
   generateDeploymentApiKeyToken,
   revokeDeploymentApiKey,
 } from './deployment-api-key.mjs';
 
 const workspaceId = 'eabf5d9d-fc99-4acb-b160-710ecb1db996';
 const userWorkspaceId = '767771e9-834d-4a89-88ca-1df32d101a40';
+const REQUIRED_PERMISSION_FLAGS = [
+  'API_KEYS_AND_WEBHOOKS',
+  'APPLICATIONS',
+  'MARKETPLACE_APPS',
+  'ROLES',
+];
 const role = {
   id: 'role-1',
   canReadAllObjectRecords: true,
@@ -66,6 +74,7 @@ describe('deployment API key helpers', () => {
       id: 'key-1',
       name: 'corgi-crm-deploy-123-2',
       expiresAt: '2026-09-08T12:30:00.000Z',
+      role: { id: 'role-1', ephemeral: false },
     });
     assert.deepEqual(calls[1].variables.input, {
       name: key.name,
@@ -100,16 +109,73 @@ describe('deployment API key helpers', () => {
     assert.equal(calls, 1);
   });
 
-  it('fails closed when no assignable role has the token permissions', async () => {
-    await assert.rejects(
-      createDeploymentApiKey({
-        graphql: async () => ({ ...tenantData, getRoles: [] }),
-        expectedWorkspaceId: workspaceId,
-        expectedUserWorkspaceId: userWorkspaceId,
-        runId: '123',
-        runAttempt: '1',
-      }),
-      /found 0/,
+  it('creates a run-owned least-privilege role when no API-key role exists', async () => {
+    const calls = [];
+    const graphql = async (request) => {
+      calls.push(request);
+      if (request.operationName === 'CorgiCrmDeploymentCredentialPreflight') {
+        return { ...tenantData, getRoles: [] };
+      }
+      if (request.operationName === 'CreateCorgiCrmDeploymentRole') {
+        return {
+          createOneRole: {
+            ...request.variables.input,
+            permissionFlags: [],
+          },
+        };
+      }
+      if (request.operationName === 'ConfigureCorgiCrmDeploymentRole') {
+        return {
+          upsertPermissionFlags: REQUIRED_PERMISSION_FLAGS.map(
+            (flag, index) => ({
+              id: `flag-${index}`,
+              roleId: request.variables.input.roleId,
+              flag,
+            }),
+          ),
+        };
+      }
+      return {
+        createApiKey: {
+          id: 'key-1',
+          name: 'corgi-crm-deploy-123-1',
+          expiresAt: '2026-09-08T12:30:00.000Z',
+          revokedAt: null,
+        },
+      };
+    };
+
+    const key = await createDeploymentApiKey({
+      graphql,
+      expectedWorkspaceId: workspaceId,
+      expectedUserWorkspaceId: userWorkspaceId,
+      repository: 'Corgi-ETF/twenty',
+      runId: '123',
+      runAttempt: '1',
+      now: new Date('2026-09-08T12:00:00.000Z'),
+    });
+
+    assert.equal(key.id, 'key-1');
+    assert.equal(key.role.ephemeral, true);
+    assert.deepEqual(
+      calls.find(
+        ({ operationName }) => operationName === 'CreateCorgiCrmDeploymentRole',
+      ).variables.input,
+      {
+        id: key.role.id,
+        label: key.role.label,
+        description: key.role.description,
+        icon: 'IconKey',
+        canUpdateAllSettings: false,
+        canAccessAllTools: false,
+        canReadAllObjectRecords: true,
+        canUpdateAllObjectRecords: false,
+        canSoftDeleteAllObjectRecords: false,
+        canDestroyAllObjectRecords: false,
+        canBeAssignedToUsers: false,
+        canBeAssignedToAgents: false,
+        canBeAssignedToApiKeys: true,
+      },
     );
   });
 
@@ -165,5 +231,70 @@ describe('deployment API key helpers', () => {
       'RevokeCorgiCrmDeploymentApiKey',
       'VerifyCorgiCrmDeploymentApiKeyRevoked',
     ]);
+  });
+
+  it('deletes only an exactly owned ephemeral deployment role', async () => {
+    const ownedRole = {
+      ...deploymentRoleIdentity({
+        repository: 'Corgi-ETF/twenty',
+        workspaceId,
+        runId: '123',
+        runAttempt: '1',
+      }),
+    };
+    const exactRole = {
+      id: ownedRole.id,
+      label: ownedRole.label,
+      description: ownedRole.description,
+      icon: 'IconKey',
+      canUpdateAllSettings: false,
+      canAccessAllTools: false,
+      canReadAllObjectRecords: true,
+      canUpdateAllObjectRecords: false,
+      canSoftDeleteAllObjectRecords: false,
+      canDestroyAllObjectRecords: false,
+      canBeAssignedToUsers: false,
+      canBeAssignedToAgents: false,
+      canBeAssignedToApiKeys: true,
+    };
+    const operations = [];
+    await deleteEphemeralDeploymentRole({
+      role: ownedRole,
+      graphql: async (request) => {
+        operations.push(request);
+        return request.operationName === 'VerifyCorgiCrmDeploymentRoleOwnership'
+          ? { getRoles: [exactRole] }
+          : { deleteOneRole: ownedRole.id };
+      },
+    });
+
+    assert.deepEqual(
+      operations.map(({ operationName }) => operationName),
+      ['VerifyCorgiCrmDeploymentRoleOwnership', 'DeleteCorgiCrmDeploymentRole'],
+    );
+  });
+
+  it('refuses to delete an ephemeral role when its ownership shape changed', async () => {
+    const ownedRole = deploymentRoleIdentity({
+      repository: 'Corgi-ETF/twenty',
+      workspaceId,
+      runId: '123',
+      runAttempt: '1',
+    });
+    await assert.rejects(
+      deleteEphemeralDeploymentRole({
+        role: ownedRole,
+        graphql: async () => ({
+          getRoles: [
+            {
+              id: ownedRole.id,
+              label: 'Foreign role',
+              description: ownedRole.description,
+            },
+          ],
+        }),
+      }),
+      /mismatched ownership/,
+    );
   });
 });
