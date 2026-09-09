@@ -218,12 +218,20 @@ const groupedDeletedFieldNames = (
     ]),
   );
 
-const auditedSnapshot = (): CanonicalizationSnapshot => {
+const auditedSnapshot = ({
+  companyCount = 2191,
+  peopleCount = 1961,
+  holdingCount = 331,
+}: {
+  companyCount?: number;
+  peopleCount?: number;
+  holdingCount?: number;
+} = {}): CanonicalizationSnapshot => {
   const wholesalers = Array.from({ length: 10 }, (_, index) => ({
     id: `wholesaler-${index}`,
     legacyFetchId: `wholesaler-legacy-${index}`,
   }));
-  const companies = Array.from({ length: 2191 }, (_, index) => ({
+  const companies = Array.from({ length: companyCount }, (_, index) => ({
     id: `company-${index}`,
     legacyFetchId: `company-legacy-${index}`,
     ...(index < 305
@@ -239,7 +247,7 @@ const auditedSnapshot = (): CanonicalizationSnapshot => {
         }
       : {}),
   }));
-  const people = Array.from({ length: 1961 }, (_, index) => ({
+  const people = Array.from({ length: peopleCount }, (_, index) => ({
     id: `person-${index}`,
     legacyFetchId: `person-legacy-${index}`,
   }));
@@ -274,7 +282,7 @@ const auditedSnapshot = (): CanonicalizationSnapshot => {
       id: `review-${index}`,
       reviewStatus: index < 140 ? 'pending' : 'accepted',
     })),
-    holdingObservations: Array.from({ length: 331 }, (_, index) => ({
+    holdingObservations: Array.from({ length: holdingCount }, (_, index) => ({
       id: `holding-${index}`,
     })),
     tasks,
@@ -1039,6 +1047,68 @@ test('requires the audited counts, hashes, and exact legacy relationships', () =
   expect(() =>
     assertAuditedCanonicalizationSnapshot(snapshot, report, expected),
   ).toThrow(/historical owner mapping is incorrect/i);
+});
+
+test('derives unset location markers from each approved manifest size', () => {
+  const report = {
+    rowCoverageHash: 'a'.repeat(64),
+    businessContentHash: 'b'.repeat(64),
+  };
+
+  for (const manifest of [
+    { companyCount: 2191, peopleCount: 1961, holdingCount: 331 },
+    { companyCount: 2238, peopleCount: 2604, holdingCount: 680 },
+  ]) {
+    const snapshot = auditedSnapshot(manifest);
+
+    expect(() =>
+      assertAuditedCanonicalizationSnapshot(snapshot, report, {
+        ...manifest,
+        rowCoverageHash: report.rowCoverageHash,
+        businessContentHash: report.businessContentHash,
+      }),
+    ).not.toThrow();
+  }
+});
+
+test('rejects non-boolean non-null location markers', () => {
+  const snapshot = auditedSnapshot();
+  snapshot.companies.at(-1)!.locationIsManual = 'false';
+  const report = {
+    rowCoverageHash: 'a'.repeat(64),
+    businessContentHash: 'b'.repeat(64),
+  };
+
+  expect(() =>
+    assertAuditedCanonicalizationSnapshot(snapshot, report, {
+      companyCount: 2191,
+      peopleCount: 1961,
+      holdingCount: 331,
+      rowCoverageHash: report.rowCoverageHash,
+      businessContentHash: report.businessContentHash,
+    }),
+  ).toThrow(/locationIsManual.*boolean or nullish/i);
+});
+
+test('rejects a manifest too small for the audited location cohorts', () => {
+  const manifest = {
+    companyCount: 2184,
+    peopleCount: 1961,
+    holdingCount: 331,
+  };
+  const snapshot = auditedSnapshot(manifest);
+  const report = {
+    rowCoverageHash: 'a'.repeat(64),
+    businessContentHash: 'b'.repeat(64),
+  };
+
+  expect(() =>
+    assertAuditedCanonicalizationSnapshot(snapshot, report, {
+      ...manifest,
+      rowCoverageHash: report.rowCoverageHash,
+      businessContentHash: report.businessContentHash,
+    }),
+  ).toThrow(/company count.*smaller than the audited location cohorts/i);
 });
 
 test('accepts additive native lead assignments without losing the migrated baseline', () => {
