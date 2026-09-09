@@ -2,6 +2,7 @@ import { useLingui } from '@lingui/react/macro';
 import { CoreObjectNameSingular } from 'twenty-shared/types';
 import { IconPhone } from 'twenty-ui/icon';
 import { Button } from 'twenty-ui/input';
+import { AppTooltip } from 'twenty-ui/surfaces';
 
 import { QuickLogCompanyActivityModal } from '@/activities/quick-log/components/QuickLogCompanyActivityModal';
 import { getQuickLogActivityMetadataStatus } from '@/activities/quick-log/utils/getQuickLogActivityMetadataStatus';
@@ -55,14 +56,25 @@ export const QuickLogCompanyActivityAction = ({
   const metadataStatus = getQuickLogActivityMetadataStatus(objectMetadataItems);
 
   if (!metadataStatus.isAvailable) {
+    const tooltipId = `quick-log-company-activity-unavailable-${companyId}`;
+
     return (
-      <Button
-        Icon={IconPhone}
-        title={t`Follow-up unavailable`}
-        ariaLabel={metadataStatus.reason}
-        variant="secondary"
-        disabled
-      />
+      <>
+        <div id={tooltipId}>
+          <Button
+            Icon={IconPhone}
+            title={t`Follow-up unavailable`}
+            ariaLabel={`${t`Follow-up unavailable`}: ${metadataStatus.reason}`}
+            variant="secondary"
+            disabled
+          />
+        </div>
+        <AppTooltip
+          anchorSelect={`#${tooltipId}`}
+          content={metadataStatus.reason}
+          place="bottom"
+        />
+      </>
     );
   }
 

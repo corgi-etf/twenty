@@ -1,17 +1,19 @@
-import { type EnrichedObjectMetadataItem } from '@/object-metadata/types/EnrichedObjectMetadataItem';
-import { FieldMetadataType } from '~/generated-metadata/graphql';
+import { FieldMetadataType, RelationType } from '~/generated-metadata/graphql';
 
 type QuickLogActivityMetadataStatus =
   | { isAvailable: true }
   | { isAvailable: false; reason: string };
 
-type QuickLogObjectMetadata = Pick<
-  EnrichedObjectMetadataItem,
-  'nameSingular'
-> & {
-  fields: Array<
-    Pick<EnrichedObjectMetadataItem['fields'][number], 'name' | 'type'>
-  >;
+type QuickLogObjectMetadata = {
+  nameSingular: string;
+  fields: Array<{
+    name: string;
+    type: FieldMetadataType;
+    relation?: {
+      type: RelationType;
+      targetObjectMetadata: { nameSingular: string };
+    } | null;
+  }>;
 };
 
 const REQUIRED_OUTREACH_FIELDS = [
@@ -21,9 +23,9 @@ const REQUIRED_OUTREACH_FIELDS = [
   ['notes', FieldMetadataType.TEXT],
   ['occurredAt', FieldMetadataType.DATE_TIME],
   ['followUpDate', FieldMetadataType.DATE],
-  ['company', FieldMetadataType.RELATION],
-  ['contact', FieldMetadataType.RELATION],
-  ['wholesaler', FieldMetadataType.RELATION],
+  ['company', FieldMetadataType.RELATION, 'company'],
+  ['contact', FieldMetadataType.RELATION, 'person'],
+  ['wholesaler', FieldMetadataType.RELATION, 'wholesaler'],
 ] as const;
 
 export const getQuickLogActivityMetadataStatus = (
@@ -57,6 +59,31 @@ export const getQuickLogActivityMetadataStatus = (
     return {
       isAvailable: false,
       reason: `Follow-up field ${missingField[0]} is not configured.`,
+    };
+  }
+
+  const incompatibleRelation = REQUIRED_OUTREACH_FIELDS.find(
+    ([fieldName, fieldType, targetObjectNameSingular]) => {
+      if (fieldType !== FieldMetadataType.RELATION) {
+        return false;
+      }
+
+      const relationField = outreachActivity.fields.find(
+        (field) => field.name === fieldName,
+      );
+
+      return (
+        relationField?.relation?.type !== RelationType.MANY_TO_ONE ||
+        relationField.relation.targetObjectMetadata.nameSingular !==
+          targetObjectNameSingular
+      );
+    },
+  );
+
+  if (incompatibleRelation) {
+    return {
+      isAvailable: false,
+      reason: `Follow-up relation ${incompatibleRelation[0]} is not configured correctly.`,
     };
   }
 

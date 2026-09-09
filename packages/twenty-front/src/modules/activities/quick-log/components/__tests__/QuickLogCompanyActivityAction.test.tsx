@@ -1,14 +1,21 @@
 import { i18n } from '@lingui/core';
 import { I18nProvider } from '@lingui/react';
 import { fireEvent, render, screen } from '@testing-library/react';
-import { FieldMetadataType } from '~/generated-metadata/graphql';
+import { FieldMetadataType, RelationType } from '~/generated-metadata/graphql';
 
 import { QuickLogCompanyActivityAction } from '@/activities/quick-log/components/QuickLogCompanyActivityAction';
 
 const mockOpenModal = jest.fn();
 let mockObjectMetadataItems: Array<{
   nameSingular: string;
-  fields: Array<{ name: string; type: FieldMetadataType }>;
+  fields: Array<{
+    name: string;
+    type: FieldMetadataType;
+    relation?: {
+      type: RelationType;
+      targetObjectMetadata: { nameSingular: string };
+    };
+  }>;
 }> = [];
 
 jest.mock('@/object-metadata/hooks/useObjectMetadataItems', () => ({
@@ -46,6 +53,10 @@ jest.mock('twenty-ui/input', () => ({
   ),
 }));
 
+jest.mock('twenty-ui/surfaces', () => ({
+  AppTooltip: ({ content }: { content: string }) => <span>{content}</span>,
+}));
+
 const configuredMetadata = [
   {
     nameSingular: 'outreachActivity',
@@ -56,9 +67,30 @@ const configuredMetadata = [
       { name: 'notes', type: FieldMetadataType.TEXT },
       { name: 'occurredAt', type: FieldMetadataType.DATE_TIME },
       { name: 'followUpDate', type: FieldMetadataType.DATE },
-      { name: 'company', type: FieldMetadataType.RELATION },
-      { name: 'contact', type: FieldMetadataType.RELATION },
-      { name: 'wholesaler', type: FieldMetadataType.RELATION },
+      {
+        name: 'company',
+        type: FieldMetadataType.RELATION,
+        relation: {
+          type: RelationType.MANY_TO_ONE,
+          targetObjectMetadata: { nameSingular: 'company' },
+        },
+      },
+      {
+        name: 'contact',
+        type: FieldMetadataType.RELATION,
+        relation: {
+          type: RelationType.MANY_TO_ONE,
+          targetObjectMetadata: { nameSingular: 'person' },
+        },
+      },
+      {
+        name: 'wholesaler',
+        type: FieldMetadataType.RELATION,
+        relation: {
+          type: RelationType.MANY_TO_ONE,
+          targetObjectMetadata: { nameSingular: 'wholesaler' },
+        },
+      },
     ],
   },
   { nameSingular: 'person', fields: [] },
@@ -96,7 +128,7 @@ describe('QuickLogCompanyActivityAction', () => {
     expect(screen.getByTestId('quick-log-modal')).toBeInTheDocument();
   });
 
-  it('shows a clear disabled action when metadata is unavailable', () => {
+  it('shows a clear disabled action and visible reason when metadata is unavailable', () => {
     mockObjectMetadataItems = [];
 
     render(
@@ -110,9 +142,12 @@ describe('QuickLogCompanyActivityAction', () => {
 
     expect(
       screen.getByRole('button', {
-        name: 'Follow-up data is not configured for this workspace.',
+        name: 'Follow-up unavailable: Follow-up data is not configured for this workspace.',
       }),
     ).toBeDisabled();
+    expect(
+      screen.getByText('Follow-up data is not configured for this workspace.'),
+    ).toBeInTheDocument();
   });
 
   it('does not render on non-Company records', () => {

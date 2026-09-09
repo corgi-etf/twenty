@@ -1,5 +1,14 @@
 import { getQuickLogActivityMetadataStatus } from '@/activities/quick-log/utils/getQuickLogActivityMetadataStatus';
-import { FieldMetadataType } from '~/generated-metadata/graphql';
+import { FieldMetadataType, RelationType } from '~/generated-metadata/graphql';
+
+const relationField = (name: string, targetObjectNameSingular: string) => ({
+  name,
+  type: FieldMetadataType.RELATION,
+  relation: {
+    type: RelationType.MANY_TO_ONE,
+    targetObjectMetadata: { nameSingular: targetObjectNameSingular },
+  },
+});
 
 const outreachFields = [
   { name: 'name', type: FieldMetadataType.TEXT },
@@ -8,9 +17,9 @@ const outreachFields = [
   { name: 'notes', type: FieldMetadataType.TEXT },
   { name: 'occurredAt', type: FieldMetadataType.DATE_TIME },
   { name: 'followUpDate', type: FieldMetadataType.DATE },
-  { name: 'company', type: FieldMetadataType.RELATION },
-  { name: 'contact', type: FieldMetadataType.RELATION },
-  { name: 'wholesaler', type: FieldMetadataType.RELATION },
+  relationField('company', 'company'),
+  relationField('contact', 'person'),
+  relationField('wholesaler', 'wholesaler'),
 ];
 
 const configuredMetadata = [
@@ -55,6 +64,58 @@ describe('getQuickLogActivityMetadataStatus', () => {
     ).toEqual({
       isAvailable: false,
       reason: 'Wholesaler email matching is not configured.',
+    });
+  });
+
+  it('rejects an Outreach Activity relation with the wrong target', () => {
+    const metadataWithWrongCompanyTarget = configuredMetadata.map((item) =>
+      item.nameSingular === 'outreachActivity'
+        ? {
+            ...item,
+            fields: item.fields.map((field) =>
+              field.name === 'company'
+                ? relationField('company', 'person')
+                : field,
+            ),
+          }
+        : item,
+    );
+
+    expect(
+      getQuickLogActivityMetadataStatus(metadataWithWrongCompanyTarget),
+    ).toEqual({
+      isAvailable: false,
+      reason: 'Follow-up relation company is not configured correctly.',
+    });
+  });
+
+  it('rejects a one-to-many Outreach Activity relation', () => {
+    const metadataWithWrongCardinality = configuredMetadata.map((item) =>
+      item.nameSingular === 'outreachActivity'
+        ? {
+            ...item,
+            fields: item.fields.map((field) =>
+              field.name === 'contact' &&
+              'relation' in field &&
+              field.relation !== undefined
+                ? {
+                    ...field,
+                    relation: {
+                      ...field.relation,
+                      type: RelationType.ONE_TO_MANY,
+                    },
+                  }
+                : field,
+            ),
+          }
+        : item,
+    );
+
+    expect(
+      getQuickLogActivityMetadataStatus(metadataWithWrongCardinality),
+    ).toEqual({
+      isAvailable: false,
+      reason: 'Follow-up relation contact is not configured correctly.',
     });
   });
 });

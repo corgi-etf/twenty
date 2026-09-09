@@ -48,8 +48,8 @@ export const useQuickLogCompanyActivity = ({
     error: wholesalerError,
   } = useFindManyRecords({
     objectNameSingular: 'wholesaler',
-    filter: { email: { ilike: currentUserEmail ?? '' } },
-    recordGqlFields: { id: true, name: true, email: true },
+    filter: { email: { eq: currentUserEmail ?? '' } },
+    recordGqlFields: { id: true, email: true },
     limit: 2,
     skip: !currentUserEmail,
   });
@@ -74,6 +74,11 @@ export const useQuickLogCompanyActivity = ({
     value: person.id,
     label: getPersonLabel(person),
   }));
+  const matchingWholesalerRecords = wholesalerRecords.filter(
+    (wholesaler) =>
+      typeof wholesaler.email === 'string' &&
+      wholesaler.email.trim().toLowerCase() === currentUserEmail,
+  );
 
   let ownershipError: string | null = null;
 
@@ -81,16 +86,16 @@ export const useQuickLogCompanyActivity = ({
     ownershipError = t`Your signed-in email is unavailable.`;
   } else if (wholesalerError) {
     ownershipError = t`Your wholesaler profile could not be verified.`;
-  } else if (!isWholesalerLoading && wholesalerRecords.length === 0) {
+  } else if (!isWholesalerLoading && matchingWholesalerRecords.length === 0) {
     ownershipError = t`No wholesaler profile is linked to your email.`;
-  } else if (!isWholesalerLoading && wholesalerRecords.length > 1) {
+  } else if (!isWholesalerLoading && matchingWholesalerRecords.length > 1) {
     ownershipError = t`More than one wholesaler profile is linked to your email.`;
   }
 
   const submitActivity = async (
     values: QuickLogActivityFormValues,
   ): Promise<boolean> => {
-    const wholesalerId = wholesalerRecords[0]?.id;
+    const wholesalerId = matchingWholesalerRecords[0]?.id;
 
     if (ownershipError || !wholesalerId) {
       enqueueErrorSnackBar({
