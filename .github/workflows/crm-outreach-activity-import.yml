@@ -1,0 +1,357 @@
+name: Manual CRM outreach activity import
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Dry-run produces an approved manifest; apply creates the guarded activities
+        required: true
+        default: dry-run
+        type: choice
+        options:
+          - dry-run
+          - apply
+      deployed_sha:
+        description: Exact 40-character SHA currently deployed to both CRM services
+        required: true
+        type: string
+      source_sha256:
+        description: SHA-256 of the raw headerless CSV stored in the production environment secret
+        required: true
+        type: string
+      expected_rows:
+        description: Exact logical CSV row count
+        required: true
+        type: number
+      activity_date:
+        description: Activity date in YYYY-MM-DD form
+        required: true
+        type: string
+      time_zone:
+        description: IANA time zone used for the activity day
+        required: true
+        type: string
+      import_id:
+        description: Stable non-PII idempotency key for this source import
+        required: true
+        type: string
+      identity_discovery_run_id:
+        description: Successful exact-SHA territory identity discovery run ID
+        required: true
+        type: string
+      identity_discovery_attempt:
+        description: Successful territory identity discovery attempt number
+        required: true
+        type: string
+      expected_manifest:
+        description: For apply, exact JSON manifest from the successful dry-run artifact
+        required: false
+        default: ''
+        type: string
+      confirmation:
+        description: For apply only, type IMPORT_CRM_OUTREACH_ACTIVITIES
+        required: false
+        default: ''
+        type: string
+      resume_run_id:
+        description: Prior failed apply run ID whose PII-free checkpoint should be restored
+        required: false
+        default: ''
+        type: string
+      resume_attempt:
+        description: Prior failed apply attempt number
+        required: false
+        default: ''
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+  id-token: write
+
+concurrency:
+  group: crm-production-deploy
+  cancel-in-progress: false
+
+env:
+  AWS_ACCOUNT_ID: '182018075072'
+  AWS_REGION: us-east-2
+  AWS_ROLE_ARN: arn:aws:iam::182018075072:role/crm-production-github-deploy
+  ECS_CLUSTER: crm-production
+  ECR_REPOSITORY: crm-production-twenty
+  SERVER_SERVICE: crm-production-server
+  SERVER_CONTAINER: server
+  WORKER_SERVICE: crm-production-worker
+  WORKER_CONTAINER: worker
+
+jobs:
+  import:
+    name: Import outreach activities with an approved manifest
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    environment: production
+    steps:
+      - name: Check out the exact import revision
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          fetch-depth: 0
+
+      - name: Validate immutable import inputs
+        shell: bash
+        env:
+          MODE: ${{ inputs.mode }}
+          DEPLOYED_SHA: ${{ inputs.deployed_sha }}
+          SOURCE_SHA256: ${{ inputs.source_sha256 }}
+          EXPECTED_ROWS: ${{ inputs.expected_rows }}
+          ACTIVITY_DATE: ${{ inputs.activity_date }}
+          TIME_ZONE: ${{ inputs.time_zone }}
+          IMPORT_ID: ${{ inputs.import_id }}
+          IDENTITY_RUN_ID: ${{ inputs.identity_discovery_run_id }}
+          IDENTITY_ATTEMPT: ${{ inputs.identity_discovery_attempt }}
+          EXPECTED_MANIFEST: ${{ inputs.expected_manifest }}
+          CONFIRMATION: ${{ inputs.confirmation }}
+          RESUME_RUN_ID: ${{ inputs.resume_run_id }}
+          RESUME_ATTEMPT: ${{ inputs.resume_attempt }}
+        run: |
+          set -euo pipefail
+          [[ "${MODE}" == "dry-run" || "${MODE}" == "apply" ]]
+          [[ "${DEPLOYED_SHA}" =~ ^[0-9a-f]{40}$ ]]
+          [[ "${DEPLOYED_SHA}" == "${GITHUB_SHA}" ]]
+          git cat-file -e "${DEPLOYED_SHA}^{commit}"
+          [[ "${SOURCE_SHA256}" =~ ^[0-9a-f]{64}$ ]]
+          [[ "${EXPECTED_ROWS}" =~ ^[1-9][0-9]*$ ]]
+          [[ "${ACTIVITY_DATE}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]
+          [[ "${TIME_ZONE}" =~ ^[A-Za-z0-9_+-]+(/[A-Za-z0-9_+-]+)+$ ]]
+          [[ "${IMPORT_ID}" =~ ^[a-z0-9][a-z0-9._-]{2,127}$ ]]
+          [[ "${IDENTITY_RUN_ID}" =~ ^[1-9][0-9]*$ ]]
+          [[ "${IDENTITY_ATTEMPT}" =~ ^[1-9][0-9]*$ ]]
+
+          if [[ "${MODE}" == "apply" ]]; then
+            [[ "${CONFIRMATION}" == "IMPORT_CRM_OUTREACH_ACTIVITIES" ]]
+            jq -e '
+              .schemaVersion == 1 and
+              ([.sourceSha256, .importIdHash, .activityIdSetHash, .planHash] |
+                all(type == "string" and test("^[a-f0-9]{64}$"))) and
+              ([.expectedRows, .rowCount, .blankNoteCount, .distinctCompanyCount] |
+                all(type == "number" and . >= 0 and floor == .)) and
+              .expectedRows == .rowCount and
+              (.activityDate | type == "string") and
+              (.timeZone | type == "string" and length > 0)
+            ' <<< "${EXPECTED_MANIFEST}" >/dev/null
+          else
+            [[ -z "${CONFIRMATION}" ]]
+            [[ -z "${EXPECTED_MANIFEST}" ]]
+            [[ -z "${RESUME_RUN_ID}" ]]
+            [[ -z "${RESUME_ATTEMPT}" ]]
+          fi
+          if [[ -n "${RESUME_RUN_ID}" || -n "${RESUME_ATTEMPT}" ]]; then
+            [[ "${MODE}" == "apply" ]]
+            [[ "${RESUME_RUN_ID}" =~ ^[1-9][0-9]*$ ]]
+            [[ "${RESUME_ATTEMPT}" =~ ^[1-9][0-9]*$ ]]
+          fi
+
+      - name: Verify authenticated exact-SHA identity artifact lineage
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DEPLOYED_SHA: ${{ inputs.deployed_sha }}
+          IDENTITY_RUN_ID: ${{ inputs.identity_discovery_run_id }}
+          IDENTITY_ATTEMPT: ${{ inputs.identity_discovery_attempt }}
+        run: |
+          set -euo pipefail
+          workflow_json="${RUNNER_TEMP}/identity-workflow.json"
+          run_json="${RUNNER_TEMP}/identity-run.json"
+          jobs_json="${RUNNER_TEMP}/identity-jobs.json"
+          artifacts_json="${RUNNER_TEMP}/identity-artifacts.json"
+          gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/crm-territory-identity-discovery.yml" > "${workflow_json}"
+          gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${IDENTITY_RUN_ID}/attempts/${IDENTITY_ATTEMPT}" > "${run_json}"
+          gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${IDENTITY_RUN_ID}/attempts/${IDENTITY_ATTEMPT}/jobs" > "${jobs_json}"
+          gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${IDENTITY_RUN_ID}/artifacts" > "${artifacts_json}"
+          workflow_id="$(jq -r '.id' "${workflow_json}")"
+          jq -e '
+            .name == "Manual CRM territory identity discovery" and
+            .path == ".github/workflows/crm-territory-identity-discovery.yml" and
+            .state == "active"
+          ' "${workflow_json}" >/dev/null
+          jq -e \
+            --arg repository "${GITHUB_REPOSITORY}" \
+            --arg run_id "${IDENTITY_RUN_ID}" \
+            --argjson attempt "${IDENTITY_ATTEMPT}" \
+            --arg workflow_id "${workflow_id}" \
+            --arg sha "${DEPLOYED_SHA}" '
+              (.id | tostring) == $run_id and .run_attempt == $attempt and
+              (.workflow_id | tostring) == $workflow_id and
+              .event == "workflow_dispatch" and .head_branch == "main" and
+              .head_repository.full_name == $repository and .head_sha == $sha and
+              .status == "completed" and .conclusion == "success"
+            ' "${run_json}" >/dev/null
+          jq -e '
+            [.jobs[] | select(
+              .name == "Discover immutable territory member identities" and
+              .status == "completed" and .conclusion == "success"
+            )] | length == 1
+          ' "${jobs_json}" >/dev/null
+          artifact_name="crm-territory-member-identities-${IDENTITY_RUN_ID}-${IDENTITY_ATTEMPT}"
+          jq -e --arg name "${artifact_name}" '
+            [.artifacts[] | select(
+              .name == $name and .expired == false and
+              (.digest | type == "string" and test("^sha256:[a-f0-9]{64}$"))
+            )] | length == 1
+          ' "${artifacts_json}" >/dev/null
+
+      - name: Download authenticated Nash identity mapping
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: crm-territory-member-identities-${{ inputs.identity_discovery_run_id }}-${{ inputs.identity_discovery_attempt }}
+          path: ${{ runner.temp }}/crm-activity-import/private/identity
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.identity_discovery_run_id }}
+
+      - name: Restore a PII-free checkpoint for an explicit resume
+        if: inputs.resume_run_id != ''
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: crm-outreach-activity-import-${{ inputs.resume_run_id }}-${{ inputs.resume_attempt }}
+          path: ${{ runner.temp }}/crm-activity-import/output
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.resume_run_id }}
+
+      - name: Install Node and Yarn dependencies
+        uses: ./.github/actions/crm-yarn-install
+
+      - name: Install the Chromium test browser
+        run: npx playwright install --with-deps chromium
+
+      - name: Configure immediate AWS deployment inspection
+        uses: aws-actions/configure-aws-credentials@61815dcd50bd041e203e49132bacad1fd04d2708 # v5.1.1
+        with:
+          role-to-assume: ${{ env.AWS_ROLE_ARN }}
+          role-duration-seconds: 3600
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Prove every live task uses the exact import revision
+        shell: bash
+        env:
+          DEPLOYED_SHA: ${{ inputs.deployed_sha }}
+        run: |
+          set -euo pipefail
+          caller_account="$(aws sts get-caller-identity --query Account --output text)"
+          [[ "${caller_account}" == "${AWS_ACCOUNT_ID}" ]]
+          expected_digest="$(aws ecr describe-images \
+            --repository-name "${ECR_REPOSITORY}" \
+            --image-ids "imageTag=git-${DEPLOYED_SHA}" \
+            --query 'imageDetails[0].imageDigest' --output text)"
+          [[ "${expected_digest}" == sha256:* ]]
+          expected_image="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPOSITORY}@${expected_digest}"
+
+          assert_stable_service_tasks() {
+            local service="$1"
+            local container="$2"
+            local service_json="${RUNNER_TEMP}/${service}-service.json"
+            local tasks_json="${RUNNER_TEMP}/${service}-tasks.json"
+            local task_definition
+            local live_image
+            local task_arns
+            local desired
+            aws ecs describe-services --cluster "${ECS_CLUSTER}" --services "${service}" > "${service_json}"
+            jq -e '
+              (.failures | length) == 0 and (.services | length) == 1 and
+              .services[0].status == "ACTIVE" and .services[0].desiredCount > 0 and
+              .services[0].runningCount == .services[0].desiredCount and
+              .services[0].pendingCount == 0 and
+              ([.services[0].deployments[] | select(.status == "PRIMARY")] | length) == 1 and
+              ([.services[0].deployments[] | select(.status == "ACTIVE")] | length) == 0
+            ' "${service_json}" >/dev/null
+            desired="$(jq -r '.services[0].desiredCount' "${service_json}")"
+            task_definition="$(jq -r '.services[0].taskDefinition' "${service_json}")"
+            live_image="$(aws ecs describe-task-definition --task-definition "${task_definition}" \
+              --query "taskDefinition.containerDefinitions[?name=='${container}'].image | [0]" --output text)"
+            [[ "${live_image}" == "${expected_image}" ]]
+            task_arns="$(aws ecs list-tasks --cluster "${ECS_CLUSTER}" --service-name "${service}" \
+              --desired-status RUNNING --query 'taskArns' --output text)"
+            [[ -n "${task_arns}" && "${task_arns}" != "None" ]]
+            # shellcheck disable=SC2086
+            aws ecs describe-tasks --cluster "${ECS_CLUSTER}" --tasks ${task_arns} > "${tasks_json}"
+            jq -e --arg container "${container}" --arg digest "${expected_digest}" --argjson desired "${desired}" '
+              (.failures | length) == 0 and (.tasks | length) == $desired and
+              all(.tasks[]; .lastStatus == "RUNNING") and
+              all(.tasks[]; ([.containers[] | select(
+                .name == $container and .lastStatus == "RUNNING" and .imageDigest == $digest
+              )] | length) == 1)
+            ' "${tasks_json}" >/dev/null
+          }
+          assert_stable_service_tasks "${SERVER_SERVICE}" "${SERVER_CONTAINER}"
+          assert_stable_service_tasks "${WORKER_SERVICE}" "${WORKER_CONTAINER}"
+
+      - name: Materialize the encrypted CSV only under RUNNER_TEMP
+        shell: bash
+        env:
+          CSV_BASE64: ${{ secrets.CRM_ACTIVITY_IMPORT_CSV_BASE64 }}
+          EXPECTED_SHA256: ${{ inputs.source_sha256 }}
+        run: |
+          set -euo pipefail
+          [[ -n "${CSV_BASE64}" ]]
+          private_directory="${RUNNER_TEMP}/crm-activity-import/private/source"
+          source_path="${private_directory}/activities.csv"
+          umask 077
+          mkdir -p "${private_directory}"
+          printf '%s' "${CSV_BASE64}" | base64 --decode > "${source_path}"
+          [[ -s "${source_path}" && ! -L "${source_path}" ]]
+          actual_sha256="$(sha256sum "${source_path}" | awk '{print $1}')"
+          [[ "${actual_sha256}" == "${EXPECTED_SHA256}" ]]
+
+      - name: Run guarded production activity import
+        env:
+          FRONTEND_BASE_URL: https://crm.corgiinvest.com
+          BACKEND_BASE_URL: https://crm.corgiinvest.com
+          CRM_E2E_LOGIN: ${{ secrets.CRM_E2E_LOGIN }}
+          CRM_E2E_PASSWORD: ${{ secrets.CRM_E2E_PASSWORD }}
+          CRM_E2E_WORKSPACE_NAME: ${{ secrets.CRM_E2E_WORKSPACE_NAME }}
+          CRM_ACTIVITY_IMPORT_ENABLED: 'true'
+          CRM_ACTIVITY_IMPORT_MODE: ${{ inputs.mode }}
+          CRM_ACTIVITY_IMPORT_SOURCE_PATH: ${{ runner.temp }}/crm-activity-import/private/source/activities.csv
+          CRM_ACTIVITY_IMPORT_IDENTITY_PATH: ${{ runner.temp }}/crm-activity-import/private/identity/workspace-member-identities.json
+          CRM_ACTIVITY_IMPORT_CHECKPOINT_PATH: ${{ runner.temp }}/crm-activity-import/output/activity-import-checkpoint.json
+          CRM_ACTIVITY_IMPORT_RESULT_PATH: ${{ runner.temp }}/crm-activity-import/output/activity-import-result.json
+          CRM_ACTIVITY_IMPORT_SOURCE_SHA256: ${{ inputs.source_sha256 }}
+          CRM_ACTIVITY_IMPORT_EXPECTED_ROWS: ${{ inputs.expected_rows }}
+          CRM_ACTIVITY_IMPORT_DATE: ${{ inputs.activity_date }}
+          CRM_ACTIVITY_IMPORT_TIME_ZONE: ${{ inputs.time_zone }}
+          CRM_ACTIVITY_IMPORT_ID: ${{ inputs.import_id }}
+          CRM_ACTIVITY_IMPORT_CONFIRMATION: ${{ inputs.confirmation }}
+          CRM_ACTIVITY_IMPORT_EXPECTED_MANIFEST: ${{ inputs.expected_manifest }}
+        run: >-
+          npx nx test:production twenty-e2e-testing --
+          tests/production/activityImport.maintenance.spec.ts
+          --project=production-chromium --retries=0
+
+      - name: Delete private source and identity material
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          private_directory="${RUNNER_TEMP}/crm-activity-import/private"
+          if [[ -d "${private_directory}" ]]; then
+            find "${private_directory}" -depth -mindepth 1 -delete
+            rmdir "${private_directory}"
+          fi
+
+      - name: Upload the PII-free manifest and checkpoint
+        if: success()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: crm-outreach-activity-import-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/crm-activity-import/output/activity-import-checkpoint.json
+            ${{ runner.temp }}/crm-activity-import/output/activity-import-result.json
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Record PII-free import completion
+        if: success()
+        shell: bash
+        run: |
+          set -euo pipefail
+          result="${RUNNER_TEMP}/crm-activity-import/output/activity-import-result.json"
+          jq -e '{mode, status, plannedCount, createdCount, alreadyPresentCount, manifest}' "${result}" >> "${GITHUB_STEP_SUMMARY}"
