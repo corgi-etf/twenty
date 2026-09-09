@@ -623,3 +623,51 @@ test('metadata bootstrap rejects an unapproved gate before any API call', async 
   );
   assert.deepEqual(api.events, []);
 });
+
+test('metadata bootstrap rejects an ambiguous inverse before any production mutation', async () => {
+  const api = new BootstrapFakeApi();
+  const wholesaler = api.snapshot.objects.find(
+    ({ nameSingular }) => nameSingular === 'wholesaler',
+  )!;
+  const workspaceMember = api.snapshot.objects.find(
+    ({ nameSingular }) => nameSingular === 'workspaceMember',
+  )!;
+  wholesaler.fields.push({
+    id: 'wholesaler-workspaceMember-existing-id',
+    name: 'workspaceMember',
+    label: 'Workspace Member',
+    type: 'RELATION',
+    relationTargetObjectMetadataId: workspaceMember.id,
+    settings: { relationType: 'MANY_TO_ONE' },
+  });
+  workspaceMember.fields.push(
+    {
+      id: 'workspaceMember-wholesalerProfiles-first-id',
+      name: 'wholesalerProfiles',
+      label: 'Wholesaler Profiles',
+      icon: 'IconUser',
+      type: 'RELATION',
+      relationTargetObjectMetadataId: wholesaler.id,
+      settings: { relationType: 'ONE_TO_MANY' },
+    },
+    {
+      id: 'workspaceMember-wholesalerProfiles-second-id',
+      name: 'otherWholesalerProfiles',
+      label: 'Wholesaler Profiles',
+      icon: 'IconUser',
+      type: 'RELATION',
+      relationTargetObjectMetadataId: wholesaler.id,
+      settings: { relationType: 'ONE_TO_MANY' },
+    },
+  );
+
+  await assert.rejects(
+    runWorkspaceMetadataBootstrap(api, {
+      origin: 'https://crm.corgiinvest.com',
+      expectedOrigin: 'https://crm.corgiinvest.com',
+      confirmation: BOOTSTRAP_WORKSPACE_METADATA_CONFIRMATION,
+    }),
+    /workspaceMember relation and inverse contract are incompatible/i,
+  );
+  assert.deepEqual(api.events, ['snapshot']);
+});

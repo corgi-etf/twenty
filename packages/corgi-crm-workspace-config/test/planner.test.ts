@@ -926,3 +926,75 @@ test('creates the wholesaler workspace member relation with the exact contract',
     },
   });
 });
+
+test('resolves the wholesaler workspace member inverse when the REST DTO omits its id', () => {
+  const value = snapshot();
+  addWorkspaceMemberRelation(value);
+  const sourceRelation = value.objects[2]!.fields.find(
+    ({ name }) => name === 'workspaceMember',
+  )!;
+  delete sourceRelation.relationTargetFieldMetadataId;
+  delete value.objects[7]!.fields[0]!.relationTargetFieldMetadataId;
+
+  const plan = buildWorkspaceConfigPlan(value);
+
+  assert.equal(
+    plan.metadataFieldsToCreate.some(({ name }) => name === 'workspaceMember'),
+    false,
+  );
+});
+
+test('rejects a missing or ambiguous structural workspace member inverse', () => {
+  for (const mutate of [
+    (value: WorkspaceConfigSnapshot) => {
+      value.objects[7]!.fields = [];
+    },
+    (value: WorkspaceConfigSnapshot) => {
+      value.objects[7]!.fields.push({
+        ...value.objects[7]!.fields[0]!,
+        id: 'workspaceMember-otherWholesalerProfiles-field-id',
+        name: 'otherWholesalerProfiles',
+      });
+    },
+  ]) {
+    const value = snapshot();
+    addWorkspaceMemberRelation(value);
+    const sourceRelation = value.objects[2]!.fields.find(
+      ({ name }) => name === 'workspaceMember',
+    )!;
+    delete sourceRelation.relationTargetFieldMetadataId;
+    mutate(value);
+
+    assert.throws(
+      () => buildWorkspaceConfigPlan(value),
+      /workspaceMember relation and inverse contract are incompatible/i,
+    );
+  }
+});
+
+test('rejects an incompatible structurally resolved workspace member inverse', () => {
+  const value = snapshot();
+  addWorkspaceMemberRelation(value);
+  const sourceRelation = value.objects[2]!.fields.find(
+    ({ name }) => name === 'workspaceMember',
+  )!;
+  delete sourceRelation.relationTargetFieldMetadataId;
+  value.objects[7]!.fields[0]!.settings = { relationType: 'MANY_TO_ONE' };
+
+  assert.throws(
+    () => buildWorkspaceConfigPlan(value),
+    /workspaceMember relation and inverse contract are incompatible/i,
+  );
+});
+
+test('rejects an inverse relation linked back to a different source field', () => {
+  const value = snapshot();
+  addWorkspaceMemberRelation(value);
+  value.objects[7]!.fields[0]!.relationTargetFieldMetadataId =
+    'wholesaler-otherWorkspaceMember-field-id';
+
+  assert.throws(
+    () => buildWorkspaceConfigPlan(value),
+    /workspaceMember relation and inverse contract are incompatible/i,
+  );
+});
