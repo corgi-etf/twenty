@@ -1,9 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import {
-  deliverDailySummaries,
+  deliverDailySummary,
   enqueueTelegramUpdateOnce,
 } from 'src/modules/telegram/services/telegram-delivery.service';
+import { TelegramDeliveryError } from 'src/modules/telegram/services/telegram-client.service';
 
 describe('enqueueTelegramUpdateOnce', () => {
   it('uses the update id as a durable dedupe key', async () => {
@@ -76,65 +77,123 @@ describe('enqueueTelegramUpdateOnce', () => {
   });
 });
 
-describe('deliverDailySummaries', () => {
-  it('claims each person and date, sends once, and marks delivery complete', async () => {
+describe('deliverDailySummary', () => {
+  const delivery = {
+    workspaceMemberId: '11111111-1111-4111-8111-111111111111',
+    chatId: '101',
+    messages: ['part one', 'part two'],
+  };
+
+  it('records intent before each part and marks confirmed delivery complete', async () => {
+    const values = new Map<string, unknown>();
     const store = {
-      get: vi.fn().mockResolvedValue(null),
-      set: vi.fn().mockResolvedValue(undefined),
+      get: vi.fn(async (key: string) => values.get(key) ?? null),
+      set: vi.fn(async (key: string, value: unknown) => values.set(key, value)),
       delete: vi.fn().mockResolvedValue(true),
     };
     const send = vi.fn().mockResolvedValue(undefined);
 
     await expect(
-      deliverDailySummaries({
+      deliverDailySummary({
         localDate: '2026-09-09',
-        deliveries: [
-          { wholesalerId: 'wholesaler-1', chatId: '101', messages: ['part one', 'part two'] },
-        ],
+        delivery,
         store,
         send,
       }),
-    ).resolves.toEqual({ delivered: 1, skipped: 0 });
+    ).resolves.toEqual({ status: 'complete', sentParts: 2 });
     expect(send.mock.calls).toEqual([
       ['101', 'part one'],
       ['101', 'part two'],
     ]);
     expect(store.set).toHaveBeenLastCalledWith(
-      'telegram:daily-summary:2026-09-09:wholesaler-1',
-      { status: 'complete', sentParts: 2 },
+      `telegram:daily-summary:2026-09-09:${delivery.workspaceMemberId}`,
+      { status: 'complete', nextPart: 2 },
+    );
+  });
+
+  it.each(['intent', 'unknown'] as const)(
+    'does not resend a part left in ambiguous %s state',
+    async (status) => {
+      const store = {
+        get: vi.fn().mockResolvedValue({ status, nextPart: 0 }),
+        set: vi.fn().mockResolvedValue(undefined),
+        delete: vi.fn().mockResolvedValue(true),
+      };
+      const send = vi.fn();
+
+      await expect(
+        deliverDailySummary({
+          localDate: '2026-09-09',
+          delivery,
+          store,
+          send,
+        }),
+      ).resolves.toEqual({ status: 'unknown', sentParts: 0 });
+      expect(send).not.toHaveBeenCalled();
+    },
+  );
+
+  it('marks an accepted-timeout response unknown and never resends it', async () => {
+    const values = new Map<string, unknown>();
+    const store = {
+      get: vi.fn(async (key: string) => values.get(key) ?? null),
+      set: vi.fn(async (key: string, value: unknown) => values.set(key, value)),
+      delete: vi.fn().mockResolvedValue(true),
+    };
+    const send = vi.fn().mockRejectedValue(
+      new TelegramDeliveryError('Telegram request outcome is unknown', true),
     );
 
-    store.get.mockResolvedValue({ status: 'complete', sentParts: 2 });
     await expect(
-      deliverDailySummaries({
+      deliverDailySummary({
         localDate: '2026-09-09',
-        deliveries: [
-          { wholesalerId: 'wholesaler-1', chatId: '101', messages: ['part one', 'part two'] },
-        ],
+        delivery,
         store,
         send,
       }),
-    ).resolves.toEqual({ delivered: 0, skipped: 1 });
+    ).resolves.toEqual({ status: 'unknown', sentParts: 0 });
+    await expect(
+      deliverDailySummary({
+        localDate: '2026-09-09',
+        delivery,
+        store,
+        send,
+      }),
+    ).resolves.toEqual({ status: 'unknown', sentParts: 0 });
+    expect(send).toHaveBeenCalledOnce();
   });
 
-  it('resumes after the last confirmed message part', async () => {
+  it('retries only a provider response that proves the message was rejected', async () => {
+    const values = new Map<string, unknown>();
     const store = {
-      get: vi.fn().mockResolvedValue({ status: 'sending', sentParts: 1 }),
-      set: vi.fn().mockResolvedValue(undefined),
+      get: vi.fn(async (key: string) => values.get(key) ?? null),
+      set: vi.fn(async (key: string, value: unknown) => values.set(key, value)),
       delete: vi.fn().mockResolvedValue(true),
     };
-    const send = vi.fn().mockResolvedValue(undefined);
+    const send = vi
+      .fn()
+      .mockRejectedValueOnce(
+        new TelegramDeliveryError('Telegram rejected the message', false),
+      )
+      .mockResolvedValue(undefined);
 
-    await deliverDailySummaries({
-      localDate: '2026-09-09',
-      deliveries: [
-        { wholesalerId: 'wholesaler-1', chatId: '101', messages: ['part one', 'part two'] },
-      ],
-      store,
-      send,
-    });
+    await expect(
+      deliverDailySummary({
+        localDate: '2026-09-09',
+        delivery,
+        store,
+        send,
+      }),
+    ).rejects.toThrow(/rejected/i);
+    await expect(
+      deliverDailySummary({
+        localDate: '2026-09-09',
+        delivery,
+        store,
+        send,
+      }),
+    ).resolves.toEqual({ status: 'complete', sentParts: 2 });
 
-    expect(send).toHaveBeenCalledOnce();
-    expect(send).toHaveBeenCalledWith('101', 'part two');
+    expect(send).toHaveBeenCalledTimes(3);
   });
 });

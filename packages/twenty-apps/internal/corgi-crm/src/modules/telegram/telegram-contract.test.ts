@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import application from 'src/application-config';
 import dailySummary from 'src/modules/telegram/telegram-daily-summary.logic-function';
+import dailySummaryWorker from 'src/modules/telegram/telegram-daily-summary-worker.logic-function';
 import updateWorker from 'src/modules/telegram/telegram-update-worker.logic-function';
 import webhook from 'src/modules/telegram/telegram-webhook.logic-function';
 
@@ -43,5 +44,10 @@ describe('Telegram application contract', () => {
     });
     expect(updateWorker.success).toBe(true);
     expect(updateWorker.config).not.toHaveProperty('httpRouteTriggerSettings');
+    expect(dailySummaryWorker.success).toBe(true);
+    expect(dailySummaryWorker.config).not.toHaveProperty(
+      'httpRouteTriggerSettings',
+    );
+    expect(dailySummaryWorker.config).not.toHaveProperty('cronTriggerSettings');
   });
 });

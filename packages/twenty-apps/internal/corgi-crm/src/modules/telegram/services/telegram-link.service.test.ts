@@ -153,6 +153,44 @@ describe('Telegram account linking', () => {
     });
   });
 
+  it('repairs a partial mirrored write on replay without granting another user access', async () => {
+    const { values, store } = memoryStore();
+    const configuredBindings = [binding()];
+    const linkedIdentity = identity();
+    values.set('telegram:user:101', {
+      workspaceMemberId: MEMBER_1,
+      wholesalerId: 'wholesaler-1',
+      wholesalerName: 'Nash',
+      userId: '101',
+      chatId: '101',
+    });
+
+    await expect(
+      linkTelegramAccount({
+        code: 'one-time-code',
+        userId: '202',
+        chatId: '202',
+        configuredBindings,
+        identity: linkedIdentity,
+        store,
+      }),
+    ).rejects.toThrow(/invalid link code/i);
+    await expect(
+      linkTelegramAccount({
+        code: 'one-time-code',
+        userId: '101',
+        chatId: '101',
+        configuredBindings,
+        identity: linkedIdentity,
+        store,
+      }),
+    ).resolves.toMatchObject({ userId: '101', workspaceMemberId: MEMBER_1 });
+    expect(values.get(`telegram:member:${MEMBER_1}`)).toMatchObject({
+      userId: '101',
+    });
+    expect(values.has('telegram:user:202')).toBe(false);
+  });
+
   it.each([
     ['deleted member', null, 'wholesaler-1'],
     ['deactivated member', { id: MEMBER_1, active: false }, 'wholesaler-1'],

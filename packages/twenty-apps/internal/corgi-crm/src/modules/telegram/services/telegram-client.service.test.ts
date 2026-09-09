@@ -1,6 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { TelegramClient } from 'src/modules/telegram/services/telegram-client.service';
+import {
+  TelegramClient,
+  TelegramDeliveryError,
+} from 'src/modules/telegram/services/telegram-client.service';
 
 describe('TelegramClient', () => {
   afterEach(() => vi.restoreAllMocks());
@@ -40,5 +43,21 @@ describe('TelegramClient', () => {
     await expect(client.sendMessage('101', 'Daily report')).rejects.not.toThrow(
       /bot-secret/,
     );
+  });
+
+  it('classifies network failures as ambiguous and explicit HTTP rejection as retryable', async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockRejectedValueOnce(new Error('socket closed after write'))
+      .mockResolvedValueOnce(new Response('{}', { status: 503 }));
+    const client = new TelegramClient({ token: 'bot-secret', timeoutMs: 1_000 });
+
+    await expect(client.sendMessage('101', 'Daily report')).rejects.toMatchObject<
+      Partial<TelegramDeliveryError>
+    >({ mayHaveSucceeded: true });
+    await expect(client.sendMessage('101', 'Daily report')).rejects.toMatchObject<
+      Partial<TelegramDeliveryError>
+    >({ mayHaveSucceeded: false });
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
   });
 });
