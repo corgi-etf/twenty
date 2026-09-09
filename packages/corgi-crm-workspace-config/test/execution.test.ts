@@ -9,6 +9,7 @@ import {
 } from '../src/execution.ts';
 import type {
   CompanyTerritoryRecord,
+  WholesalerTerritoryRecord,
   WorkspaceConfigSnapshot,
 } from '../src/planner.ts';
 
@@ -21,11 +22,13 @@ const fixture = (): WorkspaceConfigSnapshot => {
         ? 'State'
         : name === 'postalCode'
           ? 'ZIP Code'
-          : name === 'workspaceMember'
-            ? 'Workspace Member'
-            : name === 'historicalOwner'
-              ? 'Wholesaler'
-              : name,
+          : name === 'territory'
+            ? 'Territory'
+            : name === 'workspaceMember'
+              ? 'Workspace Member'
+              : name === 'historicalOwner'
+                ? 'Wholesaler'
+                : name,
     type,
   });
   const companyFields = [
@@ -50,6 +53,17 @@ const fixture = (): WorkspaceConfigSnapshot => {
     field('task', 'dueAt', 'DATE_TIME'),
     field('task', 'assignee', 'RELATION'),
     field('task', 'bodyV2', 'RICH_TEXT_V2'),
+  ];
+  const personFields = [
+    field('person', 'name', 'FULL_NAME'),
+    field('person', 'company', 'RELATION'),
+    field('person', 'jobTitle', 'TEXT'),
+    field('person', 'emails', 'EMAILS'),
+    field('person', 'phones', 'PHONES'),
+    field('person', 'city', 'TEXT'),
+    field('person', 'stateRegion', 'TEXT'),
+    field('person', 'linkedinLink', 'LINKS'),
+    field('person', 'notes', 'TEXT'),
   ];
   const outreachFields = [
     {
@@ -84,13 +98,14 @@ const fixture = (): WorkspaceConfigSnapshot => {
       id: 'person-object-id',
       nameSingular: 'person',
       namePlural: 'people',
-      fields: [],
+      fields: personFields,
     },
     {
       id: 'wholesaler-object-id',
       nameSingular: 'wholesaler',
       namePlural: 'wholesalers',
       fields: [
+        field('wholesaler', 'territory', 'TEXT'),
         {
           ...field('wholesaler', 'workspaceMember', 'RELATION'),
           relationTargetObjectMetadataId: 'workspaceMember-object-id',
@@ -177,6 +192,33 @@ const fixture = (): WorkspaceConfigSnapshot => {
         ],
       },
       {
+        id: 'person-index-view-id',
+        universalIdentifier: 'person-index-universal-id',
+        name: 'All People',
+        objectMetadataId: objects[1]!.id,
+        type: 'TABLE',
+        key: 'INDEX',
+        icon: 'IconTable',
+        position: 1,
+        visibility: 'WORKSPACE',
+        createdByUserWorkspaceId: null,
+        viewFields: personFields.map((metadataField, position) => ({
+          id: `person-view-field-${position}`,
+          fieldMetadataId: metadataField.id,
+          isVisible: true,
+          position,
+          size:
+            metadataField.name === 'company'
+              ? 210
+              : metadataField.name === 'emails' ||
+                  metadataField.name === 'notes'
+                ? 220
+                : 150,
+        })),
+        viewFilters: [],
+        viewSorts: [],
+      },
+      {
         id: followUpViewId,
         universalIdentifier: 'follow-up-universal-id',
         name: 'Follow-ups',
@@ -253,6 +295,26 @@ class FakeApi implements WorkspaceConfigApi {
       postalCode: null,
     },
   ];
+  wholesalers: WholesalerTerritoryRecord[] = [
+    {
+      id: 'grace-id',
+      name: 'Grace Hopper',
+      updatedAt: '2026-09-08T00:00:00.000Z',
+      territory: null,
+    },
+    {
+      id: 'kelly-id',
+      name: 'Kelly Johnson',
+      updatedAt: '2026-09-08T00:00:00.000Z',
+      territory: 'Chicago',
+    },
+    {
+      id: 'nash-id',
+      name: 'Morgan Nash',
+      updatedAt: '2026-09-08T00:00:00.000Z',
+      territory: null,
+    },
+  ];
   checkpoint?: WorkspaceConfigCheckpoint;
   events: string[] = [];
 
@@ -262,6 +324,10 @@ class FakeApi implements WorkspaceConfigApi {
 
   async listCompanies() {
     return structuredClone(this.companies);
+  }
+
+  async listWholesalers() {
+    return structuredClone(this.wholesalers);
   }
 
   async createMetadataField(): Promise<void> {
@@ -277,6 +343,19 @@ class FakeApi implements WorkspaceConfigApi {
     Object.assign(this.companies.find((company) => company.id === id)!, data, {
       updatedAt: '2026-09-08T00:00:01.000Z',
     });
+  }
+
+  async conditionalPatchWholesaler(
+    id: string,
+    _updatedAt: string,
+    data: object,
+  ) {
+    this.events.push(`territory:${id}`);
+    Object.assign(
+      this.wholesalers.find((wholesaler) => wholesaler.id === id)!,
+      data,
+      { updatedAt: '2026-09-08T00:00:01.000Z' },
+    );
   }
 
   async createView(): Promise<void> {
@@ -332,7 +411,7 @@ class FakeApi implements WorkspaceConfigApi {
   }
 }
 
-test('backfills all companies before layout and records a verified checkpoint', async () => {
+test('backfills companies and seeded territories before layout and records a verified checkpoint', async () => {
   const api = new FakeApi();
   const result = await runWorkspaceConfiguration(api, {
     origin: 'https://crm.corgiinvest.com',
@@ -341,12 +420,19 @@ test('backfills all companies before layout and records a verified checkpoint', 
     confirmation: APPLY_WORKSPACE_CONFIG_CONFIRMATION,
   });
 
-  assert.deepEqual(api.events, ['company:company-1']);
+  assert.deepEqual(api.events, [
+    'company:company-1',
+    'territory:grace-id',
+    'territory:nash-id',
+  ]);
   assert.equal(result.companyMutations, 1);
+  assert.equal(result.territoryMutations, 2);
+  assert.equal(result.wholesalerCount, 3);
   assert.equal(result.layoutMutations, 0);
   assert.equal(api.checkpoint?.status, 'complete');
   assert.equal(api.checkpoint?.expectedCompanyCount, 1);
   assert.match(api.checkpoint?.expectedProjectionHash ?? '', /^[a-f0-9]{64}$/);
+  assert.match(api.checkpoint?.expectedTerritoryHash ?? '', /^[a-f0-9]{64}$/);
 
   api.events = [];
   const rerun = await runWorkspaceConfiguration(api, {
@@ -357,6 +443,7 @@ test('backfills all companies before layout and records a verified checkpoint', 
   });
   assert.deepEqual(api.events, []);
   assert.equal(rerun.companyMutations, 0);
+  assert.equal(rerun.territoryMutations, 0);
 });
 
 test('rejects an unapproved origin and confirmation before reading data', async () => {

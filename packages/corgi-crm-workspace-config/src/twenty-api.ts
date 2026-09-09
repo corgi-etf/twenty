@@ -17,6 +17,7 @@ import {
 } from './execution.ts';
 import type {
   CompanyTerritoryRecord,
+  WholesalerTerritoryRecord,
   WorkspaceConfigSnapshot,
   WorkspaceMetadataObject,
   WorkspaceNavigationMenuItem,
@@ -448,6 +449,41 @@ export const createTwentyWorkspaceConfigApi = ({
     return companies;
   };
 
+  const listWholesalers = async (): Promise<WholesalerTerritoryRecord[]> => {
+    const wholesalers: WholesalerTerritoryRecord[] = [];
+    let cursor: string | undefined;
+    do {
+      const query = new URLSearchParams({ limit: '100', depth: '0' });
+      if (cursor) query.set('starting_after', cursor);
+      const response = await requestGate(() =>
+        request.get(`${restUrl('wholesalers')}?${query.toString()}`, {
+          headers,
+        }),
+      );
+      await assertSuccessfulResponse(
+        response,
+        'List wholesalers for territory assignment',
+      );
+      const body = await disposeAfterJson<RecordListResponse>(
+        response,
+        'Wholesaler list',
+      );
+      const pageWholesalers = body.data?.wholesalers;
+      if (!Array.isArray(pageWholesalers)) {
+        throw new Error('Wholesaler list response has an invalid shape');
+      }
+      wholesalers.push(...(pageWholesalers as WholesalerTerritoryRecord[]));
+      cursor = body.pageInfo?.hasNextPage
+        ? (body.pageInfo.endCursor ?? undefined)
+        : undefined;
+      if (body.pageInfo?.hasNextPage && !cursor) {
+        throw new Error('Wholesaler pagination omitted its cursor');
+      }
+    } while (cursor);
+
+    return wholesalers;
+  };
+
   return {
     async listWorkspaceConfigSnapshot(): Promise<WorkspaceConfigSnapshot> {
       const objects = await listMetadataObjects();
@@ -520,6 +556,7 @@ export const createTwentyWorkspaceConfigApi = ({
     },
 
     listCompanies,
+    listWholesalers,
 
     async createMetadataField(input) {
       const response = await requestGate(() =>
@@ -530,7 +567,7 @@ export const createTwentyWorkspaceConfigApi = ({
       );
       await assertSuccessfulResponse(
         response,
-        `Create company ${input.name} field`,
+        `Create CRM ${input.name} field`,
       );
       await response.dispose();
     },
@@ -570,6 +607,33 @@ export const createTwentyWorkspaceConfigApi = ({
         (updated[0] as { id?: unknown } | undefined)?.id !== id
       ) {
         throw new Error('Company territory projection concurrency conflict');
+      }
+    },
+
+    async conditionalPatchWholesaler(id, expectedUpdatedAt, data) {
+      const filter = `and(id[eq]:${JSON.stringify(id)},updatedAt[eq]:${JSON.stringify(expectedUpdatedAt)})`;
+      const query = new URLSearchParams({ filter, depth: '0' });
+      const response = await requestGate(() =>
+        request.patch(`${restUrl('wholesalers')}?${query.toString()}`, {
+          headers,
+          data,
+        }),
+      );
+      await assertSuccessfulResponse(
+        response,
+        'Conditionally assign wholesaler territory',
+      );
+      const body = await disposeAfterJson<RecordListResponse>(
+        response,
+        'Wholesaler territory update',
+      );
+      const updated = body.data?.updateWholesalers;
+      if (
+        !Array.isArray(updated) ||
+        updated.length !== 1 ||
+        (updated[0] as { id?: unknown } | undefined)?.id !== id
+      ) {
+        throw new Error('Wholesaler territory assignment concurrency conflict');
       }
     },
 

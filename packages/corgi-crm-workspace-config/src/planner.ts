@@ -26,6 +26,18 @@ const TERRITORY_FIELD_DEFINITIONS = [
   { name: 'postalCode', label: 'ZIP Code', type: 'TEXT' },
 ] as const;
 
+export const WHOLESALER_TERRITORY_FIELD_DEFINITION = {
+  name: 'territory',
+  label: 'Territory',
+  type: 'TEXT',
+} as const;
+
+export const WHOLESALER_TERRITORY_SEEDS = [
+  { memberNameToken: 'Grace', territory: 'Chicago' },
+  { memberNameToken: 'Kelly', territory: 'Chicago' },
+  { memberNameToken: 'Nash', territory: 'Florida' },
+] as const;
+
 export const VISIBLE_COMPANY_FIELD_NAMES = [
   'name',
   'historicalOwner',
@@ -35,6 +47,18 @@ export const VISIBLE_COMPANY_FIELD_NAMES = [
   'firmPhone',
   'linkedinLink',
   'leadStatus',
+] as const;
+
+export const VISIBLE_PERSON_FIELD_NAMES = [
+  'name',
+  'company',
+  'jobTitle',
+  'emails',
+  'phones',
+  'city',
+  'stateRegion',
+  'linkedinLink',
+  'notes',
 ] as const;
 
 const REQUIRED_OBJECT_NAMES = [
@@ -74,6 +98,13 @@ const QUICK_LOG_RELATION_FIELD_DEFINITIONS = [
 
 const companyViewFieldSize = (fieldName: string): number =>
   fieldName === 'address' ? 250 : 150;
+
+const personViewFieldSize = (fieldName: string): number => {
+  if (fieldName === 'company') return 210;
+  if (fieldName === 'emails' || fieldName === 'notes') return 220;
+
+  return 150;
+};
 
 const followUpViewFieldSize = (fieldName: string): number => {
   if (fieldName === 'company') return 210;
@@ -181,6 +212,26 @@ export type TerritoryProjectionPlan = {
   mutations: TerritoryProjectionMutation[];
 };
 
+export type WholesalerTerritoryRecord = {
+  id: string;
+  updatedAt: string;
+  name: string;
+  territory?: unknown;
+};
+
+export type WholesalerTerritoryMutation = {
+  id: string;
+  expectedUpdatedAt: string;
+  data: { territory: string };
+};
+
+export type WholesalerTerritoryPlan = {
+  wholesalerCount: number;
+  wholesalerIdentityHash: string;
+  expectedTerritoryHash: string;
+  mutations: WholesalerTerritoryMutation[];
+};
+
 type MetadataFieldCreate = {
   objectMetadataId: string;
   name: string;
@@ -201,6 +252,7 @@ type MetadataFieldUpdate = {
 
 export type WorkspaceLayoutPlan = {
   visibleCompanyFieldNames: string[];
+  visiblePersonFieldNames: string[];
   viewsToCreate: Array<{
     id: string;
     name: string;
@@ -360,6 +412,83 @@ export const buildTerritoryProjectionPlan = (
     companyIdentityHash: sha256([...ids].sort()),
     sourceProjectionHash: sha256(sourceRows),
     expectedProjectionHash: sha256(expectedRows),
+    mutations,
+  };
+};
+
+const normalizedNameTokens = (name: string): string[] =>
+  name
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLocaleLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean);
+
+export const buildWholesalerTerritoryPlan = (
+  wholesalers: WholesalerTerritoryRecord[],
+): WholesalerTerritoryPlan => {
+  const ids = new Set<string>();
+  for (const wholesaler of wholesalers) {
+    if (
+      !wholesaler.id ||
+      ids.has(wholesaler.id) ||
+      !wholesaler.name?.trim() ||
+      !wholesaler.updatedAt ||
+      Number.isNaN(Date.parse(wholesaler.updatedAt))
+    ) {
+      throw new Error('Wholesaler territory source records are invalid');
+    }
+    ids.add(wholesaler.id);
+  }
+
+  const seededTerritoryById = new Map<string, string>();
+  for (const seed of WHOLESALER_TERRITORY_SEEDS) {
+    const normalizedToken = seed.memberNameToken.toLocaleLowerCase();
+    const matches = wholesalers.filter((wholesaler) =>
+      normalizedNameTokens(wholesaler.name).includes(normalizedToken),
+    );
+    if (matches.length !== 1) {
+      throw new Error(
+        `Territory seed ${seed.memberNameToken} must match exactly one wholesaler`,
+      );
+    }
+    const [match] = matches;
+    if (seededTerritoryById.has(match.id)) {
+      throw new Error('Territory seeds must resolve to distinct wholesalers');
+    }
+    seededTerritoryById.set(match.id, seed.territory);
+  }
+
+  const expectedRows = wholesalers
+    .map((wholesaler) => ({
+      id: wholesaler.id,
+      territory:
+        seededTerritoryById.get(wholesaler.id) ??
+        trimmedText(wholesaler.territory),
+    }))
+    .sort((left, right) => left.id.localeCompare(right.id));
+  const mutations = wholesalers.flatMap((wholesaler) => {
+    const territory = seededTerritoryById.get(wholesaler.id);
+    if (
+      territory === undefined ||
+      trimmedText(wholesaler.territory) === territory
+    ) {
+      return [];
+    }
+
+    return [
+      {
+        id: wholesaler.id,
+        expectedUpdatedAt: wholesaler.updatedAt,
+        data: { territory },
+      },
+    ];
+  });
+
+  return {
+    wholesalerCount: wholesalers.length,
+    wholesalerIdentityHash: sha256([...ids].sort()),
+    expectedTerritoryHash: sha256(expectedRows),
     mutations,
   };
 };
@@ -534,6 +663,8 @@ export const buildWorkspaceConfigPlan = (
   const objectsByName = uniqueObjectMap(snapshot.objects);
   const company = objectsByName.get('company')!;
   const companyFields = uniqueFieldMap(company);
+  const person = objectsByName.get('person')!;
+  const personFields = uniqueFieldMap(person);
   const metadataFieldsToCreate: MetadataFieldCreate[] = [];
   const metadataFieldsToUpdate: MetadataFieldUpdate[] = [];
 
@@ -578,6 +709,28 @@ export const buildWorkspaceConfigPlan = (
     });
   }
 
+  const wholesalerFields = uniqueFieldMap(wholesaler);
+  const territoryField = wholesalerFields.get(
+    WHOLESALER_TERRITORY_FIELD_DEFINITION.name,
+  );
+  if (!territoryField) {
+    metadataFieldsToCreate.push({
+      objectMetadataId: wholesaler.id,
+      ...WHOLESALER_TERRITORY_FIELD_DEFINITION,
+    });
+  } else if (
+    territoryField.type !== WHOLESALER_TERRITORY_FIELD_DEFINITION.type
+  ) {
+    throw new Error('Wholesaler territory must be TEXT');
+  } else if (
+    territoryField.label !== WHOLESALER_TERRITORY_FIELD_DEFINITION.label
+  ) {
+    metadataFieldsToUpdate.push({
+      id: territoryField.id,
+      label: WHOLESALER_TERRITORY_FIELD_DEFINITION.label,
+    });
+  }
+
   const outreachActivity = objectsByName.get('outreachActivity')!;
   const outreachFields = uniqueFieldMap(outreachActivity);
   for (const definition of QUICK_LOG_SCALAR_FIELD_DEFINITIONS) {
@@ -607,7 +760,6 @@ export const buildWorkspaceConfigPlan = (
     });
   }
 
-  const wholesalerFields = uniqueFieldMap(wholesaler);
   const workspaceMemberRelation = wholesalerFields.get('workspaceMember');
   if (!workspaceMemberRelation) {
     metadataFieldsToCreate.push({
@@ -669,6 +821,11 @@ export const buildWorkspaceConfigPlan = (
   for (const fieldName of VISIBLE_COMPANY_FIELD_NAMES) {
     if (!companyFields.has(fieldName)) {
       throw new Error(`Required company field ${fieldName} is missing`);
+    }
+  }
+  for (const fieldName of VISIBLE_PERSON_FIELD_NAMES) {
+    if (!personFields.has(fieldName)) {
+      throw new Error(`Required person field ${fieldName} is missing`);
     }
   }
   if (companyFields.get('address')!.type !== 'ADDRESS') {
@@ -747,6 +904,73 @@ export const buildWorkspaceConfigPlan = (
             ? {
                 position: desiredPosition,
                 size: desiredCompanySizeByFieldId.get(field.id),
+              }
+            : {}),
+        },
+      });
+    }
+  }
+
+  const personIndexViews = snapshot.views.filter(
+    (view) => view.objectMetadataId === person.id && view.key === 'INDEX',
+  );
+  if (personIndexViews.length !== 1) {
+    throw new Error('Exactly one Person index view is required');
+  }
+  const personIndexView = personIndexViews[0]!;
+  const desiredPersonPositionByFieldId = new Map(
+    VISIBLE_PERSON_FIELD_NAMES.map((name, position) => [
+      personFields.get(name)!.id,
+      position,
+    ]),
+  );
+  const existingPersonViewFieldByMetadataId = new Map<
+    string,
+    WorkspaceViewField
+  >();
+  const personFieldIds = new Set(person.fields.map(({ id }) => id));
+  for (const viewField of personIndexView.viewFields) {
+    if (!personFieldIds.has(viewField.fieldMetadataId)) {
+      throw new Error('Person index references an unknown metadata field');
+    }
+    if (existingPersonViewFieldByMetadataId.has(viewField.fieldMetadataId)) {
+      throw new Error('Person index has duplicate view fields');
+    }
+    existingPersonViewFieldByMetadataId.set(
+      viewField.fieldMetadataId,
+      viewField,
+    );
+  }
+  for (const field of person.fields) {
+    const desiredPosition = desiredPersonPositionByFieldId.get(field.id);
+    const shouldBeVisible = desiredPosition !== undefined;
+    const existing = existingPersonViewFieldByMetadataId.get(field.id);
+    if (!existing) {
+      if (shouldBeVisible) {
+        viewFieldsToCreate.push({
+          fieldMetadataId: field.id,
+          viewId: personIndexView.id,
+          isVisible: true,
+          position: desiredPosition,
+          size: personViewFieldSize(field.name),
+        });
+      }
+      continue;
+    }
+    if (
+      existing.isVisible !== shouldBeVisible ||
+      (shouldBeVisible &&
+        (existing.position !== desiredPosition ||
+          existing.size !== personViewFieldSize(field.name)))
+    ) {
+      viewFieldUpdates.push({
+        id: existing.id,
+        update: {
+          isVisible: shouldBeVisible,
+          ...(shouldBeVisible
+            ? {
+                position: desiredPosition,
+                size: personViewFieldSize(field.name),
               }
             : {}),
         },
@@ -987,6 +1211,7 @@ export const buildWorkspaceConfigPlan = (
     metadataFieldsToUpdate,
     layout: {
       visibleCompanyFieldNames: [...VISIBLE_COMPANY_FIELD_NAMES],
+      visiblePersonFieldNames: [...VISIBLE_PERSON_FIELD_NAMES],
       viewsToCreate: newFollowUp ? [newFollowUp.view] : [],
       viewUpdates,
       viewFieldsToCreate,

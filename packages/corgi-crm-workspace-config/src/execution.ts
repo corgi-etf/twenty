@@ -2,8 +2,10 @@ import { createHash } from 'node:crypto';
 
 import {
   buildTerritoryProjectionPlan,
+  buildWholesalerTerritoryPlan,
   buildWorkspaceConfigPlan,
   type CompanyTerritoryRecord,
+  type WholesalerTerritoryRecord,
   type WorkspaceConfigPlan,
   type WorkspaceConfigSnapshot,
   type WorkspaceLayoutPlan,
@@ -14,19 +16,28 @@ export const APPLY_WORKSPACE_CONFIG_CONFIRMATION =
   'APPLY_TERRITORY_FIRST_CRM_CONFIGURATION';
 
 export type WorkspaceConfigCheckpoint = {
-  schemaVersion: 1;
+  schemaVersion: 2;
   origin: string;
   expectedCompanyCount: number;
   companyIdentityHash: string;
   sourceProjectionHash: string;
   expectedProjectionHash: string;
-  status: 'preflight' | 'metadata' | 'projections' | 'layout' | 'complete';
+  wholesalerIdentityHash: string;
+  expectedTerritoryHash: string;
+  status:
+    | 'preflight'
+    | 'metadata'
+    | 'projections'
+    | 'territories'
+    | 'layout'
+    | 'complete';
   completedOperationHashes: string[];
 };
 
 export type WorkspaceConfigApi = {
   listWorkspaceConfigSnapshot(): Promise<WorkspaceConfigSnapshot>;
   listCompanies(): Promise<CompanyTerritoryRecord[]>;
+  listWholesalers(): Promise<WholesalerTerritoryRecord[]>;
   createMetadataField(
     input: WorkspaceConfigPlan['metadataFieldsToCreate'][number],
   ): Promise<void>;
@@ -35,6 +46,11 @@ export type WorkspaceConfigApi = {
     id: string,
     expectedUpdatedAt: string,
     data: { stateRegion: string | null; postalCode: string | null },
+  ): Promise<void>;
+  conditionalPatchWholesaler(
+    id: string,
+    expectedUpdatedAt: string,
+    data: { territory: string },
   ): Promise<void>;
   createView(
     input: WorkspaceLayoutPlan['viewsToCreate'][number],
@@ -79,11 +95,15 @@ export type WorkspaceConfigRunOptions = {
 export type WorkspaceConfigRunResult = {
   companyCount: number;
   companyMutations: number;
+  territoryMutations: number;
+  wholesalerCount: number;
   metadataMutations: number;
   layoutMutations: number;
   companyIdentityHash: string;
   sourceProjectionHash: string;
   expectedProjectionHash: string;
+  wholesalerIdentityHash: string;
+  expectedTerritoryHash: string;
 };
 
 const stableStringify = (value: unknown): string => {
@@ -108,7 +128,7 @@ export const assertWorkspaceConfigCheckpoint = (
 ): WorkspaceConfigCheckpoint => {
   const checkpoint = value as WorkspaceConfigCheckpoint;
   if (
-    checkpoint?.schemaVersion !== 1 ||
+    checkpoint?.schemaVersion !== 2 ||
     typeof checkpoint.origin !== 'string' ||
     new URL(checkpoint.origin).origin !== checkpoint.origin ||
     !Number.isSafeInteger(checkpoint.expectedCompanyCount) ||
@@ -117,10 +137,17 @@ export const assertWorkspaceConfigCheckpoint = (
       checkpoint.companyIdentityHash,
       checkpoint.sourceProjectionHash,
       checkpoint.expectedProjectionHash,
+      checkpoint.wholesalerIdentityHash,
+      checkpoint.expectedTerritoryHash,
     ].every((hash) => typeof hash === 'string' && HASH_PATTERN.test(hash)) ||
-    !['preflight', 'metadata', 'projections', 'layout', 'complete'].includes(
-      checkpoint.status,
-    ) ||
+    ![
+      'preflight',
+      'metadata',
+      'projections',
+      'territories',
+      'layout',
+      'complete',
+    ].includes(checkpoint.status) ||
     !Array.isArray(checkpoint.completedOperationHashes) ||
     checkpoint.completedOperationHashes.some(
       (hash) => typeof hash !== 'string' || !HASH_PATTERN.test(hash),
@@ -325,16 +352,20 @@ export const runWorkspaceConfiguration = async (
     initialCompanies,
     options.expectedCompanyCount,
   );
+  const initialWholesalers = await api.listWholesalers();
+  const initialTerritories = buildWholesalerTerritoryPlan(initialWholesalers);
   const resumedCheckpoint = await api.readCheckpoint();
   const checkpoint = resumedCheckpoint
     ? assertWorkspaceConfigCheckpoint(resumedCheckpoint)
     : {
-        schemaVersion: 1 as const,
+        schemaVersion: 2 as const,
         origin: options.origin,
         expectedCompanyCount: options.expectedCompanyCount,
         companyIdentityHash: initialProjection.companyIdentityHash,
         sourceProjectionHash: initialProjection.sourceProjectionHash,
         expectedProjectionHash: initialProjection.expectedProjectionHash,
+        wholesalerIdentityHash: initialTerritories.wholesalerIdentityHash,
+        expectedTerritoryHash: initialTerritories.expectedTerritoryHash,
         status: 'preflight' as const,
         completedOperationHashes: [],
       };
@@ -345,7 +376,11 @@ export const runWorkspaceConfiguration = async (
     checkpoint.sourceProjectionHash !==
       initialProjection.sourceProjectionHash ||
     checkpoint.expectedProjectionHash !==
-      initialProjection.expectedProjectionHash
+      initialProjection.expectedProjectionHash ||
+    checkpoint.wholesalerIdentityHash !==
+      initialTerritories.wholesalerIdentityHash ||
+    checkpoint.expectedTerritoryHash !==
+      initialTerritories.expectedTerritoryHash
   ) {
     throw new Error(
       'Workspace configuration checkpoint does not match live data',
@@ -410,6 +445,36 @@ export const runWorkspaceConfiguration = async (
     throw new Error('Company territory projection did not converge');
   }
 
+  checkpoint.status = 'territories';
+  await api.writeCheckpoint(checkpoint);
+  let territoryMutations = 0;
+  for (const mutation of initialTerritories.mutations) {
+    await api.conditionalPatchWholesaler(
+      mutation.id,
+      mutation.expectedUpdatedAt,
+      mutation.data,
+    );
+    territoryMutations += 1;
+    await recordCompletedOperation(api, checkpoint, {
+      kind: 'assign-wholesaler-territory',
+      id: mutation.id,
+      data: mutation.data,
+    });
+  }
+
+  const verifiedTerritories = buildWholesalerTerritoryPlan(
+    await api.listWholesalers(),
+  );
+  if (
+    verifiedTerritories.wholesalerIdentityHash !==
+      checkpoint.wholesalerIdentityHash ||
+    verifiedTerritories.expectedTerritoryHash !==
+      checkpoint.expectedTerritoryHash ||
+    verifiedTerritories.mutations.length > 0
+  ) {
+    throw new Error('Wholesaler territory assignment did not converge');
+  }
+
   const layoutMutations = await applyWorkspaceLayoutPlan({
     api,
     checkpoint,
@@ -433,6 +498,20 @@ export const runWorkspaceConfiguration = async (
       'Workspace territory projection changed during layout update',
     );
   }
+  const finalTerritories = buildWholesalerTerritoryPlan(
+    await api.listWholesalers(),
+  );
+  if (
+    finalTerritories.mutations.length > 0 ||
+    finalTerritories.expectedTerritoryHash !==
+      checkpoint.expectedTerritoryHash ||
+    finalTerritories.wholesalerIdentityHash !==
+      checkpoint.wholesalerIdentityHash
+  ) {
+    throw new Error(
+      'Wholesaler territory assignments changed during layout update',
+    );
+  }
 
   checkpoint.status = 'complete';
   await api.writeCheckpoint(checkpoint);
@@ -440,10 +519,14 @@ export const runWorkspaceConfiguration = async (
   return {
     companyCount: finalProjection.companyCount,
     companyMutations,
+    territoryMutations,
+    wholesalerCount: finalTerritories.wholesalerCount,
     metadataMutations,
     layoutMutations,
     companyIdentityHash: finalProjection.companyIdentityHash,
     sourceProjectionHash: finalProjection.sourceProjectionHash,
     expectedProjectionHash: finalProjection.expectedProjectionHash,
+    wholesalerIdentityHash: finalTerritories.wholesalerIdentityHash,
+    expectedTerritoryHash: finalTerritories.expectedTerritoryHash,
   };
 };

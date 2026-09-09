@@ -87,11 +87,15 @@ test('applies the territory-first workspace configuration', async ({
     JSON.stringify({
       companyCount: result.companyCount,
       companyMutations: result.companyMutations,
+      territoryMutations: result.territoryMutations,
+      wholesalerCount: result.wholesalerCount,
       metadataMutations: result.metadataMutations,
       layoutMutations: result.layoutMutations,
       companyIdentityHash: result.companyIdentityHash,
       sourceProjectionHash: result.sourceProjectionHash,
       expectedProjectionHash: result.expectedProjectionHash,
+      wholesalerIdentityHash: result.wholesalerIdentityHash,
+      expectedTerritoryHash: result.expectedTerritoryHash,
     }),
   );
 });

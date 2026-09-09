@@ -4,6 +4,7 @@ import { test } from 'node:test';
 import {
   ADDRESS_STATE_SUBFIELD,
   buildTerritoryProjectionPlan,
+  buildWholesalerTerritoryPlan,
   buildWorkspaceConfigPlan,
   type WorkspaceConfigSnapshot,
   type WorkspaceMetadataObject,
@@ -34,7 +35,19 @@ const snapshot = (): WorkspaceConfigSnapshot => {
       ['linkedinLink', 'LINKS'],
       ['leadStatus', 'TEXT'],
     ]),
-    object('person'),
+    object('person', [
+      ['name', 'FULL_NAME'],
+      ['company', 'RELATION'],
+      ['jobTitle', 'TEXT'],
+      ['emails', 'EMAILS'],
+      ['phones', 'PHONES'],
+      ['city', 'TEXT'],
+      ['stateRegion', 'TEXT'],
+      ['postalCode', 'TEXT'],
+      ['linkedinLink', 'LINKS'],
+      ['notes', 'TEXT'],
+      ['createdAt', 'DATE_TIME'],
+    ]),
     object('wholesaler'),
     object('salesTeam'),
     object('teamMembership'),
@@ -88,6 +101,13 @@ const snapshot = (): WorkspaceConfigSnapshot => {
     position,
     size: 150,
   }));
+  const personViewFields = person.fields.map((field, position) => ({
+    id: `person-view-field-${position}`,
+    fieldMetadataId: field.id,
+    isVisible: true,
+    position,
+    size: 150,
+  }));
 
   return {
     objects,
@@ -113,6 +133,21 @@ const snapshot = (): WorkspaceConfigSnapshot => {
             subFieldName: null,
           },
         ],
+      },
+      {
+        id: 'person-index-view-id',
+        universalIdentifier: 'person-index-view-universal-id',
+        name: 'All People',
+        objectMetadataId: person.id,
+        type: 'TABLE',
+        key: 'INDEX',
+        icon: 'IconTable',
+        position: 1,
+        visibility: 'WORKSPACE',
+        createdByUserWorkspaceId: null,
+        viewFields: personViewFields,
+        viewFilters: [],
+        viewSorts: [],
       },
       {
         id: 'assigned-to-me-view-id',
@@ -195,6 +230,12 @@ const addWorkspaceMemberRelation = (value: WorkspaceConfigSnapshot): void => {
       'workspaceMember-wholesalerProfiles-field-id',
     settings: { relationType: 'MANY_TO_ONE' },
   });
+  wholesaler.fields.push({
+    id: 'wholesaler-territory-field-id',
+    name: 'territory',
+    label: 'Territory',
+    type: 'TEXT',
+  });
   workspaceMember.fields.push({
     id: 'workspaceMember-wholesalerProfiles-field-id',
     name: 'wholesalerProfiles',
@@ -248,6 +289,80 @@ test('projects State and ZIP from the native address for every company', () => {
   assert.match(plan.expectedProjectionHash, /^[a-f0-9]{64}$/);
 });
 
+test('assigns Grace and Kelly to Chicago and Nash to Florida deterministically', () => {
+  const wholesalers = [
+    {
+      id: 'grace-id',
+      updatedAt: '2026-09-08T00:00:00.000Z',
+      name: 'Grace Hopper',
+      territory: null,
+    },
+    {
+      id: 'kelly-id',
+      updatedAt: '2026-09-08T00:00:00.000Z',
+      name: 'Kelly Johnson',
+      territory: '  Chicago  ',
+    },
+    {
+      id: 'nash-id',
+      updatedAt: '2026-09-08T00:00:00.000Z',
+      name: 'Morgan Nash',
+      territory: 'Midwest',
+    },
+    {
+      id: 'other-id',
+      updatedAt: '2026-09-08T00:00:00.000Z',
+      name: 'Taylor Smith',
+      territory: 'West',
+    },
+  ];
+
+  const plan = buildWholesalerTerritoryPlan(wholesalers);
+
+  assert.deepEqual(plan.mutations, [
+    {
+      id: 'grace-id',
+      expectedUpdatedAt: '2026-09-08T00:00:00.000Z',
+      data: { territory: 'Chicago' },
+    },
+    {
+      id: 'nash-id',
+      expectedUpdatedAt: '2026-09-08T00:00:00.000Z',
+      data: { territory: 'Florida' },
+    },
+  ]);
+  assert.equal(plan.wholesalerCount, 4);
+  assert.match(plan.wholesalerIdentityHash, /^[a-f0-9]{64}$/);
+  assert.match(plan.expectedTerritoryHash, /^[a-f0-9]{64}$/);
+});
+
+test('fails closed when a territory seed is missing, ambiguous, or reused', () => {
+  const record = (id: string, name: string) => ({
+    id,
+    name,
+    updatedAt: '2026-09-08T00:00:00.000Z',
+  });
+
+  assert.throws(
+    () =>
+      buildWholesalerTerritoryPlan([
+        record('grace-1', 'Grace One'),
+        record('grace-2', 'Grace Two'),
+        record('kelly', 'Kelly Person'),
+        record('nash', 'Nash Person'),
+      ]),
+    /exactly one/i,
+  );
+  assert.throws(
+    () =>
+      buildWholesalerTerritoryPlan([
+        record('grace-kelly', 'Grace Kelly'),
+        record('nash', 'Nash Person'),
+      ]),
+    /distinct/i,
+  );
+});
+
 test('fails before mutation when company coverage is not exact', () => {
   assert.throws(
     () =>
@@ -277,6 +392,11 @@ test('bootstraps territory fields before planning the exact sales layout', () =>
     [
       { name: 'stateRegion', label: 'State', type: 'TEXT' },
       { name: 'postalCode', label: 'ZIP Code', type: 'TEXT' },
+      {
+        name: 'territory',
+        label: 'Territory',
+        type: 'TEXT',
+      },
       {
         name: 'workspaceMember',
         label: 'Workspace Member',
@@ -318,6 +438,30 @@ test('converges navigation, Follow-ups, company fields, and state sorting', () =
     'linkedinLink',
     'leadStatus',
   ]);
+  assert.deepEqual(plan.layout.visiblePersonFieldNames, [
+    'name',
+    'company',
+    'jobTitle',
+    'emails',
+    'phones',
+    'city',
+    'stateRegion',
+    'linkedinLink',
+    'notes',
+  ]);
+  assert.ok(
+    plan.layout.viewFieldUpdates.some(
+      ({ id, update }) => id === 'person-view-field-7' && !update.isVisible,
+    ),
+  );
+  assert.ok(
+    plan.layout.viewFieldUpdates.some(
+      ({ id, update }) =>
+        id === 'person-view-field-1' &&
+        update.position === 1 &&
+        update.size === 210,
+    ),
+  );
   assert.deepEqual(plan.layout.viewSortsToCreate, [
     {
       id: 'c0671000-0000-4000-8000-000000000004',
@@ -445,6 +589,7 @@ test('rejects incompatible metadata and ambiguous outreach Follow-ups views', ()
   const privateFollowUps = structuredClone(ambiguousFollowUps);
   privateFollowUps.views = [
     privateFollowUps.views[0]!,
+    privateFollowUps.views[1]!,
     {
       ...emptyView('private-follow-up'),
       visibility: 'UNLISTED',
@@ -457,8 +602,8 @@ test('rejects incompatible metadata and ambiguous outreach Follow-ups views', ()
   );
 
   const kanbanFollowUps = structuredClone(privateFollowUps);
-  kanbanFollowUps.views[1]!.visibility = 'WORKSPACE';
-  kanbanFollowUps.views[1]!.type = 'KANBAN';
+  kanbanFollowUps.views[2]!.visibility = 'WORKSPACE';
+  kanbanFollowUps.views[2]!.type = 'KANBAN';
   assert.throws(
     () => buildWorkspaceConfigPlan(kanbanFollowUps),
     /workspace table/i,

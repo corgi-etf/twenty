@@ -309,6 +309,45 @@ test('uses an updatedAt compare-and-set for each company projection', async () =
   assert.match(decodedUrl, /updatedAt\[eq\]:"2026-09-08T00:00:00.000Z"/);
 });
 
+test('lists and compare-and-set updates wholesaler territory assignments', async () => {
+  const request = new FakeRequest();
+  request.responses.push(
+    response({
+      data: {
+        wholesalers: [
+          {
+            id: 'grace-id',
+            name: 'Grace Hopper',
+            updatedAt: '2026-09-08T00:00:00.000Z',
+            territory: null,
+          },
+        ],
+      },
+      pageInfo: { hasNextPage: false },
+    }),
+    response({ data: { updateWholesalers: [{ id: 'grace-id' }] } }),
+  );
+  const api = createTwentyWorkspaceConfigApi({
+    request,
+    backendBaseUrl: 'https://crm.corgiinvest.com',
+    frontendBaseUrl: 'https://crm.corgiinvest.com',
+    checkpointFilePath: join(tmpdir(), 'unused-workspace-config.json'),
+    requestGate: immediateGate,
+  });
+
+  const wholesalers = await api.listWholesalers();
+  await api.conditionalPatchWholesaler('grace-id', '2026-09-08T00:00:00.000Z', {
+    territory: 'Chicago',
+  });
+
+  assert.equal(wholesalers[0]?.name, 'Grace Hopper');
+  assert.match(request.calls[0]!.url, /\/rest\/wholesalers\?/);
+  assert.deepEqual(request.calls[1]?.data, { territory: 'Chicago' });
+  const decodedUrl = decodeURIComponent(request.calls[1]!.url);
+  assert.match(decodedUrl, /id\[eq\]:"grace-id"/);
+  assert.match(decodedUrl, /updatedAt\[eq\]:"2026-09-08T00:00:00.000Z"/);
+});
+
 test('writes and validates a PII-free integrity-protected checkpoint', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'crm-workspace-config-'));
   try {
@@ -326,12 +365,14 @@ test('writes and validates a PII-free integrity-protected checkpoint', async () 
       requestGate: immediateGate,
     });
     const checkpoint: WorkspaceConfigCheckpoint = {
-      schemaVersion: 1,
+      schemaVersion: 2,
       origin: 'https://crm.corgiinvest.com',
       expectedCompanyCount: 2191,
       companyIdentityHash: 'a'.repeat(64),
       sourceProjectionHash: 'b'.repeat(64),
       expectedProjectionHash: 'c'.repeat(64),
+      wholesalerIdentityHash: 'e'.repeat(64),
+      expectedTerritoryHash: 'f'.repeat(64),
       status: 'preflight',
       completedOperationHashes: ['d'.repeat(64)],
     };
