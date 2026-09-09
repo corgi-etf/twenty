@@ -35,10 +35,21 @@ export const handler = async (payload: unknown) => {
       store: kv,
       timeZone: requiredEnvironment('CORGI_CRM_TELEGRAM_TIME_ZONE'),
       linkCodesJson: process.env.CORGI_CRM_TELEGRAM_LINK_CODES,
-      findWholesalers: async (workspaceMemberId) =>
-        (await wholesalerRepository.findByWorkspaceMemberId(workspaceMemberId))
-          .filter(({ id, name }) => id && name?.trim())
-          .map(({ id, name }) => ({ id, name: name!.trim() })),
+      identity: {
+        findWorkspaceMember: (workspaceMemberId) =>
+          wholesalerRepository.findWorkspaceMemberById(workspaceMemberId),
+        findWholesalers: async (workspaceMemberId) =>
+          (await wholesalerRepository.findByWorkspaceMemberId(workspaceMemberId))
+            .filter(
+              ({ id, name, workspaceMemberId: linkedMemberId }) =>
+                id && name?.trim() && linkedMemberId === workspaceMemberId,
+            )
+            .map(({ id, name }) => ({
+              id,
+              name: name!.trim(),
+              workspaceMemberId,
+            })),
+      },
       send: (chatId, text) => telegram.sendMessage(chatId, text),
       answerCallback: (callbackQueryId) =>
         telegram.answerCallbackQuery(callbackQueryId),

@@ -4,6 +4,7 @@ import {
   findWholesalersByEmail,
   findWholesalersByWorkspaceMemberId,
 } from 'src/modules/wholesaler/onboarding/graphql/queries/find-wholesalers';
+import { findWorkspaceMemberById } from 'src/modules/wholesaler/onboarding/graphql/queries/find-workspace-member';
 import { listWorkspaceMembers } from 'src/modules/wholesaler/onboarding/graphql/queries/list-workspace-members';
 import {
   createWholesaler,
@@ -26,6 +27,13 @@ const nodes = (result: {
 
 export class CoreWholesalerRepository implements WholesalerRepository {
   public constructor(private readonly client: CoreApiClient) {}
+
+  public async findWorkspaceMemberById(memberId: string) {
+    const result = await findWorkspaceMemberById(this.client, memberId);
+    const node = result.workspaceMembers?.edges?.[0]?.node;
+    if (!node?.id) return null;
+    return { id: node.id, active: Boolean(node.userWorkspaceId) };
+  }
 
   public async findByWorkspaceMemberId(
     memberId: string,

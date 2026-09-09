@@ -6,7 +6,11 @@ import { TELEGRAM_DAILY_SUMMARY_UNIVERSAL_IDENTIFIER } from 'src/constants';
 import { CoreOutreachRepository } from 'src/modules/outreach/graphql/core-outreach.repository';
 import { runDailySummaryCron } from 'src/modules/telegram/services/daily-summary-cron.service';
 import { TelegramClient } from 'src/modules/telegram/services/telegram-client.service';
-import { getTelegramDeliveryRoster } from 'src/modules/telegram/services/telegram-link.service';
+import {
+  getValidatedTelegramDeliveryRoster,
+  parseTelegramLinkBindings,
+} from 'src/modules/telegram/services/telegram-link.service';
+import { CoreWholesalerRepository } from 'src/modules/wholesaler/onboarding/graphql/core-wholesaler.repository';
 
 const requiredEnvironment = (name: string): string => {
   const value = process.env[name]?.trim();
@@ -25,12 +29,35 @@ export const handler = async (
   const telegram = new TelegramClient({
     token: requiredEnvironment('CORGI_CRM_TELEGRAM_BOT_TOKEN'),
   });
+  const coreClient = new CoreApiClient();
+  const wholesalerRepository = new CoreWholesalerRepository(coreClient);
+  const identity = {
+    findWorkspaceMember: (workspaceMemberId: string) =>
+      wholesalerRepository.findWorkspaceMemberById(workspaceMemberId),
+    findWholesalers: async (workspaceMemberId: string) =>
+      (await wholesalerRepository.findByWorkspaceMemberId(workspaceMemberId))
+        .filter(
+          ({ id, name, workspaceMemberId: linkedMemberId }) =>
+            id && name?.trim() && linkedMemberId === workspaceMemberId,
+        )
+        .map(({ id, name }) => ({
+          id,
+          name: name!.trim(),
+          workspaceMemberId,
+        })),
+  };
   return runDailySummaryCron({
     now: new Date(),
     timeZone: requiredEnvironment('CORGI_CRM_TELEGRAM_TIME_ZONE'),
     localTime: requiredEnvironment('CORGI_CRM_TELEGRAM_DAILY_SUMMARY_TIME'),
-    roster: await getTelegramDeliveryRoster(kv),
-    repository: new CoreOutreachRepository(new CoreApiClient()),
+    roster: await getValidatedTelegramDeliveryRoster({
+      store: kv,
+      configuredBindings: parseTelegramLinkBindings(
+        process.env.CORGI_CRM_TELEGRAM_LINK_CODES,
+      ),
+      identity,
+    }),
+    repository: new CoreOutreachRepository(coreClient),
     store: kv,
     send: (chatId, text) => telegram.sendMessage(chatId, text),
   });

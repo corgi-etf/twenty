@@ -5,11 +5,12 @@ import {
 } from 'src/modules/outreach/services/daily-summary.service';
 import { getZonedDayWindow } from 'src/modules/outreach/services/day-window.service';
 import { logOutreach } from 'src/modules/outreach/services/log-outreach.service';
-import { type NamedRecord, type OutreachRepository } from 'src/modules/outreach/types';
+import { type OutreachRepository } from 'src/modules/outreach/types';
 import {
-  getTelegramLink,
+  getValidatedTelegramLink,
   linkTelegramAccount,
-  parseTelegramLinkCodes,
+  parseTelegramLinkBindings,
+  type TelegramIdentitySource,
 } from 'src/modules/telegram/services/telegram-link.service';
 import { type KeyValueStore, type ParsedTelegramUpdate } from 'src/modules/telegram/types';
 import { parseTelegramLogCommand } from 'src/modules/telegram/services/parse-telegram-log-command.service';
@@ -31,7 +32,7 @@ type CommandDependencies = {
   store: KeyValueStore;
   timeZone: string;
   linkCodesJson: string | undefined;
-  findWholesalers(workspaceMemberId: string): Promise<NamedRecord[]>;
+  identity: TelegramIdentitySource;
   send(chatId: string, text: string): Promise<void>;
   answerCallback?(callbackQueryId: string): Promise<void>;
   onCrmCommitted?(activityId: string): Promise<void>;
@@ -73,8 +74,8 @@ export const processTelegramCommand = async (
         code,
         userId: update.userId,
         chatId: update.chatId,
-        configuredCodes: parseTelegramLinkCodes(dependencies.linkCodesJson),
-        findWholesalers: dependencies.findWholesalers,
+        configuredBindings: parseTelegramLinkBindings(dependencies.linkCodesJson),
+        identity: dependencies.identity,
         store: dependencies.store,
       });
       await dependencies.send(
@@ -91,7 +92,11 @@ export const processTelegramCommand = async (
     }
   }
 
-  const link = await getTelegramLink(dependencies.store, update.userId);
+  const link = await getValidatedTelegramLink({
+    store: dependencies.store,
+    userId: update.userId,
+    identity: dependencies.identity,
+  });
   if (!link || link.chatId !== update.chatId) {
     await dependencies.send(
       update.chatId,
