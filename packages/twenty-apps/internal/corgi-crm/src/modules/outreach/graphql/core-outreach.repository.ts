@@ -59,14 +59,22 @@ export class CoreOutreachRepository implements OutreachRepository {
     companyId: string,
     query: string,
   ): Promise<NamedRecord[]> {
-    const result = await this.client.query({
-      people: {
-        __args: { filter: { companyId: { eq: companyId } }, first: PAGE_SIZE },
-        edges: { node: { id: true, name: { firstName: true, lastName: true } } },
-      },
-    });
     const normalizedQuery = query.trim().toLowerCase();
-    const edges = (result.people?.edges ?? []) as Array<{
+    const matches: NamedRecord[] = [];
+    let cursor: string | undefined;
+    for (let page = 0; page < MAX_PAGES; page += 1) {
+      const result = await this.client.query({
+        people: {
+          __args: {
+            filter: { companyId: { eq: companyId } },
+            first: PAGE_SIZE,
+            after: cursor,
+          },
+          edges: { node: { id: true, name: { firstName: true, lastName: true } } },
+          pageInfo: { hasNextPage: true, endCursor: true },
+        },
+      });
+      const edges = (result.people?.edges ?? []) as Array<{
       node?: {
         id?: string | null;
         name?: {
@@ -74,13 +82,21 @@ export class CoreOutreachRepository implements OutreachRepository {
           lastName?: string | null;
         } | null;
       } | null;
-    }>;
-    return edges
-      .map((edge) => edge?.node)
-      .map((node) => ({ id: node?.id ?? '', name: fullName(node?.name) }))
-      .filter(
-        ({ id, name }) => id && name.toLowerCase().includes(normalizedQuery),
+      }>;
+      matches.push(
+        ...edges
+          .map((edge) => edge?.node)
+          .map((node) => ({ id: node?.id ?? '', name: fullName(node?.name) }))
+          .filter(({ id, name }) => id && name.toLowerCase().includes(normalizedQuery)),
       );
+      const pageInfo = result.people?.pageInfo;
+      if (!pageInfo?.hasNextPage) return matches;
+      if (!pageInfo.endCursor || pageInfo.endCursor === cursor) {
+        throw new Error('Contact pagination omitted its cursor');
+      }
+      cursor = pageInfo.endCursor;
+    }
+    throw new Error(`Contact pagination exceeded ${MAX_PAGES} pages`);
   }
 
   public async createActivity(data: OutreachActivityWrite): Promise<{ id: string }> {

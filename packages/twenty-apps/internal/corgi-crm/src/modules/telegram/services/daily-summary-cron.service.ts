@@ -2,7 +2,6 @@ import {
   buildDailySummaries,
   formatDailySummary,
   formatEmptyDailySummary,
-  splitTelegramMessage,
 } from 'src/modules/outreach/services/daily-summary.service';
 import {
   getZonedDayWindow,
@@ -12,6 +11,7 @@ import { type OutreachRepository } from 'src/modules/outreach/types';
 import { deliverDailySummaries } from 'src/modules/telegram/services/telegram-delivery.service';
 import { type TelegramLink } from 'src/modules/telegram/services/telegram-link.service';
 import { type KeyValueStore } from 'src/modules/telegram/types';
+import { splitTelegramMessage } from 'src/modules/telegram/services/split-telegram-message.service';
 
 export const runDailySummaryCron = async ({
   now,

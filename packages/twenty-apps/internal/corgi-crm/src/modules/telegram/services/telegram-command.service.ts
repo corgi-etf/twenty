@@ -2,7 +2,6 @@ import {
   buildDailySummaries,
   formatDailySummary,
   formatEmptyDailySummary,
-  splitTelegramMessage,
 } from 'src/modules/outreach/services/daily-summary.service';
 import { getZonedDayWindow } from 'src/modules/outreach/services/day-window.service';
 import { logOutreach } from 'src/modules/outreach/services/log-outreach.service';
@@ -13,6 +12,8 @@ import {
   parseTelegramLinkCodes,
 } from 'src/modules/telegram/services/telegram-link.service';
 import { type KeyValueStore, type ParsedTelegramUpdate } from 'src/modules/telegram/types';
+import { parseTelegramLogCommand } from 'src/modules/telegram/services/parse-telegram-log-command.service';
+import { splitTelegramMessage } from 'src/modules/telegram/services/split-telegram-message.service';
 
 const HELP = [
   'Corgi CRM outreach bot',
@@ -100,7 +101,10 @@ export const processTelegramCommand = async (
   if (command === '/log') {
     try {
       const result = await logOutreach({
-        text: update.text,
+        input: parseTelegramLogCommand(
+          update.text,
+          `telegram-update-${update.updateId}`,
+        ),
         wholesalerId: link.wholesalerId,
         now: dependencies.now(),
         repository: dependencies.repository,

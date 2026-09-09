@@ -1,96 +1,14 @@
 import {
+  isQuickLogActivityType,
+  isQuickLogOutcome,
+  QUICK_LOG_ACTIVITY_LABELS,
+  QUICK_LOG_OUTCOME_LABELS,
+} from 'src/modules/outreach/quick-log-taxonomy';
+import {
+  type LogOutreachInput,
   type NamedRecord,
   type OutreachRepository,
 } from 'src/modules/outreach/types';
-
-export type LogDraft = {
-  activityType: string;
-  companyQuery: string;
-  contactQuery?: string;
-  outcome: string;
-  notes?: string;
-  followUpDate?: string;
-};
-
-const required = (value: string | undefined, label: string): string => {
-  const normalized = value?.trim();
-  if (!normalized) throw new Error(`${label} is required`);
-  return normalized;
-};
-
-const parseExplicit = (body: string): LogDraft => {
-  const values = Object.fromEntries(
-    body
-      .split(';')
-      .map((part) => part.trim())
-      .filter(Boolean)
-      .map((part) => {
-        const separator = part.indexOf('=');
-        if (separator < 1) throw new Error(`Invalid /log field: ${part}`);
-        return [
-          part.slice(0, separator).trim().toLowerCase(),
-          part.slice(separator + 1).trim(),
-        ];
-      }),
-  );
-  const allowed = new Set([
-    'type',
-    'company',
-    'contact',
-    'outcome',
-    'notes',
-    'followup',
-  ]);
-  const unsupported = Object.keys(values).find((key) => !allowed.has(key));
-  if (unsupported) throw new Error(`Unsupported /log field: ${unsupported}`);
-  if (values.followup && !/^\d{4}-\d{2}-\d{2}$/.test(values.followup)) {
-    throw new Error('followup must use YYYY-MM-DD');
-  }
-
-  return {
-    activityType: required(values.type, 'type').toLowerCase(),
-    companyQuery: required(values.company, 'company'),
-    ...(values.contact ? { contactQuery: values.contact } : {}),
-    outcome: required(values.outcome, 'outcome').toLowerCase(),
-    ...(values.notes ? { notes: values.notes } : {}),
-    ...(values.followup ? { followUpDate: values.followup } : {}),
-  };
-};
-
-const parseFast = (body: string): LogDraft => {
-  const parts = body.split('|').map((part) => part.trim());
-  if (parts.length < 3 || parts.length > 5) {
-    throw new Error(
-      'Use /log type | company | outcome | notes, or include contact as the fifth field',
-    );
-  }
-  const normalizedType = required(parts[0], 'type').toLowerCase();
-
-  if (parts.length === 5) {
-    return {
-      activityType: normalizedType,
-      companyQuery: required(parts[1], 'company'),
-      contactQuery: required(parts[2], 'contact'),
-      outcome: required(parts[3], 'outcome').toLowerCase(),
-      notes: required(parts[4], 'notes'),
-    };
-  }
-
-  return {
-    activityType: normalizedType,
-    companyQuery: required(parts[1], 'company'),
-    outcome: required(parts[2], 'outcome').toLowerCase(),
-    ...(parts[3] ? { notes: parts[3] } : {}),
-  };
-};
-
-export const parseLogCommand = (text: string): LogDraft => {
-  const body = text.replace(/^\/log(?:@\w+)?\s*/i, '').trim();
-  if (!body) throw new Error('Add activity details after /log');
-  return /(?:^|;)\s*(?:type|company|outcome)\s*=/i.test(body)
-    ? parseExplicit(body)
-    : parseFast(body);
-};
 
 const exactOrAll = (records: NamedRecord[], query: string): NamedRecord[] => {
   const normalized = query.trim().toLowerCase();
@@ -101,17 +19,24 @@ const exactOrAll = (records: NamedRecord[], query: string): NamedRecord[] => {
 };
 
 export const logOutreach = async ({
-  text,
+  input,
   wholesalerId,
   now,
   repository,
 }: {
-  text: string;
+  input: LogOutreachInput;
   wholesalerId: string;
   now: Date;
   repository: OutreachRepository;
 }) => {
-  const draft = parseLogCommand(text);
+  if (!isQuickLogActivityType(input.activityType)) {
+    throw new Error(`Unsupported activity type: ${input.activityType}`);
+  }
+  if (!isQuickLogOutcome(input.outcome)) {
+    throw new Error(`Unsupported outcome: ${input.outcome}`);
+  }
+  if (!input.activityId.trim()) throw new Error('Activity ID is required');
+  const draft = input;
   const companies = exactOrAll(
     await repository.findCompanies(draft.companyQuery),
     draft.companyQuery,
@@ -137,7 +62,8 @@ export const logOutreach = async ({
 
   const occurredAt = now.toISOString();
   const activity = await repository.createActivity({
-    name: `${draft.activityType} · ${company.name} · ${occurredAt}`,
+    id: draft.activityId,
+    name: `${QUICK_LOG_ACTIVITY_LABELS[draft.activityType]} · ${QUICK_LOG_OUTCOME_LABELS[draft.outcome]}`,
     companyId: company.id,
     ...(contact ? { contactId: contact.id } : {}),
     wholesalerId,

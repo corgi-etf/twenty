@@ -71,7 +71,7 @@ form is `/log call | Company | outcome | notes`. The explicit form supports an
 optional contact and follow-up:
 
 ```text
-/log type=meeting; company=Company; contact=Name; outcome=interested; notes=Send deck; followup=2026-09-12
+/log type=meeting; company=Company; contact=Name; outcome=follow_up_scheduled; notes=Send deck; followup=2026-09-12
 ```
 
 `/today` (or `/summary`) returns that person's current local-day breakdown.

@@ -11,6 +11,7 @@ export type OutreachActivity = {
 };
 
 export type OutreachActivityWrite = {
+  id: string;
   name: string;
   companyId: string;
   contactId?: string;
@@ -19,6 +20,16 @@ export type OutreachActivityWrite = {
   outcome: string;
   notes?: string;
   occurredAt: string;
+  followUpDate?: string;
+};
+
+export type LogOutreachInput = {
+  activityId: string;
+  activityType: QuickLogActivityType;
+  companyQuery: string;
+  contactQuery?: string;
+  outcome: QuickLogOutcome;
+  notes?: string;
   followUpDate?: string;
 };
 
@@ -34,3 +45,7 @@ export type OutreachRepository = {
     wholesalerId?: string;
   }): Promise<OutreachActivity[]>;
 };
+import {
+  type QuickLogActivityType,
+  type QuickLogOutcome,
+} from 'src/modules/outreach/quick-log-taxonomy';
