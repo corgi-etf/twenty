@@ -15,7 +15,7 @@
     "twenty": "twenty",
     "lint": "oxlint -c .oxlintrc.json .",
     "test:unit": "vitest run",
-    "test:verification": "node --test scripts/verify-production-install.test.mjs",
+    "test:verification": "node --test scripts/*.test.mjs",
     "typecheck": "tsc --noEmit",
     "verify:production": "node scripts/verify-production-install.mjs"
   },
