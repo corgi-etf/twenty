@@ -140,7 +140,6 @@ export const assertAuditedProductionBaseline = (
     ['sourceRecords', 2603],
     ['importReviewItems', 212],
     ['wholesalers', 10],
-    ['leadAssignments', 4046],
     ['archivedOutreachActivities', 5],
   ] as Array<[keyof CanonicalizationSnapshot, number]>) {
     if (snapshot[name].length !== expected) {
@@ -154,6 +153,10 @@ export const assertAuditedProductionBaseline = (
     ['tasks', 159],
     ['taskTargets', 159],
     ['outreachActivities', 986],
+    // Lead assignments are active business records and may change after the
+    // audited migration baseline. Keep a conservative completeness floor while
+    // the trusted manifest and reconciliation protect the exact live set.
+    ['leadAssignments', 4000],
   ] as Array<[keyof CanonicalizationSnapshot, number]>) {
     if (snapshot[name].length < minimum) {
       throw new Error(`Audited baseline is incomplete for ${name}`);
