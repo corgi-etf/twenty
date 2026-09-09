@@ -225,6 +225,44 @@ export const normalizeDomain = (rawWebsite: unknown): string | null => {
   }
 };
 
+const canonicalCalendarDate = (
+  year: number,
+  month: number,
+  day: number,
+): string | null => {
+  const date = new Date(Date.UTC(year, month - 1, day));
+  if (
+    date.getUTCFullYear() !== year ||
+    date.getUTCMonth() !== month - 1 ||
+    date.getUTCDate() !== day
+  ) {
+    return null;
+  }
+
+  return `${String(year).padStart(4, '0')}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+};
+
+export const normalizeDate = (rawDate: unknown): string | null => {
+  if (typeof rawDate !== 'string') return null;
+  const value = rawDate.normalize('NFC').trim();
+  const iso =
+    /^(\d{4})-(\d{2})-(\d{2})(?:[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d{1,9})?)?(?:Z|[+-]\d{2}:?\d{2})?)?$/.exec(
+      value,
+    );
+  if (iso) {
+    return canonicalCalendarDate(
+      Number(iso[1]),
+      Number(iso[2]),
+      Number(iso[3]),
+    );
+  }
+  const us = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(value);
+
+  return us
+    ? canonicalCalendarDate(Number(us[3]), Number(us[1]), Number(us[2]))
+    : null;
+};
+
 export const normalizeKey = (key: string): string =>
   key
     .trim()

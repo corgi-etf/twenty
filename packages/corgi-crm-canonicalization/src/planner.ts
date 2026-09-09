@@ -4,6 +4,7 @@ import {
   canonicalContentKey,
   canonicalRowKey,
   normalizeDomain,
+  normalizeDate,
   normalizeEmail,
   normalizeKey,
   normalizeLinkedIn,
@@ -149,13 +150,26 @@ const mergeFact = (
   const text = textValue(value);
   if (!text) return;
 
-  const existing = asString(valueAt(accumulator.record, name, previousName));
+  const existing = asString(effectiveValue(accumulator, name, previousName));
   const values = accumulator.facts.get(name) ?? new Set<string>();
   for (const existingValue of existing?.split('\n').filter(Boolean) ?? []) {
     values.add(existingValue);
   }
   values.add(text);
   accumulator.facts.set(name, values);
+};
+
+const mergeLabeledFact = (
+  accumulator: RecordAccumulator,
+  name: string,
+  label: string,
+  value: unknown,
+  previousName?: string,
+): void => {
+  const text = textValue(value);
+  if (!text) return;
+
+  mergeFact(accumulator, name, `${label}: ${text}`, previousName);
 };
 
 const finalizeFacts = (accumulator: RecordAccumulator): void => {
@@ -644,7 +658,7 @@ const holdingIdentityKey = (
     filerId: companyNameKey(rawValue(index, 'filer id')),
     cik: companyNameKey(rawValue(index, 'filer cik')),
     crd: companyNameKey(rawValue(index, 'filer crd')),
-    asOfDate: textValue(rawValue(index, 'source date')),
+    asOfDate: normalizeDate(rawValue(index, 'source date')),
     shares: numberValue(rawValue(index, 'shares held', 'shares')),
     marketValue: numberValue(rawValue(index, 'market value')),
   });
@@ -686,23 +700,7 @@ const deduplicateRows = (rows: readonly StagingRow[]) => {
   const selected: StagingRow[] = [];
   const duplicateOf = new Map<string, StagingRow>();
   const collisions: UnresolvedItem[] = [];
-  for (const [semanticKey, candidates] of [...groups].sort(([left], [right]) =>
-    left.localeCompare(right),
-  )) {
-    const companyIds = new Set(
-      candidates
-        .flatMap(({ record }) => [record.companyId, record.candidateCompanyId])
-        .filter(
-          (value): value is string => typeof value === 'string' && !!value,
-        ),
-    );
-    if (companyIds.size > 1) {
-      collisions.push({
-        code: 'CONTENT_IDENTITY_COLLISION',
-        rowKey: semanticKey,
-      });
-      continue;
-    }
+  const selectGroup = (candidates: readonly StagingRow[]): void => {
     const ordered = [...candidates].sort(
       (left, right) =>
         left.priority - right.priority ||
@@ -712,6 +710,58 @@ const deduplicateRows = (rows: readonly StagingRow[]) => {
     selected.push(winner);
     for (const duplicate of ordered.slice(1)) {
       duplicateOf.set(duplicate.record.id, winner);
+    }
+  };
+  for (const [, candidates] of [...groups].sort(([left], [right]) =>
+    left.localeCompare(right),
+  )) {
+    const compatible: StagingRow[] = [];
+    for (const candidate of candidates) {
+      const companyId = asString(candidate.record.companyId);
+      const candidateCompanyId = asString(candidate.record.candidateCompanyId);
+      if (
+        companyId !== null &&
+        candidateCompanyId !== null &&
+        companyId !== candidateCompanyId
+      ) {
+        collisions.push({
+          code: 'CONTENT_IDENTITY_COLLISION',
+          rowKey: candidate.rowKey,
+        });
+      } else {
+        compatible.push(candidate);
+      }
+    }
+    if (compatible.length === 0) continue;
+
+    const directAnchors = new Set(
+      compatible
+        .map(
+          ({ record }) =>
+            asString(record.candidateCompanyId) ?? asString(record.companyId),
+        )
+        .filter((value): value is string => value !== null),
+    );
+    if (directAnchors.size <= 1) {
+      selectGroup(compatible);
+      continue;
+    }
+
+    const byCompanyAnchor = new Map<string, StagingRow[]>();
+    for (const candidate of compatible) {
+      const anchor =
+        asString(candidate.record.candidateCompanyId) ??
+        asString(candidate.record.companyId) ??
+        'unanchored';
+      byCompanyAnchor.set(anchor, [
+        ...(byCompanyAnchor.get(anchor) ?? []),
+        candidate,
+      ]);
+    }
+    for (const [, anchoredCandidates] of [...byCompanyAnchor].sort(
+      ([left], [right]) => left.localeCompare(right),
+    )) {
+      selectGroup(anchoredCandidates);
     }
   }
 
@@ -799,18 +849,22 @@ const PERSON_FACTS: ReadonlyArray<[string, string[]]> = [
   ['sportsTeams', ['person tag sports teams']],
 ];
 
-const EMPTY_ONLY_RAW_KEYS = new Set(
-  `|connection name|disclosures|email 3|lead score|notes|person tag expertise|person tag faith based investing|person tag greek life|person tag investments|person tag role`.split(
-    '|',
-  ),
-);
+const PERSON_NOTE_SOURCE_FIELDS: ReadonlyArray<[string, string]> = [
+  ['notes', 'Notes'],
+  ['disclosures', 'Disclosures'],
+  ['person tag expertise', 'Expertise'],
+  ['person tag faith based investing', 'Faith-based investing'],
+  ['person tag greek life', 'Greek life'],
+  ['person tag investments', 'Investments'],
+  ['person tag role', 'Role'],
+];
 
 const COMPANY_TARGET_BY_KEY: Readonly<Record<string, string>> = {
-  'firm address': 'company.address',
-  'firm city': 'company.address',
-  'firm state': 'company.address',
-  'firm zip': 'company.address',
-  'city hq': 'company.address',
+  'firm address': 'company.address+company.alternateAddresses',
+  'firm city': 'company.address+company.alternateAddresses',
+  'firm state': 'company.address+company.alternateAddresses',
+  'firm zip': 'company.address+company.alternateAddresses',
+  'city hq': 'company.address+company.alternateAddresses',
   region: 'company.geography',
   'firm aum': 'company.assetsUnderManagement',
   'firm bd reps': 'company.brokerDealerRepresentatives',
@@ -820,13 +874,14 @@ const COMPANY_TARGET_BY_KEY: Readonly<Record<string, string>> = {
   'firm form 13f': 'company.form13f',
   'firm form13f': 'company.form13f',
   'firm total accounts': 'company.totalAccounts',
-  'firm total employees': 'company.employees',
+  'firm total employees': 'company.employees+company.description',
   'firm ownership': 'company.ownership',
   'firm phone': 'company.firmPhone',
   'firm type': 'company.firmType',
   'type of firm': 'company.firmType',
-  'firm website': 'company.domainName',
-  website: 'company.domainName',
+  'firm website': 'company.domainName+company.websiteNotes',
+  website: 'company.domainName+company.websiteNotes',
+  'lead score': 'company.description',
   'firm tag accredited investors': 'company.accreditedInvestorFocus',
   'firm tag asset classes': 'company.assetClasses',
   'firm tag client personas': 'company.clientPersonas',
@@ -883,16 +938,26 @@ const PERSON_TARGET_BY_KEY: Readonly<Record<string, string>> = {
   'person tag services': 'person.services',
   'person tag sports teams': 'person.sportsTeams',
   title: 'person.jobTitle',
-  'email 1': 'person.emails',
-  'email 2': 'person.emails',
-  'personal email': 'person.emails',
-  'mobile phone': 'person.phones',
-  mobile: 'person.phones',
-  'landline phone': 'person.phones',
-  landline: 'person.phones',
-  phone: 'person.phones',
+  'email 1': 'person.emails+person.otherContactDetails',
+  'email 2': 'person.emails+person.otherContactDetails',
+  'email 3': 'person.emails+person.otherContactDetails',
+  'personal email': 'person.emails+person.otherContactDetails',
+  'mobile phone': 'person.phones+person.otherContactDetails',
+  mobile: 'person.phones+person.otherContactDetails',
+  'landline phone': 'person.phones+person.otherContactDetails',
+  landline: 'person.phones+person.otherContactDetails',
+  phone: 'person.phones+person.otherContactDetails',
   'phone type': 'person.otherContactDetails',
-  linkedin: 'person.linkedinLink',
+  linkedin: 'person.linkedinLink+person.otherContactDetails',
+  'linked in': 'person.linkedinLink+person.otherContactDetails',
+  'connection name': 'person.otherContactDetails',
+  notes: 'person.notes',
+  disclosures: 'person.notes',
+  'person tag expertise': 'person.notes',
+  'person tag faith based investing': 'person.notes',
+  'person tag greek life': 'person.notes',
+  'person tag investments': 'person.notes',
+  'person tag role': 'person.notes',
 };
 
 const HOLDING_TARGET_BY_KEY: Readonly<Record<string, string>> = {
@@ -964,13 +1029,16 @@ const normalizedDispositionResult = (
     return companyNameKey(value);
   }
   if (isHolding && NUMERIC_HOLDING_KEYS.has(key)) return numberValue(value);
+  if (isHolding && key === 'source date') return normalizeDate(value);
   if (key.includes('email')) return normalizeEmail(value) ?? textValue(value);
   if (key.includes('phone') || key === 'mobile' || key === 'landline') {
     const normalized = normalizePhone(value);
 
     return normalized ? phoneIdentity(normalized) : textValue(value);
   }
-  if (key === 'linkedin') return normalizeLinkedIn(value) ?? textValue(value);
+  if (key === 'linkedin' || key === 'linked in') {
+    return normalizeLinkedIn(value) ?? textValue(value);
+  }
   if (key === 'firm website' || key === 'website') {
     return normalizeDomain(value) ?? textValue(value);
   }
@@ -994,6 +1062,25 @@ const dispositionForKey = (
           ? 'opaque team identifier excluded; team name and website retained'
           : 'quality commentary excluded from business records',
       sourceValueHash,
+    };
+  }
+  const personNote = PERSON_NOTE_SOURCE_FIELDS.find(
+    ([sourceKey]) => sourceKey === key,
+  );
+  if (personNote) {
+    return {
+      kind: 'canonical',
+      target: isPerson ? 'person.notes' : 'company.description',
+      sourceValueHash,
+      resultValueHash: valueHash(textValue(value)),
+    };
+  }
+  if (key === 'connection name') {
+    return {
+      kind: 'canonical',
+      target: isPerson ? 'person.otherContactDetails' : 'company.description',
+      sourceValueHash,
+      resultValueHash: valueHash(textValue(value)),
     };
   }
   if (COMPANY_IDENTITY_RAW_KEYS.has(key)) {
@@ -1032,6 +1119,13 @@ const dispositionForKey = (
     return {
       kind: 'ignored',
       target: 'non-holding filing marker excluded as technical classification',
+      sourceValueHash,
+    };
+  }
+  if (isHolding && key === 'source date' && normalizeDate(value) === null) {
+    return {
+      kind: 'ignored',
+      target: 'invalid date placeholder excluded from canonical date field',
       sourceValueHash,
     };
   }
@@ -1156,17 +1250,45 @@ const applyCompanyRaw = (
   accumulator: RecordAccumulator,
   index: ReadonlyMap<string, unknown>,
   domainOwners: Map<string, Set<string>>,
+  isPerson = false,
 ): void => {
   for (const [field, aliases] of COMPANY_FACTS) {
     mergeFact(accumulator, field, rawValue(index, ...aliases));
   }
   mergeFact(accumulator, 'geography', rawValue(index, 'region'));
   const employeeCount = numberValue(rawValue(index, 'firm total employees'));
-  if (
-    employeeCount !== null &&
-    valueAt(accumulator.record, 'employees') == null
-  ) {
-    setIfChanged(accumulator, 'employees', employeeCount);
+  const rawEmployeeCount = rawValue(index, 'firm total employees');
+  if (employeeCount !== null) {
+    const current = effectiveValue(accumulator, 'employees');
+    if (isEmptyValue(current))
+      setIfChanged(accumulator, 'employees', employeeCount);
+    else if (!valuesEqual(current, employeeCount)) {
+      mergeLabeledFact(
+        accumulator,
+        'description',
+        'Employees',
+        rawEmployeeCount,
+      );
+    }
+  } else if (textValue(rawEmployeeCount)) {
+    mergeLabeledFact(accumulator, 'description', 'Employees', rawEmployeeCount);
+  }
+  mergeLabeledFact(
+    accumulator,
+    'description',
+    'Lead score',
+    rawValue(index, 'lead score'),
+  );
+  if (!isPerson) {
+    for (const [key, label] of PERSON_NOTE_SOURCE_FIELDS) {
+      mergeLabeledFact(accumulator, 'description', label, rawValue(index, key));
+    }
+    mergeLabeledFact(
+      accumulator,
+      'description',
+      'Connection',
+      rawValue(index, 'connection name'),
+    );
   }
   mergeFact(accumulator, 'firmPhone', rawValue(index, 'firm phone'));
   mergeFact(
@@ -1298,6 +1420,21 @@ const applyPersonRaw = (
     rawValue(index, 'zip', 'zip code'),
     'legacyPostalCode',
   );
+  for (const [key, label] of PERSON_NOTE_SOURCE_FIELDS) {
+    mergeLabeledFact(
+      accumulator,
+      'notes',
+      label,
+      rawValue(index, key),
+      'fetchNotes',
+    );
+  }
+  const connectionName = rawValue(index, 'connection name');
+  if (textValue(connectionName)) {
+    accumulator.residualContacts!.add(
+      `Connection: ${textValue(connectionName)}`,
+    );
+  }
 };
 
 const personName = (
@@ -1337,6 +1474,57 @@ const resolveCompany = (
       ? { id: direct }
       : { unresolved: 'MISSING_DIRECT_COMPANY' };
 
+  const name = rawValue(
+    index,
+    'firm company name',
+    'ria',
+    'firm name',
+    'filer name',
+  );
+  const key = companyNameKey(name);
+  const domain = normalizeDomain(rawValue(index, 'firm website', 'website'));
+  const city = companyNameKey(rawValue(index, 'firm city', 'city', 'city hq'));
+  const state = companyNameKey(
+    rawValue(index, 'firm state', 'state', 'filer state'),
+  );
+  const locationKey = companyLocationKey(name, city, state);
+  const isolatedId = key
+    ? stableUuid(
+        'company',
+        stableStringify({
+          name: key,
+          domain,
+          city,
+          state,
+          filerId: companyNameKey(rawValue(index, 'filer id')),
+          cik: companyNameKey(rawValue(index, 'filer cik')),
+          crd: companyNameKey(rawValue(index, 'filer crd')),
+          irs: companyNameKey(rawValue(index, 'filer irs number')),
+        }),
+      )
+    : null;
+  const isolateCompany = (): { id?: string; unresolved?: string } => {
+    const companyName = textValue(name);
+    if (!isolatedId || !key || !companyName) {
+      return { unresolved: 'MISSING_COMPANY_IDENTITY' };
+    }
+    if (!companies.has(isolatedId)) {
+      const record: CrmRecord = { id: isolatedId, name: companyName };
+      companies.set(isolatedId, {
+        record,
+        data: { id: isolatedId, name: companyName },
+        facts: new Map(),
+      });
+    }
+    addOwner(names, key, isolatedId);
+    if (locationKey) addOwner(locations, locationKey, isolatedId);
+    if (domain) addOwner(domains, domain, isolatedId);
+
+    return { id: isolatedId };
+  };
+
+  if (isolatedId && companies.has(isolatedId)) return { id: isolatedId };
+
   const regulatoryMatches = new Set<string>();
   for (const [kind, aliases] of [
     ['filerId', ['filer id']],
@@ -1352,34 +1540,18 @@ const resolveCompany = (
     }
   }
   if (regulatoryMatches.size === 1) return { id: [...regulatoryMatches][0] };
-  if (regulatoryMatches.size > 1)
-    return { unresolved: 'AMBIGUOUS_COMPANY_REGULATORY_ID' };
+  if (regulatoryMatches.size > 1) return isolateCompany();
 
-  const domain = normalizeDomain(rawValue(index, 'firm website', 'website'));
   const domainMatches = domain
     ? (domains.get(domain) ?? new Set<string>())
     : new Set<string>();
   if (domainMatches.size === 1) return { id: [...domainMatches][0] };
-  if (domainMatches.size > 1) return { unresolved: 'AMBIGUOUS_COMPANY' };
-
-  const name = rawValue(
-    index,
-    'firm company name',
-    'ria',
-    'firm name',
-    'filer name',
-  );
-  const key = companyNameKey(name);
-  const locationKey = companyLocationKey(
-    name,
-    rawValue(index, 'firm city', 'city', 'city hq'),
-    rawValue(index, 'firm state', 'state', 'filer state'),
-  );
+  if (domainMatches.size > 1) return isolateCompany();
   const locationMatches = locationKey
     ? (locations.get(locationKey) ?? new Set<string>())
     : new Set<string>();
   if (locationMatches.size === 1) return { id: [...locationMatches][0] };
-  if (locationMatches.size > 1) return { unresolved: 'AMBIGUOUS_COMPANY' };
+  if (locationMatches.size > 1) return isolateCompany();
   const nameMatches = key
     ? (names.get(key) ?? new Set<string>())
     : new Set<string>();
@@ -1388,32 +1560,11 @@ const resolveCompany = (
       ? { id: personCompanyAnchor }
       : { unresolved: 'MISSING_PERSON_COMPANY_ANCHOR' };
   }
-  if (nameMatches.size > 0) return { unresolved: 'AMBIGUOUS_COMPANY' };
+  if (nameMatches.size > 0) return isolateCompany();
   if (!key || !textValue(name))
     return { unresolved: 'MISSING_COMPANY_IDENTITY' };
 
-  const id = stableUuid(
-    'company',
-    stableStringify({
-      name: key,
-      domain,
-      city: companyNameKey(rawValue(index, 'firm city', 'city', 'city hq')),
-      state: companyNameKey(
-        rawValue(index, 'firm state', 'state', 'filer state'),
-      ),
-    }),
-  );
-  const record: CrmRecord = { id, name: textValue(name)! };
-  companies.set(id, {
-    record,
-    data: { id, name: record.name },
-    facts: new Map(),
-  });
-  addOwner(names, key, id);
-  if (locationKey) addOwner(locations, locationKey, id);
-  if (domain) addOwner(domains, domain, id);
-
-  return { id };
+  return isolateCompany();
 };
 
 const strongPersonCandidates = (
@@ -1424,6 +1575,7 @@ const strongPersonCandidates = (
   for (const value of [
     rawValue(index, 'email 1'),
     rawValue(index, 'email 2'),
+    rawValue(index, 'email 3'),
     rawValue(index, 'personal email'),
   ]) {
     const normalized = normalizeEmail(value);
@@ -1462,44 +1614,55 @@ const resolvePerson = (
   companyNameOwners: Map<string, Set<string>>,
 ): { id?: string; unresolved?: string } => {
   const candidates = strongPersonCandidates(index, identityOwners);
+  const identity = nameIdentity(
+    rawValue(index, 'first name'),
+    rawValue(index, 'last name'),
+  );
+  const isolatedId = stableUuid(
+    'person',
+    stableStringify({ companyId, contentKey: row.contentKey }),
+  );
+  const isolatePerson = (): { id?: string; unresolved?: string } => {
+    if (!identity) return { unresolved: 'MISSING_PERSON_IDENTITY' };
+    if (!people.has(isolatedId)) {
+      const name = {
+        firstName: textValue(rawValue(index, 'first name')) ?? '',
+        lastName: textValue(rawValue(index, 'last name')) ?? '',
+      };
+      const record: CrmRecord = { id: isolatedId, companyId, name };
+      people.set(isolatedId, {
+        record,
+        data: { id: isolatedId, companyId, name },
+        facts: new Map(),
+        residualContacts: new Set(),
+      });
+      addOwner(companyNameOwners, `${companyId}\0${identity}`, isolatedId);
+    }
+
+    return { id: isolatedId };
+  };
+
+  if (people.has(isolatedId)) return { id: isolatedId };
 
   if (candidates.size === 1) {
     const id = [...candidates][0]!;
     const existingCompanyId = asString(people.get(id)?.record.companyId);
     if (existingCompanyId && existingCompanyId !== companyId) {
-      return { unresolved: 'PERSON_COMPANY_MISMATCH' };
+      return isolatePerson();
     }
 
     return { id };
   }
-  if (candidates.size > 1) return { unresolved: 'AMBIGUOUS_PERSON_IDENTITY' };
+  if (candidates.size > 1) return isolatePerson();
 
-  const identity = nameIdentity(
-    rawValue(index, 'first name'),
-    rawValue(index, 'last name'),
-  );
   const nameMatches = identity
     ? (companyNameOwners.get(`${companyId}\0${identity}`) ?? new Set<string>())
     : new Set<string>();
   if (nameMatches.size === 1) return { id: [...nameMatches][0] };
-  if (nameMatches.size > 1) return { unresolved: 'AMBIGUOUS_PERSON_NAME' };
+  if (nameMatches.size > 1) return isolatePerson();
   if (!identity) return { unresolved: 'MISSING_PERSON_IDENTITY' };
 
-  const id = stableUuid('person', row.contentKey);
-  const name = {
-    firstName: textValue(rawValue(index, 'first name')) ?? '',
-    lastName: textValue(rawValue(index, 'last name')) ?? '',
-  };
-  const record: CrmRecord = { id, companyId, name };
-  people.set(id, {
-    record,
-    data: { id, companyId, name },
-    facts: new Map(),
-    residualContacts: new Set(),
-  });
-  addOwner(companyNameOwners, `${companyId}\0${identity}`, id);
-
-  return { id };
+  return isolatePerson();
 };
 
 const applyRawContacts = (
@@ -1515,6 +1678,7 @@ const applyRawContacts = (
   for (const value of [
     rawValue(index, 'email 1'),
     rawValue(index, 'email 2'),
+    rawValue(index, 'email 3'),
     rawValue(index, 'personal email'),
   ]) {
     const original = textValue(value);
@@ -1594,7 +1758,7 @@ const applyRawContacts = (
   );
   setIfChanged(accumulator, 'phones', phoneShape);
 
-  const originalLinkedIn = textValue(rawValue(index, 'linkedin'));
+  const originalLinkedIn = textValue(rawValue(index, 'linkedin', 'linked in'));
   if (originalLinkedIn) {
     mergeLinkedIn(accumulator, originalLinkedIn, owners);
   }
@@ -1651,12 +1815,9 @@ const holdingPatch = (
     ['asOfDate', ['source date'], 'sourceDate'],
   ];
   for (const [field, aliases, previousName] of text) {
-    const value = textValue(rawValue(index, ...aliases));
+    const raw = rawValue(index, ...aliases);
+    const value = field === 'asOfDate' ? normalizeDate(raw) : textValue(raw);
     if (!value) continue;
-    if (field === 'asOfDate' && !/^\d{4}-\d{2}-\d{2}$/.test(value)) {
-      unresolved.push({ code: 'HOLDING_DATE_INVALID', rowKey });
-      continue;
-    }
     setPreservingNative(
       accumulator,
       field,
@@ -1767,7 +1928,7 @@ export const buildCanonicalizationPlan = (
         rowIsPerson,
         rowIsHolding,
       );
-      if (!disposition || EMPTY_ONLY_RAW_KEYS.has(key)) {
+      if (!disposition) {
         if (!selectedRecordIds.has(row.record.id)) {
           unresolved.push({ code: 'UNHANDLED_RAW_FIELD', rowKey: row.rowKey });
         }
@@ -1880,7 +2041,7 @@ export const buildCanonicalizationPlan = (
       if (!textValue(value)) continue;
       const symbolic = dispositionForKey(key, value, false, true, false);
       const concrete = symbolic ? concreteDisposition(symbolic, context) : null;
-      if (!concrete || EMPTY_ONLY_RAW_KEYS.has(key)) {
+      if (!concrete) {
         unresolved.push({
           code: 'UNHANDLED_HOLDING_RAW_FIELD',
           rowKey: holding.id,
@@ -1942,7 +2103,7 @@ export const buildCanonicalizationPlan = (
       continue;
     }
     const companyAccumulator = companyAccumulators.get(company.id)!;
-    applyCompanyRaw(companyAccumulator, index, domainOwners);
+    applyCompanyRaw(companyAccumulator, index, domainOwners, isPerson);
     const companyName = rawValue(
       index,
       'firm company name',
@@ -2032,7 +2193,7 @@ export const buildCanonicalizationPlan = (
       if (!textValue(value)) continue;
       const symbolic = dispositionForKey(key, value, isPerson, isHolding);
       const concrete = symbolic ? concreteDisposition(symbolic, context) : null;
-      if (!concrete || EMPTY_ONLY_RAW_KEYS.has(key)) {
+      if (!concrete) {
         unresolved.push({ code: 'UNHANDLED_RAW_FIELD', rowKey: row.rowKey });
       } else {
         const rowKey = stagingOccurrenceKey(row);
