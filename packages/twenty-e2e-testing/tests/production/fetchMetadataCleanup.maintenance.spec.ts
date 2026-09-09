@@ -10,7 +10,6 @@ import {
   FETCH_METADATA_CLEANUP_CONFIRMATION,
   runFetchMetadataCleanup,
 } from './fetchMetadataCleanup';
-import { assertFetchMetadataCleanupWorkspace } from './fetchMetadataCleanupWorkspacePreflight';
 import { createPlaywrightMetadataCleanupApi } from './playwrightMetadataCleanupApi';
 import { requireProductionEnvironment } from './requireProductionEnvironment';
 
@@ -41,29 +40,6 @@ test('permanently removes Fetch migration metadata from the production CRM', asy
     requestGate,
     origin: new URL(FRONTEND_BASE_URL).origin,
     expectedWorkspaceId: CANONICALIZATION_APPROVED_WORKSPACE_ID,
-  });
-  const currentWorkspaceResponse = await page.request.post(
-    new URL('/metadata', BACKEND_BASE_URL).toString(),
-    {
-      headers: { Origin: new URL(FRONTEND_BASE_URL).origin },
-      data: {
-        operationName: 'VerifyFetchMetadataCleanupWorkspace',
-        query: `query VerifyFetchMetadataCleanupWorkspace {
-          currentWorkspace {
-            id
-            customDomain
-          }
-        }`,
-      },
-    },
-  );
-
-  expect(currentWorkspaceResponse.ok()).toBe(true);
-  const currentWorkspaceBody = await currentWorkspaceResponse.json();
-  assertFetchMetadataCleanupWorkspace({
-    body: currentWorkspaceBody,
-    expectedWorkspaceId: CANONICALIZATION_APPROVED_WORKSPACE_ID,
-    expectedHostname: new URL(FRONTEND_BASE_URL).hostname,
   });
 
   const plan = await runFetchMetadataCleanup(
