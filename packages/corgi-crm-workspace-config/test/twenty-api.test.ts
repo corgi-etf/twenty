@@ -7,6 +7,7 @@ import { test } from 'node:test';
 import type { WorkspaceConfigCheckpoint } from '../src/execution.ts';
 import {
   assertWorkspaceConfigTenant,
+  createTwentyTerritoryIdentityDiscoveryApi,
   createTwentyWorkspaceConfigApi,
   createWorkspaceConfigRequestGate,
   preflightWorkspaceConfigCheckpoint,
@@ -388,6 +389,45 @@ test('lists and compare-and-set updates wholesaler territory assignments', async
   const decodedUrl = decodeURIComponent(request.calls[1]!.url);
   assert.match(decodedUrl, /id\[eq\]:"grace-id"/);
   assert.match(decodedUrl, /updatedAt\[eq\]:"2026-09-08T00:00:00.000Z"/);
+});
+
+test('territory identity discovery API exposes only the read-only wholesaler query', async () => {
+  const request = new FakeRequest();
+  request.responses.push(
+    response({
+      data: {
+        wholesalers: [
+          {
+            id: 'grace-id',
+            name: { firstName: 'Grace', lastName: 'Hopper' },
+            workspaceMember: {
+              id: '11111111-1111-4111-8111-111111111111',
+            },
+            updatedAt: '2026-09-09T00:00:00.000Z',
+          },
+        ],
+      },
+      pageInfo: { hasNextPage: false },
+    }),
+  );
+  const api = createTwentyTerritoryIdentityDiscoveryApi({
+    request,
+    backendBaseUrl: 'https://crm.corgiinvest.com',
+    frontendBaseUrl: 'https://crm.corgiinvest.com',
+    requestGate: immediateGate,
+  });
+
+  assert.deepEqual(Object.keys(api), ['listWholesalers']);
+  const wholesalers = await api.listWholesalers();
+  assert.equal(
+    wholesalers[0]?.workspaceMember?.id,
+    '11111111-1111-4111-8111-111111111111',
+  );
+  assert.deepEqual(
+    request.calls.map(({ method }) => method),
+    ['GET'],
+  );
+  assert.match(request.calls[0]!.url, /\/rest\/wholesalers\?.*depth=1/);
 });
 
 test('writes and validates a PII-free integrity-protected checkpoint', async () => {

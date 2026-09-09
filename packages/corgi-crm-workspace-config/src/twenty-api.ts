@@ -23,6 +23,7 @@ import type {
   WorkspaceNavigationMenuItem,
   WorkspaceView,
 } from './planner.ts';
+import type { TerritoryIdentityDiscoveryApi } from './territory-identity-discovery.ts';
 
 export const WORKSPACE_CONFIG_APPROVED_ORIGIN = 'https://crm.corgiinvest.com';
 export const WORKSPACE_CONFIG_APPROVED_WORKSPACE_ID =
@@ -305,6 +306,76 @@ export const preflightWorkspaceConfigCheckpoint = async ({
   return resolvedPath;
 };
 
+const approvedWorkspaceConfigOrigins = ({
+  backendBaseUrl,
+  frontendBaseUrl,
+}: {
+  backendBaseUrl: string;
+  frontendBaseUrl: string;
+}): { backendOrigin: string; frontendOrigin: string } => {
+  const backendOrigin = new URL(backendBaseUrl).origin;
+  const frontendOrigin = new URL(frontendBaseUrl).origin;
+  if (
+    backendBaseUrl !== backendOrigin ||
+    frontendBaseUrl !== frontendOrigin ||
+    backendOrigin !== WORKSPACE_CONFIG_APPROVED_ORIGIN ||
+    frontendOrigin !== WORKSPACE_CONFIG_APPROVED_ORIGIN
+  ) {
+    throw new Error('Workspace configuration API origin is not approved');
+  }
+
+  return { backendOrigin, frontendOrigin };
+};
+
+const createWholesalerLister = ({
+  request,
+  backendOrigin,
+  frontendOrigin,
+  requestGate,
+}: {
+  request: WorkspaceConfigRequestContext;
+  backendOrigin: string;
+  frontendOrigin: string;
+  requestGate: ReturnType<typeof createWorkspaceConfigRequestGate>;
+}) => {
+  const headers = { Origin: frontendOrigin };
+
+  return async (): Promise<WholesalerTerritoryRecord[]> => {
+    const wholesalers: WholesalerTerritoryRecord[] = [];
+    let cursor: string | undefined;
+    do {
+      const query = new URLSearchParams({ limit: '100', depth: '1' });
+      if (cursor) query.set('starting_after', cursor);
+      const url = new URL('/rest/wholesalers', backendOrigin);
+      url.search = query.toString();
+      const response = await requestGate(() =>
+        request.get(url.toString(), { headers }),
+      );
+      await assertSuccessfulResponse(
+        response,
+        'List wholesalers for territory assignment',
+      );
+      const body = await disposeAfterJson<RecordListResponse>(
+        response,
+        'Wholesaler list',
+      );
+      const pageWholesalers = body.data?.wholesalers;
+      if (!Array.isArray(pageWholesalers)) {
+        throw new Error('Wholesaler list response has an invalid shape');
+      }
+      wholesalers.push(...(pageWholesalers as WholesalerTerritoryRecord[]));
+      cursor = body.pageInfo?.hasNextPage
+        ? (body.pageInfo.endCursor ?? undefined)
+        : undefined;
+      if (body.pageInfo?.hasNextPage && !cursor) {
+        throw new Error('Wholesaler pagination omitted its cursor');
+      }
+    } while (cursor);
+
+    return wholesalers;
+  };
+};
+
 export const createTwentyWorkspaceConfigApi = ({
   request,
   backendBaseUrl,
@@ -318,16 +389,10 @@ export const createTwentyWorkspaceConfigApi = ({
   checkpointFilePath: string;
   requestGate?: ReturnType<typeof createWorkspaceConfigRequestGate>;
 }): WorkspaceConfigApi => {
-  const backendOrigin = new URL(backendBaseUrl).origin;
-  const frontendOrigin = new URL(frontendBaseUrl).origin;
-  if (
-    backendBaseUrl !== backendOrigin ||
-    frontendBaseUrl !== frontendOrigin ||
-    backendOrigin !== WORKSPACE_CONFIG_APPROVED_ORIGIN ||
-    frontendOrigin !== WORKSPACE_CONFIG_APPROVED_ORIGIN
-  ) {
-    throw new Error('Workspace configuration API origin is not approved');
-  }
+  const { backendOrigin, frontendOrigin } = approvedWorkspaceConfigOrigins({
+    backendBaseUrl,
+    frontendBaseUrl,
+  });
   const headers = { Origin: frontendOrigin };
   const restUrl = (path: string) =>
     new URL(`/rest/${path}`, backendOrigin).toString();
@@ -449,40 +514,12 @@ export const createTwentyWorkspaceConfigApi = ({
     return companies;
   };
 
-  const listWholesalers = async (): Promise<WholesalerTerritoryRecord[]> => {
-    const wholesalers: WholesalerTerritoryRecord[] = [];
-    let cursor: string | undefined;
-    do {
-      const query = new URLSearchParams({ limit: '100', depth: '1' });
-      if (cursor) query.set('starting_after', cursor);
-      const response = await requestGate(() =>
-        request.get(`${restUrl('wholesalers')}?${query.toString()}`, {
-          headers,
-        }),
-      );
-      await assertSuccessfulResponse(
-        response,
-        'List wholesalers for territory assignment',
-      );
-      const body = await disposeAfterJson<RecordListResponse>(
-        response,
-        'Wholesaler list',
-      );
-      const pageWholesalers = body.data?.wholesalers;
-      if (!Array.isArray(pageWholesalers)) {
-        throw new Error('Wholesaler list response has an invalid shape');
-      }
-      wholesalers.push(...(pageWholesalers as WholesalerTerritoryRecord[]));
-      cursor = body.pageInfo?.hasNextPage
-        ? (body.pageInfo.endCursor ?? undefined)
-        : undefined;
-      if (body.pageInfo?.hasNextPage && !cursor) {
-        throw new Error('Wholesaler pagination omitted its cursor');
-      }
-    } while (cursor);
-
-    return wholesalers;
-  };
+  const listWholesalers = createWholesalerLister({
+    request,
+    backendOrigin,
+    frontendOrigin,
+    requestGate,
+  });
 
   return {
     async listWorkspaceConfigSnapshot(): Promise<WorkspaceConfigSnapshot> {
@@ -905,5 +942,31 @@ export const createTwentyWorkspaceConfigApi = ({
         throw error;
       }
     },
+  };
+};
+
+export const createTwentyTerritoryIdentityDiscoveryApi = ({
+  request,
+  backendBaseUrl,
+  frontendBaseUrl,
+  requestGate = createWorkspaceConfigRequestGate(),
+}: {
+  request: WorkspaceConfigRequestContext;
+  backendBaseUrl: string;
+  frontendBaseUrl: string;
+  requestGate?: ReturnType<typeof createWorkspaceConfigRequestGate>;
+}): TerritoryIdentityDiscoveryApi => {
+  const { backendOrigin, frontendOrigin } = approvedWorkspaceConfigOrigins({
+    backendBaseUrl,
+    frontendBaseUrl,
+  });
+
+  return {
+    listWholesalers: createWholesalerLister({
+      request,
+      backendOrigin,
+      frontendOrigin,
+      requestGate,
+    }),
   };
 };
