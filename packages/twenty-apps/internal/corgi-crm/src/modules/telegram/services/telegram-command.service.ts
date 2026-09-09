@@ -1,0 +1,156 @@
+import {
+  buildDailySummaries,
+  formatDailySummary,
+  formatEmptyDailySummary,
+  splitTelegramMessage,
+} from 'src/modules/outreach/services/daily-summary.service';
+import { getZonedDayWindow } from 'src/modules/outreach/services/day-window.service';
+import { logOutreach } from 'src/modules/outreach/services/log-outreach.service';
+import { type NamedRecord, type OutreachRepository } from 'src/modules/outreach/types';
+import {
+  getTelegramLink,
+  linkTelegramAccount,
+  parseTelegramLinkCodes,
+} from 'src/modules/telegram/services/telegram-link.service';
+import { type KeyValueStore, type ParsedTelegramUpdate } from 'src/modules/telegram/types';
+
+const HELP = [
+  'Corgi CRM outreach bot',
+  '/link CODE — securely link your CRM identity',
+  '/log call | Company | outcome | notes',
+  '/log type=meeting; company=Company; contact=Name; outcome=interested; notes=Next step; followup=YYYY-MM-DD',
+  '/today — your activity breakdown for the current local day',
+  '/cancel — cancel the current entry',
+  '/help — show this guide',
+].join('\n');
+
+type CommandDependencies = {
+  repository: OutreachRepository;
+  store: KeyValueStore;
+  timeZone: string;
+  linkCodesJson: string | undefined;
+  findWholesalers(workspaceMemberId: string): Promise<NamedRecord[]>;
+  send(chatId: string, text: string): Promise<void>;
+  answerCallback?(callbackQueryId: string): Promise<void>;
+  now(): Date;
+};
+
+const sendParts = async (
+  send: CommandDependencies['send'],
+  chatId: string,
+  text: string,
+) => {
+  for (const part of splitTelegramMessage(text)) await send(chatId, part);
+};
+
+const commandName = (text: string) =>
+  text.trim().split(/\s+/, 1)[0]!.replace(/@\w+$/i, '').toLowerCase();
+
+export const processTelegramCommand = async (
+  update: ParsedTelegramUpdate,
+  dependencies: CommandDependencies,
+) => {
+  if (update.callbackQueryId && dependencies.answerCallback) {
+    await dependencies.answerCallback(update.callbackQueryId);
+  }
+  const command = commandName(update.text);
+  if (command === '/help' || command === '/start') {
+    await sendParts(dependencies.send, update.chatId, HELP);
+    return { status: 'help' } as const;
+  }
+  if (command === '/cancel') {
+    await dependencies.store.delete(`telegram:draft:${update.userId}`);
+    await dependencies.send(update.chatId, 'Canceled. Nothing was logged.');
+    return { status: 'canceled' } as const;
+  }
+  if (command === '/link') {
+    const code = update.text.replace(/^\/link(?:@\w+)?\s*/i, '').trim();
+    try {
+      const link = await linkTelegramAccount({
+        code,
+        userId: update.userId,
+        chatId: update.chatId,
+        configuredCodes: parseTelegramLinkCodes(dependencies.linkCodesJson),
+        findWholesalers: dependencies.findWholesalers,
+        store: dependencies.store,
+      });
+      await dependencies.send(
+        update.chatId,
+        `Linked to ${link.wholesalerName}. Use /log or /today.`,
+      );
+      return { status: 'linked' } as const;
+    } catch {
+      await dependencies.send(
+        update.chatId,
+        'Could not link that code. Ask an administrator for a new one-time code.',
+      );
+      return { status: 'link_failed' } as const;
+    }
+  }
+
+  const link = await getTelegramLink(dependencies.store, update.userId);
+  if (!link || link.chatId !== update.chatId) {
+    await dependencies.send(
+      update.chatId,
+      'Link your CRM identity first with /link CODE.',
+    );
+    return { status: 'not_linked' } as const;
+  }
+
+  if (command === '/log') {
+    try {
+      const result = await logOutreach({
+        text: update.text,
+        wholesalerId: link.wholesalerId,
+        now: dependencies.now(),
+        repository: dependencies.repository,
+      });
+      if (result.status === 'logged') {
+        await dependencies.send(
+          update.chatId,
+          `Logged ${result.companyName}. Use /today to review your day.`,
+        );
+      } else if (result.status === 'ambiguous_company' || result.status === 'ambiguous_contact') {
+        await dependencies.send(
+          update.chatId,
+          `More than one match: ${result.matches.map(({ name }) => name).join(', ')}. Use the exact name and try again.`,
+        );
+      } else {
+        await dependencies.send(
+          update.chatId,
+          result.status === 'company_not_found'
+            ? 'Company not found. Check the CRM name and try again.'
+            : 'Contact not found at that company. Check the CRM name and try again.',
+        );
+      }
+      return result;
+    } catch {
+      await dependencies.send(update.chatId, `Could not parse that entry.\n${HELP}`);
+      return { status: 'invalid_log' } as const;
+    }
+  }
+
+  if (command === '/today' || command === '/summary' || update.text === 'today') {
+    const window = getZonedDayWindow({
+      now: dependencies.now(),
+      timeZone: dependencies.timeZone,
+    });
+    const activities = await dependencies.repository.listActivities({
+      start: window.start.toISOString(),
+      end: window.end.toISOString(),
+      wholesalerId: link.wholesalerId,
+    });
+    const summary = buildDailySummaries(activities, window.localDate)[0];
+    await sendParts(
+      dependencies.send,
+      update.chatId,
+      summary
+        ? formatDailySummary(summary)
+        : formatEmptyDailySummary(link.wholesalerName, window.localDate),
+    );
+    return { status: 'summary' } as const;
+  }
+
+  await sendParts(dependencies.send, update.chatId, HELP);
+  return { status: 'help' } as const;
+};

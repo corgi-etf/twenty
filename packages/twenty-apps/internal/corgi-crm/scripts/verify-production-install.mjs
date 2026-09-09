@@ -1,5 +1,8 @@
 const APPLICATION_ID = 'ca87ad48-b62a-41be-a790-7c17707ff1b4';
 const TRIGGER_ID = '65f68f6b-e130-4292-ab05-3ef48458d7de';
+const TELEGRAM_WEBHOOK_ID = 'a7693988-ab2a-4f07-b865-b4d4808c814a';
+const TELEGRAM_WORKER_ID = '32cf139c-a4bf-4d87-84f4-f70ac39a3942';
+const TELEGRAM_CRON_ID = 'e61bb12c-a0f5-421b-97d2-e2596e56cf59';
 const APPROVED_ORIGIN = 'https://crm.corgiinvest.com';
 const APPROVED_WORKSPACE_ID = 'eabf5d9d-fc99-4acb-b160-710ecb1db996';
 const PAGE_SIZE = 100;
@@ -82,6 +85,78 @@ const parseTriggerSettings = (settings) => {
   }
 };
 
+const TELEGRAM_VARIABLE_KEYS = [
+  'CORGI_CRM_TELEGRAM_BOT_TOKEN',
+  'CORGI_CRM_TELEGRAM_WEBHOOK_SECRET',
+  'CORGI_CRM_TELEGRAM_LINK_CODES',
+  'CORGI_CRM_TELEGRAM_TIME_ZONE',
+  'CORGI_CRM_TELEGRAM_DAILY_SUMMARY_TIME',
+];
+
+const exactlyOne = (values, predicate, label) => {
+  const matches = values.filter(predicate);
+  if (matches.length !== 1) {
+    throw new Error(`Expected exactly one ${label}, found ${matches.length}`);
+  }
+  return matches[0];
+};
+
+const verifyTelegramApplicationContract = (application, workspaceId) => {
+  const variables = application.applicationVariables ?? [];
+  const workspaceVariable = exactlyOne(
+    variables,
+    (variable) => variable.key === 'CORGI_CRM_WORKSPACE_ID',
+    'workspace variable',
+  );
+  if (workspaceVariable.value !== workspaceId) {
+    throw new Error('Telegram application workspace variable is incorrect');
+  }
+  for (const key of TELEGRAM_VARIABLE_KEYS) {
+    const variable = exactlyOne(
+      variables,
+      (candidate) => candidate.key === key,
+      `Telegram variable ${key}`,
+    );
+    if (typeof variable.value !== 'string' || !variable.value.trim()) {
+      throw new Error(`Telegram variable ${key} is not configured`);
+    }
+  }
+
+  const functions = application.logicFunctions ?? [];
+  const webhook = exactlyOne(
+    functions,
+    (logicFunction) =>
+      logicFunction.universalIdentifier === TELEGRAM_WEBHOOK_ID,
+    'Telegram webhook function',
+  );
+  const webhookSettings = parseTriggerSettings(
+    webhook.httpRouteTriggerSettings,
+  );
+  if (
+    webhookSettings?.path !== '/telegram/webhook' ||
+    webhookSettings?.httpMethod !== 'POST' ||
+    webhookSettings?.isAuthRequired !== false
+  ) {
+    throw new Error('Telegram webhook route contract is not active');
+  }
+
+  exactlyOne(
+    functions,
+    (logicFunction) =>
+      logicFunction.universalIdentifier === TELEGRAM_WORKER_ID,
+    'Telegram queued worker function',
+  );
+  const cron = exactlyOne(
+    functions,
+    (logicFunction) => logicFunction.universalIdentifier === TELEGRAM_CRON_ID,
+    'Telegram cron function',
+  );
+  const cronSettings = parseTriggerSettings(cron.cronTriggerSettings);
+  if (cronSettings?.pattern !== '*/15 * * * *') {
+    throw new Error('Telegram cron contract is not active');
+  }
+};
+
 const verifyInstalledApplication = async ({
   graphql,
   version,
@@ -95,7 +170,12 @@ const verifyInstalledApplication = async ({
       findManyApplications {
         universalIdentifier version state
         applicationVariables { key value }
-        logicFunctions { universalIdentifier databaseEventTriggerSettings }
+        logicFunctions {
+          universalIdentifier
+          databaseEventTriggerSettings
+          httpRouteTriggerSettings
+          cronTriggerSettings
+        }
       }
     }`,
   });
@@ -134,6 +214,7 @@ const verifyInstalledApplication = async ({
   ) {
     throw new Error('Corgi CRM member-created database trigger is not active');
   }
+  return application;
 };
 
 const listAllRecords = async ({ graphql, operationName, root, selection }) => {
@@ -223,8 +304,10 @@ const verifyReconciliation = ({ members, wholesalers }) => {
 
 const main = async () => {
   const mode = process.argv[2];
-  if (mode !== 'target' && mode !== 'installed') {
-    throw new Error('Usage: verify-production-install.mjs <target|installed>');
+  if (mode !== 'target' && mode !== 'installed' && mode !== 'telegram') {
+    throw new Error(
+      'Usage: verify-production-install.mjs <target|installed|telegram>',
+    );
   }
   const origin = new URL(requiredEnvironment('CORGI_CRM_API_URL')).origin;
   const workspaceId = requiredEnvironment('CORGI_CRM_EXPECTED_WORKSPACE_ID');
@@ -242,7 +325,7 @@ const main = async () => {
     return;
   }
 
-  await verifyInstalledApplication({
+  const application = await verifyInstalledApplication({
     graphql,
     version: requiredEnvironment('CORGI_CRM_EXPECTED_VERSION'),
     workspaceId,
@@ -262,8 +345,11 @@ const main = async () => {
     }),
   ]);
   const result = verifyReconciliation({ members, wholesalers });
+  if (mode === 'telegram') {
+    verifyTelegramApplicationContract(application, workspaceId);
+  }
   console.log(
-    `Verified installed app, active trigger, and ${result.members} member identities across ${result.wholesalers} wholesalers.`,
+    `Verified installed app, active trigger, and ${result.members} member identities across ${result.wholesalers} wholesalers${mode === 'telegram' ? ', including the configured Telegram topology' : ''}.`,
   );
 };
 
@@ -274,5 +360,5 @@ if (
   await main();
 }
 
-export { verifyReconciliation };
+export { verifyReconciliation, verifyTelegramApplicationContract };
 import { pathToFileURL } from 'node:url';
