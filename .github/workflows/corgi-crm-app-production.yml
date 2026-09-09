@@ -59,6 +59,14 @@ jobs:
           [[ "${DEPLOYED_SHA}" == "${GITHUB_SHA}" ]]
           git cat-file -e "${DEPLOYED_SHA}^{commit}"
 
+      - name: Read the app version from the approved revision
+        id: app
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(jq -er '.version | select(type == "string" and length > 0)' "${APP_PATH}/package.json")"
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+
       - name: Configure immediate AWS deployment inspection
         uses: aws-actions/configure-aws-credentials@61815dcd50bd041e203e49132bacad1fd04d2708 # v5.1.1
         with:
@@ -157,5 +165,5 @@ jobs:
       - name: Verify installed application, trigger, and reconciliation
         env:
           CORGI_CRM_API_KEY: ${{ secrets.CRM_APP_API_KEY }}
-          CORGI_CRM_EXPECTED_VERSION: '1.0.0'
+          CORGI_CRM_EXPECTED_VERSION: ${{ steps.app.outputs.version }}
         run: node "${APP_PATH}/scripts/verify-production-install.mjs" installed
