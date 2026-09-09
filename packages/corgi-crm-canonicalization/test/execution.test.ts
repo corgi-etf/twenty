@@ -224,19 +224,57 @@ test('dry-run reports every unresolved record while apply remains fail-closed', 
     name: 'Acme',
     updatedAt: '2026-01-01T00:00:00.000Z',
   });
-  input.sourceRecords.push({
-    id: 'source-1',
-    companyId: 'company-1',
-    sourceFile: 'source.csv',
-    sourceSheet: 'Leads',
-    sourceRow: 1,
-    rawData: JSON.stringify({ 'Unsupported Field': 'value' }),
-  });
+  input.sourceRecords.push(
+    {
+      id: 'private-source-one',
+      companyId: 'company-1',
+      sourceFile: 'private-damien.csv',
+      sourceSheet: 'Leads',
+      sourceRow: 1,
+      rawData: JSON.stringify({
+        'Unsupported Field': 'damien@corgi.insure',
+      }),
+    },
+    {
+      id: 'private-source-two',
+      companyId: 'company-1',
+      sourceFile: 'private-addresses.csv',
+      sourceSheet: 'Leads',
+      sourceRow: 2,
+      rawData: JSON.stringify({
+        'Unsupported Field': 'Damien Wiese | +1 312-555-0198 | 1 Main St',
+      }),
+    },
+  );
   const api = new MemoryApi(input);
+  const unresolvedRowKeys = buildCanonicalizationPlan(input).unresolved.map(
+    ({ rowKey }) => rowKey,
+  );
 
   const dryRun = await runCanonicalization(api, options);
+  const serialized = JSON.stringify(dryRun);
 
   assert.ok(dryRun.unresolved > 0);
+  assert.deepEqual(dryRun.reconciliation.unresolvedSchemaDiagnostics, [
+    {
+      code: 'UNHANDLED_RAW_FIELD',
+      normalizedRawKey: 'unsupported field',
+      canonicalTarget: null,
+      canonicalField: null,
+      count: 2,
+    },
+  ]);
+  for (const forbidden of [
+    'damien@corgi.insure',
+    'Damien Wiese',
+    '+1 312-555-0198',
+    '1 Main St',
+    'private-damien.csv',
+    'private-addresses.csv',
+    ...unresolvedRowKeys,
+  ]) {
+    assert.equal(serialized.includes(forbidden), false, forbidden);
+  }
   assert.deepEqual(api.writes, []);
   await assert.rejects(
     runCanonicalization(api, {

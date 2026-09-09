@@ -240,11 +240,15 @@ jobs:
           --project=production-chromium
 
       - name: Summarize the aggregate result
-        if: success()
+        if: always()
         shell: bash
         run: |
           set -euo pipefail
           RESULT="${RUNNER_TEMP}/crm-canonicalization/canonicalization-result.json"
+          if [[ ! -f "${RESULT}" ]]; then
+            echo 'Canonicalization result artifact was not produced.' >> "${GITHUB_STEP_SUMMARY}"
+            exit 0
+          fi
           jq '{
             mode,
             metadataRenames,
@@ -252,7 +256,9 @@ jobs:
             plannedRecordMutations,
             unresolved,
             manifest,
-            remainingMutations: .reconciliation.remainingMutations
+            remainingMutations: .reconciliation.remainingMutations,
+            unresolvedByCode: .reconciliation.unresolvedByCode,
+            unresolvedSchemaDiagnostics: .reconciliation.unresolvedSchemaDiagnostics
           }' "${RESULT}" >> "${GITHUB_STEP_SUMMARY}"
 
       - name: Upload the PII-free result and durable checkpoint
