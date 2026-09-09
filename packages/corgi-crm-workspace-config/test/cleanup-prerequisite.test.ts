@@ -26,6 +26,30 @@ const completedJournal = () => ({
   },
 });
 
+const recoveredJournal = () => ({
+  schemaVersion: 1,
+  status: 'complete',
+  operations: [],
+  completedOperationKeys: [],
+  preflightEvidence: {
+    companyCount: 2191,
+    peopleCount: 1961,
+    holdingObservationCount: 331,
+    rowCoverageHash: 'a'.repeat(64),
+    businessContentHash: 'b'.repeat(64),
+  },
+  recoveryEvidence: {
+    sourceRunId: '34399833291',
+    sourceAttempt: 1,
+    sourceHeadSha: 'c'.repeat(40),
+    postconditionCounts: {
+      companyCount: 2191,
+      peopleCount: 1961,
+      holdingCount: 331,
+    },
+  },
+});
+
 const writeJournal = async (path: string, journal: unknown): Promise<void> => {
   const sha256 = createHash('sha256')
     .update(JSON.stringify(journal), 'utf8')
@@ -103,6 +127,28 @@ test('rejects incomplete or unknown cleanup completion keys', async () => {
     await writeJournal(path, unknownCompletionJournal);
 
     await assert.rejects(assertJournalAccepted(path), /operation coverage/i);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('accepts empty operation coverage only with matching recovery evidence', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'crm-cleanup-prerequisite-'));
+  try {
+    const path = join(directory, 'metadata-cleanup-journal.json');
+    await writeJournal(path, recoveredJournal());
+
+    await assertJournalAccepted(path);
+
+    const missingRecovery = recoveredJournal();
+    delete (missingRecovery as { recoveryEvidence?: unknown }).recoveryEvidence;
+    await writeJournal(path, missingRecovery);
+    await assert.rejects(assertJournalAccepted(path), /recovery evidence/i);
+
+    const mismatchedRecovery = recoveredJournal();
+    mismatchedRecovery.recoveryEvidence.postconditionCounts.companyCount = 2192;
+    await writeJournal(path, mismatchedRecovery);
+    await assert.rejects(assertJournalAccepted(path), /recovery evidence/i);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

@@ -14,6 +14,10 @@ const bootstrapWorkflowPath = new URL(
   '../../../.github/workflows/crm-workspace-metadata-bootstrap.yml',
   import.meta.url,
 );
+const cleanupWorkflowPath = new URL(
+  '../../../.github/workflows/crm-metadata-cleanup.yml',
+  import.meta.url,
+);
 const appWorkflowPath = new URL(
   '../../../.github/workflows/corgi-crm-app-production.yml',
   import.meta.url,
@@ -74,6 +78,27 @@ test('workspace configuration requires the exact deployed workflow revision', as
     workspaceConfigSpec,
     /assertCompletedTerritoryIdentityDiscovery/,
   );
+});
+
+test('cleanup journal recovery is lineage-bound and cannot silently drop its artifact', async () => {
+  const cleanupWorkflow = await readFile(cleanupWorkflowPath, 'utf8');
+
+  assert.match(cleanupWorkflow, /recovery_source_run_id:/);
+  assert.match(cleanupWorkflow, /recovery_source_attempt:/);
+  assert.match(
+    cleanupWorkflow,
+    /Verify successful cleanup lineage for journal recovery/,
+  );
+  assert.match(
+    cleanupWorkflow,
+    /Run fail-closed production metadata cleanup[\s\S]*?conclusion == "success"/,
+  );
+  assert.match(
+    cleanupWorkflow,
+    /CRM_METADATA_CLEANUP_JOURNAL_PATH: \$\{\{ runner\.temp \}\}\/crm-metadata-cleanup\/metadata-cleanup-journal\.json/,
+  );
+  assert.match(cleanupWorkflow, /if-no-files-found: error/);
+  assert.doesNotMatch(cleanupWorkflow, /if-no-files-found: ignore/);
 });
 
 test('metadata bootstrap is exact-SHA, metadata-only, and precedes app preflight', async () => {
