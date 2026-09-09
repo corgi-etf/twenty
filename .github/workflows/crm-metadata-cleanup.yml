@@ -42,6 +42,16 @@ on:
         required: false
         default: ''
         type: string
+      recovery_source_run_id:
+        description: Successful cleanup run whose missing journal must be recovered
+        required: false
+        default: ''
+        type: string
+      recovery_source_attempt:
+        description: Successful cleanup run attempt whose missing journal must be recovered
+        required: false
+        default: ''
+        type: string
 
 permissions:
   actions: read
@@ -91,6 +101,8 @@ jobs:
           HOLDING_COUNT: ${{ inputs.holding_count }}
           RESUME_RUN_ID: ${{ inputs.resume_run_id }}
           RESUME_ATTEMPT: ${{ inputs.resume_attempt }}
+          RECOVERY_SOURCE_RUN_ID: ${{ inputs.recovery_source_run_id }}
+          RECOVERY_SOURCE_ATTEMPT: ${{ inputs.recovery_source_attempt }}
         run: |
           set -euo pipefail
           if [[ "${REQUESTED_CONFIRMATION}" != "${REQUIRED_CONFIRMATION}" ]]; then
@@ -107,8 +119,64 @@ jobs:
             [[ "${RESUME_RUN_ID}" =~ ^[1-9][0-9]*$ ]]
             [[ "${RESUME_ATTEMPT}" =~ ^[1-9][0-9]*$ ]]
           fi
+          if [[ -n "${RECOVERY_SOURCE_RUN_ID}" || -n "${RECOVERY_SOURCE_ATTEMPT}" ]]; then
+            [[ "${RECOVERY_SOURCE_RUN_ID}" =~ ^[1-9][0-9]*$ ]]
+            [[ "${RECOVERY_SOURCE_ATTEMPT}" =~ ^[1-9][0-9]*$ ]]
+            [[ -z "${RESUME_RUN_ID}" && -z "${RESUME_ATTEMPT}" ]]
+          fi
           git cat-file -e "${DEPLOYED_SHA}^{commit}"
           git merge-base --is-ancestor "${DEPLOYED_SHA}" "${GITHUB_SHA}"
+
+      - name: Verify successful cleanup lineage for journal recovery
+        if: inputs.recovery_source_run_id != ''
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DEPLOYED_SHA: ${{ inputs.deployed_sha }}
+          SOURCE_RUN_ID: ${{ inputs.recovery_source_run_id }}
+          SOURCE_ATTEMPT: ${{ inputs.recovery_source_attempt }}
+        run: |
+          set -euo pipefail
+          workflow_json="${RUNNER_TEMP}/cleanup-workflow.json"
+          run_json="${RUNNER_TEMP}/cleanup-source-run.json"
+          jobs_json="${RUNNER_TEMP}/cleanup-source-jobs.json"
+          gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/crm-metadata-cleanup.yml" > "${workflow_json}"
+          gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${SOURCE_RUN_ID}/attempts/${SOURCE_ATTEMPT}" > "${run_json}"
+          gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${SOURCE_RUN_ID}/attempts/${SOURCE_ATTEMPT}/jobs" > "${jobs_json}"
+          workflow_id="$(jq -r '.id' "${workflow_json}")"
+          jq -e '
+            .name == "Manual CRM migration metadata cleanup" and
+            .path == ".github/workflows/crm-metadata-cleanup.yml" and
+            .state == "active" and (.id | type == "number")
+          ' "${workflow_json}" >/dev/null
+          jq -e \
+            --arg repository "${GITHUB_REPOSITORY}" \
+            --arg run_id "${SOURCE_RUN_ID}" \
+            --argjson run_attempt "${SOURCE_ATTEMPT}" \
+            --arg workflow_id "${workflow_id}" \
+            --arg deployed_sha "${DEPLOYED_SHA}" '
+              (.id | tostring) == $run_id and
+              .run_attempt == $run_attempt and
+              (.workflow_id | tostring) == $workflow_id and
+              .name == "Manual CRM migration metadata cleanup" and
+              .event == "workflow_dispatch" and .head_branch == "main" and
+              .head_repository.full_name == $repository and
+              .status == "completed" and .conclusion == "success" and
+              .head_sha == $deployed_sha
+            ' "${run_json}" >/dev/null
+          jq -e '
+            [
+              .jobs[] | select(
+                .name == "Permanently remove migration-only CRM metadata" and
+                .status == "completed" and .conclusion == "success" and
+                any(
+                  .steps[];
+                  .name == "Run fail-closed production metadata cleanup" and
+                  .status == "completed" and .conclusion == "success"
+                )
+              )
+            ] | length == 1
+          ' "${jobs_json}" >/dev/null
 
       - name: Configure read-only AWS deployment inspection
         uses: aws-actions/configure-aws-credentials@61815dcd50bd041e203e49132bacad1fd04d2708 # v5.1.1
@@ -173,7 +241,7 @@ jobs:
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: crm-metadata-cleanup-${{ inputs.resume_run_id }}-${{ inputs.resume_attempt }}
-          path: packages/twenty-e2e-testing/run_results/production/
+          path: ${{ runner.temp }}/crm-metadata-cleanup/
           github-token: ${{ github.token }}
           run-id: ${{ inputs.resume_run_id }}
 
@@ -271,7 +339,10 @@ jobs:
           CRM_CANONICALIZATION_COMPANY_COUNT: ${{ inputs.company_count }}
           CRM_CANONICALIZATION_PEOPLE_COUNT: ${{ inputs.people_count }}
           CRM_CANONICALIZATION_HOLDING_COUNT: ${{ inputs.holding_count }}
-          CRM_METADATA_CLEANUP_JOURNAL_PATH: packages/twenty-e2e-testing/run_results/production/metadata-cleanup-journal.json
+          CRM_METADATA_CLEANUP_RECOVERY_SOURCE_RUN_ID: ${{ inputs.recovery_source_run_id }}
+          CRM_METADATA_CLEANUP_RECOVERY_SOURCE_ATTEMPT: ${{ inputs.recovery_source_attempt }}
+          CRM_METADATA_CLEANUP_RECOVERY_SOURCE_HEAD_SHA: ${{ inputs.deployed_sha }}
+          CRM_METADATA_CLEANUP_JOURNAL_PATH: ${{ runner.temp }}/crm-metadata-cleanup/metadata-cleanup-journal.json
         run: >-
           npx nx test:production twenty-e2e-testing --
           tests/production/fetchMetadataCleanup.maintenance.spec.ts
@@ -292,6 +363,6 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: crm-metadata-cleanup-${{ github.run_id }}-${{ github.run_attempt }}
-          path: packages/twenty-e2e-testing/run_results/production/metadata-cleanup-journal.json
-          if-no-files-found: ignore
+          path: ${{ runner.temp }}/crm-metadata-cleanup/metadata-cleanup-journal.json
+          if-no-files-found: error
           retention-days: 30

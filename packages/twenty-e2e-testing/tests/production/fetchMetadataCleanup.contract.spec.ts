@@ -335,6 +335,7 @@ class FakeMetadataCleanupApi implements MetadataCleanupApi {
   journals: Parameters<MetadataCleanupApi['writeCleanupJournal']>[0][] = [];
   journalToResume?: Parameters<MetadataCleanupApi['writeCleanupJournal']>[0];
   events: string[] = [];
+  recoveryRequest?: ReturnType<MetadataCleanupApi['getCleanupRecoveryRequest']>;
 
   async listMetadataObjects() {
     return structuredClone(this.objects);
@@ -355,10 +356,14 @@ class FakeMetadataCleanupApi implements MetadataCleanupApi {
     this.events.push('workflow-preflight');
   }
 
+  getCleanupRecoveryRequest() {
+    return this.recoveryRequest;
+  }
+
   async readCleanupJournal() {
-    return this.journalToResume
-      ? structuredClone(this.journalToResume)
-      : undefined;
+    const journal = this.journalToResume ?? this.journals.at(-1);
+
+    return journal ? structuredClone(journal) : undefined;
   }
 
   async writeCleanupJournal(
@@ -676,6 +681,100 @@ test('applies once and a second run is an idempotent no-op', async () => {
       expect.stringMatching(cleanupContract.forbiddenMetadataPattern),
     ]),
   );
+});
+
+test('recovers a missing journal only from verified zero-operation live evidence', async () => {
+  const api = new FakeMetadataCleanupApi();
+  await runFetchMetadataCleanup(api);
+  api.journalToResume = undefined;
+  api.records.holdingObservations = [{ id: 'holding-1' }];
+  api.deletedObjectIds = [];
+  api.deletedFieldIds = [];
+  api.updatedFields = [];
+  api.journals = [];
+  api.events = [];
+  api.recoveryRequest = {
+    sourceRunId: '34399833291',
+    sourceAttempt: 1,
+    sourceHeadSha: 'c'.repeat(40),
+    companyCount: 1,
+    peopleCount: 1,
+    holdingCount: 1,
+    rowCoverageHash: 'a'.repeat(64),
+    businessContentHash: 'b'.repeat(64),
+  };
+
+  const plan = await runFetchMetadataCleanup(api);
+
+  expect(plan).toEqual({
+    objectsToDelete: [],
+    fieldsToDelete: [],
+    fieldsToRename: [],
+  });
+  expect(api.deletedObjectIds).toEqual([]);
+  expect(api.deletedFieldIds).toEqual([]);
+  expect(api.updatedFields).toEqual([]);
+  expect(api.journals).toHaveLength(1);
+  expect(api.journals[0]).toMatchObject({
+    status: 'complete',
+    operations: [],
+    completedOperationKeys: [],
+    preflightEvidence: {
+      companyCount: 1,
+      peopleCount: 1,
+      holdingObservationCount: 1,
+      rowCoverageHash: 'a'.repeat(64),
+      businessContentHash: 'b'.repeat(64),
+    },
+    recoveryEvidence: {
+      sourceRunId: '34399833291',
+      sourceAttempt: 1,
+      sourceHeadSha: 'c'.repeat(40),
+      postconditionCounts: {
+        companyCount: 1,
+        peopleCount: 1,
+        holdingCount: 1,
+      },
+    },
+  });
+});
+
+test('rejects missing or mismatched recovery evidence without mutation', async () => {
+  const api = new FakeMetadataCleanupApi();
+  await runFetchMetadataCleanup(api);
+  api.journalToResume = undefined;
+  api.deletedObjectIds = [];
+  api.deletedFieldIds = [];
+  api.updatedFields = [];
+  api.journals = [];
+
+  await expect(runFetchMetadataCleanup(api)).rejects.toThrow(
+    /recovery evidence is required/i,
+  );
+  expect(api.deletedObjectIds).toEqual([]);
+  expect(api.deletedFieldIds).toEqual([]);
+  expect(api.updatedFields).toEqual([]);
+  expect(api.journals).toEqual([]);
+
+  api.recoveryRequest = {
+    sourceRunId: '34399833291',
+    sourceAttempt: 1,
+    sourceHeadSha: 'c'.repeat(40),
+    companyCount: 2,
+    peopleCount: 1,
+    holdingCount: 1,
+    rowCoverageHash: 'a'.repeat(64),
+    businessContentHash: 'b'.repeat(64),
+  };
+  api.records.holdingObservations = [{ id: 'holding-1' }];
+
+  await expect(runFetchMetadataCleanup(api)).rejects.toThrow(
+    /Company count.*expected 2.*received 1/i,
+  );
+  expect(api.deletedObjectIds).toEqual([]);
+  expect(api.deletedFieldIds).toEqual([]);
+  expect(api.updatedFields).toEqual([]);
+  expect(api.journals).toEqual([]);
 });
 
 test('resumes an interrupted journal without rerunning a destroyed staging preflight', async () => {

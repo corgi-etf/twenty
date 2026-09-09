@@ -220,6 +220,7 @@ export type MetadataCleanupApi = {
   listRecords(objectNamePlural: string): Promise<WorkspaceRecord[]>;
   assertCanonicalizationComplete(): Promise<MetadataCleanupPreflightEvidence>;
   assertNoWorkflowReferences(plan: MetadataCleanupPlan): Promise<void>;
+  getCleanupRecoveryRequest(): MetadataCleanupRecoveryRequest | undefined;
   readCleanupJournal(): Promise<MetadataCleanupJournal | undefined>;
   writeCleanupJournal(journal: MetadataCleanupJournal): Promise<void>;
   deleteMetadataObject(id: string): Promise<void>;
@@ -261,6 +262,29 @@ export type MetadataCleanupJournal = {
   operations: MetadataCleanupOperation[];
   completedOperationKeys: string[];
   preflightEvidence: MetadataCleanupPreflightEvidence;
+  recoveryEvidence?: MetadataCleanupRecoveryEvidence;
+};
+
+export type MetadataCleanupRecoveryRequest = {
+  sourceRunId: string;
+  sourceAttempt: number;
+  sourceHeadSha: string;
+  companyCount: number;
+  peopleCount: number;
+  holdingCount: number;
+  rowCoverageHash: string;
+  businessContentHash: string;
+};
+
+export type MetadataCleanupRecoveryEvidence = {
+  sourceRunId: string;
+  sourceAttempt: number;
+  sourceHeadSha: string;
+  postconditionCounts: {
+    companyCount: number;
+    peopleCount: number;
+    holdingCount: number;
+  };
 };
 
 export type MetadataCleanupPreflightEvidence = {
@@ -894,11 +918,26 @@ const assertResumeJournalMatchesPlan = (
 export const runFetchMetadataCleanup = async (
   api: MetadataCleanupApi,
 ): Promise<MetadataCleanupPlan> => {
-  const plan = buildFetchMetadataCleanupPlan(await api.listMetadataObjects());
+  const initialObjects = await api.listMetadataObjects();
+  const plan = buildFetchMetadataCleanupPlan(initialObjects);
   const operations = cleanupOperations(plan);
   const previousJournal = await api.readCleanupJournal();
+  const recoveryRequest = api.getCleanupRecoveryRequest();
   const isResume = previousJournal?.status === 'running';
   let preflightEvidence = previousJournal?.preflightEvidence;
+  let recoveryEvidence: MetadataCleanupRecoveryEvidence | undefined;
+
+  if (recoveryRequest && operations.length > 0) {
+    throw new Error(
+      'Cleanup recovery is allowed only after every cleanup operation is complete',
+    );
+  }
+
+  if (previousJournal?.status === 'complete' && operations.length === 0) {
+    assertCleanupComplete(initialObjects);
+    await api.writeCleanupJournal(previousJournal);
+    return plan;
+  }
 
   if (isResume) {
     assertResumeJournalMatchesPlan(previousJournal, operations);
@@ -910,6 +949,57 @@ export const runFetchMetadataCleanup = async (
     }
     if (operations.length > 0) {
       preflightEvidence = await api.assertCanonicalizationComplete();
+    } else {
+      if (!recoveryRequest) {
+        throw new Error(
+          'Cleanup recovery evidence is required when no durable journal exists',
+        );
+      }
+      assertCleanupComplete(initialObjects);
+      const companies = await api.listRecords('companies');
+      const people = await api.listRecords('people');
+      const holdingObservations = await api.listRecords('holdingObservations');
+      const actualCounts = {
+        companyCount: companies.length,
+        peopleCount: people.length,
+        holdingCount: holdingObservations.length,
+      };
+      for (const [label, actual, expected] of [
+        ['Company', actualCounts.companyCount, recoveryRequest.companyCount],
+        ['People', actualCounts.peopleCount, recoveryRequest.peopleCount],
+        [
+          'Holding observation',
+          actualCounts.holdingCount,
+          recoveryRequest.holdingCount,
+        ],
+      ] as const) {
+        if (actual !== expected) {
+          throw new Error(
+            `${label} count recovery mismatch: expected ${expected}, received ${actual}`,
+          );
+        }
+      }
+      preflightEvidence = {
+        rowCoverageHash: recoveryRequest.rowCoverageHash,
+        businessContentHash: recoveryRequest.businessContentHash,
+        sourceRecordCount: 0,
+        importReviewItemCount: 0,
+        companyCount: actualCounts.companyCount,
+        peopleCount: actualCounts.peopleCount,
+        taskCount: 0,
+        taskTargetCount: 0,
+        wholesalerCount: 0,
+        leadAssignmentCount: 0,
+        outreachActivityCount: 0,
+        holdingObservationCount: actualCounts.holdingCount,
+        archivedOutreachActivityCount: 0,
+      };
+      recoveryEvidence = {
+        sourceRunId: recoveryRequest.sourceRunId,
+        sourceAttempt: recoveryRequest.sourceAttempt,
+        sourceHeadSha: recoveryRequest.sourceHeadSha,
+        postconditionCounts: actualCounts,
+      };
     }
   }
   if (operations.length > 0) await api.assertNoWorkflowReferences(plan);
@@ -922,6 +1012,7 @@ export const runFetchMetadataCleanup = async (
           status: operations.length > 0 ? 'running' : 'complete',
           operations,
           completedOperationKeys: [],
+          recoveryEvidence,
           preflightEvidence: preflightEvidence ?? {
             rowCoverageHash: '',
             businessContentHash: '',
@@ -974,8 +1065,10 @@ export const runFetchMetadataCleanup = async (
     throw new Error('Fetch metadata cleanup postcondition failed');
   }
 
-  journal.status = 'complete';
-  await api.writeCleanupJournal(journal);
+  if (journal.status !== 'complete') {
+    journal.status = 'complete';
+    await api.writeCleanupJournal(journal);
+  }
 
   return plan;
 };

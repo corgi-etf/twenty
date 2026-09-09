@@ -10,6 +10,7 @@ import {
   assertPeopleContactValuesCanonicalized,
   type MetadataCleanupApi,
   type MetadataCleanupJournal,
+  type MetadataCleanupRecoveryRequest,
   type MetadataObject,
   type WorkspaceRecord,
 } from './fetchMetadataCleanup';
@@ -89,6 +90,39 @@ const expectedCanonicalizationManifest =
       businessContentHash,
     };
   };
+
+const cleanupRecoveryRequest = ():
+  | MetadataCleanupRecoveryRequest
+  | undefined => {
+  const sourceRunId =
+    process.env.CRM_METADATA_CLEANUP_RECOVERY_SOURCE_RUN_ID?.trim();
+  if (!sourceRunId) return undefined;
+
+  const sourceAttempt = positiveIntegerEnvironmentValue(
+    'CRM_METADATA_CLEANUP_RECOVERY_SOURCE_ATTEMPT',
+  );
+  const sourceHeadSha = requiredEnvironmentValue(
+    'CRM_METADATA_CLEANUP_RECOVERY_SOURCE_HEAD_SHA',
+  );
+  if (!/^[1-9][0-9]*$/.test(sourceRunId)) {
+    throw new Error('Cleanup recovery source run ID is invalid');
+  }
+  if (!/^[a-f0-9]{40}$/.test(sourceHeadSha)) {
+    throw new Error('Cleanup recovery source head SHA is invalid');
+  }
+  const expected = expectedCanonicalizationManifest();
+
+  return {
+    sourceRunId,
+    sourceAttempt,
+    sourceHeadSha,
+    companyCount: expected.companyCount,
+    peopleCount: expected.peopleCount,
+    holdingCount: expected.holdingCount,
+    rowCoverageHash: expected.rowCoverageHash,
+    businessContentHash: expected.businessContentHash,
+  };
+};
 
 const journalPath = (): string =>
   resolve(
@@ -336,6 +370,8 @@ export const createPlaywrightMetadataCleanupApi = ({
       const workflowVersions = await listRecords('workflowVersions');
       assertNoWorkflowReferences([...workflows, ...workflowVersions], plan);
     },
+
+    getCleanupRecoveryRequest: cleanupRecoveryRequest,
 
     readCleanupJournal: readJournal,
     writeCleanupJournal: writeJournal,

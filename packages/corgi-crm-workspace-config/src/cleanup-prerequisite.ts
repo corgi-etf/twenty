@@ -14,9 +14,46 @@ type MetadataCleanupJournal = {
   completedOperationKeys?: unknown;
   preflightEvidence?: {
     companyCount?: unknown;
+    peopleCount?: unknown;
+    holdingObservationCount?: unknown;
     rowCoverageHash?: unknown;
     businessContentHash?: unknown;
   };
+  recoveryEvidence?: {
+    sourceRunId?: unknown;
+    sourceAttempt?: unknown;
+    sourceHeadSha?: unknown;
+    postconditionCounts?: {
+      companyCount?: unknown;
+      peopleCount?: unknown;
+      holdingCount?: unknown;
+    };
+  };
+};
+
+const assertRecoveryEvidence = (journal: MetadataCleanupJournal): void => {
+  const recovery = journal.recoveryEvidence;
+  const counts = recovery?.postconditionCounts;
+  const validCount = (value: unknown): value is number =>
+    Number.isSafeInteger(value) && (value as number) > 0;
+  if (
+    typeof recovery?.sourceRunId !== 'string' ||
+    !/^[1-9][0-9]*$/.test(recovery.sourceRunId) ||
+    !Number.isSafeInteger(recovery.sourceAttempt) ||
+    (recovery.sourceAttempt as number) < 1 ||
+    typeof recovery.sourceHeadSha !== 'string' ||
+    !/^[a-f0-9]{40}$/.test(recovery.sourceHeadSha) ||
+    !validCount(counts?.companyCount) ||
+    !validCount(counts?.peopleCount) ||
+    !validCount(counts?.holdingCount) ||
+    counts?.companyCount !== journal.preflightEvidence?.companyCount ||
+    counts?.peopleCount !== journal.preflightEvidence?.peopleCount ||
+    counts?.holdingCount !== journal.preflightEvidence?.holdingObservationCount
+  ) {
+    throw new Error(
+      'Metadata cleanup prerequisite recovery evidence is invalid',
+    );
+  }
 };
 
 const assertCompletedOperationCoverage = (
@@ -64,6 +101,14 @@ const assertCompletedOperationCoverage = (
   if (operationKeys.some((key) => !completedKeySet.has(key))) {
     throw new Error(
       'Metadata cleanup prerequisite operation coverage is incomplete',
+    );
+  }
+
+  if (operationKeys.length === 0) {
+    assertRecoveryEvidence(journal);
+  } else if (journal.recoveryEvidence !== undefined) {
+    throw new Error(
+      'Metadata cleanup prerequisite recovery evidence is invalid',
     );
   }
 };
