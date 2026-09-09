@@ -217,6 +217,39 @@ test('dry-run is default, serial, aggregate-only, and performs no writes', async
   assert.equal(JSON.stringify(result).includes('corgi.insure'), false);
 });
 
+test('dry-run reports every unresolved record while apply remains fail-closed', async () => {
+  const input = emptySnapshot();
+  input.companies.push({
+    id: 'company-1',
+    name: 'Acme',
+    updatedAt: '2026-01-01T00:00:00.000Z',
+  });
+  input.sourceRecords.push({
+    id: 'source-1',
+    companyId: 'company-1',
+    sourceFile: 'source.csv',
+    sourceSheet: 'Leads',
+    sourceRow: 1,
+    rawData: JSON.stringify({ 'Unsupported Field': 'value' }),
+  });
+  const api = new MemoryApi(input);
+
+  const dryRun = await runCanonicalization(api, options);
+
+  assert.ok(dryRun.unresolved > 0);
+  assert.deepEqual(api.writes, []);
+  await assert.rejects(
+    runCanonicalization(api, {
+      ...options,
+      mode: 'apply',
+      confirmation: 'CANONICALIZE_CRM_DATA',
+      expectedManifest: dryRun.manifest,
+    }),
+    /unresolved/i,
+  );
+  assert.deepEqual(api.writes, []);
+});
+
 test('apply requires exact origin, confirmation, and trusted manifest', async () => {
   const api = new MemoryApi(emptySnapshot());
   const dryRun = await runCanonicalization(api, options);

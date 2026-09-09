@@ -270,6 +270,27 @@ test('promotes business facts, merges native contacts, and backfills relations',
   );
 });
 
+test('non-numeric holding placeholders are explicitly disposed without blocking cleanup', () => {
+  const input = snapshot();
+  const holding = input.holdingObservations[0]!;
+  const rawData = JSON.parse(String(holding.rawData)) as Record<
+    string,
+    unknown
+  >;
+  rawData['% Ownership'] = 'N/A';
+  holding.rawData = JSON.stringify(rawData);
+
+  const plan = buildCanonicalizationPlan(input);
+  const disposition = plan.dispositions.find(({ key }) => key === 'ownership');
+
+  assert.equal(plan.unresolved.length, 0);
+  assert.equal(disposition?.kind, 'ignored');
+  assert.match(
+    String(disposition?.target),
+    /non-numeric source placeholder excluded/,
+  );
+});
+
 test('planner output is deterministic under unordered input', () => {
   const left = snapshot();
   const right = snapshot();

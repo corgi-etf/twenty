@@ -691,7 +691,7 @@ export const runCanonicalization = async (
   }
   const metadataPlan = buildMetadataPlan(metadata);
   const dataPlan = buildCanonicalizationPlan(snapshot);
-  assertPlanCanApply(dataPlan);
+  if (mode === 'apply') assertPlanCanApply(dataPlan);
   assertMutationConcurrencyTokens(snapshot, dataPlan.mutations);
   const report = buildReconciliationReport(snapshot);
   const manifest = createReconciliationManifest(report);
