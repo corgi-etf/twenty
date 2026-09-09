@@ -282,6 +282,12 @@ const auditedSnapshot = (): CanonicalizationSnapshot => {
     wholesalers,
     leadAssignments: Array.from({ length: 4046 }, (_, index) => ({
       id: `assignment-${index}`,
+      legacyFetchId: `assignment-legacy-${index}`,
+      companyId: `company-${index % companies.length}`,
+      wholesalerId: `wholesaler-${index % wholesalers.length}`,
+      ...(index % 2 === 0
+        ? { contactId: `person-${index % people.length}` }
+        : {}),
     })),
     outreachActivities: Array.from({ length: 986 }, (_, index) => ({
       id: `outreach-${index}`,
@@ -1033,6 +1039,62 @@ test('requires the audited counts, hashes, and exact legacy relationships', () =
   expect(() =>
     assertAuditedCanonicalizationSnapshot(snapshot, report, expected),
   ).toThrow(/historical owner mapping is incorrect/i);
+});
+
+test('accepts additive native lead assignments without losing the migrated baseline', () => {
+  const snapshot = auditedSnapshot();
+  const report = {
+    rowCoverageHash: 'a'.repeat(64),
+    businessContentHash: 'b'.repeat(64),
+  };
+  const expected = {
+    companyCount: 2191,
+    peopleCount: 1961,
+    holdingCount: 331,
+    rowCoverageHash: report.rowCoverageHash,
+    businessContentHash: report.businessContentHash,
+  };
+
+  expect(() =>
+    assertAuditedCanonicalizationSnapshot(snapshot, report, expected),
+  ).not.toThrow();
+
+  snapshot.leadAssignments.push({ id: 'native-assignment' });
+  expect(() =>
+    assertAuditedCanonicalizationSnapshot(snapshot, report, expected),
+  ).not.toThrow();
+
+  snapshot.leadAssignments.shift();
+  expect(() =>
+    assertAuditedCanonicalizationSnapshot(snapshot, report, expected),
+  ).toThrow(/migrated lead assignments/i);
+});
+
+test('rejects unresolved relations on the migrated lead-assignment cohort', () => {
+  const report = {
+    rowCoverageHash: 'a'.repeat(64),
+    businessContentHash: 'b'.repeat(64),
+  };
+  const expected = {
+    companyCount: 2191,
+    peopleCount: 1961,
+    holdingCount: 331,
+    rowCoverageHash: report.rowCoverageHash,
+    businessContentHash: report.businessContentHash,
+  };
+
+  for (const [field, error] of [
+    ['companyId', /company mapping is unresolved/i],
+    ['wholesalerId', /wholesaler mapping is unresolved/i],
+    ['contactId', /contact mapping is unresolved/i],
+  ] as const) {
+    const snapshot = auditedSnapshot();
+    snapshot.leadAssignments[0]![field] = 'missing-relation';
+
+    expect(() =>
+      assertAuditedCanonicalizationSnapshot(snapshot, report, expected),
+    ).toThrow(error);
+  }
 });
 
 test('paces every request and honors bounded Retry-After retries', async () => {
