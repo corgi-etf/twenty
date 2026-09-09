@@ -3,6 +3,7 @@ import { FeatureFlagKey } from 'twenty-shared/types';
 import { isDefined } from 'twenty-shared/utils';
 
 import { WorkspaceRouteUnavailable } from '@/app/routing/components/WorkspaceRouteUnavailable';
+import { QuickLogCompanyActivityAction } from '@/activities/quick-log/components/QuickLogCompanyActivityAction';
 import { isWorkspaceWorkflowVersionRouteHidden } from '@/object-core/workflows/utils/isWorkspaceWorkflowVersionRouteHidden';
 import { useIsFeatureEnabled } from '@/workspace/hooks/useIsFeatureEnabled';
 import { SidePanelToggleButton } from '@/side-panel/components/SidePanelToggleButton';
@@ -111,6 +112,10 @@ const RecordShowPageContent = ({
             >
               {!isInSidePanel && (
                 <>
+                  <QuickLogCompanyActivityAction
+                    objectNameSingular={objectNameSingular}
+                    companyId={objectRecordId}
+                  />
                   <RecordShowCommandMenu />
                   {!isLayoutCustomizationModeEnabled && (
                     <SidePanelToggleButton />
