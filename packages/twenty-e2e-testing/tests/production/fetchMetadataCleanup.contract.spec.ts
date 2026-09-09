@@ -1,4 +1,4 @@
-import { type APIResponse, expect, test } from '@playwright/test';
+import { type APIResponse, expect, type Page, test } from '@playwright/test';
 
 import {
   assertCompanyValuesCanonicalized,
@@ -16,10 +16,41 @@ import {
   assertNoWorkflowReferences,
   type CanonicalizationSnapshot,
 } from './fetchMetadataCleanupPreflight';
-import { createRateLimitedRequest } from './playwrightMetadataCleanupApi';
+import {
+  createPlaywrightMetadataCleanupApi,
+  createRateLimitedRequest,
+} from './playwrightMetadataCleanupApi';
 
 const MIGRATION_APPLICATION_ID = 'migration-application-id';
 const STANDARD_APPLICATION_ID = 'standard-application-id';
+
+const canonicalSystemTargetRelations = {
+  timelineActivity: [
+    'workspaceMember',
+    'targetPerson',
+    'targetCompany',
+    'targetOpportunity',
+    'targetNote',
+    'targetTask',
+    'targetWorkflow',
+    'targetWorkflowVersion',
+    'targetWorkflowRun',
+    'targetDashboard',
+    'targetMessageList',
+    'targetMessageCampaign',
+  ],
+  attachment: [
+    'targetTask',
+    'targetNote',
+    'targetPerson',
+    'targetCompany',
+    'targetOpportunity',
+    'targetDashboard',
+    'targetWorkflow',
+  ],
+  noteTarget: ['note', 'targetPerson', 'targetCompany', 'targetOpportunity'],
+  taskTarget: ['task', 'targetPerson', 'targetCompany', 'targetOpportunity'],
+} as const;
 
 const fakePreflightEvidence = {
   rowCoverageHash: 'a'.repeat(64),
@@ -43,6 +74,9 @@ const oldLabelByField = new Map(
       [`${objectName}.${oldName}`, oldLabel] as const,
   ),
 );
+const provenanceObjectNames = new Set<string>(
+  cleanupContract.provenanceObjectNames,
+);
 
 const metadataField = (
   objectName: string,
@@ -63,7 +97,9 @@ const metadataFixture = (): MetadataObject[] => {
         .filter(([targetObjectName]) => targetObjectName === objectName)
         .map(([, oldName]) => oldName);
       const customFieldNames = new Set([
-        ...cleanupContract.provenanceFieldNames,
+        ...(provenanceObjectNames.has(objectName)
+          ? cleanupContract.provenanceFieldNames
+          : []),
         ...cleanupContract.additionalFieldsToDelete[objectName],
         ...retainedFieldNames,
       ]);
@@ -72,12 +108,23 @@ const metadataFixture = (): MetadataObject[] => {
       return {
         id: `${objectName}-id`,
         nameSingular: objectName,
-        namePlural: objectName === 'person' ? 'people' : `${objectName}s`,
+        namePlural:
+          objectName === 'person'
+            ? 'people'
+            : objectName === 'timelineActivity'
+              ? 'timelineActivities'
+              : `${objectName}s`,
         labelSingular: objectName,
         labelPlural: `${objectName}s`,
-        isSystem: ['company', 'person', 'task', 'taskTarget'].includes(
-          objectName,
-        ),
+        isSystem: [
+          'company',
+          'person',
+          'task',
+          'taskTarget',
+          'timelineActivity',
+          'attachment',
+          'noteTarget',
+        ].includes(objectName),
         applicationId: ['wholesaler', 'salesTeam', 'teamMembership'].includes(
           objectName,
         )
@@ -235,6 +282,12 @@ const auditedSnapshot = (): CanonicalizationSnapshot => {
     wholesalers,
     leadAssignments: Array.from({ length: 4046 }, (_, index) => ({
       id: `assignment-${index}`,
+      legacyFetchId: `assignment-legacy-${index}`,
+      companyId: `company-${index % companies.length}`,
+      wholesalerId: `wholesaler-${index % wholesalers.length}`,
+      ...(index % 2 === 0
+        ? { contactId: `person-${index % people.length}` }
+        : {}),
     })),
     outreachActivities: Array.from({ length: 986 }, (_, index) => ({
       id: `outreach-${index}`,
@@ -392,6 +445,7 @@ test('builds the exact object and field purge allowlist', () => {
       'sourceCreatedAt',
       'sourceRowHmac',
       'sourceUpdatedAt',
+      'targetImportBatch',
     ],
     wholesaler: [
       'legacyFetchId',
@@ -441,8 +495,11 @@ test('builds the exact object and field purge allowlist', () => {
       'sourceRowHmac',
       'sourceUpdatedAt',
     ],
+    timelineActivity: ['targetImportBatch'],
+    attachment: ['targetImportBatch'],
+    noteTarget: ['targetImportBatch'],
   });
-  expect(plan.fieldsToDelete).toHaveLength(74);
+  expect(plan.fieldsToDelete).toHaveLength(78);
   expect(plan.fieldsToRename).toHaveLength(9);
   expect(
     plan.fieldsToRename.map(
@@ -457,9 +514,29 @@ test('builds the exact object and field purge allowlist', () => {
     'person.legacyStateRegion->stateRegion:State / Region',
     'person.legacyPostalCode->postalCode:Postal Code',
     'person.fetchNotes->notes:Notes',
-    'wholesaler.fetchRole->role:Role',
+    'wholesaler.fetchRole->wholesalerRole:Role',
     'holdingObservation.sourceDate->asOfDate:As Of Date',
   ]);
+});
+
+test('accepts an already canonical wholesaler role field without a reserved target', () => {
+  const objects = metadataFixture();
+  const wholesaler = objects.find(
+    ({ nameSingular }) => nameSingular === 'wholesaler',
+  );
+  const roleField = wholesaler?.fields.find(({ name }) => name === 'fetchRole');
+  expect(roleField).toBeDefined();
+  roleField!.name = 'wholesalerRole';
+  roleField!.label = 'Role';
+
+  const plan = buildFetchMetadataCleanupPlan(objects);
+
+  expect(
+    plan.fieldsToRename.some(
+      ({ objectNameSingular }) => objectNameSingular === 'wholesaler',
+    ),
+  ).toBe(false);
+  expect(plan.fieldsToRename.some(({ name }) => name === 'role')).toBe(false);
 });
 
 test('never plans deletion of the retained sales and map contract', () => {
@@ -482,6 +559,63 @@ test('never plans deletion of the retained sales and map contract', () => {
   }
 });
 
+test('deletes only import-batch system targets and remains idempotent', async () => {
+  const api = new FakeMetadataCleanupApi();
+  for (const [objectName, relationNames] of Object.entries(
+    canonicalSystemTargetRelations,
+  )) {
+    let object = api.objects.find(
+      ({ nameSingular }) => nameSingular === objectName,
+    );
+    if (!object) {
+      object = {
+        id: `${objectName}-id`,
+        nameSingular: objectName,
+        namePlural:
+          objectName === 'timelineActivity'
+            ? 'timelineActivities'
+            : `${objectName}s`,
+        labelSingular: objectName,
+        labelPlural: `${objectName}s`,
+        isSystem: true,
+        applicationId: STANDARD_APPLICATION_ID,
+        fields: relationNames.map((fieldName) =>
+          metadataField(objectName, fieldName, STANDARD_APPLICATION_ID),
+        ),
+      };
+      api.objects.push(object);
+    }
+    if (!object.fields.some(({ name }) => name === 'targetImportBatch')) {
+      object.fields.push(metadataField(objectName, 'targetImportBatch'));
+    }
+  }
+
+  const firstPlan = await runFetchMetadataCleanup(api);
+  const secondPlan = await runFetchMetadataCleanup(api);
+
+  expect(
+    firstPlan.fieldsToDelete
+      .filter(({ fieldName }) => fieldName === 'targetImportBatch')
+      .map(({ objectNameSingular }) => objectNameSingular)
+      .sort(),
+  ).toEqual(Object.keys(canonicalSystemTargetRelations).sort());
+  expect(secondPlan).toEqual({
+    objectsToDelete: [],
+    fieldsToDelete: [],
+    fieldsToRename: [],
+  });
+  for (const [objectName, relationNames] of Object.entries(
+    canonicalSystemTargetRelations,
+  )) {
+    expect(api.deletedFieldIds).toContain(`${objectName}-targetImportBatch-id`);
+    expect(
+      api.objects
+        .find(({ nameSingular }) => nameSingular === objectName)
+        ?.fields.map(({ name }) => name),
+    ).toEqual(expect.arrayContaining([...relationNames]));
+  }
+});
+
 test('applies once and a second run is an idempotent no-op', async () => {
   const api = new FakeMetadataCleanupApi();
   const firstPlan = await runFetchMetadataCleanup(api);
@@ -492,9 +626,9 @@ test('applies once and a second run is an idempotent no-op', async () => {
   const secondPlan = await runFetchMetadataCleanup(api);
 
   expect(firstPlan.objectsToDelete).toHaveLength(4);
-  expect(firstPlan.fieldsToDelete).toHaveLength(74);
+  expect(firstPlan.fieldsToDelete).toHaveLength(78);
   expect(firstPlan.fieldsToRename).toHaveLength(9);
-  expect(firstMutationCount).toBe(87);
+  expect(firstMutationCount).toBe(91);
   expect(api.reconciliationChecks).toBe(1);
   expect(api.events.slice(0, 4)).toEqual([
     'reconciliation',
@@ -510,7 +644,7 @@ test('applies once and a second run is an idempotent no-op', async () => {
     status: 'complete',
     completedOperationKeys: expect.any(Array),
   });
-  expect(completedMutationJournal?.completedOperationKeys).toHaveLength(87);
+  expect(completedMutationJournal?.completedOperationKeys).toHaveLength(91);
   expect(secondPlan).toEqual({
     objectsToDelete: [],
     fieldsToDelete: [],
@@ -580,7 +714,7 @@ test('resumes an interrupted journal without rerunning a destroyed staging prefl
       `delete-object:${firstObject.id}`,
     ]),
   });
-  expect(api.journals.at(-1)?.completedOperationKeys).toHaveLength(87);
+  expect(api.journals.at(-1)?.completedOperationKeys).toHaveLength(91);
 });
 
 test('preserves populated sales teams and memberships while removing provenance fields', async () => {
@@ -653,9 +787,97 @@ test('proves imported contact values exist in standard Twenty fields', () => {
   );
 });
 
+test('matches canonical contact normalization and residual preservation', () => {
+  const normalizedLinkedIn = canonicalizedPerson();
+  normalizedLinkedIn.legacyLinkedInUrl =
+    'http://www.linkedin.com/in/owner/?trk=old#profile';
+  normalizedLinkedIn.linkedinLink = {
+    primaryLinkLabel: '',
+    primaryLinkUrl: '',
+    secondaryLinks: [
+      { primaryLinkUrl: 'https://linkedin.com/in/owner', label: 'LinkedIn' },
+    ],
+  };
+  expect(() =>
+    assertPeopleContactValuesCanonicalized([normalizedLinkedIn]),
+  ).not.toThrow();
+
+  const residualContacts = canonicalizedPerson();
+  residualContacts.legacySecondaryEmails = JSON.stringify([
+    { label: 'private' },
+  ]);
+  residualContacts.legacySecondaryPhones = 'call switchboard';
+  residualContacts.otherContactDetails =
+    'Email: {"label":"private"}\nPhone: call switchboard\nPhone extension: (312) 555-0100 x55';
+  expect(() =>
+    assertPeopleContactValuesCanonicalized([residualContacts]),
+  ).not.toThrow();
+
+  const ignoredNonArrays = canonicalizedPerson();
+  ignoredNonArrays.legacySecondaryEmails = JSON.stringify({
+    email: 'not-a-candidate@example.com',
+  });
+  ignoredNonArrays.legacySecondaryPhones = JSON.stringify({
+    phone: '+13125550199',
+  });
+  expect(() =>
+    assertPeopleContactValuesCanonicalized([ignoredNonArrays]),
+  ).not.toThrow();
+
+  const missingLinkedIn = canonicalizedPerson();
+  missingLinkedIn.linkedinLink = {
+    primaryLinkLabel: '',
+    primaryLinkUrl: '',
+    secondaryLinks: [],
+  };
+  expect(() =>
+    assertPeopleContactValuesCanonicalized([missingLinkedIn]),
+  ).toThrow(/LinkedIn does not contain the imported URL/i);
+
+  const missingResiduals = canonicalizedPerson();
+  missingResiduals.legacySecondaryEmails = '[not-json';
+  missingResiduals.legacySecondaryPhones = 'call switchboard';
+  missingResiduals.otherContactDetails = '';
+  expect(() =>
+    assertPeopleContactValuesCanonicalized([missingResiduals]),
+  ).toThrow(/Emails does not contain every imported email/i);
+
+  const missingPhoneResidual = canonicalizedPerson();
+  missingPhoneResidual.legacyEmail = null;
+  missingPhoneResidual.legacySecondaryEmails = null;
+  missingPhoneResidual.legacyPrimaryPhone = null;
+  missingPhoneResidual.legacySecondaryPhones = 'call switchboard';
+  missingPhoneResidual.otherContactDetails = '';
+  expect(() =>
+    assertPeopleContactValuesCanonicalized([missingPhoneResidual]),
+  ).toThrow(/Phones does not contain every imported phone/i);
+
+  const partialPhoneIdentity = canonicalizedPerson();
+  partialPhoneIdentity.legacyPrimaryPhone = '(312) 555-0100';
+  partialPhoneIdentity.legacySecondaryPhones = null;
+  partialPhoneIdentity.phones = {
+    primaryPhoneCallingCode: '',
+    primaryPhoneNumber: '5550100',
+    additionalPhones: [],
+  };
+  partialPhoneIdentity.otherContactDetails = '';
+  expect(() =>
+    assertPeopleContactValuesCanonicalized([partialPhoneIdentity]),
+  ).toThrow(/Phones does not contain every imported phone/i);
+});
+
 test('proves company descriptions, ownership, and websites were canonicalized', () => {
   expect(() =>
     assertCompanyValuesCanonicalized([canonicalizedCompany()], []),
+  ).not.toThrow();
+
+  const enrichedMultilineDescription = canonicalizedCompany();
+  enrichedMultilineDescription.fetchDescription =
+    'Zulu re\u0301sume\u0301\r\n  Middle profile  \r\n \t \r\nAlpha profile';
+  enrichedMultilineDescription.description =
+    'Alpha profile\nAdded native context\nMiddle profile\nZulu résumé';
+  expect(() =>
+    assertCompanyValuesCanonicalized([enrichedMultilineDescription], []),
   ).not.toThrow();
 
   const sourceCommentary = canonicalizedCompany();
@@ -676,6 +898,46 @@ test('proves company descriptions, ownership, and websites were canonicalized', 
     ),
   ).not.toThrow();
 
+  const normalizedImportReviewCommentary = canonicalizedCompany();
+  normalizedImportReviewCommentary.fetchDescription =
+    'High confidence import review';
+  normalizedImportReviewCommentary.description = null;
+  expect(() =>
+    assertCompanyValuesCanonicalized(
+      [normalizedImportReviewCommentary],
+      [],
+      [
+        {
+          id: 'review-1',
+          companyId: normalizedImportReviewCommentary.id,
+          rawData: JSON.stringify({
+            ' Notes / Source-Confidence ': 'High confidence import review',
+          }),
+        },
+      ],
+    ),
+  ).not.toThrow();
+
+  const unrelatedImportReviewCommentary = canonicalizedCompany();
+  unrelatedImportReviewCommentary.fetchDescription =
+    'High confidence import review';
+  unrelatedImportReviewCommentary.description = null;
+  expect(() =>
+    assertCompanyValuesCanonicalized(
+      [unrelatedImportReviewCommentary],
+      [],
+      [
+        {
+          id: 'review-2',
+          companyId: 'another-company',
+          rawData: JSON.stringify({
+            'notes source confidence': 'High confidence import review',
+          }),
+        },
+      ],
+    ),
+  ).toThrow(/Description classification is incomplete/i);
+
   const missingWebsite = canonicalizedCompany();
   missingWebsite.domainName = { primaryLinkUrl: '', secondaryLinks: [] };
   expect(() => assertCompanyValuesCanonicalized([missingWebsite], [])).toThrow(
@@ -693,6 +955,20 @@ test('proves company descriptions, ownership, and websites were canonicalized', 
   expect(() => assertCompanyValuesCanonicalized([manualLocation], [])).toThrow(
     /manual location marker still requires canonicalization/i,
   );
+
+  for (const description of [
+    'Alpha profile\nZulu résumé',
+    'Alpha profile with user-authored context\nMiddle profile\nZulu résumé',
+  ]) {
+    const incompleteMultilineDescription = canonicalizedCompany();
+    incompleteMultilineDescription.fetchDescription =
+      'Zulu re\u0301sume\u0301\r\n  Middle profile  \r\n \t \r\nAlpha profile';
+    incompleteMultilineDescription.description = description;
+
+    expect(() =>
+      assertCompanyValuesCanonicalized([incompleteMultilineDescription], []),
+    ).toThrow(/Description classification is incomplete/i);
+  }
 });
 
 test('blocks before mutation when a workflow references cleanup metadata', () => {
@@ -765,6 +1041,62 @@ test('requires the audited counts, hashes, and exact legacy relationships', () =
   ).toThrow(/historical owner mapping is incorrect/i);
 });
 
+test('accepts additive native lead assignments without losing the migrated baseline', () => {
+  const snapshot = auditedSnapshot();
+  const report = {
+    rowCoverageHash: 'a'.repeat(64),
+    businessContentHash: 'b'.repeat(64),
+  };
+  const expected = {
+    companyCount: 2191,
+    peopleCount: 1961,
+    holdingCount: 331,
+    rowCoverageHash: report.rowCoverageHash,
+    businessContentHash: report.businessContentHash,
+  };
+
+  expect(() =>
+    assertAuditedCanonicalizationSnapshot(snapshot, report, expected),
+  ).not.toThrow();
+
+  snapshot.leadAssignments.push({ id: 'native-assignment' });
+  expect(() =>
+    assertAuditedCanonicalizationSnapshot(snapshot, report, expected),
+  ).not.toThrow();
+
+  snapshot.leadAssignments.shift();
+  expect(() =>
+    assertAuditedCanonicalizationSnapshot(snapshot, report, expected),
+  ).toThrow(/migrated lead assignments/i);
+});
+
+test('rejects unresolved relations on the migrated lead-assignment cohort', () => {
+  const report = {
+    rowCoverageHash: 'a'.repeat(64),
+    businessContentHash: 'b'.repeat(64),
+  };
+  const expected = {
+    companyCount: 2191,
+    peopleCount: 1961,
+    holdingCount: 331,
+    rowCoverageHash: report.rowCoverageHash,
+    businessContentHash: report.businessContentHash,
+  };
+
+  for (const [field, error] of [
+    ['companyId', /company mapping is unresolved/i],
+    ['wholesalerId', /wholesaler mapping is unresolved/i],
+    ['contactId', /contact mapping is unresolved/i],
+  ] as const) {
+    const snapshot = auditedSnapshot();
+    snapshot.leadAssignments[0]![field] = 'missing-relation';
+
+    expect(() =>
+      assertAuditedCanonicalizationSnapshot(snapshot, report, expected),
+    ).toThrow(error);
+  }
+});
+
 test('paces every request and honors bounded Retry-After retries', async () => {
   let clock = 0;
   const waits: number[] = [];
@@ -804,6 +1136,31 @@ test('paces every request and honors bounded Retry-After retries', async () => {
     }),
   ).rejects.toThrow(/remained rate limited after retries/i);
   expect(attempts).toBe(5);
+});
+
+test('loads canonicalization before issuing the first snapshot request', async () => {
+  const sentinel = new Error('snapshot request sentinel');
+  let getCount = 0;
+  const page = {
+    request: {
+      get: async () => {
+        getCount += 1;
+        throw sentinel;
+      },
+    },
+  } as unknown as Page;
+  const api = createPlaywrightMetadataCleanupApi({
+    page,
+    backendBaseUrl: 'https://crm.example.test',
+    frontendBaseUrl: 'https://crm.example.test',
+  });
+
+  const preflight = api.assertCanonicalizationComplete();
+  const getCountBeforeYield = getCount;
+
+  await expect(preflight).rejects.toBe(sentinel);
+  expect(getCountBeforeYield).toBe(1);
+  expect(getCount).toBe(1);
 });
 
 test('fails closed on protected or unhandled metadata', () => {

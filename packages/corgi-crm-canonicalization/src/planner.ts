@@ -39,6 +39,9 @@ export type RecordMutation = {
 export type UnresolvedItem = {
   code: string;
   rowKey: string;
+  normalizedRawKey?: string;
+  canonicalTarget?: string;
+  canonicalField?: string;
 };
 
 export type RawKeyDisposition = {
@@ -122,6 +125,23 @@ const effectiveValue = (
 const isEmptyValue = (value: unknown): boolean =>
   value === undefined || value === null || value === '';
 
+const normalizedNonemptyLines = (value: string): string[] =>
+  value
+    .normalize('NFC')
+    .replace(/\r\n?/g, '\n')
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+
+const includesEveryExactLine = (
+  value: string,
+  lines: readonly string[],
+): boolean => {
+  const valueLines = new Set(normalizedNonemptyLines(value));
+
+  return lines.length > 0 && lines.every((line) => valueLines.has(line));
+};
+
 const setPreservingNative = (
   accumulator: RecordAccumulator,
   name: string,
@@ -137,7 +157,13 @@ const setPreservingNative = (
     return;
   }
   if (!valuesEqual(current, value)) {
-    unresolved.push({ code: conflictCode, rowKey });
+    unresolved.push({
+      code: conflictCode,
+      rowKey,
+      ...(conflictCode === 'HOLDING_FIELD_CONFLICT'
+        ? { canonicalField: name }
+        : {}),
+    });
   }
 };
 
@@ -806,7 +832,7 @@ const COMPANY_FACTS: ReadonlyArray<[string, string[]]> = [
   ['totalAccounts', ['firm total accounts']],
   ['ownership', ['firm ownership']],
   ['accreditedInvestorFocus', ['firm tag accredited investors']],
-  ['assetClasses', ['firm tag asset classes']],
+  ['assetClasses', ['firm tag asset classes', 'family office asset class']],
   ['clientPersonas', ['firm tag client personas']],
   ['crmSystem', ['firm tag crm']],
   ['fundManagers', ['firm tag fund managers']],
@@ -818,7 +844,10 @@ const COMPANY_FACTS: ReadonlyArray<[string, string[]]> = [
   ['familyOfficeType', ['family office type']],
   ['familyOfficeGeneration', ['family office generation']],
   ['familyOfficeWealthOrigin', ['family office wealth source']],
-  ['familyOfficeFocus', ['family office focus']],
+  [
+    'familyOfficeFocus',
+    ['family office focus', 'family office industry focus'],
+  ],
   ['familyOfficeGeography', ['family office geography']],
 ];
 
@@ -897,6 +926,10 @@ const COMPANY_TARGET_BY_KEY: Readonly<Record<string, string>> = {
   'family office wealth source': 'company.familyOfficeWealthOrigin',
   'family office focus': 'company.familyOfficeFocus',
   'family office geography': 'company.familyOfficeGeography',
+  'family office asset class': 'company.assetClasses',
+  'family office bio': 'company.description',
+  'family office industry focus': 'company.familyOfficeFocus',
+  'family office years founded': 'company.description',
 };
 
 const PERSON_TARGET_BY_KEY: Readonly<Record<string, string>> = {
@@ -970,8 +1003,9 @@ const HOLDING_TARGET_BY_KEY: Readonly<Record<string, string>> = {
   'street address': 'holdingObservation.streetAddress',
   'street address2': 'holdingObservation.addressLine2',
   city: 'holdingObservation.city',
-  state: 'holdingObservation.stateRegion',
-  'filer state': 'holdingObservation.stateRegion',
+  state: 'holdingObservation.stateRegion+holdingObservation.addressLine2',
+  'filer state':
+    'holdingObservation.stateRegion+holdingObservation.addressLine2',
   zip: 'holdingObservation.postalCode',
   'zip code': 'holdingObservation.postalCode',
   'shares held': 'holdingObservation.sharesHeld',
@@ -1019,6 +1053,23 @@ const NUMERIC_HOLDING_KEYS = new Set([
   'ranking',
   'prior ranking',
 ]);
+
+const DATE_PLACEHOLDERS = new Set([
+  '-',
+  '--',
+  'n/a',
+  'na',
+  'none',
+  'not available',
+  'not reported',
+  'unknown',
+]);
+
+const isDatePlaceholder = (value: unknown): boolean => {
+  const text = textValue(value);
+
+  return text !== null && DATE_PLACEHOLDERS.has(text.toLowerCase());
+};
 
 const normalizedDispositionResult = (
   key: string,
@@ -1110,7 +1161,7 @@ const dispositionForKey = (
     if (!isPerson) return null;
     return {
       kind: 'identity',
-      target: 'person.name',
+      target: 'person.name+person.otherContactDetails',
       sourceValueHash,
       resultValueHash: valueHash(companyNameKey(value)),
     };
@@ -1123,11 +1174,14 @@ const dispositionForKey = (
     };
   }
   if (isHolding && key === 'source date' && normalizeDate(value) === null) {
-    return {
-      kind: 'ignored',
-      target: 'invalid date placeholder excluded from canonical date field',
-      sourceValueHash,
-    };
+    return isDatePlaceholder(value)
+      ? {
+          kind: 'ignored',
+          target:
+            'explicit date placeholder excluded from canonical date field',
+          sourceValueHash,
+        }
+      : null;
   }
   if (
     isHolding &&
@@ -1212,6 +1266,20 @@ const targetPreservesResult = (
   return atoms.has(expectedText) || atoms.has(expectedText.toLowerCase());
 };
 
+const diagnosticTarget = (concreteTarget: string): string =>
+  [
+    ...new Set(
+      concreteTarget.split('|').map((target) => {
+        const slash = target.indexOf('/');
+        const dot = target.indexOf('.', slash + 1);
+
+        return `${target.slice(0, slash)}.${target.slice(dot + 1)}`;
+      }),
+    ),
+  ]
+    .sort()
+    .join('|');
+
 type DispositionContext = {
   companyId?: string;
   personId?: string;
@@ -1253,7 +1321,9 @@ const applyCompanyRaw = (
   isPerson = false,
 ): void => {
   for (const [field, aliases] of COMPANY_FACTS) {
-    mergeFact(accumulator, field, rawValue(index, ...aliases));
+    for (const alias of aliases) {
+      mergeFact(accumulator, field, rawValue(index, alias));
+    }
   }
   mergeFact(accumulator, 'geography', rawValue(index, 'region'));
   const employeeCount = numberValue(rawValue(index, 'firm total employees'));
@@ -1278,6 +1348,18 @@ const applyCompanyRaw = (
     'description',
     'Lead score',
     rawValue(index, 'lead score'),
+  );
+  mergeLabeledFact(
+    accumulator,
+    'description',
+    'Family office bio',
+    rawValue(index, 'family office bio'),
+  );
+  mergeLabeledFact(
+    accumulator,
+    'description',
+    'Family office years founded',
+    rawValue(index, 'family office years founded'),
   );
   if (!isPerson) {
     for (const [key, label] of PERSON_NOTE_SOURCE_FIELDS) {
@@ -1363,8 +1445,20 @@ const applyCompanyRaw = (
       companyNameKey(currentAddress[field]) !== companyNameKey(value),
   );
   if (conflicts.length > 0) {
-    const alternate = Object.values(rawAddress).filter(Boolean).join(', ');
-    if (alternate) mergeFact(accumulator, 'alternateAddresses', alternate);
+    for (const [field, label] of [
+      ['addressStreet1', 'Street'],
+      ['addressStreet2', 'Street 2'],
+      ['addressCity', 'City'],
+      ['addressState', 'State / Region'],
+      ['addressPostcode', 'Postal Code'],
+    ] as const) {
+      mergeLabeledFact(
+        accumulator,
+        'alternateAddresses',
+        label,
+        rawAddress[field],
+      );
+    }
   } else {
     const nextAddress = {
       addressStreet1:
@@ -1396,8 +1490,31 @@ const applyPersonRaw = (
   index: ReadonlyMap<string, unknown>,
 ): void => {
   for (const [field, aliases] of PERSON_FACTS) {
-    mergeFact(accumulator, field, rawValue(index, ...aliases));
+    for (const alias of aliases) {
+      mergeFact(accumulator, field, rawValue(index, alias));
+    }
   }
+  const currentName = personName({
+    ...accumulator.record,
+    ...accumulator.data,
+    id: accumulator.record.id,
+  });
+  const nextName = { ...currentName };
+  for (const [sourceKey, field, label] of [
+    ['first name', 'firstName', 'First name'],
+    ['last name', 'lastName', 'Last name'],
+  ] as const) {
+    const source = textValue(rawValue(index, sourceKey));
+    if (!source) continue;
+    if (!nextName[field]) {
+      nextName[field] = source;
+    } else if (companyNameKey(source) !== companyNameKey(nextName[field])) {
+      accumulator.residualContacts!.add(
+        `Other ${label.toLowerCase()}: ${source}`,
+      );
+    }
+  }
+  setIfChanged(accumulator, 'name', nextName);
   mergeFact(accumulator, 'jobTitle', rawValue(index, 'title'));
   const phoneType = textValue(rawValue(index, 'phone type'));
   if (phoneType) accumulator.residualContacts!.add(`Phone type: ${phoneType}`);
@@ -1488,42 +1605,51 @@ const resolveCompany = (
     rawValue(index, 'firm state', 'state', 'filer state'),
   );
   const locationKey = companyLocationKey(name, city, state);
-  const isolatedId = key
+  const companyFingerprint = key
+    ? stableStringify({
+        name: key,
+        domain,
+        city,
+        state,
+        filerId: companyNameKey(rawValue(index, 'filer id')),
+        cik: companyNameKey(rawValue(index, 'filer cik')),
+        crd: companyNameKey(rawValue(index, 'filer crd')),
+        irs: companyNameKey(rawValue(index, 'filer irs number')),
+      })
+    : null;
+  const isolatedId = companyFingerprint
+    ? stableUuid('company', companyFingerprint)
+    : null;
+  const rowIsolatedId = companyFingerprint
     ? stableUuid(
         'company',
         stableStringify({
-          name: key,
-          domain,
-          city,
-          state,
-          filerId: companyNameKey(rawValue(index, 'filer id')),
-          cik: companyNameKey(rawValue(index, 'filer cik')),
-          crd: companyNameKey(rawValue(index, 'filer crd')),
-          irs: companyNameKey(rawValue(index, 'filer irs number')),
+          companyFingerprint,
+          contentKey: row.contentKey,
         }),
       )
     : null;
-  const isolateCompany = (): { id?: string; unresolved?: string } => {
+  const isolateCompany = (
+    id: string | null,
+  ): { id?: string; unresolved?: string } => {
     const companyName = textValue(name);
-    if (!isolatedId || !key || !companyName) {
+    if (!id || !key || !companyName) {
       return { unresolved: 'MISSING_COMPANY_IDENTITY' };
     }
-    if (!companies.has(isolatedId)) {
-      const record: CrmRecord = { id: isolatedId, name: companyName };
-      companies.set(isolatedId, {
+    if (!companies.has(id)) {
+      const record: CrmRecord = { id, name: companyName };
+      companies.set(id, {
         record,
-        data: { id: isolatedId, name: companyName },
+        data: { id, name: companyName },
         facts: new Map(),
       });
     }
-    addOwner(names, key, isolatedId);
-    if (locationKey) addOwner(locations, locationKey, isolatedId);
-    if (domain) addOwner(domains, domain, isolatedId);
+    addOwner(names, key, id);
+    if (locationKey) addOwner(locations, locationKey, id);
+    if (domain) addOwner(domains, domain, id);
 
-    return { id: isolatedId };
+    return { id };
   };
-
-  if (isolatedId && companies.has(isolatedId)) return { id: isolatedId };
 
   const regulatoryMatches = new Set<string>();
   for (const [kind, aliases] of [
@@ -1540,18 +1666,18 @@ const resolveCompany = (
     }
   }
   if (regulatoryMatches.size === 1) return { id: [...regulatoryMatches][0] };
-  if (regulatoryMatches.size > 1) return isolateCompany();
+  if (regulatoryMatches.size > 1) return isolateCompany(rowIsolatedId);
 
   const domainMatches = domain
     ? (domains.get(domain) ?? new Set<string>())
     : new Set<string>();
   if (domainMatches.size === 1) return { id: [...domainMatches][0] };
-  if (domainMatches.size > 1) return isolateCompany();
+  if (domainMatches.size > 1) return isolateCompany(rowIsolatedId);
   const locationMatches = locationKey
     ? (locations.get(locationKey) ?? new Set<string>())
     : new Set<string>();
   if (locationMatches.size === 1) return { id: [...locationMatches][0] };
-  if (locationMatches.size > 1) return isolateCompany();
+  if (locationMatches.size > 1) return isolateCompany(rowIsolatedId);
   const nameMatches = key
     ? (names.get(key) ?? new Set<string>())
     : new Set<string>();
@@ -1560,11 +1686,11 @@ const resolveCompany = (
       ? { id: personCompanyAnchor }
       : { unresolved: 'MISSING_PERSON_COMPANY_ANCHOR' };
   }
-  if (nameMatches.size > 0) return isolateCompany();
+  if (nameMatches.size > 0) return isolateCompany(rowIsolatedId);
   if (!key || !textValue(name))
     return { unresolved: 'MISSING_COMPANY_IDENTITY' };
 
-  return isolateCompany();
+  return isolateCompany(isolatedId);
 };
 
 const strongPersonCandidates = (
@@ -1805,7 +1931,6 @@ const holdingPatch = (
     ['crd', ['filer crd']],
     ['filerIrsNumber', ['filer irs number']],
     ['city', ['city']],
-    ['stateRegion', ['filer state', 'state']],
     ['streetAddress', ['street address', 'address']],
     ['addressLine2', ['street address2']],
     ['postalCode', ['zip', 'zip code']],
@@ -1817,6 +1942,14 @@ const holdingPatch = (
   for (const [field, aliases, previousName] of text) {
     const raw = rawValue(index, ...aliases);
     const value = field === 'asOfDate' ? normalizeDate(raw) : textValue(raw);
+    if (
+      field === 'asOfDate' &&
+      textValue(raw) &&
+      value === null &&
+      !isDatePlaceholder(raw)
+    ) {
+      unresolved.push({ code: 'HOLDING_DATE_INVALID', rowKey });
+    }
     if (!value) continue;
     setPreservingNative(
       accumulator,
@@ -1827,6 +1960,21 @@ const holdingPatch = (
       'HOLDING_FIELD_CONFLICT',
       previousName,
     );
+  }
+  for (const sourceKey of ['filer state', 'state']) {
+    const value = textValue(rawValue(index, sourceKey));
+    if (!value) continue;
+    const current = effectiveValue(accumulator, 'stateRegion');
+    if (isEmptyValue(current)) {
+      setIfChanged(accumulator, 'stateRegion', value);
+    } else if (companyNameKey(current) !== companyNameKey(value)) {
+      mergeLabeledFact(
+        accumulator,
+        'addressLine2',
+        'Other state / region',
+        value,
+      );
+    }
   }
 
   return accumulator;
@@ -1930,7 +2078,11 @@ export const buildCanonicalizationPlan = (
       );
       if (!disposition) {
         if (!selectedRecordIds.has(row.record.id)) {
-          unresolved.push({ code: 'UNHANDLED_RAW_FIELD', rowKey: row.rowKey });
+          unresolved.push({
+            code: 'UNHANDLED_RAW_FIELD',
+            rowKey: row.rowKey,
+            normalizedRawKey: key,
+          });
         }
       } else if (duplicateOf.has(row.record.id)) {
         const selectedRow = duplicateOf.get(row.record.id)!;
@@ -1976,14 +2128,22 @@ export const buildCanonicalizationPlan = (
         confidenceByCompany.get(accumulator.record.id)?.has(description) ??
         false;
       if (!isConfidence) {
-        setPreservingNative(
-          accumulator,
-          'description',
-          description,
-          unresolved,
-          accumulator.record.id,
-          'DESCRIPTION_CONFLICT',
+        const currentDescription = asString(
+          effectiveValue(accumulator, 'description'),
         );
+        const descriptionLines = normalizedNonemptyLines(description);
+        if (!currentDescription) {
+          for (const line of descriptionLines) {
+            mergeFact(accumulator, 'description', line);
+          }
+        } else if (
+          !includesEveryExactLine(currentDescription, descriptionLines)
+        ) {
+          unresolved.push({
+            code: 'DESCRIPTION_CONFLICT',
+            rowKey: accumulator.record.id,
+          });
+        }
       }
     }
     const website = accumulator.record.legacyWebsite;
@@ -2194,7 +2354,11 @@ export const buildCanonicalizationPlan = (
       const symbolic = dispositionForKey(key, value, isPerson, isHolding);
       const concrete = symbolic ? concreteDisposition(symbolic, context) : null;
       if (!concrete) {
-        unresolved.push({ code: 'UNHANDLED_RAW_FIELD', rowKey: row.rowKey });
+        unresolved.push({
+          code: 'UNHANDLED_RAW_FIELD',
+          rowKey: row.rowKey,
+          normalizedRawKey: key,
+        });
       } else {
         const rowKey = stagingOccurrenceKey(row);
         dispositions.push({
@@ -2215,6 +2379,8 @@ export const buildCanonicalizationPlan = (
   for (const accumulator of companyAccumulators.values())
     finalizeFacts(accumulator);
   for (const accumulator of personAccumulators.values())
+    finalizeFacts(accumulator);
+  for (const accumulator of holdingAccumulators.values())
     finalizeFacts(accumulator);
 
   const canonicalRecords = new Map<string, CrmRecord>();
@@ -2268,6 +2434,8 @@ export const buildCanonicalizationPlan = (
       unresolved.push({
         code: 'DISPOSITION_VALUE_NOT_PRESERVED',
         rowKey: disposition.rowKey,
+        normalizedRawKey: disposition.key,
+        canonicalTarget: diagnosticTarget(disposition.target),
       });
       continue;
     }

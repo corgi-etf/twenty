@@ -5,6 +5,7 @@ import {
   assertCanonicalizationTenant,
   CANONICALIZATION_APPROVED_WORKSPACE_ID,
 } from '../../../corgi-crm-canonicalization/src/tenant-preflight.ts';
+import { CANONICALIZATION_APPROVED_ORIGIN } from '../../../corgi-crm-canonicalization/src/twenty-rest-api.ts';
 import {
   FETCH_METADATA_CLEANUP_CONFIRMATION,
   runFetchMetadataCleanup,
@@ -27,6 +28,12 @@ test('permanently removes Fetch migration metadata from the production CRM', asy
   );
   const { BACKEND_BASE_URL, FRONTEND_BASE_URL } =
     requireProductionEnvironment();
+  if (
+    FRONTEND_BASE_URL !== CANONICALIZATION_APPROVED_ORIGIN ||
+    BACKEND_BASE_URL !== CANONICALIZATION_APPROVED_ORIGIN
+  ) {
+    throw new Error('Production metadata cleanup origin is not approved');
+  }
   const requestGate = createCanonicalizationRequestGate();
   await assertCanonicalizationTenant({
     request: page.request,
@@ -34,43 +41,6 @@ test('permanently removes Fetch migration metadata from the production CRM', asy
     origin: new URL(FRONTEND_BASE_URL).origin,
     expectedWorkspaceId: CANONICALIZATION_APPROVED_WORKSPACE_ID,
   });
-  const currentWorkspaceResponse = await page.request.post(
-    new URL('/metadata', BACKEND_BASE_URL).toString(),
-    {
-      headers: { Origin: new URL(FRONTEND_BASE_URL).origin },
-      data: {
-        operationName: 'VerifyFetchMetadataCleanupWorkspace',
-        query: `query VerifyFetchMetadataCleanupWorkspace {
-          currentWorkspace {
-            id
-            customDomain
-            isCustomDomainEnabled
-          }
-        }`,
-      },
-    },
-  );
-
-  expect(currentWorkspaceResponse.ok()).toBe(true);
-  const currentWorkspaceBody = (await currentWorkspaceResponse.json()) as {
-    data?: {
-      currentWorkspace?: {
-        id?: string;
-        customDomain?: string | null;
-        isCustomDomainEnabled?: boolean;
-      };
-    };
-    errors?: unknown;
-  };
-
-  expect(currentWorkspaceBody.errors).toBeUndefined();
-  expect(currentWorkspaceBody.data?.currentWorkspace?.id).toBeTruthy();
-  expect(
-    currentWorkspaceBody.data?.currentWorkspace?.isCustomDomainEnabled,
-  ).toBe(true);
-  expect(currentWorkspaceBody.data?.currentWorkspace?.customDomain).toBe(
-    new URL(FRONTEND_BASE_URL).hostname,
-  );
 
   const plan = await runFetchMetadataCleanup(
     createPlaywrightMetadataCleanupApi({

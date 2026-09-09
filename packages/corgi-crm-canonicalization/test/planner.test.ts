@@ -344,6 +344,48 @@ test('ambiguous company matches create an isolated deterministic company', () =>
   );
 });
 
+test('separate unanchored rows never merge through a weak ambiguous company fingerprint', () => {
+  const input = snapshot();
+  input.companies.push({ id: 'company-2', name: 'Acme Advisors' });
+  input.sourceRecords = [];
+  input.importReviewItems = [
+    {
+      id: 'review-ambiguous-one',
+      reviewStatus: 'pending',
+      sourceFile: 'firms.csv',
+      sourceRow: 20,
+      rawData: JSON.stringify({
+        'Firm Name': 'Acme Advisors',
+        'Firm AUM': '$1,000',
+      }),
+    },
+    {
+      id: 'review-ambiguous-two',
+      reviewStatus: 'pending',
+      sourceFile: 'firms.csv',
+      sourceRow: 21,
+      rawData: JSON.stringify({
+        'Firm Name': 'Acme Advisors',
+        'Firm AUM': '$2,000',
+      }),
+    },
+  ];
+
+  const plan = buildCanonicalizationPlan(input);
+  const isolatedCompanies = plan.mutations.filter(
+    ({ objectPlural, id }) =>
+      objectPlural === 'companies' &&
+      !input.companies.some((company) => company.id === id),
+  );
+
+  assertPlanCanApply(plan);
+  assert.equal(isolatedCompanies.length, 2);
+  assert.deepEqual(
+    isolatedCompanies.map(({ data }) => data.assetsUnderManagement).sort(),
+    ['$1,000', '$2,000'],
+  );
+});
+
 test('ambiguous person identities create an isolated person and retain contacts', () => {
   const input = snapshot();
   input.people.push({
@@ -551,6 +593,7 @@ test('native business values are preserved and conflicting staging values fail c
   input.outreachActivities[0]!.followUpDate = '2026-06-16';
 
   const plan = buildCanonicalizationPlan(input);
+  const report = buildReconciliationReport(input);
 
   assert.equal(
     plan.unresolved.some(({ code }) => code === 'DESCRIPTION_CONFLICT'),
@@ -580,6 +623,86 @@ test('native business values are preserved and conflicting staging values fail c
     mutationFor(plan, 'outreachActivities', 'activity-1')?.data.followUpTaskId,
     undefined,
   );
+  assert.deepEqual(
+    report.unresolvedSchemaDiagnostics.filter(
+      ({ code }) =>
+        code === 'DISPOSITION_VALUE_NOT_PRESERVED' ||
+        code === 'HOLDING_FIELD_CONFLICT',
+    ),
+    [
+      {
+        code: 'HOLDING_FIELD_CONFLICT',
+        normalizedRawKey: null,
+        canonicalTarget: null,
+        canonicalField: 'averagePrice',
+        count: 1,
+      },
+      {
+        code: 'DISPOSITION_VALUE_NOT_PRESERVED',
+        normalizedRawKey: 'avg price',
+        canonicalTarget: 'holdingObservations.averagePrice',
+        canonicalField: null,
+        count: 1,
+      },
+    ],
+  );
+});
+
+test('reverse-sorted CRLF imported description lines normalize and converge', () => {
+  const input = snapshot();
+  input.companies[0]!.fetchDescription =
+    'Zulu re\u0301sume\u0301\r\n  Middle profile  \r\n \t \r\nAlpha profile';
+  input.sourceRecords = [
+    {
+      id: 'source-description-facts',
+      companyId: 'company-1',
+      sourceFile: 'firms.csv',
+      sourceRow: 16,
+      rawData: JSON.stringify({
+        'Firm Name': 'Acme Advisors',
+        'Lead Score': 'A',
+      }),
+    },
+  ];
+  input.importReviewItems = [];
+
+  const firstPlan = buildCanonicalizationPlan(input);
+  assertPlanCanApply(firstPlan);
+  const firstCompanyMutation = mutationFor(firstPlan, 'companies', 'company-1');
+  const description = firstCompanyMutation?.data.description;
+  assert.equal(
+    description,
+    'Alpha profile\nLead score: A\nMiddle profile\nZulu résumé',
+  );
+
+  Object.assign(input.companies[0]!, firstCompanyMutation?.data);
+  const convergedPlan = buildCanonicalizationPlan(input);
+
+  assertPlanCanApply(convergedPlan);
+  assert.equal(convergedPlan.unresolved.length, 0);
+  assert.equal(mutationFor(convergedPlan, 'companies', 'company-1'), undefined);
+});
+
+test('missing or partial imported-description lines remain native conflicts', () => {
+  for (const description of [
+    'Alpha profile\nZulu résumé',
+    'Alpha profile with user-authored context\nMiddle profile\nZulu résumé',
+  ]) {
+    const input = snapshot();
+    input.companies[0]!.fetchDescription =
+      'Zulu re\u0301sume\u0301\r\n  Middle profile  \r\n \t \r\nAlpha profile';
+    input.companies[0]!.description = description;
+    input.sourceRecords = [];
+    input.importReviewItems = [];
+
+    const plan = buildCanonicalizationPlan(input);
+
+    assert.equal(
+      plan.unresolved.some(({ code }) => code === 'DESCRIPTION_CONFLICT'),
+      true,
+      description,
+    );
+  }
 });
 
 test('strong person identity anchors an otherwise ambiguous company name', () => {
@@ -922,6 +1045,241 @@ test('conflicting company facts use explicit neutral fallback fields', () => {
   assert.match(String(company?.data.alternateAddresses), /2 Source Street/);
 });
 
+test('a comma-bearing firm address is preserved exactly in other addresses', () => {
+  const input = snapshot();
+  input.companies[0]!.address = {
+    addressStreet1: '1 Existing Road',
+    addressStreet2: '',
+    addressCity: 'Chicago',
+    addressState: 'IL',
+    addressPostcode: '60601',
+    addressCountry: 'US',
+    addressLat: null,
+    addressLng: null,
+  };
+  input.sourceRecords = [
+    {
+      id: 'source-address-with-suite',
+      companyId: 'company-1',
+      sourceFile: 'firms.csv',
+      sourceRow: 21,
+      rawData: JSON.stringify({
+        'Firm Name': 'Acme Advisors',
+        'Firm Address': '2 Source Street, Suite 400',
+        'Firm City': 'Evanston',
+        'Firm State': 'IL',
+        'Firm Zip': '60201',
+      }),
+    },
+  ];
+  input.importReviewItems = [];
+
+  const plan = buildCanonicalizationPlan(input);
+  const company = mutationFor(plan, 'companies', 'company-1');
+
+  assert.equal(
+    plan.unresolved.some(
+      ({ code, normalizedRawKey }) =>
+        code === 'DISPOSITION_VALUE_NOT_PRESERVED' &&
+        normalizedRawKey === 'firm address',
+    ),
+    false,
+  );
+  assertPlanCanApply(plan);
+  assert.match(
+    String(company?.data.alternateAddresses),
+    /Street: 2 Source Street, Suite 400/,
+  );
+  Object.assign(input.companies[0]!, company?.data);
+  assert.equal(
+    mutationFor(buildCanonicalizationPlan(input), 'companies', 'company-1'),
+    undefined,
+  );
+});
+
+test('every distinct custodian source alias is retained canonically', () => {
+  const input = snapshot();
+  input.sourceRecords = [
+    {
+      id: 'source-custodians',
+      companyId: 'company-1',
+      sourceFile: 'firms.csv',
+      sourceRow: 22,
+      rawData: JSON.stringify({
+        'Firm Name': 'Acme Advisors',
+        'Firm Custodians': 'Schwab',
+        'Firm Tag: Custodian': 'Fidelity',
+      }),
+    },
+  ];
+  input.importReviewItems = [];
+
+  const plan = buildCanonicalizationPlan(input);
+  const custodians = String(
+    mutationFor(plan, 'companies', 'company-1')?.data.custodians,
+  );
+
+  assert.equal(
+    plan.unresolved.some(
+      ({ code, normalizedRawKey }) =>
+        code === 'DISPOSITION_VALUE_NOT_PRESERVED' &&
+        normalizedRawKey === 'firm tag custodian',
+    ),
+    false,
+  );
+  assertPlanCanApply(plan);
+  assert.match(custodians, /Fidelity/);
+  assert.match(custodians, /Schwab/);
+  Object.assign(
+    input.companies[0]!,
+    mutationFor(plan, 'companies', 'company-1')?.data,
+  );
+  assert.equal(
+    mutationFor(buildCanonicalizationPlan(input), 'companies', 'company-1'),
+    undefined,
+  );
+});
+
+test('strong person matches retain differing source names as alternate names', () => {
+  const input = snapshot();
+  input.people[0]!.otherContactDetails = 'Prefers email';
+  input.sourceRecords = [
+    {
+      id: 'source-alternate-person-name',
+      companyId: 'company-1',
+      sourceFile: 'people.csv',
+      sourceRow: 23,
+      rawData: JSON.stringify({
+        RIA: 'Acme Advisors',
+        'First Name': 'Alexis',
+        'Last Name': 'Smythe',
+        'Email 1': 'alex@acme.example',
+      }),
+    },
+  ];
+  input.importReviewItems = [];
+
+  const plan = buildCanonicalizationPlan(input);
+  const person = mutationFor(plan, 'people', 'person-1');
+
+  assert.equal(
+    plan.unresolved.some(
+      ({ code, normalizedRawKey }) =>
+        code === 'DISPOSITION_VALUE_NOT_PRESERVED' &&
+        ['first name', 'last name'].includes(normalizedRawKey ?? ''),
+    ),
+    false,
+  );
+  assertPlanCanApply(plan);
+  assert.equal(person?.data.alternateNames, undefined);
+  assert.match(
+    String(person?.data.otherContactDetails),
+    /Other first name: Alexis/,
+  );
+  assert.match(
+    String(person?.data.otherContactDetails),
+    /Other last name: Smythe/,
+  );
+  assert.match(String(person?.data.otherContactDetails), /Prefers email/);
+  Object.assign(input.people[0]!, person?.data);
+  assert.equal(
+    mutationFor(buildCanonicalizationPlan(input), 'people', 'person-1'),
+    undefined,
+  );
+});
+
+test('family office business fields are retained without raw staging metadata', () => {
+  const input = snapshot();
+  input.sourceRecords = [
+    {
+      id: 'source-family-office',
+      companyId: 'company-1',
+      sourceFile: 'firms.csv',
+      sourceRow: 24,
+      rawData: JSON.stringify({
+        'Firm Name': 'Acme Advisors',
+        'Family Office Asset Class': 'Private equity',
+        'Family Office Bio': 'Multi-generation investment office',
+        'Family Office Industry Focus': 'Manufacturing',
+        'Family Office Years Founded': '1987',
+      }),
+    },
+  ];
+  input.importReviewItems = [];
+
+  const plan = buildCanonicalizationPlan(input);
+  const company = mutationFor(plan, 'companies', 'company-1');
+
+  assert.equal(
+    plan.unresolved.some(({ code }) => code === 'UNHANDLED_RAW_FIELD'),
+    false,
+  );
+  assertPlanCanApply(plan);
+  assert.equal(company?.data.assetClasses, 'Private equity');
+  assert.equal(company?.data.familyOfficeFocus, 'Manufacturing');
+  assert.match(
+    String(company?.data.description),
+    /Family office bio: Multi-generation investment office/,
+  );
+  assert.match(
+    String(company?.data.description),
+    /Family office years founded: 1987/,
+  );
+  Object.assign(input.companies[0]!, company?.data);
+  assert.equal(
+    mutationFor(buildCanonicalizationPlan(input), 'companies', 'company-1'),
+    undefined,
+  );
+});
+
+test('holding state conflicts retain every exact region in a neutral alternate field', () => {
+  const input = snapshot();
+  input.sourceRecords = [];
+  input.importReviewItems = [];
+  input.holdingObservations[0]!.stateRegion = 'IL';
+  input.holdingObservations[0]!.addressLine2 = 'Suite 200';
+  const rawData = JSON.parse(
+    String(input.holdingObservations[0]!.rawData),
+  ) as Record<string, unknown>;
+  rawData['Filer State'] = 'Illinois';
+  rawData.State = 'Illinois, USA';
+  input.holdingObservations[0]!.rawData = JSON.stringify(rawData);
+
+  const first = buildCanonicalizationPlan(input);
+  const holding = mutationFor(first, 'holdingObservations', 'holding-1');
+
+  assert.equal(
+    first.unresolved.some(
+      ({ code, canonicalField, normalizedRawKey }) =>
+        (code === 'HOLDING_FIELD_CONFLICT' &&
+          canonicalField === 'stateRegion') ||
+        (code === 'DISPOSITION_VALUE_NOT_PRESERVED' &&
+          ['filer state', 'state'].includes(normalizedRawKey ?? '')),
+    ),
+    false,
+  );
+  assertPlanCanApply(first);
+  assert.equal(holding?.data.stateRegion, undefined);
+  assert.equal(holding?.data.alternateStateRegions, undefined);
+  assert.match(
+    String(holding?.data.addressLine2),
+    /Other state \/ region: Illinois/,
+  );
+  assert.match(
+    String(holding?.data.addressLine2),
+    /Other state \/ region: Illinois, USA/,
+  );
+  assert.match(String(holding?.data.addressLine2), /Suite 200/);
+
+  Object.assign(input.holdingObservations[0]!, holding?.data);
+  const second = buildCanonicalizationPlan(input);
+  assertPlanCanApply(second);
+  assert.equal(
+    mutationFor(second, 'holdingObservations', 'holding-1'),
+    undefined,
+  );
+});
+
 test('invalid contact structures are retained in other contact details', () => {
   const input = snapshot();
   input.sourceRecords = [
@@ -967,7 +1325,7 @@ test('invalid contact structures are retained in other contact details', () => {
   assert.match(String(person?.data.otherContactDetails), /not supplied/);
 });
 
-test('holding dates normalize and invalid placeholders are explicitly disposed', () => {
+test('holding dates normalize and explicit placeholders are safely disposed', () => {
   const input = snapshot();
   const rawData = JSON.parse(
     String(input.holdingObservations[0]!.rawData),
@@ -1002,7 +1360,45 @@ test('holding dates normalize and invalid placeholders are explicitly disposed',
     false,
   );
   assert.equal(sourceDateDisposition?.kind, 'ignored');
-  assert.match(String(sourceDateDisposition?.target), /invalid date/i);
+  assert.match(
+    String(sourceDateDisposition?.target),
+    /explicit date placeholder/i,
+  );
+});
+
+test('natural-language holding dates normalize while unsupported dates fail closed', () => {
+  const input = snapshot();
+  const rawData = JSON.parse(
+    String(input.holdingObservations[0]!.rawData),
+  ) as Record<string, unknown>;
+  rawData['Source Date'] = 'June 30, 2026';
+  input.holdingObservations[0]!.rawData = JSON.stringify(rawData);
+  delete input.holdingObservations[0]!.sourceDate;
+
+  const naturalLanguagePlan = buildCanonicalizationPlan(input);
+
+  assertPlanCanApply(naturalLanguagePlan);
+  assert.equal(
+    mutationFor(naturalLanguagePlan, 'holdingObservations', 'holding-1')?.data
+      .asOfDate,
+    '2026-06-30',
+  );
+
+  rawData['Source Date'] = 'end of second quarter 2026';
+  input.holdingObservations[0]!.rawData = JSON.stringify(rawData);
+  const unsupportedPlan = buildCanonicalizationPlan(input);
+  const sourceDateDisposition = unsupportedPlan.dispositions.find(
+    ({ key }) => key === 'source date',
+  );
+
+  assert.equal(
+    unsupportedPlan.unresolved.some(
+      ({ code }) => code === 'HOLDING_DATE_INVALID',
+    ),
+    true,
+  );
+  assert.notEqual(sourceDateDisposition?.kind, 'ignored');
+  assert.throws(() => assertPlanCanApply(unsupportedPlan), /unresolved/i);
 });
 
 test('known optional source fields have explicit business dispositions', () => {

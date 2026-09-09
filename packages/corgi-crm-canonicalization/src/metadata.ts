@@ -111,7 +111,7 @@ const RENAME_DEFINITIONS: readonly (FieldDefinition & {
   {
     objectName: 'wholesaler',
     currentName: 'fetchRole',
-    name: 'role',
+    name: 'wholesalerRole',
     label: 'Role',
     type: 'TEXT',
   },

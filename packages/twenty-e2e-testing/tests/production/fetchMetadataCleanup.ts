@@ -1,3 +1,13 @@
+import {
+  normalizeEmail,
+  normalizeKey,
+  normalizeLinkedIn,
+  normalizePhone,
+  parseRawData,
+  stableStringify,
+  textValue,
+} from '../../../corgi-crm-canonicalization/src/normalization.ts';
+
 const CLEANUP_OBJECT_NAMES = [
   'archivedOutreachActivity',
   'importReviewItem',
@@ -5,7 +15,7 @@ const CLEANUP_OBJECT_NAMES = [
   'sourceRecord',
 ] as const;
 
-const SURVIVING_MIGRATED_OBJECT_NAMES = [
+const MIGRATED_SURVIVING_OBJECT_NAMES = [
   'company',
   'person',
   'task',
@@ -16,6 +26,17 @@ const SURVIVING_MIGRATED_OBJECT_NAMES = [
   'leadAssignment',
   'outreachActivity',
   'holdingObservation',
+] as const;
+
+const SYSTEM_REVERSE_RELATION_OBJECT_NAMES = [
+  'timelineActivity',
+  'attachment',
+  'noteTarget',
+] as const;
+
+const SURVIVING_MIGRATED_OBJECT_NAMES = [
+  ...MIGRATED_SURVIVING_OBJECT_NAMES,
+  ...SYSTEM_REVERSE_RELATION_OBJECT_NAMES,
 ] as const;
 
 const PROVENANCE_FIELD_NAMES = [
@@ -51,7 +72,7 @@ const ADDITIONAL_FIELDS_TO_DELETE = {
     'legacySecondaryPhones',
   ],
   task: ['legacyCompanyId', 'legacyContactId', 'legacyWholesalerId'],
-  taskTarget: [],
+  taskTarget: ['targetImportBatch'],
   wholesaler: [],
   salesTeam: [],
   teamMembership: [],
@@ -63,6 +84,9 @@ const ADDITIONAL_FIELDS_TO_DELETE = {
     'sourceRow',
     'rawData',
   ],
+  timelineActivity: ['targetImportBatch'],
+  attachment: ['targetImportBatch'],
+  noteTarget: ['targetImportBatch'],
 } as const satisfies Record<SurvivingMigratedObjectName, readonly string[]>;
 
 const PRESERVED_FIELDS = {
@@ -76,7 +100,7 @@ const PRESERVED_FIELDS = {
     'otherContactDetails',
   ],
   task: ['title'],
-  taskTarget: ['task', 'targetCompany'],
+  taskTarget: ['task', 'targetCompany', 'targetPerson', 'targetOpportunity'],
   wholesaler: ['name'],
   salesTeam: ['name', 'description'],
   teamMembership: ['name', 'membershipRole', 'salesTeam', 'wholesaler'],
@@ -108,6 +132,30 @@ const PRESERVED_FIELDS = {
     'streetAddress',
     'addressLine2',
   ],
+  timelineActivity: [
+    'workspaceMember',
+    'targetPerson',
+    'targetCompany',
+    'targetOpportunity',
+    'targetNote',
+    'targetTask',
+    'targetWorkflow',
+    'targetWorkflowVersion',
+    'targetWorkflowRun',
+    'targetDashboard',
+    'targetMessageList',
+    'targetMessageCampaign',
+  ],
+  attachment: [
+    'targetTask',
+    'targetNote',
+    'targetPerson',
+    'targetCompany',
+    'targetOpportunity',
+    'targetDashboard',
+    'targetWorkflow',
+  ],
+  noteTarget: ['note', 'targetPerson', 'targetCompany', 'targetOpportunity'],
 } as const satisfies Record<SurvivingMigratedObjectName, readonly string[]>;
 
 const RETAINED_FIELD_RENAMES = [
@@ -136,7 +184,7 @@ const RETAINED_FIELD_RENAMES = [
     'Postal Code',
   ],
   ['person', 'fetchNotes', 'Fetch Notes', 'notes', 'Notes'],
-  ['wholesaler', 'fetchRole', 'Fetch Role', 'role', 'Role'],
+  ['wholesaler', 'fetchRole', 'Fetch Role', 'wholesalerRole', 'Role'],
   ['holdingObservation', 'sourceDate', 'Source Date', 'asOfDate', 'As Of Date'],
 ] as const;
 
@@ -415,7 +463,11 @@ export const buildFetchMetadataCleanupPlan = (
   });
   const fieldsToDelete = survivingObjects.flatMap((object) => {
     const fieldNames = new Set<string>([
-      ...PROVENANCE_FIELD_NAMES,
+      ...(MIGRATED_SURVIVING_OBJECT_NAMES.includes(
+        object.nameSingular as (typeof MIGRATED_SURVIVING_OBJECT_NAMES)[number],
+      )
+        ? PROVENANCE_FIELD_NAMES
+        : []),
       ...ADDITIONAL_FIELDS_TO_DELETE[
         object.nameSingular as SurvivingMigratedObjectName
       ],
@@ -453,110 +505,46 @@ export const buildFetchMetadataCleanupPlan = (
 const trimmedString = (value: unknown): string | undefined =>
   typeof value === 'string' && value.trim() ? value.trim() : undefined;
 
-const parseJsonArray = (value: unknown, context: string): unknown[] => {
-  if (value === null || value === undefined || value === '') return [];
+const jsonArray = (value: unknown): unknown[] => {
   if (Array.isArray(value)) return value;
-  if (typeof value !== 'string')
-    throw new Error(`${context} is not a JSON array`);
-
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(value);
-  } catch {
-    throw new Error(`${context} contains invalid JSON`);
-  }
-  if (!Array.isArray(parsed)) throw new Error(`${context} is not a JSON array`);
-  return parsed;
-};
-
-const emailSources = (person: WorkspaceRecord): string[] => {
-  const primary = trimmedString(person.legacyEmail);
-  const secondary = parseJsonArray(
-    person.legacySecondaryEmails,
-    `person ${person.id} legacySecondaryEmails`,
-  ).map((value) => {
-    const email = trimmedString(value);
-    if (!email)
-      throw new Error(`person ${person.id} has invalid secondary email data`);
-    return email;
-  });
-
-  const seen = new Set<string>();
-  return (primary ? [primary, ...secondary] : secondary).filter((email) => {
-    const key = email.toLocaleLowerCase();
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
-};
-
-const phoneKey = (value: string): string => value.replace(/\D/g, '');
-
-type PhoneSource = { raw: string; baseKey: string; extension?: string };
-
-const phoneSources = (person: WorkspaceRecord): PhoneSource[] => {
-  const values = [
-    person.legacyPrimaryPhone,
-    ...parseJsonArray(
-      person.legacySecondaryPhones,
-      `person ${person.id} legacySecondaryPhones`,
-    ),
-  ];
-
-  return values.flatMap((value) => {
-    if (value === null || value === undefined || value === '') return [];
-    if (typeof value === 'string' && value.trim()) {
-      const raw = value.trim();
-      const extensionMatch = raw.match(
-        /[\s,;]*(?:(?:ext(?:ension)?\.?|x|#)\s*(\d+))\s*$/i,
-      );
-      const base = extensionMatch
-        ? raw.slice(0, extensionMatch.index).trim()
-        : raw;
-      return [
-        {
-          raw,
-          baseKey: phoneKey(base),
-          extension: extensionMatch?.[1],
-        },
-      ];
-    }
-    if (typeof value === 'object' && !Array.isArray(value)) {
-      const record = value as Record<string, unknown>;
-      const number = trimmedString(record.number);
-      const callingCode = trimmedString(record.callingCode) ?? '';
-      if (number) {
-        return [
-          {
-            raw: `${callingCode}${number}`,
-            baseKey: phoneKey(`${callingCode}${number}`),
-          },
-        ];
-      }
-    }
-    throw new Error(`person ${person.id} has invalid secondary phone data`);
-  });
-};
-
-const normalizedHttpUrl = (value: unknown): string | undefined => {
-  const raw = trimmedString(value);
-  if (!raw) return undefined;
-  const candidate = /^(?:www\.)?linkedin\.com(?:[/?#]|$)/i.test(raw)
-    ? `https://${raw}`
-    : raw;
+  if (typeof value !== 'string' || !value.trim()) return [];
 
   try {
-    const parsed = new URL(candidate);
-    if (!['http:', 'https:'].includes(parsed.protocol) || !parsed.hostname) {
-      return undefined;
-    }
-    parsed.search = '';
-    parsed.hash = '';
-    parsed.pathname = parsed.pathname.replace(/\/+$/, '') || '/';
-    return parsed.href.replace(/\/$/, '');
+    const parsed = JSON.parse(value) as unknown;
+
+    return Array.isArray(parsed) ? parsed : [];
   } catch {
-    return undefined;
+    return [value];
   }
+};
+
+const legacyEmailCandidates = (person: WorkspaceRecord): unknown[] => [
+  person.legacyEmail,
+  ...jsonArray(person.legacySecondaryEmails),
+];
+
+const legacyPhoneCandidates = (person: WorkspaceRecord): unknown[] => [
+  person.legacyPrimaryPhone,
+  ...jsonArray(person.legacySecondaryPhones),
+];
+
+const phoneIdentity = (
+  normalized: NonNullable<ReturnType<typeof normalizePhone>>,
+): string => `${normalized.callingCode}${normalized.number}`;
+
+const normalizedCompositePhone = (
+  number: unknown,
+  callingCode: unknown,
+): ReturnType<typeof normalizePhone> => {
+  const numberText = textValue(number);
+  const callingCodeText = textValue(callingCode);
+  if (!numberText) return null;
+
+  return normalizePhone(
+    callingCodeText && !numberText.startsWith('+')
+      ? `${callingCodeText}${numberText}`
+      : numberText,
+  );
 };
 
 export const assertPeopleContactValuesCanonicalized = (
@@ -570,21 +558,27 @@ export const assertPeopleContactValuesCanonicalized = (
         .filter(Boolean),
     );
     const emails = (person.emails ?? {}) as Record<string, unknown>;
-    const canonicalEmails = [
-      emails.primaryEmail,
-      ...(Array.isArray(emails.additionalEmails)
-        ? emails.additionalEmails
-        : []),
-    ]
-      .map(trimmedString)
-      .filter((value): value is string => Boolean(value))
-      .map((email) => email.toLocaleLowerCase());
+    const canonicalEmails = new Set(
+      [
+        emails.primaryEmail,
+        ...(Array.isArray(emails.additionalEmails)
+          ? emails.additionalEmails
+          : []),
+      ]
+        .map(normalizeEmail)
+        .filter((value): value is string => Boolean(value)),
+    );
     if (
-      emailSources(person).some(
-        (email) =>
-          !canonicalEmails.includes(email.toLocaleLowerCase()) &&
-          !residualLines.has(`Email: ${email}`),
-      )
+      legacyEmailCandidates(person).some((candidate) => {
+        const original = textValue(candidate);
+        if (!original) return false;
+        const normalized = normalizeEmail(candidate);
+
+        return (
+          (!normalized || !canonicalEmails.has(normalized)) &&
+          !residualLines.has(`Email: ${original}`)
+        );
+      })
     ) {
       throw new Error(
         `person ${person.id} contact cleanup blocked: Emails does not contain every imported email`,
@@ -592,34 +586,41 @@ export const assertPeopleContactValuesCanonicalized = (
     }
 
     const phones = (person.phones ?? {}) as Record<string, unknown>;
-    const canonicalPhoneKeys = [
-      phoneKey(
-        `${trimmedString(phones.primaryPhoneCallingCode) ?? ''}${trimmedString(phones.primaryPhoneNumber) ?? ''}`,
-      ),
-      ...(Array.isArray(phones.additionalPhones)
-        ? phones.additionalPhones.map((value) => {
-            if (!value || typeof value !== 'object' || Array.isArray(value))
-              return '';
-            const phone = value as Record<string, unknown>;
-            return phoneKey(
-              `${trimmedString(phone.callingCode) ?? ''}${trimmedString(phone.number) ?? ''}`,
-            );
-          })
-        : []),
-    ].filter(Boolean);
+    const canonicalPhoneIdentities = new Set(
+      [
+        normalizedCompositePhone(
+          phones.primaryPhoneNumber,
+          phones.primaryPhoneCallingCode,
+        ),
+        ...(Array.isArray(phones.additionalPhones)
+          ? phones.additionalPhones.map((value) => {
+              if (!value || typeof value !== 'object' || Array.isArray(value)) {
+                return null;
+              }
+              const phone = value as Record<string, unknown>;
+
+              return normalizedCompositePhone(phone.number, phone.callingCode);
+            })
+          : []),
+      ]
+        .filter((value): value is NonNullable<typeof value> => value !== null)
+        .map(phoneIdentity),
+    );
     if (
-      phoneSources(person).some(({ raw, baseKey, extension }) => {
-        const baseIsCanonical =
-          baseKey.length > 0 &&
-          canonicalPhoneKeys.some(
-            (canonical) =>
-              canonical === baseKey ||
-              canonical.endsWith(baseKey) ||
-              baseKey.endsWith(canonical),
-          );
-        if (!baseIsCanonical) return !residualLines.has(`Phone: ${raw}`);
+      legacyPhoneCandidates(person).some((candidate) => {
+        const original = textValue(candidate);
+        if (!original) return false;
+        const normalized = normalizePhone(candidate);
+        const isCanonical =
+          normalized !== null &&
+          canonicalPhoneIdentities.has(phoneIdentity(normalized));
+        if (!isCanonical && !residualLines.has(`Phone: ${original}`)) {
+          return true;
+        }
+
         return Boolean(
-          extension && !residualLines.has(`Phone extension: ${raw}`),
+          normalized?.extension &&
+          !residualLines.has(`Phone extension: ${original}`),
         );
       })
     ) {
@@ -628,21 +629,24 @@ export const assertPeopleContactValuesCanonicalized = (
       );
     }
 
-    const rawLegacyLinkedin = trimmedString(person.legacyLinkedInUrl);
-    const legacyLinkedin = normalizedHttpUrl(rawLegacyLinkedin);
+    const rawLegacyLinkedin = textValue(person.legacyLinkedInUrl);
+    const legacyLinkedin = normalizeLinkedIn(person.legacyLinkedInUrl);
     if (rawLegacyLinkedin) {
       const linkedin = (person.linkedinLink ?? {}) as Record<string, unknown>;
       const canonicalLinkedinUrls = [
         linkedin.primaryLinkUrl,
         ...(Array.isArray(linkedin.secondaryLinks)
-          ? linkedin.secondaryLinks.map((value) =>
-              value && typeof value === 'object' && !Array.isArray(value)
-                ? (value as Record<string, unknown>).url
-                : undefined,
-            )
+          ? linkedin.secondaryLinks.flatMap((value) => {
+              if (!value || typeof value !== 'object' || Array.isArray(value)) {
+                return [];
+              }
+              const link = value as Record<string, unknown>;
+
+              return [link.url, link.primaryLinkUrl];
+            })
           : []),
       ]
-        .map(normalizedHttpUrl)
+        .map(normalizeLinkedIn)
         .filter((value): value is string => Boolean(value));
       if (
         (!legacyLinkedin || !canonicalLinkedinUrls.includes(legacyLinkedin)) &&
@@ -668,27 +672,55 @@ const normalizedHostname = (value: unknown): string | undefined => {
   }
 };
 
+const normalizedNonemptyLines = (value: string): string[] =>
+  value
+    .normalize('NFC')
+    .replace(/\r\n?/g, '\n')
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+
+const includesEveryExactLine = (
+  value: string,
+  lines: readonly string[],
+): boolean => {
+  const valueLines = new Set(normalizedNonemptyLines(value));
+
+  return lines.length > 0 && lines.every((line) => valueLines.has(line));
+};
+
+const rawIndex = (rawData: Record<string, unknown>): Map<string, unknown> => {
+  const index = new Map<string, unknown>();
+
+  for (const [key, value] of Object.entries(rawData)) {
+    const normalized = normalizeKey(key);
+    const existing = index.get(normalized);
+    const valuesMatch =
+      existing === undefined || value === undefined
+        ? existing === value
+        : stableStringify(existing) === stableStringify(value);
+    if (index.has(normalized) && !valuesMatch) {
+      throw new Error(`Conflicting normalized raw key ${normalized}`);
+    }
+    if (!index.has(normalized)) index.set(normalized, value);
+  }
+
+  return index;
+};
+
 export const assertCompanyValuesCanonicalized = (
   companies: WorkspaceRecord[],
   sourceRecords: WorkspaceRecord[],
+  importReviewItems: WorkspaceRecord[] = [],
 ): void => {
   const confidenceNotesByCompanyId = new Map<string, string[]>();
-  for (const sourceRecord of sourceRecords) {
+  for (const sourceRecord of [...sourceRecords, ...importReviewItems]) {
     const companyId = trimmedString(sourceRecord.companyId);
     if (!companyId) continue;
-    let rawData: unknown = sourceRecord.rawData;
-    if (typeof rawData === 'string') {
-      try {
-        rawData = JSON.parse(rawData);
-      } catch {
-        continue;
-      }
-    }
-    if (!rawData || typeof rawData !== 'object' || Array.isArray(rawData)) {
-      continue;
-    }
-    const confidenceNote = trimmedString(
-      (rawData as Record<string, unknown>)['notes / source confidence'],
+    const confidenceNote = textValue(
+      rawIndex(parseRawData(sourceRecord.rawData)).get(
+        normalizeKey('notes source confidence'),
+      ),
     );
     if (!confidenceNote) continue;
     confidenceNotesByCompanyId.set(companyId, [
@@ -759,12 +791,19 @@ export const assertCompanyValuesCanonicalized = (
 
     const sourceDescription = trimmedString(company.fetchDescription);
     const description = trimmedString(company.description);
+    const isPreservedInDescription =
+      sourceDescription !== undefined &&
+      description !== undefined &&
+      includesEveryExactLine(
+        description,
+        normalizedNonemptyLines(sourceDescription),
+      );
     const isSourceConfidenceCommentary = (
       confidenceNotesByCompanyId.get(company.id) ?? []
     ).includes(sourceDescription ?? '');
     if (
       sourceDescription &&
-      description !== sourceDescription &&
+      !isPreservedInDescription &&
       !isSourceConfidenceCommentary
     ) {
       throw new Error(
@@ -944,6 +983,7 @@ export const runFetchMetadataCleanup = async (
 export const cleanupContract = {
   objectNames: CLEANUP_OBJECT_NAMES,
   survivingObjectNames: SURVIVING_MIGRATED_OBJECT_NAMES,
+  provenanceObjectNames: MIGRATED_SURVIVING_OBJECT_NAMES,
   provenanceFieldNames: PROVENANCE_FIELD_NAMES,
   additionalFieldsToDelete: ADDITIONAL_FIELDS_TO_DELETE,
   preservedFields: PRESERVED_FIELDS,

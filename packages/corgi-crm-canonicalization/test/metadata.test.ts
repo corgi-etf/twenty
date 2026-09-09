@@ -78,7 +78,7 @@ test('metadata plan renames useful fields and creates explicit business fields',
       ['company', 'fetchTags', 'tags'],
       ['holdingObservation', 'sourceDate', 'asOfDate'],
       ['person', 'legacyCity', 'city'],
-      ['wholesaler', 'fetchRole', 'role'],
+      ['wholesaler', 'fetchRole', 'wholesalerRole'],
     ],
   );
   assert.ok(
@@ -117,6 +117,15 @@ test('metadata plan renames useful fields and creates explicit business fields',
         objectName === 'holdingObservation' && name === 'form13f',
     ),
   );
+  assert.equal(
+    plan.creates.some(
+      ({ objectName, name }) =>
+        (objectName === 'person' && name === 'alternateNames') ||
+        (objectName === 'holdingObservation' &&
+          name === 'alternateStateRegions'),
+    ),
+    false,
+  );
   assert.ok(
     plan.creates.some(
       ({ objectName, name }) => objectName === 'task' && name === 'wholesaler',
@@ -138,6 +147,11 @@ test('metadata plan renames useful fields and creates explicit business fields',
       /fetch|legacy|import|source|migration|batch|hmac|raw/i.test(name),
     ),
     false,
+  );
+  assert.equal(
+    retainedNames.includes('role'),
+    false,
+    'metadata targets must not use Twenty reserved name role',
   );
   assert.equal(
     plan.renames.some(({ currentName }) => currentName === 'legacyWebsite'),

@@ -65,6 +65,18 @@ const assertCount = (label: string, actual: number, expected: number): void => {
   }
 };
 
+const assertMinimumCount = (
+  label: string,
+  actual: number,
+  expectedMinimum: number,
+): void => {
+  if (actual < expectedMinimum) {
+    throw new Error(
+      `CRM cleanup baseline mismatch for ${label}: expected at least ${expectedMinimum}, received ${actual}`,
+    );
+  }
+};
+
 const uniqueLegacyIdMap = (
   objectName: string,
   records: WorkspaceRecord[],
@@ -151,11 +163,40 @@ export const assertAuditedCanonicalizationSnapshot = (
     snapshot.wholesalers.length,
     EXACT_COUNTS.wholesalers,
   );
-  assertCount(
+  assertMinimumCount(
     'lead assignments',
     snapshot.leadAssignments.length,
     EXACT_COUNTS.leadAssignments,
   );
+  assertCount(
+    'migrated lead assignments',
+    uniqueLegacyIdMap('lead assignment', snapshot.leadAssignments).size,
+    EXACT_COUNTS.leadAssignments,
+  );
+  const companyIds = new Set(snapshot.companies.map(({ id }) => id));
+  const personIds = new Set(snapshot.people.map(({ id }) => id));
+  const wholesalerIds = new Set(snapshot.wholesalers.map(({ id }) => id));
+  for (const assignment of snapshot.leadAssignments) {
+    if (!stringValue(assignment.legacyFetchId)) continue;
+    const companyId = stringValue(assignment.companyId);
+    if (!companyId || !companyIds.has(companyId)) {
+      throw new Error(
+        `CRM cleanup blocked: leadAssignment ${assignment.id} company mapping is unresolved`,
+      );
+    }
+    const wholesalerId = stringValue(assignment.wholesalerId);
+    if (!wholesalerId || !wholesalerIds.has(wholesalerId)) {
+      throw new Error(
+        `CRM cleanup blocked: leadAssignment ${assignment.id} wholesaler mapping is unresolved`,
+      );
+    }
+    const contactId = stringValue(assignment.contactId);
+    if (contactId && !personIds.has(contactId)) {
+      throw new Error(
+        `CRM cleanup blocked: leadAssignment ${assignment.id} contact mapping is unresolved`,
+      );
+    }
+  }
   assertCount(
     'outreach activities',
     snapshot.outreachActivities.length,
