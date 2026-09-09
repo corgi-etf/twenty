@@ -425,13 +425,14 @@ test('apply refetches metadata, writes one record, and proves zero work', async 
   assert.equal(api.checkpoint?.status, 'complete');
 });
 
-test('apply rereads a composed imported description and converges', async () => {
+test('apply rereads reverse-sorted CRLF imported description lines and converges', async () => {
   const input = emptySnapshot();
   input.companies.push({
     id: 'company-1',
     name: 'Example Advisors',
     updatedAt: '2026-01-01T00:00:00.000Z',
-    fetchDescription: 'Imported company profile',
+    fetchDescription:
+      'Zulu re\u0301sume\u0301\r\n  Middle profile  \r\n \t \r\nAlpha profile',
   });
   input.sourceRecords.push({
     id: 'source-description-facts',
@@ -453,11 +454,10 @@ test('apply rereads a composed imported description and converges', async () => 
     expectedManifest: dryRun.manifest,
   });
 
-  assert.match(
-    String(api.snapshot.companies[0]?.description),
-    /Imported company profile/,
+  assert.equal(
+    api.snapshot.companies[0]?.description,
+    'Alpha profile\nLead score: A\nMiddle profile\nZulu résumé',
   );
-  assert.match(String(api.snapshot.companies[0]?.description), /Lead score: A/);
   assert.equal(result.reconciliation.remainingMutations, 0);
   assert.deepEqual(result.reconciliation.unresolvedByCode, {});
   assert.equal(api.checkpoint?.status, 'complete');
