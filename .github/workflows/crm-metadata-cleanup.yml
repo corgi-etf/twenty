@@ -1,0 +1,297 @@
+name: Manual CRM migration metadata cleanup
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: >-
+          Type PERMANENTLY_DELETE_FETCH_METADATA_FROM_CRM_CORGIINVEST_COM
+        required: true
+        type: string
+      deployed_sha:
+        description: Exact 40-character SHA currently deployed to both CRM services
+        required: true
+        type: string
+      row_coverage_sha256:
+        description: Row coverage SHA-256 from the successful canonicalization result
+        required: true
+        type: string
+      business_content_sha256:
+        description: Business content SHA-256 from the successful canonicalization result
+        required: true
+        type: string
+      company_count:
+        description: Exact Company count from the successful canonicalization result
+        required: true
+        type: number
+      people_count:
+        description: Exact People count from the successful canonicalization result
+        required: true
+        type: number
+      holding_count:
+        description: Exact Holding count from the successful canonicalization result
+        required: true
+        type: number
+      resume_run_id:
+        description: Prior failed cleanup run ID to resume (leave blank for first run)
+        required: false
+        default: ''
+        type: string
+      resume_attempt:
+        description: Prior failed cleanup attempt number to resume
+        required: false
+        default: ''
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+  id-token: write
+
+concurrency:
+  # Serialize the irreversible cleanup with every production deployment.
+  group: crm-production-deploy
+  cancel-in-progress: false
+
+env:
+  AWS_ACCOUNT_ID: '182018075072'
+  AWS_REGION: us-east-2
+  AWS_ROLE_ARN: arn:aws:iam::182018075072:role/crm-production-github-deploy
+  ECS_CLUSTER: crm-production
+  ECR_REPOSITORY: crm-production-twenty
+  SERVER_SERVICE: crm-production-server
+  SERVER_CONTAINER: server
+  WORKER_SERVICE: crm-production-worker
+  WORKER_CONTAINER: worker
+
+jobs:
+  preflight:
+    name: Verify the exact deployed production revision
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # The deploy role's OIDC trust is scoped to this protected environment.
+    environment: production
+    steps:
+      - name: Check out the exact workflow revision
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          fetch-depth: 0
+
+      - name: Validate confirmation and dry-run manifest inputs
+        shell: bash
+        env:
+          REQUESTED_CONFIRMATION: ${{ inputs.confirmation }}
+          REQUIRED_CONFIRMATION: PERMANENTLY_DELETE_FETCH_METADATA_FROM_CRM_CORGIINVEST_COM
+          DEPLOYED_SHA: ${{ inputs.deployed_sha }}
+          ROW_COVERAGE_SHA256: ${{ inputs.row_coverage_sha256 }}
+          BUSINESS_CONTENT_SHA256: ${{ inputs.business_content_sha256 }}
+          COMPANY_COUNT: ${{ inputs.company_count }}
+          PEOPLE_COUNT: ${{ inputs.people_count }}
+          HOLDING_COUNT: ${{ inputs.holding_count }}
+          RESUME_RUN_ID: ${{ inputs.resume_run_id }}
+          RESUME_ATTEMPT: ${{ inputs.resume_attempt }}
+        run: |
+          set -euo pipefail
+          if [[ "${REQUESTED_CONFIRMATION}" != "${REQUIRED_CONFIRMATION}" ]]; then
+            echo "The exact permanent-cleanup confirmation was not provided." >&2
+            exit 1
+          fi
+          [[ "${DEPLOYED_SHA}" =~ ^[0-9a-f]{40}$ ]]
+          [[ "${ROW_COVERAGE_SHA256}" =~ ^[0-9a-f]{64}$ ]]
+          [[ "${BUSINESS_CONTENT_SHA256}" =~ ^[0-9a-f]{64}$ ]]
+          [[ "${COMPANY_COUNT}" =~ ^[1-9][0-9]*$ ]]
+          [[ "${PEOPLE_COUNT}" =~ ^[1-9][0-9]*$ ]]
+          [[ "${HOLDING_COUNT}" =~ ^[1-9][0-9]*$ ]]
+          if [[ -n "${RESUME_RUN_ID}" || -n "${RESUME_ATTEMPT}" ]]; then
+            [[ "${RESUME_RUN_ID}" =~ ^[1-9][0-9]*$ ]]
+            [[ "${RESUME_ATTEMPT}" =~ ^[1-9][0-9]*$ ]]
+          fi
+          git cat-file -e "${DEPLOYED_SHA}^{commit}"
+          git merge-base --is-ancestor "${DEPLOYED_SHA}" "${GITHUB_SHA}"
+
+      - name: Configure read-only AWS deployment inspection
+        uses: aws-actions/configure-aws-credentials@61815dcd50bd041e203e49132bacad1fd04d2708 # v5.1.1
+        with:
+          role-to-assume: ${{ env.AWS_ROLE_ARN }}
+          role-duration-seconds: 900
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Prove both live services use the approved deployed SHA
+        shell: bash
+        env:
+          DEPLOYED_SHA: ${{ inputs.deployed_sha }}
+        run: |
+          set -euo pipefail
+          CALLER_ACCOUNT="$(aws sts get-caller-identity --query Account --output text)"
+          [[ "${CALLER_ACCOUNT}" == "${AWS_ACCOUNT_ID}" ]]
+
+          EXPECTED_DIGEST="$(aws ecr describe-images \
+            --repository-name "${ECR_REPOSITORY}" \
+            --image-ids "imageTag=git-${DEPLOYED_SHA}" \
+            --query 'imageDetails[0].imageDigest' \
+            --output text)"
+          [[ "${EXPECTED_DIGEST}" == sha256:* ]]
+          EXPECTED_IMAGE="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPOSITORY}@${EXPECTED_DIGEST}"
+
+          assert_service_image() {
+            local service="$1"
+            local container="$2"
+            local task_definition
+            local live_image
+            task_definition="$(aws ecs describe-services \
+              --cluster "${ECS_CLUSTER}" \
+              --services "${service}" \
+              --query 'services[0].taskDefinition' \
+              --output text)"
+            live_image="$(aws ecs describe-task-definition \
+              --task-definition "${task_definition}" \
+              --query "taskDefinition.containerDefinitions[?name=='${container}'].image | [0]" \
+              --output text)"
+            if [[ "${live_image}" != "${EXPECTED_IMAGE}" ]]; then
+              echo "${service} is not running approved SHA ${DEPLOYED_SHA}." >&2
+              exit 1
+            fi
+          }
+
+          assert_service_image "${SERVER_SERVICE}" "${SERVER_CONTAINER}"
+          assert_service_image "${WORKER_SERVICE}" "${WORKER_CONTAINER}"
+
+  cleanup:
+    name: Permanently remove migration-only CRM metadata
+    needs: preflight
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment: production
+    steps:
+      - name: Check out the preflighted main revision
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - name: Restore the durable journal for an explicit resume
+        if: inputs.resume_run_id != ''
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: crm-metadata-cleanup-${{ inputs.resume_run_id }}-${{ inputs.resume_attempt }}
+          path: packages/twenty-e2e-testing/run_results/production/
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.resume_run_id }}
+
+      - name: Install Node and Yarn dependencies
+        uses: ./.github/actions/crm-yarn-install
+
+      - name: Install the Chromium test browser
+        run: npx playwright install --with-deps chromium
+
+      - name: Configure immediate AWS deployment inspection
+        uses: aws-actions/configure-aws-credentials@61815dcd50bd041e203e49132bacad1fd04d2708 # v5.1.1
+        with:
+          role-to-assume: ${{ env.AWS_ROLE_ARN }}
+          role-duration-seconds: 3600
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Recheck every live task immediately before cleanup
+        shell: bash
+        env:
+          DEPLOYED_SHA: ${{ inputs.deployed_sha }}
+        run: |
+          set -euo pipefail
+          EXPECTED_DIGEST="$(aws ecr describe-images \
+            --repository-name "${ECR_REPOSITORY}" \
+            --image-ids "imageTag=git-${DEPLOYED_SHA}" \
+            --query 'imageDetails[0].imageDigest' \
+            --output text)"
+          [[ "${EXPECTED_DIGEST}" == sha256:* ]]
+
+          assert_stable_service_tasks() {
+            local service="$1"
+            local container="$2"
+            local service_json="${RUNNER_TEMP}/${service}-service.json"
+            local tasks_json="${RUNNER_TEMP}/${service}-tasks.json"
+            local task_arns
+            local desired
+
+            aws ecs describe-services \
+              --cluster "${ECS_CLUSTER}" \
+              --services "${service}" > "${service_json}"
+            jq -e '
+              (.failures | length) == 0 and
+              (.services | length) == 1 and
+              .services[0].status == "ACTIVE" and
+              .services[0].desiredCount > 0 and
+              .services[0].runningCount == .services[0].desiredCount and
+              .services[0].pendingCount == 0 and
+              ([.services[0].deployments[] | select(.status == "PRIMARY")] | length) == 1 and
+              ([.services[0].deployments[] | select(.status == "ACTIVE")] | length) == 0
+            ' "${service_json}" >/dev/null
+            desired="$(jq -r '.services[0].desiredCount' "${service_json}")"
+
+            task_arns="$(aws ecs list-tasks \
+              --cluster "${ECS_CLUSTER}" \
+              --service-name "${service}" \
+              --desired-status RUNNING \
+              --query 'taskArns' \
+              --output text)"
+            # shellcheck disable=SC2086
+            aws ecs describe-tasks \
+              --cluster "${ECS_CLUSTER}" \
+              --tasks ${task_arns} > "${tasks_json}"
+            jq -e \
+              --arg container "${container}" \
+              --arg digest "${EXPECTED_DIGEST}" \
+              --argjson desired "${desired}" '
+                (.failures | length) == 0 and
+                (.tasks | length) == $desired and
+                all(.tasks[]; .lastStatus == "RUNNING") and
+                all(
+                  .tasks[];
+                  ([.containers[] | select(
+                    .name == $container and
+                    .lastStatus == "RUNNING" and
+                    .imageDigest == $digest
+                  )] | length) == 1
+                )
+              ' "${tasks_json}" >/dev/null
+          }
+
+          assert_stable_service_tasks "${SERVER_SERVICE}" "${SERVER_CONTAINER}"
+          assert_stable_service_tasks "${WORKER_SERVICE}" "${WORKER_CONTAINER}"
+
+      - name: Run fail-closed production metadata cleanup
+        env:
+          FRONTEND_BASE_URL: https://crm.corgiinvest.com
+          BACKEND_BASE_URL: https://crm.corgiinvest.com
+          CRM_E2E_LOGIN: ${{ secrets.CRM_E2E_LOGIN }}
+          CRM_E2E_PASSWORD: ${{ secrets.CRM_E2E_PASSWORD }}
+          CRM_E2E_WORKSPACE_NAME: ${{ secrets.CRM_E2E_WORKSPACE_NAME }}
+          CRM_METADATA_CLEANUP_ENABLED: 'true'
+          CRM_METADATA_CLEANUP_CONFIRMATION: ${{ inputs.confirmation }}
+          CRM_CANONICALIZATION_ROW_COVERAGE_SHA256: ${{ inputs.row_coverage_sha256 }}
+          CRM_CANONICALIZATION_BUSINESS_CONTENT_SHA256: ${{ inputs.business_content_sha256 }}
+          CRM_CANONICALIZATION_COMPANY_COUNT: ${{ inputs.company_count }}
+          CRM_CANONICALIZATION_PEOPLE_COUNT: ${{ inputs.people_count }}
+          CRM_CANONICALIZATION_HOLDING_COUNT: ${{ inputs.holding_count }}
+          CRM_METADATA_CLEANUP_JOURNAL_PATH: packages/twenty-e2e-testing/run_results/production/metadata-cleanup-journal.json
+        run: >-
+          npx nx test:production twenty-e2e-testing --
+          tests/production/fetchMetadataCleanup.maintenance.spec.ts
+          --project=production-chromium
+
+      - name: Record required one-time workflow retirement
+        if: success()
+        shell: bash
+        run: |
+          {
+            echo '## One-time cleanup completed'
+            echo
+            echo 'Remove this workflow and the Fetch-named maintenance helpers in the immediate follow-up commit.'
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Upload the PII-free durable cleanup journal
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: crm-metadata-cleanup-${{ github.run_id }}-${{ github.run_attempt }}
+          path: packages/twenty-e2e-testing/run_results/production/metadata-cleanup-journal.json
+          if-no-files-found: ignore
+          retention-days: 30

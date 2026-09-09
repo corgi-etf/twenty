@@ -27631,6 +27631,14 @@ __metadata:
   languageName: node
   linkType: hard
 
+"corgi-crm-canonicalization@workspace:packages/corgi-crm-canonicalization":
+  version: 0.0.0-use.local
+  resolution: "corgi-crm-canonicalization@workspace:packages/corgi-crm-canonicalization"
+  dependencies:
+    libphonenumber-js: "npm:^1.11.5"
+  languageName: unknown
+  linkType: soft
+
 "cors@npm:2.8.6":
   version: 2.8.6
   resolution: "cors@npm:2.8.6"

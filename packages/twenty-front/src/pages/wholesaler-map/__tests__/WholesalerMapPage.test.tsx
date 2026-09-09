@@ -47,7 +47,9 @@ jest.mock('@/ui/layout/page/components/PageCardHeader', () => ({
   PageCardHeader: ({ title }: { title: ReactNode }) => <div>{title}</div>,
 }));
 jest.mock('@/ui/utilities/page-title/components/PageTitle', () => ({
-  PageTitle: () => null,
+  PageTitle: ({ title }: { title: string }) => (
+    <div data-testid="page-title">{title}</div>
+  ),
 }));
 jest.mock(
   '@/object-record/record-index/components/RecordIndexEmptyStateNotShared',
@@ -84,8 +86,11 @@ describe('WholesalerMapPage', () => {
     renderPage();
 
     expect(
-      screen.getByRole('heading', { name: 'Wholesaler coverage' }),
+      screen.getByRole('heading', { name: 'Territory map' }),
     ).toBeInTheDocument();
+    expect(screen.getByTestId('page-title')).toHaveTextContent(
+      'Territory map | Twenty',
+    );
     expect(screen.getByText('Wholesaler map content')).toBeInTheDocument();
   });
 

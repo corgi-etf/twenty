@@ -1,0 +1,267 @@
+name: Manual CRM data canonicalization
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Dry-run produces the trusted aggregate manifest; apply performs the guarded merge
+        required: true
+        default: dry-run
+        type: choice
+        options:
+          - dry-run
+          - apply
+      deployed_sha:
+        description: Exact 40-character SHA currently deployed to both CRM services
+        required: true
+        type: string
+      confirmation:
+        description: For apply only, type CANONICALIZE_CRM_DATA
+        required: false
+        default: ''
+        type: string
+      expected_manifest:
+        description: For apply only, paste the exact JSON manifest from the successful dry-run artifact
+        required: false
+        default: ''
+        type: string
+      resume_run_id:
+        description: Prior failed apply run ID to resume (leave blank for a new run)
+        required: false
+        default: ''
+        type: string
+      resume_attempt:
+        description: Prior failed apply attempt number to resume
+        required: false
+        default: ''
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+  id-token: write
+
+concurrency:
+  # Production data maintenance must never overlap an ECS rollout or metadata cleanup.
+  group: crm-production-deploy
+  cancel-in-progress: false
+
+env:
+  AWS_ACCOUNT_ID: '182018075072'
+  AWS_REGION: us-east-2
+  AWS_ROLE_ARN: arn:aws:iam::182018075072:role/crm-production-github-deploy
+  ECS_CLUSTER: crm-production
+  ECR_REPOSITORY: crm-production-twenty
+  SERVER_SERVICE: crm-production-server
+  SERVER_CONTAINER: server
+  WORKER_SERVICE: crm-production-worker
+  WORKER_CONTAINER: worker
+
+jobs:
+  canonicalize:
+    name: Canonicalize CRM data with a trusted manifest
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    environment: production
+    steps:
+      - name: Check out the exact main revision
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          fetch-depth: 0
+
+      - name: Validate the requested operation
+        shell: bash
+        env:
+          MODE: ${{ inputs.mode }}
+          DEPLOYED_SHA: ${{ inputs.deployed_sha }}
+          CONFIRMATION: ${{ inputs.confirmation }}
+          EXPECTED_MANIFEST: ${{ inputs.expected_manifest }}
+          RESUME_RUN_ID: ${{ inputs.resume_run_id }}
+          RESUME_ATTEMPT: ${{ inputs.resume_attempt }}
+        run: |
+          set -euo pipefail
+          [[ "${MODE}" == "dry-run" || "${MODE}" == "apply" ]]
+          [[ "${DEPLOYED_SHA}" =~ ^[0-9a-f]{40}$ ]]
+          git cat-file -e "${DEPLOYED_SHA}^{commit}"
+          git merge-base --is-ancestor "${DEPLOYED_SHA}" "${GITHUB_SHA}"
+
+          if [[ "${MODE}" == "apply" ]]; then
+            [[ "${CONFIRMATION}" == "CANONICALIZE_CRM_DATA" ]]
+            jq -e '
+              type == "object" and
+              ([
+                .sourceRecordRows,
+                .reviewItemRows,
+                .holdingRawRows,
+                .companyRecords,
+                .personRecords,
+                .holdingRecords,
+                .stagingRows,
+                .distinctBusinessRows,
+                .duplicateRows,
+                .nonemptyRawValues,
+                .disposedRawValues
+              ] | all(type == "number" and . >= 0 and floor == .)) and
+              (.dispositionsByKind | type == "object") and
+              ([
+                .rowCoverageHash,
+                .businessContentHash,
+                .dispositionHash,
+                .companyIdSetHash,
+                .personIdSetHash,
+                .holdingIdSetHash
+              ] |
+                all(type == "string" and test("^[a-f0-9]{64}$")))
+            ' <<< "${EXPECTED_MANIFEST}" >/dev/null
+          else
+            [[ -z "${CONFIRMATION}" ]]
+            [[ -z "${EXPECTED_MANIFEST}" ]]
+            [[ -z "${RESUME_RUN_ID}" ]]
+            [[ -z "${RESUME_ATTEMPT}" ]]
+          fi
+
+          if [[ -n "${RESUME_RUN_ID}" || -n "${RESUME_ATTEMPT}" ]]; then
+            [[ "${MODE}" == "apply" ]]
+            [[ "${RESUME_RUN_ID}" =~ ^[1-9][0-9]*$ ]]
+            [[ "${RESUME_ATTEMPT}" =~ ^[1-9][0-9]*$ ]]
+          fi
+
+      - name: Restore the PII-free checkpoint for an explicit resume
+        if: inputs.resume_run_id != ''
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: crm-canonicalization-${{ inputs.resume_run_id }}-${{ inputs.resume_attempt }}
+          path: ${{ runner.temp }}/crm-canonicalization
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.resume_run_id }}
+
+      - name: Install Node and Yarn dependencies
+        uses: ./.github/actions/crm-yarn-install
+
+      - name: Install the Chromium test browser
+        run: npx playwright install --with-deps chromium
+
+      - name: Configure immediate AWS deployment inspection
+        uses: aws-actions/configure-aws-credentials@61815dcd50bd041e203e49132bacad1fd04d2708 # v5.1.1
+        with:
+          role-to-assume: ${{ env.AWS_ROLE_ARN }}
+          role-duration-seconds: 3600
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Recheck every live task immediately before data maintenance
+        shell: bash
+        env:
+          DEPLOYED_SHA: ${{ inputs.deployed_sha }}
+        run: |
+          set -euo pipefail
+          CALLER_ACCOUNT="$(aws sts get-caller-identity --query Account --output text)"
+          [[ "${CALLER_ACCOUNT}" == "${AWS_ACCOUNT_ID}" ]]
+
+          EXPECTED_DIGEST="$(aws ecr describe-images \
+            --repository-name "${ECR_REPOSITORY}" \
+            --image-ids "imageTag=git-${DEPLOYED_SHA}" \
+            --query 'imageDetails[0].imageDigest' \
+            --output text)"
+          [[ "${EXPECTED_DIGEST}" == sha256:* ]]
+
+          assert_stable_service_tasks() {
+            local service="$1"
+            local container="$2"
+            local service_json="${RUNNER_TEMP}/${service}-service.json"
+            local tasks_json="${RUNNER_TEMP}/${service}-tasks.json"
+            local task_arns
+            local desired
+
+            aws ecs describe-services \
+              --cluster "${ECS_CLUSTER}" \
+              --services "${service}" > "${service_json}"
+            jq -e '
+              (.failures | length) == 0 and
+              (.services | length) == 1 and
+              .services[0].status == "ACTIVE" and
+              .services[0].desiredCount > 0 and
+              .services[0].runningCount == .services[0].desiredCount and
+              .services[0].pendingCount == 0 and
+              ([.services[0].deployments[] | select(.status == "PRIMARY")] | length) == 1 and
+              ([.services[0].deployments[] | select(.status == "ACTIVE")] | length) == 0
+            ' "${service_json}" >/dev/null
+            desired="$(jq -r '.services[0].desiredCount' "${service_json}")"
+
+            task_arns="$(aws ecs list-tasks \
+              --cluster "${ECS_CLUSTER}" \
+              --service-name "${service}" \
+              --desired-status RUNNING \
+              --query 'taskArns' \
+              --output text)"
+            [[ -n "${task_arns}" && "${task_arns}" != "None" ]]
+            # shellcheck disable=SC2086
+            aws ecs describe-tasks \
+              --cluster "${ECS_CLUSTER}" \
+              --tasks ${task_arns} > "${tasks_json}"
+            jq -e \
+              --arg container "${container}" \
+              --arg digest "${EXPECTED_DIGEST}" \
+              --argjson desired "${desired}" '
+                (.failures | length) == 0 and
+                (.tasks | length) == $desired and
+                all(.tasks[]; .lastStatus == "RUNNING") and
+                all(
+                  .tasks[];
+                  ([.containers[] | select(
+                    .name == $container and
+                    .lastStatus == "RUNNING" and
+                    .imageDigest == $digest
+                  )] | length) == 1
+                )
+              ' "${tasks_json}" >/dev/null
+          }
+
+          assert_stable_service_tasks "${SERVER_SERVICE}" "${SERVER_CONTAINER}"
+          assert_stable_service_tasks "${WORKER_SERVICE}" "${WORKER_CONTAINER}"
+
+      - name: Run guarded production canonicalization
+        env:
+          FRONTEND_BASE_URL: https://crm.corgiinvest.com
+          BACKEND_BASE_URL: https://crm.corgiinvest.com
+          CRM_E2E_LOGIN: ${{ secrets.CRM_E2E_LOGIN }}
+          CRM_E2E_PASSWORD: ${{ secrets.CRM_E2E_PASSWORD }}
+          CRM_E2E_WORKSPACE_NAME: ${{ secrets.CRM_E2E_WORKSPACE_NAME }}
+          CRM_CANONICALIZATION_ENABLED: 'true'
+          CRM_CANONICALIZATION_MODE: ${{ inputs.mode }}
+          CRM_CANONICALIZATION_WORKSPACE_ID: eabf5d9d-fc99-4acb-b160-710ecb1db996
+          CRM_CANONICALIZATION_CONFIRMATION: ${{ inputs.confirmation }}
+          CRM_CANONICALIZATION_EXPECTED_MANIFEST: ${{ inputs.expected_manifest }}
+          CRM_CANONICALIZATION_CHECKPOINT_PATH: ${{ runner.temp }}/crm-canonicalization/canonicalization-checkpoint.json
+          CRM_CANONICALIZATION_RESULT_PATH: ${{ runner.temp }}/crm-canonicalization/canonicalization-result.json
+        run: >-
+          npx nx test:production twenty-e2e-testing --
+          tests/production/canonicalization.production.spec.ts
+          --project=production-chromium
+
+      - name: Summarize the aggregate result
+        if: success()
+        shell: bash
+        run: |
+          set -euo pipefail
+          RESULT="${RUNNER_TEMP}/crm-canonicalization/canonicalization-result.json"
+          jq '{
+            mode,
+            metadataRenames,
+            metadataCreates,
+            plannedRecordMutations,
+            unresolved,
+            manifest,
+            remainingMutations: .reconciliation.remainingMutations
+          }' "${RESULT}" >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Upload the PII-free result and durable checkpoint
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: crm-canonicalization-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/crm-canonicalization/canonicalization-result.json
+            ${{ runner.temp }}/crm-canonicalization/canonicalization-checkpoint.json
+          if-no-files-found: ignore
+          retention-days: 30

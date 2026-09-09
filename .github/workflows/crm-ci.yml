@@ -21,6 +21,7 @@ jobs:
       # These entrypoints and their Nx build dependencies make up the production image.
       CRM_RUNTIME_PROJECTS: twenty-server,twenty-front
       CRM_MIGRATION_PROJECT: corgi-fetch-migration
+      CRM_CANONICALIZATION_PROJECT: corgi-crm-canonicalization
       NX_CLOUD_ACCESS_TOKEN: ''
     steps:
       - name: Check out the exact head with full history
@@ -117,6 +118,14 @@ jobs:
           else
             echo "${CRM_MIGRATION_PROJECT} is not affected; skipping migration validation."
           fi
+
+      - name: Validate one-time CRM canonicalization
+        run: >-
+          npx nx run-many
+          --nxBail
+          --projects="${CRM_CANONICALIZATION_PROJECT}"
+          --targets=lint,typecheck,test
+          --parallel=1
 
       - name: Validate production smoke-suite discovery
         env:

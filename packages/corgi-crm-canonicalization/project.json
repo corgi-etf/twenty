@@ -1,0 +1,30 @@
+{
+  "name": "corgi-crm-canonicalization",
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "sourceRoot": "packages/corgi-crm-canonicalization/src",
+  "projectType": "application",
+  "tags": ["scope:tooling"],
+  "targets": {
+    "test": {
+      "executor": "nx:run-commands",
+      "options": {
+        "cwd": "{projectRoot}",
+        "command": "node --experimental-strip-types --test test/*.test.ts"
+      }
+    },
+    "typecheck": {
+      "executor": "nx:run-commands",
+      "options": {
+        "cwd": "{projectRoot}",
+        "command": "tsgo -p tsconfig.json"
+      }
+    },
+    "lint": {
+      "executor": "nx:run-commands",
+      "options": {
+        "cwd": "{projectRoot}",
+        "command": "npx oxlint -c .oxlintrc.json src test && npx oxfmt --check src test"
+      }
+    }
+  }
+}
