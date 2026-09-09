@@ -81,21 +81,33 @@ const featureCollection = {
       properties: {
         companyId: 'company-1',
         companyName: 'Northstar Capital',
+        firmPhone: '312-555-0199',
+        fullAddress: '100 W Lake St, Chicago, IL 60601, US',
+        leadStatus: 'Follow-up',
+        linkedinUrl: 'https://www.linkedin.com/company/northstar',
         locationLabel: 'Chicago, IL, US',
+        notes: 'Call next week',
         ownerId: 'owner-1',
         ownerName: 'Alex Morgan',
+        ownerTerritory: 'Chicago',
         ownerColor: WHOLESALER_COVERAGE_MAP_COLORS.clusterLow,
+        postcode: '60601',
+        state: 'IL',
       },
     },
   ],
 };
 
-const renderMap = (onCompanySelect = jest.fn()) =>
+const renderMap = (
+  onCompanySelect = jest.fn(),
+  selectedCompanyId: string | null = null,
+) =>
   render(
     <I18nProvider i18n={i18n}>
       <WholesalerCoverageMap
         featureCollection={featureCollection}
         onCompanySelect={onCompanySelect}
+        selectedCompanyId={selectedCompanyId}
       />
     </I18nProvider>,
   );
@@ -123,16 +135,28 @@ describe('WholesalerCoverageMap', () => {
     ).toBeInTheDocument();
     expect(mockAddSource).toHaveBeenCalledWith('wholesaler-leads', {
       type: 'geojson',
-      data: featureCollection,
+      data: expect.objectContaining({
+        features: [
+          expect.objectContaining({
+            properties: expect.objectContaining({ isSelected: false }),
+          }),
+        ],
+      }),
       cluster: true,
-      clusterMaxZoom: 14,
-      clusterRadius: 50,
+      clusterMaxZoom: 10,
+      clusterRadius: 32,
     });
+    expect(mockAddLayer).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'territory-boundaries' }),
+    );
     expect(mockAddLayer).toHaveBeenCalledWith(
       expect.objectContaining({ id: 'lead-clusters' }),
     );
     expect(mockAddLayer).toHaveBeenCalledWith(
       expect.objectContaining({ id: 'unclustered-leads' }),
+    );
+    expect(mockAddLayer).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'selected-lead-halo' }),
     );
 
     const clusterLayer = mockAddLayer.mock.calls.find(
@@ -156,6 +180,37 @@ describe('WholesalerCoverageMap', () => {
     expect(unclusteredLayer.paint['circle-stroke-color']).toMatch(
       mapLibreSafeColor,
     );
+  });
+
+  it('updates the selection halo and centers the selected company without recreating the map', () => {
+    const { rerender } = renderMap();
+    act(() => mapEventHandlers.get('load')?.());
+
+    rerender(
+      <I18nProvider i18n={i18n}>
+        <WholesalerCoverageMap
+          featureCollection={featureCollection}
+          onCompanySelect={jest.fn()}
+          selectedCompanyId="company-1"
+        />
+      </I18nProvider>,
+    );
+
+    expect(mockSetData).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        features: [
+          expect.objectContaining({
+            properties: expect.objectContaining({ isSelected: true }),
+          }),
+        ],
+      }),
+    );
+    expect(mockEaseTo).toHaveBeenLastCalledWith({
+      center: [-87.6298, 41.8781],
+      duration: 450,
+      zoom: 11,
+    });
+    expect(mockRemove).not.toHaveBeenCalled();
   });
 
   it('selects a Company through an unclustered map point', () => {

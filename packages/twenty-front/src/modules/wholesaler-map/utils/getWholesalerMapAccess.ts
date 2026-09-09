@@ -32,6 +32,13 @@ export const getWholesalerMapAccess = (
     args.readableWholesalerFieldNames.includes(
       WHOLESALER_MAP_DATA_CONTRACT.wholesalerNameFieldName,
     );
+  const optionalCompanyFields = [
+    WHOLESALER_MAP_DATA_CONTRACT.companyDescriptionFieldName,
+    WHOLESALER_MAP_DATA_CONTRACT.companyFirmPhoneFieldName,
+    WHOLESALER_MAP_DATA_CONTRACT.companyLeadStatusFieldName,
+    WHOLESALER_MAP_DATA_CONTRACT.companyLinkedinFieldName,
+    WHOLESALER_MAP_DATA_CONTRACT.companyWebsiteNotesFieldName,
+  ].filter((fieldName) => readableFieldNames.has(fieldName));
 
   if (!canViewMap) {
     return {
@@ -48,11 +55,21 @@ export const getWholesalerMapAccess = (
       id: true,
       [WHOLESALER_MAP_DATA_CONTRACT.companyNameFieldName]: true,
       [WHOLESALER_MAP_DATA_CONTRACT.companyAddressFieldName]: true,
+      ...Object.fromEntries(
+        optionalCompanyFields.map((fieldName) => [fieldName, true]),
+      ),
       ...(hasWholesalerRelation
         ? {
             [WHOLESALER_MAP_DATA_CONTRACT.wholesalerRelationFieldName]: {
               id: true,
               name: true,
+              ...(args.readableWholesalerFieldNames.includes(
+                WHOLESALER_MAP_DATA_CONTRACT.wholesalerTerritoryFieldName,
+              )
+                ? {
+                    [WHOLESALER_MAP_DATA_CONTRACT.wholesalerTerritoryFieldName]: true,
+                  }
+                : {}),
             },
           }
         : {}),

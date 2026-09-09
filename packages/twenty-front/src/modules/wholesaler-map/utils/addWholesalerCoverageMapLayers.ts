@@ -17,8 +17,34 @@ export const addWholesalerCoverageMapLayers = ({
     type: 'geojson',
     data: featureCollection,
     cluster: true,
-    clusterMaxZoom: 14,
-    clusterRadius: 50,
+    clusterMaxZoom: 10,
+    clusterRadius: 32,
+  });
+  map.addLayer({
+    id: WHOLESALER_COVERAGE_MAP_IDS.territoryBoundaryLayer,
+    type: 'line',
+    source: 'openmaptiles',
+    'source-layer': 'boundary',
+    filter: [
+      'all',
+      ['==', ['get', 'admin_level'], 4],
+      ['!=', ['get', 'maritime'], 1],
+    ],
+    paint: {
+      'line-color': WHOLESALER_COVERAGE_MAP_COLORS.territoryBoundary,
+      'line-opacity': 0.72,
+      'line-width': [
+        'interpolate',
+        ['linear'],
+        ['zoom'],
+        2,
+        0.8,
+        6,
+        1.5,
+        10,
+        2.25,
+      ],
+    },
   });
   map.addLayer({
     id: WHOLESALER_COVERAGE_MAP_IDS.clusterLayer,
@@ -30,14 +56,14 @@ export const addWholesalerCoverageMapLayers = ({
         'step',
         ['get', 'point_count'],
         WHOLESALER_COVERAGE_MAP_COLORS.clusterLow,
-        100,
+        25,
         WHOLESALER_COVERAGE_MAP_COLORS.clusterMedium,
-        750,
+        100,
         WHOLESALER_COVERAGE_MAP_COLORS.clusterHigh,
       ],
-      'circle-radius': ['step', ['get', 'point_count'], 17, 100, 23, 750, 30],
+      'circle-radius': ['step', ['get', 'point_count'], 16, 25, 21, 100, 27],
       'circle-stroke-color': WHOLESALER_COVERAGE_MAP_COLORS.invertedText,
-      'circle-stroke-width': 1,
+      'circle-stroke-width': 2,
     },
   });
   map.addLayer({
@@ -54,6 +80,23 @@ export const addWholesalerCoverageMapLayers = ({
     },
   });
   map.addLayer({
+    id: WHOLESALER_COVERAGE_MAP_IDS.selectedLeadLayer,
+    type: 'circle',
+    source: WHOLESALER_COVERAGE_MAP_IDS.source,
+    filter: [
+      'all',
+      ['!', ['has', 'point_count']],
+      ['==', ['get', 'isSelected'], true],
+    ],
+    paint: {
+      'circle-color': WHOLESALER_COVERAGE_MAP_COLORS.invertedText,
+      'circle-opacity': 0.92,
+      'circle-radius': 13,
+      'circle-stroke-color': WHOLESALER_COVERAGE_MAP_COLORS.selectedLead,
+      'circle-stroke-width': 3,
+    },
+  });
+  map.addLayer({
     id: WHOLESALER_COVERAGE_MAP_IDS.unclusteredLayer,
     type: 'circle',
     source: WHOLESALER_COVERAGE_MAP_IDS.source,
@@ -61,9 +104,9 @@ export const addWholesalerCoverageMapLayers = ({
     paint: {
       'circle-color': ['get', 'ownerColor'],
       'circle-opacity': 0.9,
-      'circle-radius': 6,
-      'circle-stroke-color': WHOLESALER_COVERAGE_MAP_COLORS.invertedText,
-      'circle-stroke-width': 1,
+      'circle-radius': 7,
+      'circle-stroke-color': WHOLESALER_COVERAGE_MAP_COLORS.selectedLead,
+      'circle-stroke-width': 1.5,
     },
   });
 };

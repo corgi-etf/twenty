@@ -56,7 +56,7 @@ export const WholesalerMapPage = () => {
 
   // Canvas points cannot render React Router links.
   // oxlint-disable-next-line twenty/no-navigate-prefer-link
-  const handleCompanySelect = (companyId: string) => {
+  const handleCompanyOpen = (companyId: string) => {
     navigate(
       getAppPath(AppPath.RecordShowPage, {
         objectNameSingular: CoreObjectNameSingular.Company,
@@ -94,7 +94,7 @@ export const WholesalerMapPage = () => {
           hasWholesalerRelation={hasWholesalerRelation}
           isLoading={isLoadingAllCompanies}
           loadError={loadError}
-          onCompanySelect={handleCompanySelect}
+          onCompanyOpen={handleCompanyOpen}
           onCountryChange={setSelectedCountry}
           onOwnerChange={setSelectedOwnerId}
           onPostcodeChange={setSelectedPostcode}

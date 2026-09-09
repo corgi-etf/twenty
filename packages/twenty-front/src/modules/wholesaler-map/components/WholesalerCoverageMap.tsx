@@ -41,11 +41,13 @@ const StyledMapError = styled.div`
 type WholesalerCoverageMapProps = {
   featureCollection: WholesalerMapFeatureCollection;
   onCompanySelect: (companyId: string) => void;
+  selectedCompanyId: string | null;
 };
 
 export const WholesalerCoverageMap = ({
   featureCollection,
   onCompanySelect,
+  selectedCompanyId,
 }: WholesalerCoverageMapProps) => {
   const { t } = useLingui();
   const containerRef = useRef<HTMLDivElement>(null);
@@ -53,6 +55,7 @@ export const WholesalerCoverageMap = ({
     containerRef,
     featureCollection,
     onCompanySelect,
+    selectedCompanyId,
   });
 
   if (hasMapError) {

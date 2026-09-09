@@ -4,6 +4,7 @@ export type WholesalerMapOwner = {
   __typename?: 'Wholesaler';
   id: string;
   name: string;
+  territory?: string | null;
 };
 
 export type WholesalerMapAddress = {
@@ -20,7 +21,16 @@ export type WholesalerMapAddress = {
 
 export type WholesalerMapCompany = Omit<Company, 'address'> & {
   address?: WholesalerMapAddress | null;
+  description?: string | null;
+  firmPhone?: string | null;
   historicalOwner?: WholesalerMapOwner | null;
+  leadStatus?: string | null;
+  linkedinLink?: {
+    __typename?: 'Links';
+    primaryLinkUrl?: string | null;
+    primaryLinkLabel?: string | null;
+  } | null;
+  websiteNotes?: string | null;
 };
 
 export type WholesalerMapFilters = {
@@ -39,10 +49,19 @@ export type WholesalerMapFeature = {
   properties: {
     companyId: string;
     companyName: string;
+    firmPhone: string;
+    fullAddress: string;
+    isSelected?: boolean;
+    leadStatus: string;
+    linkedinUrl: string;
     locationLabel: string;
+    notes: string;
     ownerId: string;
     ownerName: string;
+    ownerTerritory: string;
     ownerColor: string;
+    postcode: string;
+    state: string;
   };
 };
 

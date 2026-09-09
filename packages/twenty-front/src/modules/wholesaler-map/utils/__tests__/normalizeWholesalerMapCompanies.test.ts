@@ -24,13 +24,18 @@ const createCompany = (
     addressLng: -87.6298,
   },
   linkedinLink: {
-    primaryLinkUrl: '',
-    primaryLinkLabel: '',
+    primaryLinkUrl: 'https://www.linkedin.com/company/northstar',
+    primaryLinkLabel: 'Northstar on LinkedIn',
   },
+  description: 'Regional advisor prospect',
+  firmPhone: '312-555-0199',
   historicalOwner: {
     id: 'owner-1',
     name: 'Alex Morgan',
+    territory: 'Chicago',
   },
+  leadStatus: 'Follow-up',
+  websiteNotes: 'Prefers morning calls',
   ...overrides,
 });
 
@@ -56,13 +61,54 @@ describe('normalizeWholesalerMapCompanies', () => {
           properties: expect.objectContaining({
             companyId: 'company-1',
             companyName: 'Northstar Capital',
+            firmPhone: '312-555-0199',
+            fullAddress: 'Chicago, IL, US',
+            leadStatus: 'Follow-up',
+            linkedinUrl: 'https://www.linkedin.com/company/northstar',
             locationLabel: 'Chicago, IL, US',
+            notes: 'Prefers morning calls',
             ownerId: 'owner-1',
             ownerName: 'Alex Morgan',
+            ownerTerritory: 'Chicago',
+            postcode: '',
+            state: 'IL',
           }),
         }),
       ],
     });
+  });
+
+  it('uses safe detail fallbacks and never emits an executable LinkedIn URL', () => {
+    const company = createCompany({
+      description: 'Fallback company note',
+      websiteNotes: ' ',
+      linkedinLink: {
+        primaryLinkUrl: ['java', 'script:alert(1)'].join(''),
+        primaryLinkLabel: 'Unsafe',
+      },
+      address: {
+        ...createCompany().address,
+        addressStreet1: '100 W Lake St',
+        addressPostcode: '60601',
+      },
+    });
+
+    const [feature] = normalizeWholesalerMapCompanies(
+      [company],
+      { country: null, ownerId: null, postcode: null, state: null },
+      'Unassigned',
+      ['blue'],
+      'gray',
+    ).features;
+
+    expect(feature?.properties).toEqual(
+      expect.objectContaining({
+        fullAddress: '100 W Lake St, Chicago, IL 60601, US',
+        linkedinUrl: '',
+        notes: 'Fallback company note',
+        postcode: '60601',
+      }),
+    );
   });
 
   it.each([

@@ -2,6 +2,7 @@ import { expect, test } from '@playwright/test';
 
 import {
   buildTerritoryProjectionPlan,
+  buildWholesalerTerritoryPlan,
   buildWorkspaceConfigPlan,
   workspaceConfigOperationCount,
 } from '../../../corgi-crm-workspace-config/src/planner.ts';
@@ -45,6 +46,10 @@ test('keeps the production CRM territory-first and free of helper navigation', a
   expect(companies.length).toBeGreaterThanOrEqual(2191);
   const projection = buildTerritoryProjectionPlan(companies, companies.length);
   expect(projection.mutations).toHaveLength(0);
+  const territoryAssignments = buildWholesalerTerritoryPlan(
+    await api.listWholesalers(),
+  );
+  expect(territoryAssignments.mutations).toHaveLength(0);
 
   await page.goto('/objects/companies');
   await expect(
@@ -85,7 +90,31 @@ test('keeps the production CRM territory-first and free of helper navigation', a
   await expect(page.getByTestId('wholesaler-map-located-count')).toBeVisible();
   const mappedLeads = page.locator('aside[aria-label="Mapped leads"]');
   await expect(mappedLeads).toBeVisible();
-  await expect(mappedLeads.getByRole('list')).toBeVisible();
+  const mappedLeadList = mappedLeads.getByRole('list');
+  await expect(mappedLeadList).toBeVisible();
+  await mappedLeadList.getByRole('button').first().click();
+  const selectedCompanyDetails = page.getByTestId('territory-company-details');
+  await expect(selectedCompanyDetails).toBeVisible();
+  for (const detailLabel of [
+    'Wholesaler',
+    'Territory',
+    'Phone',
+    'Location',
+    'State',
+    'ZIP',
+    'Address',
+    'LinkedIn',
+    'Notes',
+  ]) {
+    await expect(
+      selectedCompanyDetails.getByText(detailLabel, { exact: true }),
+    ).toBeVisible();
+  }
+  await expect(
+    selectedCompanyDetails.getByRole('button', {
+      name: 'Open full company record',
+    }),
+  ).toBeVisible();
 
   const companyId = companies[0]?.id;
   expect(companyId).toBeTruthy();

@@ -52,6 +52,28 @@ const getLocationLabel = (company: WholesalerMapCompany) => {
     .join(', ');
 };
 
+const getFullAddress = (company: WholesalerMapCompany) =>
+  [
+    company.address?.addressStreet1?.trim(),
+    company.address?.addressStreet2?.trim(),
+    company.address?.addressCity?.trim(),
+    [
+      company.address?.addressState?.trim(),
+      company.address?.addressPostcode?.trim(),
+    ]
+      .filter(Boolean)
+      .join(' '),
+    company.address?.addressCountry?.trim(),
+  ]
+    .filter(Boolean)
+    .join(', ');
+
+const getLinkedinUrl = (company: WholesalerMapCompany) => {
+  const url = company.linkedinLink?.primaryLinkUrl?.trim() ?? '';
+
+  return /^https?:\/\//i.test(url) ? url : '';
+};
+
 const matchesLocationFilter = (
   fieldValue: string | null | undefined,
   selectedValue: string | null,
@@ -98,10 +120,18 @@ const toWholesalerMapFeature = (
     properties: {
       companyId: company.id,
       companyName: company.name,
+      firmPhone: company.firmPhone?.trim() ?? '',
+      fullAddress: getFullAddress(company),
+      leadStatus: company.leadStatus?.trim() ?? '',
+      linkedinUrl: getLinkedinUrl(company),
       locationLabel: getLocationLabel(company),
+      notes: company.websiteNotes?.trim() || company.description?.trim() || '',
       ownerId,
       ownerName: company.historicalOwner?.name ?? unassignedOwnerName,
+      ownerTerritory: company.historicalOwner?.territory?.trim() ?? '',
       ownerColor: getOwnerColor(ownerId, ownerColors, unassignedOwnerColor),
+      postcode: company.address?.addressPostcode?.trim() ?? '',
+      state: company.address?.addressState?.trim() ?? '',
     },
   };
 };
