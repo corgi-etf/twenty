@@ -49,7 +49,7 @@ const immediateGate = createCanonicalizationRequestGate({
   minimumIntervalMs: 0,
 });
 
-test('tenant preflight accepts only the expected non-impersonated metadata role', async () => {
+test('tenant preflight accepts only the exact non-impersonated service account', async () => {
   const request = new TenantRequest(
     response({
       data: {
@@ -64,18 +64,6 @@ test('tenant preflight accepts only the expected non-impersonated metadata role'
             isImpersonating: false,
           },
         },
-        getRoles: [
-          {
-            canUpdateAllSettings: true,
-            canReadAllObjectRecords: true,
-            canUpdateAllObjectRecords: true,
-            workspaceMembers: [
-              {
-                userWorkspaceId: CANONICALIZATION_APPROVED_USER_WORKSPACE_ID,
-              },
-            ],
-          },
-        ],
       },
     }),
   );
@@ -91,58 +79,7 @@ test('tenant preflight accepts only the expected non-impersonated metadata role'
   assert.equal(request.calls[0]?.url, 'https://crm.corgiinvest.com/metadata');
 });
 
-test('tenant preflight accepts an admin when the member has multiple assigned roles', async () => {
-  const request = new TenantRequest(
-    response({
-      data: {
-        currentUser: {
-          currentWorkspace: {
-            id: CANONICALIZATION_APPROVED_WORKSPACE_ID,
-            displayName: 'Corgi ETF',
-          },
-          currentUserWorkspace: {
-            id: CANONICALIZATION_APPROVED_USER_WORKSPACE_ID,
-            permissionFlags: ['DATA_MODEL'],
-            isImpersonating: false,
-          },
-        },
-        getRoles: [
-          {
-            canUpdateAllSettings: false,
-            canReadAllObjectRecords: true,
-            canUpdateAllObjectRecords: true,
-            workspaceMembers: [
-              {
-                userWorkspaceId: CANONICALIZATION_APPROVED_USER_WORKSPACE_ID,
-              },
-            ],
-          },
-          {
-            canUpdateAllSettings: true,
-            canReadAllObjectRecords: true,
-            canUpdateAllObjectRecords: true,
-            workspaceMembers: [
-              {
-                userWorkspaceId: CANONICALIZATION_APPROVED_USER_WORKSPACE_ID,
-              },
-            ],
-          },
-        ],
-      },
-    }),
-  );
-
-  await assertCanonicalizationTenant({
-    request,
-    requestGate: immediateGate,
-    origin: 'https://crm.corgiinvest.com',
-    expectedWorkspaceId: CANONICALIZATION_APPROVED_WORKSPACE_ID,
-  });
-
-  assert.equal(request.calls.length, 1);
-});
-
-test('wrong workspace and non-admin sessions fail without a mutation', async () => {
+test('wrong workspace and insufficient metadata sessions fail without a mutation', async () => {
   for (const currentUser of [
     {
       currentWorkspace: {
@@ -166,23 +103,33 @@ test('wrong workspace and non-admin sessions fail without a mutation', async () 
         isImpersonating: false,
       },
     },
+    {
+      currentWorkspace: {
+        id: CANONICALIZATION_APPROVED_WORKSPACE_ID,
+        displayName: 'Corgi ETF',
+      },
+      currentUserWorkspace: {
+        id: CANONICALIZATION_APPROVED_USER_WORKSPACE_ID,
+        permissionFlags: ['DATA_MODEL'],
+        isImpersonating: true,
+      },
+    },
+    {
+      currentWorkspace: {
+        id: CANONICALIZATION_APPROVED_WORKSPACE_ID,
+        displayName: 'Corgi ETF',
+      },
+      currentUserWorkspace: {
+        id: '123e4567-e89b-42d3-a456-426614174000',
+        permissionFlags: ['DATA_MODEL'],
+        isImpersonating: false,
+      },
+    },
   ]) {
     const request = new TenantRequest(
       response({
         data: {
           currentUser,
-          getRoles: [
-            {
-              canUpdateAllSettings: true,
-              canReadAllObjectRecords: true,
-              canUpdateAllObjectRecords: true,
-              workspaceMembers: [
-                {
-                  userWorkspaceId: CANONICALIZATION_APPROVED_USER_WORKSPACE_ID,
-                },
-              ],
-            },
-          ],
         },
       }),
     );
@@ -199,64 +146,5 @@ test('wrong workspace and non-admin sessions fail without a mutation', async () 
     const requestData = request.calls[0]?.data as { query?: unknown };
     assert.match(String(requestData.query), /^query /);
     assert.equal(String(requestData.query).includes('mutation'), false);
-  }
-});
-
-test('a DATA_MODEL-only custom role fails before any REST mutation', async () => {
-  for (const capabilities of [
-    {
-      canUpdateAllSettings: false,
-      canReadAllObjectRecords: true,
-      canUpdateAllObjectRecords: true,
-    },
-    {
-      canUpdateAllSettings: true,
-      canReadAllObjectRecords: false,
-      canUpdateAllObjectRecords: true,
-    },
-    {
-      canUpdateAllSettings: true,
-      canReadAllObjectRecords: true,
-      canUpdateAllObjectRecords: false,
-    },
-  ]) {
-    const request = new TenantRequest(
-      response({
-        data: {
-          currentUser: {
-            currentWorkspace: {
-              id: CANONICALIZATION_APPROVED_WORKSPACE_ID,
-              displayName: 'Corgi ETF',
-            },
-            currentUserWorkspace: {
-              id: CANONICALIZATION_APPROVED_USER_WORKSPACE_ID,
-              permissionFlags: ['DATA_MODEL'],
-              isImpersonating: false,
-            },
-          },
-          getRoles: [
-            {
-              ...capabilities,
-              workspaceMembers: [
-                {
-                  userWorkspaceId: CANONICALIZATION_APPROVED_USER_WORKSPACE_ID,
-                },
-              ],
-            },
-          ],
-        },
-      }),
-    );
-
-    await assert.rejects(
-      assertCanonicalizationTenant({
-        request,
-        requestGate: immediateGate,
-        origin: 'https://crm.corgiinvest.com',
-        expectedWorkspaceId: CANONICALIZATION_APPROVED_WORKSPACE_ID,
-      }),
-      /not an admin/,
-    );
-    assert.equal(request.calls.length, 1);
   }
 });
