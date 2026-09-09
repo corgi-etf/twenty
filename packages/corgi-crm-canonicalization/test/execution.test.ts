@@ -51,6 +51,37 @@ const emptyMetadata = (): MetadataObject[] =>
     fields: [],
   }));
 
+const metadataWithLegacyRenames = (): MetadataObject[] => {
+  const metadata = emptyMetadata();
+  const fieldsByObject = {
+    company: [
+      ['fetchStatus', 'Fetch Status', 'TEXT'],
+      ['fetchTags', 'Fetch Tags', 'MULTI_SELECT'],
+    ],
+    holdingObservation: [['sourceDate', 'Source Date', 'DATE']],
+    person: [
+      ['legacyAddress', 'Legacy Address', 'TEXT'],
+      ['legacyCity', 'Legacy City', 'TEXT'],
+      ['legacyStateRegion', 'Legacy State / Region', 'TEXT'],
+      ['legacyPostalCode', 'Legacy Postal Code', 'TEXT'],
+      ['fetchNotes', 'Fetch Notes', 'TEXT'],
+    ],
+    wholesaler: [['fetchRole', 'Fetch Role', 'TEXT']],
+  } as const;
+
+  for (const [objectName, fields] of Object.entries(fieldsByObject)) {
+    const object = metadata.find(
+      ({ nameSingular }) => nameSingular === objectName,
+    );
+    assert.ok(object);
+    for (const [name, label, type] of fields) {
+      object.fields.push({ id: `${objectName}-${name}`, name, label, type });
+    }
+  }
+
+  return metadata;
+};
+
 class MemoryApi implements CanonicalizationApi {
   readonly snapshot: CanonicalizationSnapshot;
   metadata = emptyMetadata();
@@ -61,6 +92,7 @@ class MemoryApi implements CanonicalizationApi {
   failAfterNextPersist = false;
   failAfterNextBatchPersist = false;
   failBeforeNextPersist = false;
+  rejectedMetadataName?: string;
 
   constructor(snapshot: CanonicalizationSnapshot) {
     this.snapshot = snapshot;
@@ -88,6 +120,9 @@ class MemoryApi implements CanonicalizationApi {
     name: string,
     label: string,
   ): Promise<void> {
+    if (name === this.rejectedMetadataName) {
+      throw new Error(`simulated rejected metadata name ${name}`);
+    }
     const field = this.metadata
       .flatMap(({ fields }) => fields)
       .find(({ id }) => id === fieldId);
@@ -388,6 +423,39 @@ test('apply refetches metadata, writes one record, and proves zero work', async 
   assert.ok(api.writes.some((write) => write.startsWith('create-field:')));
   assert.ok(api.writes.includes('conditional:people:1'));
   assert.equal(api.checkpoint?.status, 'complete');
+});
+
+test('metadata-stage checkpoint resumes the reserved role hotfix after eight renames', async () => {
+  const api = new MemoryApi(emptySnapshot());
+  api.metadata = metadataWithLegacyRenames();
+  const dryRun = await runCanonicalization(api, options);
+  api.rejectedMetadataName = 'wholesalerRole';
+
+  await assert.rejects(
+    runCanonicalization(api, {
+      ...options,
+      mode: 'apply',
+      confirmation: 'CANONICALIZE_CRM_DATA',
+      expectedManifest: dryRun.manifest,
+    }),
+    /simulated rejected metadata name wholesalerRole/,
+  );
+  assert.equal(api.checkpoint?.status, 'metadata');
+  assert.equal(api.checkpoint?.completedOperations.length, 8);
+
+  api.rejectedMetadataName = undefined;
+  const result = await runCanonicalization(api, {
+    ...options,
+    mode: 'apply',
+    confirmation: 'CANONICALIZE_CRM_DATA',
+    expectedManifest: dryRun.manifest,
+  });
+
+  assert.equal(result.reconciliation.remainingMutations, 0);
+  assert.deepEqual(result.manifest, dryRun.manifest);
+  assert.equal(api.checkpoint?.status, 'complete');
+  assert.ok(api.writes.includes('rename:wholesalerRole'));
+  assert.equal(api.writes.includes('rename:role'), false);
 });
 
 test('an existing mutation without updatedAt fails before metadata or checkpoint writes', async () => {
