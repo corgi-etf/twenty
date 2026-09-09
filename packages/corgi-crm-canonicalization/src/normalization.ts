@@ -257,10 +257,34 @@ export const normalizeDate = (rawDate: unknown): string | null => {
     );
   }
   const us = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(value);
+  if (us) {
+    return canonicalCalendarDate(Number(us[3]), Number(us[1]), Number(us[2]));
+  }
+  const natural =
+    /^(january|february|march|april|may|june|july|august|september|october|november|december)\s+(\d{1,2}),\s*(\d{4})$/i.exec(
+      value,
+    );
+  if (!natural) return null;
+  const month = [
+    'january',
+    'february',
+    'march',
+    'april',
+    'may',
+    'june',
+    'july',
+    'august',
+    'september',
+    'october',
+    'november',
+    'december',
+  ].indexOf(natural[1]!.toLowerCase());
 
-  return us
-    ? canonicalCalendarDate(Number(us[3]), Number(us[1]), Number(us[2]))
-    : null;
+  return canonicalCalendarDate(
+    Number(natural[3]),
+    month + 1,
+    Number(natural[2]),
+  );
 };
 
 export const normalizeKey = (key: string): string =>

@@ -344,6 +344,48 @@ test('ambiguous company matches create an isolated deterministic company', () =>
   );
 });
 
+test('separate unanchored rows never merge through a weak ambiguous company fingerprint', () => {
+  const input = snapshot();
+  input.companies.push({ id: 'company-2', name: 'Acme Advisors' });
+  input.sourceRecords = [];
+  input.importReviewItems = [
+    {
+      id: 'review-ambiguous-one',
+      reviewStatus: 'pending',
+      sourceFile: 'firms.csv',
+      sourceRow: 20,
+      rawData: JSON.stringify({
+        'Firm Name': 'Acme Advisors',
+        'Firm AUM': '$1,000',
+      }),
+    },
+    {
+      id: 'review-ambiguous-two',
+      reviewStatus: 'pending',
+      sourceFile: 'firms.csv',
+      sourceRow: 21,
+      rawData: JSON.stringify({
+        'Firm Name': 'Acme Advisors',
+        'Firm AUM': '$2,000',
+      }),
+    },
+  ];
+
+  const plan = buildCanonicalizationPlan(input);
+  const isolatedCompanies = plan.mutations.filter(
+    ({ objectPlural, id }) =>
+      objectPlural === 'companies' &&
+      !input.companies.some((company) => company.id === id),
+  );
+
+  assertPlanCanApply(plan);
+  assert.equal(isolatedCompanies.length, 2);
+  assert.deepEqual(
+    isolatedCompanies.map(({ data }) => data.assetsUnderManagement).sort(),
+    ['$1,000', '$2,000'],
+  );
+});
+
 test('ambiguous person identities create an isolated person and retain contacts', () => {
   const input = snapshot();
   input.people.push({
@@ -967,7 +1009,7 @@ test('invalid contact structures are retained in other contact details', () => {
   assert.match(String(person?.data.otherContactDetails), /not supplied/);
 });
 
-test('holding dates normalize and invalid placeholders are explicitly disposed', () => {
+test('holding dates normalize and explicit placeholders are safely disposed', () => {
   const input = snapshot();
   const rawData = JSON.parse(
     String(input.holdingObservations[0]!.rawData),
@@ -1002,7 +1044,45 @@ test('holding dates normalize and invalid placeholders are explicitly disposed',
     false,
   );
   assert.equal(sourceDateDisposition?.kind, 'ignored');
-  assert.match(String(sourceDateDisposition?.target), /invalid date/i);
+  assert.match(
+    String(sourceDateDisposition?.target),
+    /explicit date placeholder/i,
+  );
+});
+
+test('natural-language holding dates normalize while unsupported dates fail closed', () => {
+  const input = snapshot();
+  const rawData = JSON.parse(
+    String(input.holdingObservations[0]!.rawData),
+  ) as Record<string, unknown>;
+  rawData['Source Date'] = 'June 30, 2026';
+  input.holdingObservations[0]!.rawData = JSON.stringify(rawData);
+  delete input.holdingObservations[0]!.sourceDate;
+
+  const naturalLanguagePlan = buildCanonicalizationPlan(input);
+
+  assertPlanCanApply(naturalLanguagePlan);
+  assert.equal(
+    mutationFor(naturalLanguagePlan, 'holdingObservations', 'holding-1')?.data
+      .asOfDate,
+    '2026-06-30',
+  );
+
+  rawData['Source Date'] = 'end of second quarter 2026';
+  input.holdingObservations[0]!.rawData = JSON.stringify(rawData);
+  const unsupportedPlan = buildCanonicalizationPlan(input);
+  const sourceDateDisposition = unsupportedPlan.dispositions.find(
+    ({ key }) => key === 'source date',
+  );
+
+  assert.equal(
+    unsupportedPlan.unresolved.some(
+      ({ code }) => code === 'HOLDING_DATE_INVALID',
+    ),
+    true,
+  );
+  assert.notEqual(sourceDateDisposition?.kind, 'ignored');
+  assert.throws(() => assertPlanCanApply(unsupportedPlan), /unresolved/i);
 });
 
 test('known optional source fields have explicit business dispositions', () => {

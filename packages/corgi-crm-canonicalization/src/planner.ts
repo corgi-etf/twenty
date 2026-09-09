@@ -1020,6 +1020,23 @@ const NUMERIC_HOLDING_KEYS = new Set([
   'prior ranking',
 ]);
 
+const DATE_PLACEHOLDERS = new Set([
+  '-',
+  '--',
+  'n/a',
+  'na',
+  'none',
+  'not available',
+  'not reported',
+  'unknown',
+]);
+
+const isDatePlaceholder = (value: unknown): boolean => {
+  const text = textValue(value);
+
+  return text !== null && DATE_PLACEHOLDERS.has(text.toLowerCase());
+};
+
 const normalizedDispositionResult = (
   key: string,
   value: unknown,
@@ -1123,11 +1140,14 @@ const dispositionForKey = (
     };
   }
   if (isHolding && key === 'source date' && normalizeDate(value) === null) {
-    return {
-      kind: 'ignored',
-      target: 'invalid date placeholder excluded from canonical date field',
-      sourceValueHash,
-    };
+    return isDatePlaceholder(value)
+      ? {
+          kind: 'ignored',
+          target:
+            'explicit date placeholder excluded from canonical date field',
+          sourceValueHash,
+        }
+      : null;
   }
   if (
     isHolding &&
@@ -1488,42 +1508,51 @@ const resolveCompany = (
     rawValue(index, 'firm state', 'state', 'filer state'),
   );
   const locationKey = companyLocationKey(name, city, state);
-  const isolatedId = key
+  const companyFingerprint = key
+    ? stableStringify({
+        name: key,
+        domain,
+        city,
+        state,
+        filerId: companyNameKey(rawValue(index, 'filer id')),
+        cik: companyNameKey(rawValue(index, 'filer cik')),
+        crd: companyNameKey(rawValue(index, 'filer crd')),
+        irs: companyNameKey(rawValue(index, 'filer irs number')),
+      })
+    : null;
+  const isolatedId = companyFingerprint
+    ? stableUuid('company', companyFingerprint)
+    : null;
+  const rowIsolatedId = companyFingerprint
     ? stableUuid(
         'company',
         stableStringify({
-          name: key,
-          domain,
-          city,
-          state,
-          filerId: companyNameKey(rawValue(index, 'filer id')),
-          cik: companyNameKey(rawValue(index, 'filer cik')),
-          crd: companyNameKey(rawValue(index, 'filer crd')),
-          irs: companyNameKey(rawValue(index, 'filer irs number')),
+          companyFingerprint,
+          contentKey: row.contentKey,
         }),
       )
     : null;
-  const isolateCompany = (): { id?: string; unresolved?: string } => {
+  const isolateCompany = (
+    id: string | null,
+  ): { id?: string; unresolved?: string } => {
     const companyName = textValue(name);
-    if (!isolatedId || !key || !companyName) {
+    if (!id || !key || !companyName) {
       return { unresolved: 'MISSING_COMPANY_IDENTITY' };
     }
-    if (!companies.has(isolatedId)) {
-      const record: CrmRecord = { id: isolatedId, name: companyName };
-      companies.set(isolatedId, {
+    if (!companies.has(id)) {
+      const record: CrmRecord = { id, name: companyName };
+      companies.set(id, {
         record,
-        data: { id: isolatedId, name: companyName },
+        data: { id, name: companyName },
         facts: new Map(),
       });
     }
-    addOwner(names, key, isolatedId);
-    if (locationKey) addOwner(locations, locationKey, isolatedId);
-    if (domain) addOwner(domains, domain, isolatedId);
+    addOwner(names, key, id);
+    if (locationKey) addOwner(locations, locationKey, id);
+    if (domain) addOwner(domains, domain, id);
 
-    return { id: isolatedId };
+    return { id };
   };
-
-  if (isolatedId && companies.has(isolatedId)) return { id: isolatedId };
 
   const regulatoryMatches = new Set<string>();
   for (const [kind, aliases] of [
@@ -1540,18 +1569,18 @@ const resolveCompany = (
     }
   }
   if (regulatoryMatches.size === 1) return { id: [...regulatoryMatches][0] };
-  if (regulatoryMatches.size > 1) return isolateCompany();
+  if (regulatoryMatches.size > 1) return isolateCompany(rowIsolatedId);
 
   const domainMatches = domain
     ? (domains.get(domain) ?? new Set<string>())
     : new Set<string>();
   if (domainMatches.size === 1) return { id: [...domainMatches][0] };
-  if (domainMatches.size > 1) return isolateCompany();
+  if (domainMatches.size > 1) return isolateCompany(rowIsolatedId);
   const locationMatches = locationKey
     ? (locations.get(locationKey) ?? new Set<string>())
     : new Set<string>();
   if (locationMatches.size === 1) return { id: [...locationMatches][0] };
-  if (locationMatches.size > 1) return isolateCompany();
+  if (locationMatches.size > 1) return isolateCompany(rowIsolatedId);
   const nameMatches = key
     ? (names.get(key) ?? new Set<string>())
     : new Set<string>();
@@ -1560,11 +1589,11 @@ const resolveCompany = (
       ? { id: personCompanyAnchor }
       : { unresolved: 'MISSING_PERSON_COMPANY_ANCHOR' };
   }
-  if (nameMatches.size > 0) return isolateCompany();
+  if (nameMatches.size > 0) return isolateCompany(rowIsolatedId);
   if (!key || !textValue(name))
     return { unresolved: 'MISSING_COMPANY_IDENTITY' };
 
-  return isolateCompany();
+  return isolateCompany(isolatedId);
 };
 
 const strongPersonCandidates = (
@@ -1817,6 +1846,14 @@ const holdingPatch = (
   for (const [field, aliases, previousName] of text) {
     const raw = rawValue(index, ...aliases);
     const value = field === 'asOfDate' ? normalizeDate(raw) : textValue(raw);
+    if (
+      field === 'asOfDate' &&
+      textValue(raw) &&
+      value === null &&
+      !isDatePlaceholder(raw)
+    ) {
+      unresolved.push({ code: 'HOLDING_DATE_INVALID', rowKey });
+    }
     if (!value) continue;
     setPreservingNative(
       accumulator,
