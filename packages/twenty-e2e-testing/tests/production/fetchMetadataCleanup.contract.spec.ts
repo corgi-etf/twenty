@@ -781,9 +781,97 @@ test('proves imported contact values exist in standard Twenty fields', () => {
   );
 });
 
+test('matches canonical contact normalization and residual preservation', () => {
+  const normalizedLinkedIn = canonicalizedPerson();
+  normalizedLinkedIn.legacyLinkedInUrl =
+    'http://www.linkedin.com/in/owner/?trk=old#profile';
+  normalizedLinkedIn.linkedinLink = {
+    primaryLinkLabel: '',
+    primaryLinkUrl: '',
+    secondaryLinks: [
+      { primaryLinkUrl: 'https://linkedin.com/in/owner', label: 'LinkedIn' },
+    ],
+  };
+  expect(() =>
+    assertPeopleContactValuesCanonicalized([normalizedLinkedIn]),
+  ).not.toThrow();
+
+  const residualContacts = canonicalizedPerson();
+  residualContacts.legacySecondaryEmails = JSON.stringify([
+    { label: 'private' },
+  ]);
+  residualContacts.legacySecondaryPhones = 'call switchboard';
+  residualContacts.otherContactDetails =
+    'Email: {"label":"private"}\nPhone: call switchboard\nPhone extension: (312) 555-0100 x55';
+  expect(() =>
+    assertPeopleContactValuesCanonicalized([residualContacts]),
+  ).not.toThrow();
+
+  const ignoredNonArrays = canonicalizedPerson();
+  ignoredNonArrays.legacySecondaryEmails = JSON.stringify({
+    email: 'not-a-candidate@example.com',
+  });
+  ignoredNonArrays.legacySecondaryPhones = JSON.stringify({
+    phone: '+13125550199',
+  });
+  expect(() =>
+    assertPeopleContactValuesCanonicalized([ignoredNonArrays]),
+  ).not.toThrow();
+
+  const missingLinkedIn = canonicalizedPerson();
+  missingLinkedIn.linkedinLink = {
+    primaryLinkLabel: '',
+    primaryLinkUrl: '',
+    secondaryLinks: [],
+  };
+  expect(() =>
+    assertPeopleContactValuesCanonicalized([missingLinkedIn]),
+  ).toThrow(/LinkedIn does not contain the imported URL/i);
+
+  const missingResiduals = canonicalizedPerson();
+  missingResiduals.legacySecondaryEmails = '[not-json';
+  missingResiduals.legacySecondaryPhones = 'call switchboard';
+  missingResiduals.otherContactDetails = '';
+  expect(() =>
+    assertPeopleContactValuesCanonicalized([missingResiduals]),
+  ).toThrow(/Emails does not contain every imported email/i);
+
+  const missingPhoneResidual = canonicalizedPerson();
+  missingPhoneResidual.legacyEmail = null;
+  missingPhoneResidual.legacySecondaryEmails = null;
+  missingPhoneResidual.legacyPrimaryPhone = null;
+  missingPhoneResidual.legacySecondaryPhones = 'call switchboard';
+  missingPhoneResidual.otherContactDetails = '';
+  expect(() =>
+    assertPeopleContactValuesCanonicalized([missingPhoneResidual]),
+  ).toThrow(/Phones does not contain every imported phone/i);
+
+  const partialPhoneIdentity = canonicalizedPerson();
+  partialPhoneIdentity.legacyPrimaryPhone = '(312) 555-0100';
+  partialPhoneIdentity.legacySecondaryPhones = null;
+  partialPhoneIdentity.phones = {
+    primaryPhoneCallingCode: '',
+    primaryPhoneNumber: '5550100',
+    additionalPhones: [],
+  };
+  partialPhoneIdentity.otherContactDetails = '';
+  expect(() =>
+    assertPeopleContactValuesCanonicalized([partialPhoneIdentity]),
+  ).toThrow(/Phones does not contain every imported phone/i);
+});
+
 test('proves company descriptions, ownership, and websites were canonicalized', () => {
   expect(() =>
     assertCompanyValuesCanonicalized([canonicalizedCompany()], []),
+  ).not.toThrow();
+
+  const enrichedMultilineDescription = canonicalizedCompany();
+  enrichedMultilineDescription.fetchDescription =
+    'Zulu re\u0301sume\u0301\r\n  Middle profile  \r\n \t \r\nAlpha profile';
+  enrichedMultilineDescription.description =
+    'Alpha profile\nAdded native context\nMiddle profile\nZulu résumé';
+  expect(() =>
+    assertCompanyValuesCanonicalized([enrichedMultilineDescription], []),
   ).not.toThrow();
 
   const sourceCommentary = canonicalizedCompany();
@@ -804,6 +892,46 @@ test('proves company descriptions, ownership, and websites were canonicalized', 
     ),
   ).not.toThrow();
 
+  const normalizedImportReviewCommentary = canonicalizedCompany();
+  normalizedImportReviewCommentary.fetchDescription =
+    'High confidence import review';
+  normalizedImportReviewCommentary.description = null;
+  expect(() =>
+    assertCompanyValuesCanonicalized(
+      [normalizedImportReviewCommentary],
+      [],
+      [
+        {
+          id: 'review-1',
+          companyId: normalizedImportReviewCommentary.id,
+          rawData: JSON.stringify({
+            ' Notes / Source-Confidence ': 'High confidence import review',
+          }),
+        },
+      ],
+    ),
+  ).not.toThrow();
+
+  const unrelatedImportReviewCommentary = canonicalizedCompany();
+  unrelatedImportReviewCommentary.fetchDescription =
+    'High confidence import review';
+  unrelatedImportReviewCommentary.description = null;
+  expect(() =>
+    assertCompanyValuesCanonicalized(
+      [unrelatedImportReviewCommentary],
+      [],
+      [
+        {
+          id: 'review-2',
+          companyId: 'another-company',
+          rawData: JSON.stringify({
+            'notes source confidence': 'High confidence import review',
+          }),
+        },
+      ],
+    ),
+  ).toThrow(/Description classification is incomplete/i);
+
   const missingWebsite = canonicalizedCompany();
   missingWebsite.domainName = { primaryLinkUrl: '', secondaryLinks: [] };
   expect(() => assertCompanyValuesCanonicalized([missingWebsite], [])).toThrow(
@@ -821,6 +949,20 @@ test('proves company descriptions, ownership, and websites were canonicalized', 
   expect(() => assertCompanyValuesCanonicalized([manualLocation], [])).toThrow(
     /manual location marker still requires canonicalization/i,
   );
+
+  for (const description of [
+    'Alpha profile\nZulu résumé',
+    'Alpha profile with user-authored context\nMiddle profile\nZulu résumé',
+  ]) {
+    const incompleteMultilineDescription = canonicalizedCompany();
+    incompleteMultilineDescription.fetchDescription =
+      'Zulu re\u0301sume\u0301\r\n  Middle profile  \r\n \t \r\nAlpha profile';
+    incompleteMultilineDescription.description = description;
+
+    expect(() =>
+      assertCompanyValuesCanonicalized([incompleteMultilineDescription], []),
+    ).toThrow(/Description classification is incomplete/i);
+  }
 });
 
 test('blocks before mutation when a workflow references cleanup metadata', () => {
