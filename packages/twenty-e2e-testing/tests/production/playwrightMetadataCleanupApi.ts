@@ -4,6 +4,7 @@ import { dirname, resolve } from 'node:path';
 
 import { type APIResponse, type Page } from '@playwright/test';
 
+import { assertCanonicalizationComplete as assertCorgiCanonicalizationComplete } from '../../../corgi-crm-canonicalization/src/reconciliation.ts';
 import {
   assertCompanyValuesCanonicalized,
   assertPeopleContactValuesCanonicalized,
@@ -284,9 +285,6 @@ export const createPlaywrightMetadataCleanupApi = ({
     listRecords,
 
     async assertCanonicalizationComplete() {
-      const { assertCanonicalizationComplete } =
-        await import('../../../corgi-crm-canonicalization/src/reconciliation.ts');
-
       const snapshot: CanonicalizationSnapshot = {
         companies: await listRecords('companies'),
         people: await listRecords('people'),
@@ -302,7 +300,7 @@ export const createPlaywrightMetadataCleanupApi = ({
           'archivedOutreachActivities',
         ),
       };
-      const report = assertCanonicalizationComplete(snapshot);
+      const report = assertCorgiCanonicalizationComplete(snapshot);
       assertPeopleContactValuesCanonicalized(snapshot.people);
       assertCompanyValuesCanonicalized(
         snapshot.companies,

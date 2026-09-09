@@ -1,4 +1,4 @@
-import { type APIResponse, expect, test } from '@playwright/test';
+import { type APIResponse, expect, type Page, test } from '@playwright/test';
 
 import {
   assertCompanyValuesCanonicalized,
@@ -16,7 +16,10 @@ import {
   assertNoWorkflowReferences,
   type CanonicalizationSnapshot,
 } from './fetchMetadataCleanupPreflight';
-import { createRateLimitedRequest } from './playwrightMetadataCleanupApi';
+import {
+  createPlaywrightMetadataCleanupApi,
+  createRateLimitedRequest,
+} from './playwrightMetadataCleanupApi';
 
 const MIGRATION_APPLICATION_ID = 'migration-application-id';
 const STANDARD_APPLICATION_ID = 'standard-application-id';
@@ -929,6 +932,31 @@ test('paces every request and honors bounded Retry-After retries', async () => {
     }),
   ).rejects.toThrow(/remained rate limited after retries/i);
   expect(attempts).toBe(5);
+});
+
+test('loads canonicalization before issuing the first snapshot request', async () => {
+  const sentinel = new Error('snapshot request sentinel');
+  let getCount = 0;
+  const page = {
+    request: {
+      get: async () => {
+        getCount += 1;
+        throw sentinel;
+      },
+    },
+  } as unknown as Page;
+  const api = createPlaywrightMetadataCleanupApi({
+    page,
+    backendBaseUrl: 'https://crm.example.test',
+    frontendBaseUrl: 'https://crm.example.test',
+  });
+
+  const preflight = api.assertCanonicalizationComplete();
+  const getCountBeforeYield = getCount;
+
+  await expect(preflight).rejects.toBe(sentinel);
+  expect(getCountBeforeYield).toBe(1);
+  expect(getCount).toBe(1);
 });
 
 test('fails closed on protected or unhandled metadata', () => {
