@@ -39,7 +39,7 @@ jobs:
     name: Guard, publish, install, and verify Corgi CRM app
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 25
     environment: production
     steps:
       - name: Check out the exact workflow revision
@@ -66,6 +66,12 @@ jobs:
           set -euo pipefail
           version="$(jq -er '.version | select(type == "string" and length > 0)' "${APP_PATH}/package.json")"
           echo "version=${version}" >> "${GITHUB_OUTPUT}"
+
+      - name: Install repository dependencies
+        uses: ./.github/actions/crm-yarn-install
+
+      - name: Install the Chromium authentication browser
+        run: npx playwright install --with-deps chromium
 
       - name: Configure immediate AWS deployment inspection
         uses: aws-actions/configure-aws-credentials@61815dcd50bd041e203e49132bacad1fd04d2708 # v5.1.1
@@ -143,27 +149,73 @@ jobs:
           assert_stable_service_tasks "${SERVER_SERVICE}" "${SERVER_CONTAINER}"
           assert_stable_service_tasks "${WORKER_SERVICE}" "${WORKER_CONTAINER}"
 
+      - name: Acquire a short-lived deployment API key
+        env:
+          FRONTEND_BASE_URL: ${{ env.CORGI_CRM_API_URL }}
+          BACKEND_BASE_URL: ${{ env.CORGI_CRM_API_URL }}
+          CRM_E2E_LOGIN: ${{ secrets.CRM_E2E_LOGIN }}
+          CRM_E2E_PASSWORD: ${{ secrets.CRM_E2E_PASSWORD }}
+          CRM_E2E_WORKSPACE_NAME: ${{ secrets.CRM_E2E_WORKSPACE_NAME }}
+          CORGI_CRM_DEPLOYMENT_KEY_OPERATION: acquire
+          CORGI_CRM_DEPLOYMENT_KEY_PATH: ${{ runner.temp }}/corgi-crm-deployment-key.json
+        run: >-
+          npx nx test:production twenty-e2e-testing --
+          tests/production/corgiCrmAppDeploymentKey.production.spec.ts
+          --project=production-chromium
+
+      - name: Mask the deployment token for subsequent steps
+        id: credential
+        shell: bash
+        run: |
+          set -euo pipefail
+          token="$(jq -er '.token | select(type == "string" and length > 0)' "${RUNNER_TEMP}/corgi-crm-deployment-key.json")"
+          echo "::add-mask::${token}"
+          echo "token=${token}" >> "${GITHUB_OUTPUT}"
+
       - name: Verify the authenticated production workspace
         env:
-          CORGI_CRM_API_KEY: ${{ secrets.CRM_APP_API_KEY }}
+          CORGI_CRM_API_KEY: ${{ steps.credential.outputs.token }}
         run: node "${APP_PATH}/scripts/verify-production-install.mjs" target
 
       - name: Publish the private Corgi CRM app
         uses: ./.github/actions/deploy-twenty-app
         with:
           api-url: ${{ env.CORGI_CRM_API_URL }}
-          api-key: ${{ secrets.CRM_APP_API_KEY }}
+          api-key: ${{ steps.credential.outputs.token }}
           app-path: ${{ env.APP_PATH }}
 
       - name: Install or upgrade the Corgi CRM app
         uses: ./.github/actions/install-twenty-app
         with:
           api-url: ${{ env.CORGI_CRM_API_URL }}
-          api-key: ${{ secrets.CRM_APP_API_KEY }}
+          api-key: ${{ steps.credential.outputs.token }}
           app-path: ${{ env.APP_PATH }}
 
       - name: Verify installed application, trigger, and reconciliation
         env:
-          CORGI_CRM_API_KEY: ${{ secrets.CRM_APP_API_KEY }}
+          CORGI_CRM_API_KEY: ${{ steps.credential.outputs.token }}
           CORGI_CRM_EXPECTED_VERSION: ${{ steps.app.outputs.version }}
         run: node "${APP_PATH}/scripts/verify-production-install.mjs" installed
+
+      - name: Revoke the short-lived deployment API key
+        if: always()
+        env:
+          FRONTEND_BASE_URL: ${{ env.CORGI_CRM_API_URL }}
+          BACKEND_BASE_URL: ${{ env.CORGI_CRM_API_URL }}
+          CRM_E2E_LOGIN: ${{ secrets.CRM_E2E_LOGIN }}
+          CRM_E2E_PASSWORD: ${{ secrets.CRM_E2E_PASSWORD }}
+          CRM_E2E_WORKSPACE_NAME: ${{ secrets.CRM_E2E_WORKSPACE_NAME }}
+          CORGI_CRM_DEPLOYMENT_KEY_OPERATION: revoke
+          CORGI_CRM_DEPLOYMENT_KEY_PATH: ${{ runner.temp }}/corgi-crm-deployment-key.json
+        run: >-
+          npx nx test:production twenty-e2e-testing --
+          tests/production/corgiCrmAppDeploymentKey.production.spec.ts
+          --project=production-chromium
+
+      - name: Remove local authentication artifacts
+        if: always()
+        shell: bash
+        run: |
+          rm -f "${RUNNER_TEMP}/corgi-crm-deployment-key.json"
+          rm -f /home/runner/.twenty/config.json
+          rm -f packages/twenty-e2e-testing/.auth/production-user.json
