@@ -986,10 +986,9 @@ const HOLDING_TARGET_BY_KEY: Readonly<Record<string, string>> = {
   'street address': 'holdingObservation.streetAddress',
   'street address2': 'holdingObservation.addressLine2',
   city: 'holdingObservation.city',
-  state:
-    'holdingObservation.stateRegion+holdingObservation.alternateStateRegions',
+  state: 'holdingObservation.stateRegion+holdingObservation.addressLine2',
   'filer state':
-    'holdingObservation.stateRegion+holdingObservation.alternateStateRegions',
+    'holdingObservation.stateRegion+holdingObservation.addressLine2',
   zip: 'holdingObservation.postalCode',
   'zip code': 'holdingObservation.postalCode',
   'shares held': 'holdingObservation.sharesHeld',
@@ -1145,7 +1144,7 @@ const dispositionForKey = (
     if (!isPerson) return null;
     return {
       kind: 'identity',
-      target: 'person.name+person.alternateNames',
+      target: 'person.name+person.otherContactDetails',
       sourceValueHash,
       resultValueHash: valueHash(companyNameKey(value)),
     };
@@ -1493,7 +1492,9 @@ const applyPersonRaw = (
     if (!nextName[field]) {
       nextName[field] = source;
     } else if (companyNameKey(source) !== companyNameKey(nextName[field])) {
-      mergeLabeledFact(accumulator, 'alternateNames', label, source);
+      accumulator.residualContacts!.add(
+        `Other ${label.toLowerCase()}: ${source}`,
+      );
     }
   }
   setIfChanged(accumulator, 'name', nextName);
@@ -1950,7 +1951,12 @@ const holdingPatch = (
     if (isEmptyValue(current)) {
       setIfChanged(accumulator, 'stateRegion', value);
     } else if (companyNameKey(current) !== companyNameKey(value)) {
-      mergeFact(accumulator, 'alternateStateRegions', value);
+      mergeLabeledFact(
+        accumulator,
+        'addressLine2',
+        'Other state / region',
+        value,
+      );
     }
   }
 

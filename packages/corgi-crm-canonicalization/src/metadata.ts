@@ -188,7 +188,6 @@ const CREATE_DEFINITIONS: readonly FieldDefinition[] = [
     ['school', 'School'],
     ['sportsTeams', 'Sports Teams'],
     ['services', 'Services'],
-    ['alternateNames', 'Other Names'],
     ['otherContactDetails', 'Other Contact Details'],
   ]),
   ...fields('holdingObservation', [
@@ -206,7 +205,6 @@ const CREATE_DEFINITIONS: readonly FieldDefinition[] = [
     ['postalCode', 'Postal Code'],
     ['filingType', 'Filing Type'],
     ['form13f', 'Form 13F'],
-    ['alternateStateRegions', 'Other States / Regions'],
   ]),
   {
     objectName: 'task',

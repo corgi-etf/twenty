@@ -1085,6 +1085,7 @@ test('every distinct custodian source alias is retained canonically', () => {
 
 test('strong person matches retain differing source names as alternate names', () => {
   const input = snapshot();
+  input.people[0]!.otherContactDetails = 'Prefers email';
   input.sourceRecords = [
     {
       id: 'source-alternate-person-name',
@@ -1113,8 +1114,16 @@ test('strong person matches retain differing source names as alternate names', (
     false,
   );
   assertPlanCanApply(plan);
-  assert.match(String(person?.data.alternateNames), /First name: Alexis/);
-  assert.match(String(person?.data.alternateNames), /Last name: Smythe/);
+  assert.equal(person?.data.alternateNames, undefined);
+  assert.match(
+    String(person?.data.otherContactDetails),
+    /Other first name: Alexis/,
+  );
+  assert.match(
+    String(person?.data.otherContactDetails),
+    /Other last name: Smythe/,
+  );
+  assert.match(String(person?.data.otherContactDetails), /Prefers email/);
   Object.assign(input.people[0]!, person?.data);
   assert.equal(
     mutationFor(buildCanonicalizationPlan(input), 'people', 'person-1'),
@@ -1171,6 +1180,7 @@ test('holding state conflicts retain every exact region in a neutral alternate f
   input.sourceRecords = [];
   input.importReviewItems = [];
   input.holdingObservations[0]!.stateRegion = 'IL';
+  input.holdingObservations[0]!.addressLine2 = 'Suite 200';
   const rawData = JSON.parse(
     String(input.holdingObservations[0]!.rawData),
   ) as Record<string, unknown>;
@@ -1193,7 +1203,16 @@ test('holding state conflicts retain every exact region in a neutral alternate f
   );
   assertPlanCanApply(first);
   assert.equal(holding?.data.stateRegion, undefined);
-  assert.equal(holding?.data.alternateStateRegions, 'Illinois\nIllinois, USA');
+  assert.equal(holding?.data.alternateStateRegions, undefined);
+  assert.match(
+    String(holding?.data.addressLine2),
+    /Other state \/ region: Illinois/,
+  );
+  assert.match(
+    String(holding?.data.addressLine2),
+    /Other state \/ region: Illinois, USA/,
+  );
+  assert.match(String(holding?.data.addressLine2), /Suite 200/);
 
   Object.assign(input.holdingObservations[0]!, holding?.data);
   const second = buildCanonicalizationPlan(input);
