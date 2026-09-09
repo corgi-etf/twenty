@@ -1,0 +1,161 @@
+name: Publish and install Corgi CRM app in production
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: Type PUBLISH_AND_INSTALL_CORGI_CRM_APP
+        required: true
+        type: string
+      deployed_sha:
+        description: Exact 40-character SHA deployed to both CRM services
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: crm-production-deploy
+  cancel-in-progress: false
+
+env:
+  APP_PATH: packages/twenty-apps/internal/corgi-crm
+  AWS_ACCOUNT_ID: '182018075072'
+  AWS_REGION: us-east-2
+  AWS_ROLE_ARN: arn:aws:iam::182018075072:role/crm-production-github-deploy
+  ECS_CLUSTER: crm-production
+  ECR_REPOSITORY: crm-production-twenty
+  SERVER_SERVICE: crm-production-server
+  SERVER_CONTAINER: server
+  WORKER_SERVICE: crm-production-worker
+  WORKER_CONTAINER: worker
+  CORGI_CRM_API_URL: https://crm.corgiinvest.com
+  CORGI_CRM_EXPECTED_WORKSPACE_ID: eabf5d9d-fc99-4acb-b160-710ecb1db996
+
+jobs:
+  publish-and-install:
+    name: Guard, publish, install, and verify Corgi CRM app
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: production
+    steps:
+      - name: Check out the exact workflow revision
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          fetch-depth: 0
+
+      - name: Validate explicit production approval and revision
+        shell: bash
+        env:
+          CONFIRMATION: ${{ inputs.confirmation }}
+          DEPLOYED_SHA: ${{ inputs.deployed_sha }}
+        run: |
+          set -euo pipefail
+          [[ "${CONFIRMATION}" == "PUBLISH_AND_INSTALL_CORGI_CRM_APP" ]]
+          [[ "${DEPLOYED_SHA}" =~ ^[0-9a-f]{40}$ ]]
+          [[ "${DEPLOYED_SHA}" == "${GITHUB_SHA}" ]]
+          git cat-file -e "${DEPLOYED_SHA}^{commit}"
+
+      - name: Configure immediate AWS deployment inspection
+        uses: aws-actions/configure-aws-credentials@61815dcd50bd041e203e49132bacad1fd04d2708 # v5.1.1
+        with:
+          role-to-assume: ${{ env.AWS_ROLE_ARN }}
+          role-duration-seconds: 1800
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Prove every live task uses the approved deployed SHA
+        shell: bash
+        env:
+          DEPLOYED_SHA: ${{ inputs.deployed_sha }}
+        run: |
+          set -euo pipefail
+          caller_account="$(aws sts get-caller-identity --query Account --output text)"
+          [[ "${caller_account}" == "${AWS_ACCOUNT_ID}" ]]
+          expected_digest="$(aws ecr describe-images \
+            --repository-name "${ECR_REPOSITORY}" \
+            --image-ids "imageTag=git-${DEPLOYED_SHA}" \
+            --query 'imageDetails[0].imageDigest' \
+            --output text)"
+          [[ "${expected_digest}" == sha256:* ]]
+
+          assert_stable_service_tasks() {
+            local service="$1"
+            local container="$2"
+            local service_json="${RUNNER_TEMP}/${service}-service.json"
+            local tasks_json="${RUNNER_TEMP}/${service}-tasks.json"
+            local task_arns
+            local desired
+
+            aws ecs describe-services \
+              --cluster "${ECS_CLUSTER}" \
+              --services "${service}" > "${service_json}"
+            jq -e '
+              (.failures | length) == 0 and
+              (.services | length) == 1 and
+              .services[0].status == "ACTIVE" and
+              .services[0].desiredCount > 0 and
+              .services[0].runningCount == .services[0].desiredCount and
+              .services[0].pendingCount == 0 and
+              ([.services[0].deployments[] | select(.status == "PRIMARY")] | length) == 1 and
+              ([.services[0].deployments[] | select(.status == "ACTIVE")] | length) == 0
+            ' "${service_json}" >/dev/null
+            desired="$(jq -r '.services[0].desiredCount' "${service_json}")"
+            task_arns="$(aws ecs list-tasks \
+              --cluster "${ECS_CLUSTER}" \
+              --service-name "${service}" \
+              --desired-status RUNNING \
+              --query 'taskArns' \
+              --output text)"
+            [[ -n "${task_arns}" && "${task_arns}" != "None" ]]
+            # shellcheck disable=SC2086
+            aws ecs describe-tasks \
+              --cluster "${ECS_CLUSTER}" \
+              --tasks ${task_arns} > "${tasks_json}"
+            jq -e \
+              --arg container "${container}" \
+              --arg digest "${expected_digest}" \
+              --argjson desired "${desired}" '
+                (.failures | length) == 0 and
+                (.tasks | length) == $desired and
+                all(.tasks[]; .lastStatus == "RUNNING") and
+                all(
+                  .tasks[];
+                  ([.containers[] | select(
+                    .name == $container and
+                    .lastStatus == "RUNNING" and
+                    .imageDigest == $digest
+                  )] | length) == 1
+                )
+              ' "${tasks_json}" >/dev/null
+          }
+
+          assert_stable_service_tasks "${SERVER_SERVICE}" "${SERVER_CONTAINER}"
+          assert_stable_service_tasks "${WORKER_SERVICE}" "${WORKER_CONTAINER}"
+
+      - name: Verify the authenticated production workspace
+        env:
+          CORGI_CRM_API_KEY: ${{ secrets.CRM_APP_API_KEY }}
+        run: node "${APP_PATH}/scripts/verify-production-install.mjs" target
+
+      - name: Publish the private Corgi CRM app
+        uses: ./.github/actions/deploy-twenty-app
+        with:
+          api-url: ${{ env.CORGI_CRM_API_URL }}
+          api-key: ${{ secrets.CRM_APP_API_KEY }}
+          app-path: ${{ env.APP_PATH }}
+
+      - name: Install or upgrade the Corgi CRM app
+        uses: ./.github/actions/install-twenty-app
+        with:
+          api-url: ${{ env.CORGI_CRM_API_URL }}
+          api-key: ${{ secrets.CRM_APP_API_KEY }}
+          app-path: ${{ env.APP_PATH }}
+
+      - name: Verify installed application, trigger, and reconciliation
+        env:
+          CORGI_CRM_API_KEY: ${{ secrets.CRM_APP_API_KEY }}
+          CORGI_CRM_EXPECTED_VERSION: '1.0.0'
+        run: node "${APP_PATH}/scripts/verify-production-install.mjs" installed
