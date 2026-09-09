@@ -83,7 +83,9 @@ test('keeps the production CRM territory-first and free of helper navigation', a
     ).toBeVisible();
   }
   await expect(page.getByTestId('wholesaler-map-located-count')).toBeVisible();
-  await expect(page.getByRole('list', { name: 'Mapped leads' })).toBeVisible();
+  const mappedLeads = page.locator('aside[aria-label="Mapped leads"]');
+  await expect(mappedLeads).toBeVisible();
+  await expect(mappedLeads.getByRole('list')).toBeVisible();
 
   const companyId = companies[0]?.id;
   expect(companyId).toBeTruthy();
