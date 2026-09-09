@@ -134,7 +134,7 @@ jobs:
           role-duration-seconds: 1800
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Prove every live task uses the approved deployed SHA
+      - name: Prove every live task uses the approved deployed SHA and runtime configuration
         shell: bash
         env:
           DEPLOYED_SHA: ${{ inputs.deployed_sha }}
@@ -154,7 +154,9 @@ jobs:
             local container="$2"
             local service_json="${RUNNER_TEMP}/${service}-service.json"
             local tasks_json="${RUNNER_TEMP}/${service}-tasks.json"
+            local task_definition_json="${RUNNER_TEMP}/${service}-task-definition.json"
             local task_arns
+            local task_definition
             local desired
 
             aws ecs describe-services \
@@ -171,6 +173,30 @@ jobs:
               ([.services[0].deployments[] | select(.status == "ACTIVE")] | length) == 0
             ' "${service_json}" >/dev/null
             desired="$(jq -r '.services[0].desiredCount' "${service_json}")"
+            task_definition="$(jq -er '
+              .services[0].taskDefinition
+              | select(type == "string" and length > 0)
+            ' "${service_json}")"
+            aws ecs describe-task-definition \
+              --task-definition "${task_definition}" > "${task_definition_json}"
+            jq -e \
+              --arg container "${container}" '
+                ([.taskDefinition.containerDefinitions[]
+                  | select(.name == $container)] | length) == 1 and
+                ((.taskDefinition.containerDefinitions[]
+                  | select(.name == $container)) as $runtime_container |
+                  (($runtime_container.environment // [])
+                    | map(select(.name == "LOGIC_FUNCTION_TYPE"))) == [{
+                      name: "LOGIC_FUNCTION_TYPE",
+                      value: "LOCAL"
+                    }] and
+                  (($runtime_container.environment // [])
+                    | map(select(.name == "CODE_INTERPRETER_TYPE"))) == [{
+                      name: "CODE_INTERPRETER_TYPE",
+                      value: "DISABLED"
+                    }]
+                )
+              ' "${task_definition_json}" >/dev/null
             task_arns="$(aws ecs list-tasks \
               --cluster "${ECS_CLUSTER}" \
               --service-name "${service}" \
@@ -185,10 +211,12 @@ jobs:
             jq -e \
               --arg container "${container}" \
               --arg digest "${expected_digest}" \
+              --arg task_definition "${task_definition}" \
               --argjson desired "${desired}" '
                 (.failures | length) == 0 and
                 (.tasks | length) == $desired and
                 all(.tasks[]; .lastStatus == "RUNNING") and
+                all(.tasks[]; .taskDefinitionArn == $task_definition) and
                 all(
                   .tasks[];
                   ([.containers[] | select(

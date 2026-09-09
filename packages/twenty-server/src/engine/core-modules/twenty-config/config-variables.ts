@@ -691,6 +691,7 @@ export class ConfigVariables {
     description: 'Type of function execution (local or Lambda)',
     type: ConfigVariableType.ENUM,
     options: Object.values(LogicFunctionDriverType),
+    isEnvOnly: true,
   })
   @IsOptional()
   @CastToUpperSnakeCase()
@@ -802,6 +803,7 @@ export class ConfigVariables {
       'Code interpreter driver type - LOCAL for development (unsafe), E2B for sandboxed execution',
     type: ConfigVariableType.STRING,
     options: Object.values(CodeInterpreterDriverType),
+    isEnvOnly: true,
   })
   @IsOptional()
   @CastToUpperSnakeCase()

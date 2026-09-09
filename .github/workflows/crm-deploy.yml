@@ -128,9 +128,20 @@ jobs:
             DOCKER_INPUT_CHANGED=false
           fi
 
+          RUNTIME_CONFIG_CHANGED=false
+          for runtime_config_path in \
+            '.github/workflows/crm-deploy.yml' \
+            'infra/aws/production/locals.tf'; do
+            if grep -Fxq "${runtime_config_path}" "${CHANGED_FILES_FILE}"; then
+              RUNTIME_CONFIG_CHANGED=true
+              break
+            fi
+          done
+
           if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]] ||
              [[ "${NX_RUNTIME_CHANGED}" == "true" ]] ||
-             [[ "${DOCKER_INPUT_CHANGED}" == "true" ]]; then
+             [[ "${DOCKER_INPUT_CHANGED}" == "true" ]] ||
+             [[ "${RUNTIME_CONFIG_CHANGED}" == "true" ]]; then
             DEPLOY_IMAGE=true
           else
             DEPLOY_IMAGE=false
@@ -138,6 +149,7 @@ jobs:
 
           echo "Nx runtime project changed: ${NX_RUNTIME_CHANGED}"
           echo "Non-project Docker input changed: ${DOCKER_INPUT_CHANGED}"
+          echo "Deployment runtime configuration changed: ${RUNTIME_CONFIG_CHANGED}"
           echo "Build and deploy image: ${DEPLOY_IMAGE}"
           echo "deploy_image=${DEPLOY_IMAGE}" >> "${GITHUB_OUTPUT}"
 

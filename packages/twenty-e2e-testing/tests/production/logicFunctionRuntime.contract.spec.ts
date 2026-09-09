@@ -16,6 +16,10 @@ const deploymentWorkflowSource = readFileSync(
   join(repositoryRoot, '.github/workflows/crm-deploy.yml'),
   'utf8',
 );
+const appDeploymentWorkflowSource = readFileSync(
+  join(repositoryRoot, '.github/workflows/corgi-crm-app-production.yml'),
+  'utf8',
+);
 
 test('pins trusted logic functions locally while keeping the code interpreter disabled for both Terraform task definitions', () => {
   expect(productionLocalsSource).toContain(
@@ -53,6 +57,47 @@ test('forces and verifies the exact runtime contract on every deployed server an
   expect(
     deploymentWorkflowSource.match(
       /verify_service \\\n+\s+"\$\{(?:SERVER|WORKER)_SERVICE\}" \\\n+\s+"\$\{NEW_(?:SERVER|WORKER)_ARN\}" \\\n+\s+"\$\{(?:SERVER|WORKER)_CONTAINER\}"/g,
+    ),
+  ).toHaveLength(2);
+});
+
+test('deploys a new task revision when either runtime configuration source changes', () => {
+  expect(deploymentWorkflowSource).toContain('infra/aws/production/locals.tf');
+  expect(deploymentWorkflowSource).toContain(
+    '.github/workflows/crm-deploy.yml',
+  );
+  expect(deploymentWorkflowSource).toContain('RUNTIME_CONFIG_CHANGED=true');
+  expect(deploymentWorkflowSource).toContain(
+    '[[ "${RUNTIME_CONFIG_CHANGED}" == "true" ]]',
+  );
+});
+
+test('blocks app credentials until both live services prove the exact runtime contract', () => {
+  const runtimePreflightIndex = appDeploymentWorkflowSource.indexOf(
+    'Prove every live task uses the approved deployed SHA and runtime configuration',
+  );
+  const credentialAcquisitionIndex = appDeploymentWorkflowSource.indexOf(
+    'Acquire a short-lived deployment API key',
+  );
+
+  expect(runtimePreflightIndex).toBeGreaterThan(-1);
+  expect(credentialAcquisitionIndex).toBeGreaterThan(runtimePreflightIndex);
+  expect(appDeploymentWorkflowSource).toContain(
+    'aws ecs describe-task-definition',
+  );
+  expect(appDeploymentWorkflowSource).toContain(
+    '.taskDefinitionArn == $task_definition',
+  );
+  expect(appDeploymentWorkflowSource).toContain('.imageDigest == $digest');
+  expect(appDeploymentWorkflowSource).toMatch(
+    /map\(select\(\.name == "LOGIC_FUNCTION_TYPE"\)\)\) == \[\{\s*name: "LOGIC_FUNCTION_TYPE",\s*value: "LOCAL"\s*\}\]/,
+  );
+  expect(appDeploymentWorkflowSource).toMatch(
+    /map\(select\(\.name == "CODE_INTERPRETER_TYPE"\)\)\) == \[\{\s*name: "CODE_INTERPRETER_TYPE",\s*value: "DISABLED"\s*\}\]/,
+  );
+  expect(
+    appDeploymentWorkflowSource.match(
+      /assert_stable_service_tasks "\$\{(?:SERVER|WORKER)_SERVICE\}" "\$\{(?:SERVER|WORKER)_CONTAINER\}"/g,
     ),
   ).toHaveLength(2);
 });
