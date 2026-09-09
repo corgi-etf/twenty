@@ -31,12 +31,12 @@ export const handler = async (payload: RoutePayload<unknown>) => {
     updateId: update.updateId,
     payload: payload.body as Record<string, unknown>,
     store: kv,
-    enqueue: (jobPayload) =>
+    enqueue: (jobPayload, jobId) =>
       enqueueJob({
         logicFunctionUniversalIdentifier:
           TELEGRAM_UPDATE_WORKER_UNIVERSAL_IDENTIFIER,
         payload: jobPayload,
-        jobId: `telegram-update-${update.updateId}`,
+        jobId,
         retryLimit: 5,
       }),
   });
@@ -57,5 +57,6 @@ export default defineLogicFunction({
     path: '/telegram/webhook',
     httpMethod: 'POST',
     isAuthRequired: false,
+    forwardedRequestHeaders: ['x-telegram-bot-api-secret-token'],
   },
 });

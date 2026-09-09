@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { processTelegramCommand } from 'src/modules/telegram/services/telegram-command.service';
+import { getTelegramActivityId } from 'src/modules/telegram/services/telegram-identifiers.service';
 import { type OutreachRepository } from 'src/modules/outreach/types';
 
 const base = () => {
@@ -134,7 +135,7 @@ describe('processTelegramCommand', () => {
       ),
     ).resolves.toMatchObject({ status: 'logged' });
     expect(records.size).toBe(1);
-    expect([...records.keys()]).toEqual(['telegram-update-42']);
+    expect([...records.keys()]).toEqual([getTelegramActivityId(42)]);
   });
 
   it('returns an empty current-day summary using the configured timezone', async () => {

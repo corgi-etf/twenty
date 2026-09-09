@@ -9,18 +9,18 @@ export const enqueueTelegramUpdateOnce = async ({
   updateId: number;
   payload: Record<string, unknown>;
   store: KeyValueStore;
-  enqueue(payload: Record<string, unknown>): Promise<unknown>;
+  enqueue(payload: Record<string, unknown>, jobId: string): Promise<unknown>;
 }) => {
   const key = `telegram:update:${updateId}`;
-  if (await store.get(key)) return { status: 'duplicate' } as const;
-  await store.set(key, { status: 'queued' });
-  try {
-    await enqueue(payload);
-    return { status: 'enqueued' } as const;
-  } catch (error) {
-    await store.delete(key).catch(() => false);
-    throw error;
+  const state = (await store.get(key)) as { status?: string } | null;
+  if (state?.status === 'complete') {
+    return { status: 'duplicate' } as const;
   }
+  // The queue's unique deterministic job ID is the authoritative admission
+  // claim. No KV marker is written before enqueue, so a process crash after
+  // queue acceptance is recovered by retrying the exact same job ID.
+  await enqueue(payload, `telegram-update-${updateId}`);
+  return { status: 'enqueued' } as const;
 };
 
 type Delivery = {

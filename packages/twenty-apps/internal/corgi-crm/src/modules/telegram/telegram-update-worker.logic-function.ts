@@ -20,7 +20,9 @@ export const handler = async (payload: unknown) => {
   const key = `telegram:update:${update.updateId}`;
   const existing = await kv.get<{ status?: string }>(key);
   if (existing?.status === 'complete') return { status: 'duplicate' };
-  await kv.set(key, { status: 'processing' });
+  let phase =
+    existing?.status === 'crm_committed' ? 'crm_committed' : 'processing';
+  if (phase === 'processing') await kv.set(key, { status: phase });
 
   const telegram = new TelegramClient({
     token: requiredEnvironment('CORGI_CRM_TELEGRAM_BOT_TOKEN'),
@@ -41,11 +43,17 @@ export const handler = async (payload: unknown) => {
       answerCallback: (callbackQueryId) =>
         telegram.answerCallbackQuery(callbackQueryId),
       now: () => new Date(),
+      onCrmCommitted: async (activityId) => {
+        phase = 'crm_committed';
+        await kv.set(key, { status: phase, activityId });
+      },
     });
     await kv.set(key, { status: 'complete' });
     return result;
   } catch (error) {
-    await kv.set(key, { status: 'queued' });
+    if (phase !== 'crm_committed') {
+      await kv.set(key, { status: 'queued' });
+    }
     throw error;
   }
 };

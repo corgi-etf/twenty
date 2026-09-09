@@ -14,6 +14,7 @@ import {
 import { type KeyValueStore, type ParsedTelegramUpdate } from 'src/modules/telegram/types';
 import { parseTelegramLogCommand } from 'src/modules/telegram/services/parse-telegram-log-command.service';
 import { splitTelegramMessage } from 'src/modules/telegram/services/split-telegram-message.service';
+import { getTelegramActivityId } from 'src/modules/telegram/services/telegram-identifiers.service';
 
 const HELP = [
   'Corgi CRM outreach bot',
@@ -33,6 +34,7 @@ type CommandDependencies = {
   findWholesalers(workspaceMemberId: string): Promise<NamedRecord[]>;
   send(chatId: string, text: string): Promise<void>;
   answerCallback?(callbackQueryId: string): Promise<void>;
+  onCrmCommitted?(activityId: string): Promise<void>;
   now(): Date;
 };
 
@@ -99,39 +101,42 @@ export const processTelegramCommand = async (
   }
 
   if (command === '/log') {
+    let input;
     try {
-      const result = await logOutreach({
-        input: parseTelegramLogCommand(
-          update.text,
-          `telegram-update-${update.updateId}`,
-        ),
-        wholesalerId: link.wholesalerId,
-        now: dependencies.now(),
-        repository: dependencies.repository,
-      });
-      if (result.status === 'logged') {
-        await dependencies.send(
-          update.chatId,
-          `Logged ${result.companyName}. Use /today to review your day.`,
-        );
-      } else if (result.status === 'ambiguous_company' || result.status === 'ambiguous_contact') {
-        await dependencies.send(
-          update.chatId,
-          `More than one match: ${result.matches.map(({ name }) => name).join(', ')}. Use the exact name and try again.`,
-        );
-      } else {
-        await dependencies.send(
-          update.chatId,
-          result.status === 'company_not_found'
-            ? 'Company not found. Check the CRM name and try again.'
-            : 'Contact not found at that company. Check the CRM name and try again.',
-        );
-      }
-      return result;
+      input = parseTelegramLogCommand(
+        update.text,
+        getTelegramActivityId(update.updateId),
+      );
     } catch {
       await dependencies.send(update.chatId, `Could not parse that entry.\n${HELP}`);
       return { status: 'invalid_log' } as const;
     }
+    const result = await logOutreach({
+      input,
+      wholesalerId: link.wholesalerId,
+      now: dependencies.now(),
+      repository: dependencies.repository,
+    });
+    if (result.status === 'logged') {
+      await dependencies.onCrmCommitted?.(result.activityId);
+      await dependencies.send(
+        update.chatId,
+        `Logged ${result.companyName}. Use /today to review your day.`,
+      );
+    } else if (result.status === 'ambiguous_company' || result.status === 'ambiguous_contact') {
+      await dependencies.send(
+        update.chatId,
+        `More than one match: ${result.matches.map(({ name }) => name).join(', ')}. Use the exact name and try again.`,
+      );
+    } else {
+      await dependencies.send(
+        update.chatId,
+        result.status === 'company_not_found'
+          ? 'Company not found. Check the CRM name and try again.'
+          : 'Contact not found at that company. Check the CRM name and try again.',
+      );
+    }
+    return result;
   }
 
   if (command === '/today' || command === '/summary' || update.text === 'today') {

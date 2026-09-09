@@ -23,7 +23,7 @@ describe('enqueueTelegramUpdateOnce', () => {
     );
     expect(store.set).not.toHaveBeenCalled();
 
-    store.get.mockResolvedValue({ status: 'queued' });
+    store.get.mockResolvedValue({ status: 'complete' });
     await expect(
       enqueueTelegramUpdateOnce({ updateId: 42, payload: { update_id: 42 }, store, enqueue }),
     ).resolves.toEqual({ status: 'duplicate' });

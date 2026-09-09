@@ -100,15 +100,65 @@ export class CoreOutreachRepository implements OutreachRepository {
   }
 
   public async createActivity(data: OutreachActivityWrite): Promise<{ id: string }> {
-    const result = await this.client.mutation({
-      createOutreachActivity: {
-        __args: { data },
-        id: true,
+    const existing = await this.findActivityWrite(data.id);
+    if (existing) return this.assertSameActivity(existing, data);
+    try {
+      const result = await this.client.mutation({
+        createOutreachActivity: {
+          __args: { data },
+          id: true,
+        },
+      });
+      const id = result.createOutreachActivity?.id;
+      if (!id) throw new Error('createOutreachActivity did not return an id');
+      return { id };
+    } catch (error) {
+      // A concurrent retry may have won the deterministic primary key. Accept
+      // only an exact record; never turn an unrelated collision into success.
+      const concurrent = await this.findActivityWrite(data.id);
+      if (concurrent) return this.assertSameActivity(concurrent, data);
+      throw error;
+    }
+  }
+
+  private async findActivityWrite(id: string): Promise<Record<string, unknown> | null> {
+    const result = await this.client.query({
+      outreachActivities: {
+        __args: { filter: { id: { eq: id } }, first: 2 },
+        edges: {
+          node: {
+            id: true,
+            name: true,
+            companyId: true,
+            contactId: true,
+            wholesalerId: true,
+            activityType: true,
+            outcome: true,
+            notes: true,
+            occurredAt: true,
+            followUpDate: true,
+          },
+        },
       },
     });
-    const id = result.createOutreachActivity?.id;
-    if (!id) throw new Error('createOutreachActivity did not return an id');
-    return { id };
+    const nodes = (result.outreachActivities?.edges ?? [])
+      .map((edge: { node?: Record<string, unknown> | null }) => edge?.node)
+      .filter((node): node is Record<string, unknown> => Boolean(node));
+    if (nodes.length > 1) throw new Error(`Duplicate outreach activity ID ${id}`);
+    return nodes[0] ?? null;
+  }
+
+  private assertSameActivity(
+    existing: Record<string, unknown>,
+    expected: OutreachActivityWrite,
+  ): { id: string } {
+    const comparable = (value: unknown) => value ?? null;
+    for (const [key, value] of Object.entries(expected)) {
+      if (comparable(existing[key]) !== comparable(value)) {
+        throw new Error(`Deterministic outreach activity ${expected.id} conflicts at ${key}`);
+      }
+    }
+    return { id: expected.id };
   }
 
   public async listActivities({
