@@ -21,6 +21,34 @@ import { createRateLimitedRequest } from './playwrightMetadataCleanupApi';
 const MIGRATION_APPLICATION_ID = 'migration-application-id';
 const STANDARD_APPLICATION_ID = 'standard-application-id';
 
+const canonicalSystemTargetRelations = {
+  timelineActivity: [
+    'workspaceMember',
+    'targetPerson',
+    'targetCompany',
+    'targetOpportunity',
+    'targetNote',
+    'targetTask',
+    'targetWorkflow',
+    'targetWorkflowVersion',
+    'targetWorkflowRun',
+    'targetDashboard',
+    'targetMessageList',
+    'targetMessageCampaign',
+  ],
+  attachment: [
+    'targetTask',
+    'targetNote',
+    'targetPerson',
+    'targetCompany',
+    'targetOpportunity',
+    'targetDashboard',
+    'targetWorkflow',
+  ],
+  noteTarget: ['note', 'targetPerson', 'targetCompany', 'targetOpportunity'],
+  taskTarget: ['task', 'targetPerson', 'targetCompany', 'targetOpportunity'],
+} as const;
+
 const fakePreflightEvidence = {
   rowCoverageHash: 'a'.repeat(64),
   businessContentHash: 'b'.repeat(64),
@@ -43,6 +71,9 @@ const oldLabelByField = new Map(
       [`${objectName}.${oldName}`, oldLabel] as const,
   ),
 );
+const provenanceObjectNames = new Set<string>(
+  cleanupContract.provenanceObjectNames,
+);
 
 const metadataField = (
   objectName: string,
@@ -63,7 +94,9 @@ const metadataFixture = (): MetadataObject[] => {
         .filter(([targetObjectName]) => targetObjectName === objectName)
         .map(([, oldName]) => oldName);
       const customFieldNames = new Set([
-        ...cleanupContract.provenanceFieldNames,
+        ...(provenanceObjectNames.has(objectName)
+          ? cleanupContract.provenanceFieldNames
+          : []),
         ...cleanupContract.additionalFieldsToDelete[objectName],
         ...retainedFieldNames,
       ]);
@@ -72,12 +105,23 @@ const metadataFixture = (): MetadataObject[] => {
       return {
         id: `${objectName}-id`,
         nameSingular: objectName,
-        namePlural: objectName === 'person' ? 'people' : `${objectName}s`,
+        namePlural:
+          objectName === 'person'
+            ? 'people'
+            : objectName === 'timelineActivity'
+              ? 'timelineActivities'
+              : `${objectName}s`,
         labelSingular: objectName,
         labelPlural: `${objectName}s`,
-        isSystem: ['company', 'person', 'task', 'taskTarget'].includes(
-          objectName,
-        ),
+        isSystem: [
+          'company',
+          'person',
+          'task',
+          'taskTarget',
+          'timelineActivity',
+          'attachment',
+          'noteTarget',
+        ].includes(objectName),
         applicationId: ['wholesaler', 'salesTeam', 'teamMembership'].includes(
           objectName,
         )
@@ -442,8 +486,11 @@ test('builds the exact object and field purge allowlist', () => {
       'sourceRowHmac',
       'sourceUpdatedAt',
     ],
+    timelineActivity: ['targetImportBatch'],
+    attachment: ['targetImportBatch'],
+    noteTarget: ['targetImportBatch'],
   });
-  expect(plan.fieldsToDelete).toHaveLength(75);
+  expect(plan.fieldsToDelete).toHaveLength(78);
   expect(plan.fieldsToRename).toHaveLength(9);
   expect(
     plan.fieldsToRename.map(
@@ -503,32 +550,61 @@ test('never plans deletion of the retained sales and map contract', () => {
   }
 });
 
-test('deletes the import-batch task target while preserving canonical relations', async () => {
+test('deletes only import-batch system targets and remains idempotent', async () => {
   const api = new FakeMetadataCleanupApi();
-  const taskTarget = api.objects.find(
-    ({ nameSingular }) => nameSingular === 'taskTarget',
-  );
-
-  expect(taskTarget).toBeDefined();
-  if (!taskTarget!.fields.some(({ name }) => name === 'targetImportBatch')) {
-    taskTarget!.fields.push(metadataField('taskTarget', 'targetImportBatch'));
-  }
-  if (!taskTarget!.fields.some(({ name }) => name === 'targetPerson')) {
-    taskTarget!.fields.push(
-      metadataField('taskTarget', 'targetPerson', STANDARD_APPLICATION_ID),
+  for (const [objectName, relationNames] of Object.entries(
+    canonicalSystemTargetRelations,
+  )) {
+    let object = api.objects.find(
+      ({ nameSingular }) => nameSingular === objectName,
     );
+    if (!object) {
+      object = {
+        id: `${objectName}-id`,
+        nameSingular: objectName,
+        namePlural:
+          objectName === 'timelineActivity'
+            ? 'timelineActivities'
+            : `${objectName}s`,
+        labelSingular: objectName,
+        labelPlural: `${objectName}s`,
+        isSystem: true,
+        applicationId: STANDARD_APPLICATION_ID,
+        fields: relationNames.map((fieldName) =>
+          metadataField(objectName, fieldName, STANDARD_APPLICATION_ID),
+        ),
+      };
+      api.objects.push(object);
+    }
+    if (!object.fields.some(({ name }) => name === 'targetImportBatch')) {
+      object.fields.push(metadataField(objectName, 'targetImportBatch'));
+    }
   }
 
-  await runFetchMetadataCleanup(api);
+  const firstPlan = await runFetchMetadataCleanup(api);
+  const secondPlan = await runFetchMetadataCleanup(api);
 
-  expect(api.deletedFieldIds).toContain('taskTarget-targetImportBatch-id');
-  const remainingTaskTargetFields = api.objects
-    .find(({ nameSingular }) => nameSingular === 'taskTarget')
-    ?.fields.map(({ name }) => name);
-
-  expect(remainingTaskTargetFields).toEqual(
-    expect.arrayContaining(['task', 'targetCompany', 'targetPerson']),
-  );
+  expect(
+    firstPlan.fieldsToDelete
+      .filter(({ fieldName }) => fieldName === 'targetImportBatch')
+      .map(({ objectNameSingular }) => objectNameSingular)
+      .sort(),
+  ).toEqual(Object.keys(canonicalSystemTargetRelations).sort());
+  expect(secondPlan).toEqual({
+    objectsToDelete: [],
+    fieldsToDelete: [],
+    fieldsToRename: [],
+  });
+  for (const [objectName, relationNames] of Object.entries(
+    canonicalSystemTargetRelations,
+  )) {
+    expect(api.deletedFieldIds).toContain(`${objectName}-targetImportBatch-id`);
+    expect(
+      api.objects
+        .find(({ nameSingular }) => nameSingular === objectName)
+        ?.fields.map(({ name }) => name),
+    ).toEqual(expect.arrayContaining([...relationNames]));
+  }
 });
 
 test('applies once and a second run is an idempotent no-op', async () => {
@@ -541,9 +617,9 @@ test('applies once and a second run is an idempotent no-op', async () => {
   const secondPlan = await runFetchMetadataCleanup(api);
 
   expect(firstPlan.objectsToDelete).toHaveLength(4);
-  expect(firstPlan.fieldsToDelete).toHaveLength(75);
+  expect(firstPlan.fieldsToDelete).toHaveLength(78);
   expect(firstPlan.fieldsToRename).toHaveLength(9);
-  expect(firstMutationCount).toBe(88);
+  expect(firstMutationCount).toBe(91);
   expect(api.reconciliationChecks).toBe(1);
   expect(api.events.slice(0, 4)).toEqual([
     'reconciliation',
@@ -559,7 +635,7 @@ test('applies once and a second run is an idempotent no-op', async () => {
     status: 'complete',
     completedOperationKeys: expect.any(Array),
   });
-  expect(completedMutationJournal?.completedOperationKeys).toHaveLength(88);
+  expect(completedMutationJournal?.completedOperationKeys).toHaveLength(91);
   expect(secondPlan).toEqual({
     objectsToDelete: [],
     fieldsToDelete: [],
@@ -629,7 +705,7 @@ test('resumes an interrupted journal without rerunning a destroyed staging prefl
       `delete-object:${firstObject.id}`,
     ]),
   });
-  expect(api.journals.at(-1)?.completedOperationKeys).toHaveLength(88);
+  expect(api.journals.at(-1)?.completedOperationKeys).toHaveLength(91);
 });
 
 test('preserves populated sales teams and memberships while removing provenance fields', async () => {

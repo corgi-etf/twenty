@@ -5,7 +5,7 @@ const CLEANUP_OBJECT_NAMES = [
   'sourceRecord',
 ] as const;
 
-const SURVIVING_MIGRATED_OBJECT_NAMES = [
+const MIGRATED_SURVIVING_OBJECT_NAMES = [
   'company',
   'person',
   'task',
@@ -16,6 +16,17 @@ const SURVIVING_MIGRATED_OBJECT_NAMES = [
   'leadAssignment',
   'outreachActivity',
   'holdingObservation',
+] as const;
+
+const SYSTEM_REVERSE_RELATION_OBJECT_NAMES = [
+  'timelineActivity',
+  'attachment',
+  'noteTarget',
+] as const;
+
+const SURVIVING_MIGRATED_OBJECT_NAMES = [
+  ...MIGRATED_SURVIVING_OBJECT_NAMES,
+  ...SYSTEM_REVERSE_RELATION_OBJECT_NAMES,
 ] as const;
 
 const PROVENANCE_FIELD_NAMES = [
@@ -63,6 +74,9 @@ const ADDITIONAL_FIELDS_TO_DELETE = {
     'sourceRow',
     'rawData',
   ],
+  timelineActivity: ['targetImportBatch'],
+  attachment: ['targetImportBatch'],
+  noteTarget: ['targetImportBatch'],
 } as const satisfies Record<SurvivingMigratedObjectName, readonly string[]>;
 
 const PRESERVED_FIELDS = {
@@ -76,7 +90,7 @@ const PRESERVED_FIELDS = {
     'otherContactDetails',
   ],
   task: ['title'],
-  taskTarget: ['task', 'targetCompany', 'targetPerson'],
+  taskTarget: ['task', 'targetCompany', 'targetPerson', 'targetOpportunity'],
   wholesaler: ['name'],
   salesTeam: ['name', 'description'],
   teamMembership: ['name', 'membershipRole', 'salesTeam', 'wholesaler'],
@@ -108,6 +122,30 @@ const PRESERVED_FIELDS = {
     'streetAddress',
     'addressLine2',
   ],
+  timelineActivity: [
+    'workspaceMember',
+    'targetPerson',
+    'targetCompany',
+    'targetOpportunity',
+    'targetNote',
+    'targetTask',
+    'targetWorkflow',
+    'targetWorkflowVersion',
+    'targetWorkflowRun',
+    'targetDashboard',
+    'targetMessageList',
+    'targetMessageCampaign',
+  ],
+  attachment: [
+    'targetTask',
+    'targetNote',
+    'targetPerson',
+    'targetCompany',
+    'targetOpportunity',
+    'targetDashboard',
+    'targetWorkflow',
+  ],
+  noteTarget: ['note', 'targetPerson', 'targetCompany', 'targetOpportunity'],
 } as const satisfies Record<SurvivingMigratedObjectName, readonly string[]>;
 
 const RETAINED_FIELD_RENAMES = [
@@ -415,7 +453,11 @@ export const buildFetchMetadataCleanupPlan = (
   });
   const fieldsToDelete = survivingObjects.flatMap((object) => {
     const fieldNames = new Set<string>([
-      ...PROVENANCE_FIELD_NAMES,
+      ...(MIGRATED_SURVIVING_OBJECT_NAMES.includes(
+        object.nameSingular as (typeof MIGRATED_SURVIVING_OBJECT_NAMES)[number],
+      )
+        ? PROVENANCE_FIELD_NAMES
+        : []),
       ...ADDITIONAL_FIELDS_TO_DELETE[
         object.nameSingular as SurvivingMigratedObjectName
       ],
@@ -944,6 +986,7 @@ export const runFetchMetadataCleanup = async (
 export const cleanupContract = {
   objectNames: CLEANUP_OBJECT_NAMES,
   survivingObjectNames: SURVIVING_MIGRATED_OBJECT_NAMES,
+  provenanceObjectNames: MIGRATED_SURVIVING_OBJECT_NAMES,
   provenanceFieldNames: PROVENANCE_FIELD_NAMES,
   additionalFieldsToDelete: ADDITIONAL_FIELDS_TO_DELETE,
   preservedFields: PRESERVED_FIELDS,
