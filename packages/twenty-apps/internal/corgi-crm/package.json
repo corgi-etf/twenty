@@ -14,9 +14,10 @@
   "scripts": {
     "twenty": "twenty",
     "lint": "oxlint -c .oxlintrc.json .",
-    "test": "vitest run",
     "test:unit": "vitest run",
-    "typecheck": "tsc --noEmit"
+    "test:verification": "node --test scripts/verify-production-install.test.mjs",
+    "typecheck": "tsc --noEmit",
+    "verify:production": "node scripts/verify-production-install.mjs"
   },
   "devDependencies": {
     "@types/node": "^24.7.2",
