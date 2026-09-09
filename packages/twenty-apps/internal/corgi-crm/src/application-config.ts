@@ -1,6 +1,9 @@
 import { defineApplication } from 'twenty-sdk/define';
 
-import { APPLICATION_UNIVERSAL_IDENTIFIER } from 'src/constants';
+import {
+  APPLICATION_UNIVERSAL_IDENTIFIER,
+  CORGI_CRM_PRODUCTION_WORKSPACE_ID,
+} from 'src/constants';
 
 export default defineApplication({
   universalIdentifier: APPLICATION_UNIVERSAL_IDENTIFIER,
@@ -12,6 +15,7 @@ export default defineApplication({
       description:
         'Workspace ID allowed to run Corgi CRM automation. The member-created trigger fails closed for every other workspace.',
       isSecret: false,
+      value: CORGI_CRM_PRODUCTION_WORKSPACE_ID,
     },
   },
 });
