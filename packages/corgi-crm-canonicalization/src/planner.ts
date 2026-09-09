@@ -125,19 +125,21 @@ const effectiveValue = (
 const isEmptyValue = (value: unknown): boolean =>
   value === undefined || value === null || value === '';
 
-const includesNewlineDelimitedBlock = (
-  value: string,
-  block: string,
-): boolean => {
-  const normalizedValue = value.replace(/\r\n/g, '\n');
-  const normalizedBlock = block.replace(/\r\n/g, '\n');
+const normalizedNonemptyLines = (value: string): string[] =>
+  value
+    .normalize('NFC')
+    .replace(/\r\n?/g, '\n')
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
 
-  return (
-    normalizedValue === normalizedBlock ||
-    normalizedValue.startsWith(`${normalizedBlock}\n`) ||
-    normalizedValue.endsWith(`\n${normalizedBlock}`) ||
-    normalizedValue.includes(`\n${normalizedBlock}\n`)
-  );
+const includesEveryExactLine = (
+  value: string,
+  lines: readonly string[],
+): boolean => {
+  const valueLines = new Set(normalizedNonemptyLines(value));
+
+  return lines.length > 0 && lines.every((line) => valueLines.has(line));
 };
 
 const setPreservingNative = (
@@ -2129,10 +2131,13 @@ export const buildCanonicalizationPlan = (
         const currentDescription = asString(
           effectiveValue(accumulator, 'description'),
         );
+        const descriptionLines = normalizedNonemptyLines(description);
         if (!currentDescription) {
-          mergeFact(accumulator, 'description', description);
+          for (const line of descriptionLines) {
+            mergeFact(accumulator, 'description', line);
+          }
         } else if (
-          !includesNewlineDelimitedBlock(currentDescription, description)
+          !includesEveryExactLine(currentDescription, descriptionLines)
         ) {
           unresolved.push({
             code: 'DESCRIPTION_CONFLICT',

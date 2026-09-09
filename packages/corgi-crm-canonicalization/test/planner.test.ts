@@ -648,9 +648,10 @@ test('native business values are preserved and conflicting staging values fail c
   );
 });
 
-test('a composed imported description converges without becoming a native conflict', () => {
+test('reverse-sorted CRLF imported description lines normalize and converge', () => {
   const input = snapshot();
-  input.companies[0]!.fetchDescription = 'Imported company profile';
+  input.companies[0]!.fetchDescription =
+    'Zulu re\u0301sume\u0301\r\n  Middle profile  \r\n \t \r\nAlpha profile';
   input.sourceRecords = [
     {
       id: 'source-description-facts',
@@ -659,7 +660,6 @@ test('a composed imported description converges without becoming a native confli
       sourceRow: 16,
       rawData: JSON.stringify({
         'Firm Name': 'Acme Advisors',
-        'Family Office Bio': 'Multi-generation investment office',
         'Lead Score': 'A',
       }),
     },
@@ -670,9 +670,10 @@ test('a composed imported description converges without becoming a native confli
   assertPlanCanApply(firstPlan);
   const firstCompanyMutation = mutationFor(firstPlan, 'companies', 'company-1');
   const description = firstCompanyMutation?.data.description;
-  assert.match(String(description), /Family office bio:/);
-  assert.match(String(description), /Imported company profile/);
-  assert.match(String(description), /Lead score: A/);
+  assert.equal(
+    description,
+    'Alpha profile\nLead score: A\nMiddle profile\nZulu résumé',
+  );
 
   Object.assign(input.companies[0]!, firstCompanyMutation?.data);
   const convergedPlan = buildCanonicalizationPlan(input);
@@ -682,20 +683,26 @@ test('a composed imported description converges without becoming a native confli
   assert.equal(mutationFor(convergedPlan, 'companies', 'company-1'), undefined);
 });
 
-test('a partial imported-description substring remains a native conflict', () => {
-  const input = snapshot();
-  input.companies[0]!.fetchDescription = 'Imported company profile';
-  input.companies[0]!.description =
-    'Imported company profile with user-authored context';
-  input.sourceRecords = [];
-  input.importReviewItems = [];
+test('missing or partial imported-description lines remain native conflicts', () => {
+  for (const description of [
+    'Alpha profile\nZulu résumé',
+    'Alpha profile with user-authored context\nMiddle profile\nZulu résumé',
+  ]) {
+    const input = snapshot();
+    input.companies[0]!.fetchDescription =
+      'Zulu re\u0301sume\u0301\r\n  Middle profile  \r\n \t \r\nAlpha profile';
+    input.companies[0]!.description = description;
+    input.sourceRecords = [];
+    input.importReviewItems = [];
 
-  const plan = buildCanonicalizationPlan(input);
+    const plan = buildCanonicalizationPlan(input);
 
-  assert.equal(
-    plan.unresolved.some(({ code }) => code === 'DESCRIPTION_CONFLICT'),
-    true,
-  );
+    assert.equal(
+      plan.unresolved.some(({ code }) => code === 'DESCRIPTION_CONFLICT'),
+      true,
+      description,
+    );
+  }
 });
 
 test('strong person identity anchors an otherwise ambiguous company name', () => {
