@@ -12,8 +12,8 @@ jest.mock('@/ui/input/components/Select', () => ({
     pinnedOption,
   }: {
     label: string;
-    onChange: (value: null) => void;
-    pinnedOption: { label: string; value: null };
+    onChange: (value: string | null) => void;
+    pinnedOption: { label: string; value: string | null };
   }) => (
     <>
       <button>{label}</button>
@@ -54,27 +54,44 @@ type ContentFixtureProps = {
   currentFeatureCollection?: typeof featureCollection;
   isLoading?: boolean;
   loadError?: Error | null;
+  hasActiveFilters?: boolean;
   onOwnerChange?: (ownerId: string | null) => void;
+  onResetFilters?: () => void;
   selectedOwnerId?: string | null;
+  selectedState?: string | null;
 };
 
 const ContentFixture = ({
   currentFeatureCollection = featureCollection,
+  hasActiveFilters = false,
   isLoading = false,
   loadError = null,
   onOwnerChange = jest.fn(),
+  onResetFilters = jest.fn(),
   selectedOwnerId = null,
+  selectedState = null,
 }: ContentFixtureProps) => (
   <WholesalerMapContent
+    countryOptions={[{ value: 'US', label: 'US' }]}
     featureCollection={currentFeatureCollection}
     hasWholesalerRelation
+    hasActiveFilters={hasActiveFilters}
     isLoading={isLoading}
     loadError={loadError}
     onCompanySelect={jest.fn()}
+    onCountryChange={jest.fn()}
     onOwnerChange={onOwnerChange}
+    onPostcodeChange={jest.fn()}
+    onResetFilters={onResetFilters}
     onRetry={jest.fn()}
+    onStateChange={jest.fn()}
     ownerOptions={[{ value: 'owner-1', label: 'Alex Morgan' }]}
+    postcodeOptions={[{ value: '60601', label: '60601' }]}
+    selectedCountry={null}
     selectedOwnerId={selectedOwnerId}
+    selectedPostcode={null}
+    selectedState={selectedState}
+    stateOptions={[{ value: 'IL', label: 'IL' }]}
     totalCompanyCount={1}
   />
 );
@@ -83,7 +100,7 @@ const renderContent = (content: ReactNode) =>
   render(<I18nProvider i18n={i18n}>{content}</I18nProvider>);
 
 describe('WholesalerMapContent', () => {
-  it('renders a mapped count, owner filter, map, and equivalent lead list', () => {
+  it('renders a mapped count, territory filters, map, and equivalent lead list', () => {
     renderContent(<ContentFixture />);
 
     expect(
@@ -92,10 +109,30 @@ describe('WholesalerMapContent', () => {
     expect(
       screen.getByRole('button', { name: 'Wholesaler' }),
     ).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'State' })).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: 'ZIP code' }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Country' })).toBeInTheDocument();
     expect(screen.getByTestId('wholesaler-coverage-map')).toBeInTheDocument();
     expect(
       screen.getByRole('button', { name: /northstar capital/i }),
     ).toHaveTextContent('Chicago, IL, US');
+  });
+
+  it('clears all active territory filters with one action', () => {
+    const onResetFilters = jest.fn();
+
+    renderContent(
+      <ContentFixture
+        hasActiveFilters
+        onResetFilters={onResetFilters}
+        selectedState="IL"
+      />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Clear filters' }));
+
+    expect(onResetFilters).toHaveBeenCalledTimes(1);
   });
 
   it('provides a pinned option that clears the selected wholesaler', () => {
@@ -117,17 +154,40 @@ describe('WholesalerMapContent', () => {
           features: [],
         }}
         onOwnerChange={onOwnerChange}
+        hasActiveFilters
         selectedOwnerId="owner-1"
       />,
     );
 
-    expect(screen.getByText('No mapped leads')).toBeInTheDocument();
+    expect(
+      screen.getByText('No mapped leads match these filters'),
+    ).toBeInTheDocument();
     expect(
       screen.getByRole('button', { name: 'Wholesaler' }),
     ).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'All wholesalers' }));
 
     expect(onOwnerChange).toHaveBeenCalledWith(null);
+  });
+
+  it('distinguishes an empty filter result from missing map coordinates', () => {
+    renderContent(
+      <ContentFixture
+        currentFeatureCollection={{
+          type: 'FeatureCollection',
+          features: [],
+        }}
+        hasActiveFilters
+        selectedState="IL"
+      />,
+    );
+
+    expect(
+      screen.getByText('No mapped leads match these filters'),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText('Clear the filters to see every mapped company.'),
+    ).toBeInTheDocument();
   });
 
   it('renders explicit loading, failure, and empty states', () => {

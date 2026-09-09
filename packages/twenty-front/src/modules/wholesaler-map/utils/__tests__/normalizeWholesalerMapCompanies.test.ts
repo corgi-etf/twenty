@@ -39,7 +39,7 @@ describe('normalizeWholesalerMapCompanies', () => {
     expect(
       normalizeWholesalerMapCompanies(
         [createCompany()],
-        null,
+        { country: null, ownerId: null, postcode: null, state: null },
         'Unassigned',
         ['blue', 'red'],
         'gray',
@@ -83,7 +83,7 @@ describe('normalizeWholesalerMapCompanies', () => {
     expect(
       normalizeWholesalerMapCompanies(
         [company],
-        null,
+        { country: null, ownerId: null, postcode: null, state: null },
         'Unassigned',
         ['blue', 'red'],
         'gray',
@@ -101,7 +101,12 @@ describe('normalizeWholesalerMapCompanies', () => {
     expect(
       normalizeWholesalerMapCompanies(
         [createCompany(), unassigned],
-        'owner-1',
+        {
+          country: null,
+          ownerId: 'owner-1',
+          postcode: null,
+          state: null,
+        },
         'Unassigned',
         ['blue', 'red'],
         'gray',
@@ -111,7 +116,78 @@ describe('normalizeWholesalerMapCompanies', () => {
     expect(
       normalizeWholesalerMapCompanies(
         [createCompany(), unassigned],
-        '',
+        { country: null, ownerId: '', postcode: null, state: null },
+        'Unassigned',
+        ['blue', 'red'],
+        'gray',
+      ).features.map(({ properties }) => properties.companyId),
+    ).toEqual(['company-2']);
+  });
+
+  it('filters mapped companies by combined state, ZIP, country, and owner', () => {
+    const matchingCompany = createCompany({
+      address: {
+        ...createCompany().address,
+        addressPostcode: '60601-1234',
+      },
+    });
+    const wrongOwner = createCompany({
+      id: 'company-2',
+      historicalOwner: { id: 'owner-2', name: 'Zoe Kim' },
+      address: {
+        ...createCompany().address,
+        addressPostcode: '60601-1234',
+      },
+    });
+    const wrongState = createCompany({
+      id: 'company-3',
+      address: {
+        ...createCompany().address,
+        addressState: 'WI',
+        addressPostcode: '53703',
+      },
+    });
+
+    const result = normalizeWholesalerMapCompanies(
+      [matchingCompany, wrongOwner, wrongState],
+      {
+        country: ' us ',
+        ownerId: 'owner-1',
+        postcode: ' 60601-1234 ',
+        state: 'il',
+      },
+      'Unassigned',
+      ['blue', 'red'],
+      'gray',
+    );
+
+    expect(
+      result.features.map(({ properties }) => properties.companyId),
+    ).toEqual(['company-1']);
+    expect(result.features[0]?.properties.locationLabel).toBe(
+      'Chicago, IL 60601-1234, US',
+    );
+  });
+
+  it('matches unassigned ownership together with location filters', () => {
+    const unassigned = createCompany({
+      id: 'company-2',
+      historicalOwner: null,
+      address: {
+        ...createCompany().address,
+        addressPostcode: '60601',
+      },
+    });
+
+    expect(
+      normalizeWholesalerMapCompanies(
+        [createCompany(), unassigned],
+        {
+          country: 'US',
+          ownerId: '',
+          postcode: '60601',
+          state: 'IL',
+        },
         'Unassigned',
         ['blue', 'red'],
         'gray',

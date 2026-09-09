@@ -2,7 +2,9 @@ import {
   type WholesalerMapCompany,
   type WholesalerMapFeature,
   type WholesalerMapFeatureCollection,
+  type WholesalerMapFilters,
 } from '@/wholesaler-map/types/WholesalerMapCompany';
+import { normalizeWholesalerMapFilterValue } from '@/wholesaler-map/utils/normalizeWholesalerMapFilterValue';
 
 const isValidLatitude = (value: number | null): value is number =>
   typeof value === 'number' &&
@@ -33,16 +35,44 @@ const getOwnerColor = (
   return ownerColors[ownerHash % ownerColors.length] ?? unassignedOwnerColor;
 };
 
-const getLocationLabel = (company: WholesalerMapCompany) =>
-  [
-    company.address.addressCity,
-    company.address.addressState,
-    company.address.addressCountry,
+const getLocationLabel = (company: WholesalerMapCompany) => {
+  const city = company.address.addressCity.trim();
+  const stateAndPostcode = [
+    company.address.addressState.trim(),
+    company.address.addressPostcode.trim(),
   ]
+    .filter((value) => value !== '')
+    .join(' ');
+  const country = company.address.addressCountry.trim();
+
+  return [city, stateAndPostcode, country]
     .filter(
       (value, index, values) => value !== '' && values.indexOf(value) === index,
     )
     .join(', ');
+};
+
+const matchesLocationFilter = (
+  fieldValue: string,
+  selectedValue: string | null,
+) =>
+  selectedValue === null ||
+  normalizeWholesalerMapFilterValue(fieldValue) ===
+    normalizeWholesalerMapFilterValue(selectedValue);
+
+const matchesFilters = (
+  company: WholesalerMapCompany,
+  filters: WholesalerMapFilters,
+) => {
+  const ownerId = company.historicalOwner?.id ?? '';
+
+  return (
+    (filters.ownerId === null || ownerId === filters.ownerId) &&
+    matchesLocationFilter(company.address.addressState, filters.state) &&
+    matchesLocationFilter(company.address.addressPostcode, filters.postcode) &&
+    matchesLocationFilter(company.address.addressCountry, filters.country)
+  );
+};
 
 const toWholesalerMapFeature = (
   company: WholesalerMapCompany,
@@ -78,15 +108,13 @@ const toWholesalerMapFeature = (
 
 export const normalizeWholesalerMapCompanies = (
   companies: WholesalerMapCompany[],
-  selectedOwnerId: string | null,
+  filters: WholesalerMapFilters,
   unassignedOwnerName: string,
   ownerColors: readonly string[],
   unassignedOwnerColor: string,
 ): WholesalerMapFeatureCollection => {
   const features = companies.flatMap((company) => {
-    const ownerId = company.historicalOwner?.id ?? '';
-
-    if (selectedOwnerId !== null && ownerId !== selectedOwnerId) {
+    if (!matchesFilters(company, filters)) {
       return [];
     }
 

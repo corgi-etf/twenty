@@ -4,8 +4,8 @@ import { useLingui } from '@lingui/react/macro';
 import { LightButton, type SelectOption } from 'twenty-ui/input';
 import { MOBILE_VIEWPORT, themeCssVariables } from 'twenty-ui/theme-constants';
 
-import { Select } from '@/ui/input/components/Select';
 import { WholesalerCoverageMap } from '@/wholesaler-map/components/WholesalerCoverageMap';
+import { WholesalerMapFilters } from '@/wholesaler-map/components/WholesalerMapFilters';
 import { type WholesalerMapFeatureCollection } from '@/wholesaler-map/types/WholesalerMapCompany';
 
 const StyledState = styled.div`
@@ -28,10 +28,11 @@ const StyledContent = styled.div`
 `;
 
 const StyledToolbar = styled.div`
-  align-items: center;
+  align-items: flex-end;
   background: ${themeCssVariables.background.secondary};
   border-bottom: 1px solid ${themeCssVariables.border.color.medium};
   display: flex;
+  flex-wrap: wrap;
   gap: ${themeCssVariables.spacing[3]};
   justify-content: space-between;
   min-height: ${themeCssVariables.spacing[12]};
@@ -42,10 +43,6 @@ const StyledMappedCount = styled.span`
   color: ${themeCssVariables.font.color.secondary};
   font-size: ${themeCssVariables.font.size.sm};
   white-space: nowrap;
-`;
-
-const StyledFilter = styled.div`
-  min-width: 220px;
 `;
 
 const StyledMapAndList = styled.div`
@@ -121,29 +118,51 @@ const StyledLeadMeta = styled.span`
 `;
 
 type WholesalerMapContentProps = {
+  countryOptions: SelectOption<string | null>[];
   featureCollection: WholesalerMapFeatureCollection;
+  hasActiveFilters: boolean;
   hasWholesalerRelation: boolean;
   isLoading: boolean;
   loadError: Error | null;
   ownerOptions: SelectOption<string | null>[];
+  postcodeOptions: SelectOption<string | null>[];
+  selectedCountry: string | null;
   selectedOwnerId: string | null;
+  selectedPostcode: string | null;
+  selectedState: string | null;
+  stateOptions: SelectOption<string | null>[];
   totalCompanyCount: number;
   onCompanySelect: (companyId: string) => void;
+  onCountryChange: (country: string | null) => void;
   onOwnerChange: (ownerId: string | null) => void;
+  onPostcodeChange: (postcode: string | null) => void;
+  onResetFilters: () => void;
   onRetry: () => void;
+  onStateChange: (state: string | null) => void;
 };
 
 export const WholesalerMapContent = ({
+  countryOptions,
   featureCollection,
+  hasActiveFilters,
   hasWholesalerRelation,
   isLoading,
   loadError,
   ownerOptions,
+  postcodeOptions,
+  selectedCountry,
   selectedOwnerId,
+  selectedPostcode,
+  selectedState,
+  stateOptions,
   totalCompanyCount,
   onCompanySelect,
+  onCountryChange,
   onOwnerChange,
+  onPostcodeChange,
+  onResetFilters,
   onRetry,
+  onStateChange,
 }: WholesalerMapContentProps) => {
   const { t } = useLingui();
 
@@ -163,7 +182,7 @@ export const WholesalerMapContent = ({
   }
 
   const mappedLeadCount = featureCollection.features.length;
-  const emptyState = (
+  const unmappedEmptyState = (
     <StyledState>
       <strong>{t`No mapped leads`}</strong>
       <span>
@@ -171,9 +190,15 @@ export const WholesalerMapContent = ({
       </span>
     </StyledState>
   );
+  const filteredEmptyState = (
+    <StyledState>
+      <strong>{t`No mapped leads match these filters`}</strong>
+      <span>{t`Clear the filters to see every mapped company.`}</span>
+    </StyledState>
+  );
 
-  if (mappedLeadCount === 0 && selectedOwnerId === null) {
-    return emptyState;
+  if (mappedLeadCount === 0 && !hasActiveFilters) {
+    return unmappedEmptyState;
   }
 
   return (
@@ -188,23 +213,26 @@ export const WholesalerMapContent = ({
             ? t` of ${totalCompanyCount.toLocaleString()} companies`
             : ''}
         </StyledMappedCount>
-        {hasWholesalerRelation && (
-          <StyledFilter>
-            <Select<string | null>
-              dropdownId="wholesaler-map-owner-filter"
-              fullWidth
-              label={t`Wholesaler`}
-              onChange={onOwnerChange}
-              options={ownerOptions}
-              pinnedOption={{ label: t`All wholesalers`, value: null }}
-              value={selectedOwnerId}
-              withSearchInput
-            />
-          </StyledFilter>
-        )}
+        <WholesalerMapFilters
+          countryOptions={countryOptions}
+          hasActiveFilters={hasActiveFilters}
+          hasWholesalerRelation={hasWholesalerRelation}
+          onCountryChange={onCountryChange}
+          onOwnerChange={onOwnerChange}
+          onPostcodeChange={onPostcodeChange}
+          onResetFilters={onResetFilters}
+          onStateChange={onStateChange}
+          ownerOptions={ownerOptions}
+          postcodeOptions={postcodeOptions}
+          selectedCountry={selectedCountry}
+          selectedOwnerId={selectedOwnerId}
+          selectedPostcode={selectedPostcode}
+          selectedState={selectedState}
+          stateOptions={stateOptions}
+        />
       </StyledToolbar>
       {mappedLeadCount === 0 ? (
-        emptyState
+        filteredEmptyState
       ) : (
         <StyledMapAndList>
           <WholesalerCoverageMap

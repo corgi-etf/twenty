@@ -10,6 +10,13 @@ export type WholesalerMapCompany = Company & {
   historicalOwner?: WholesalerMapOwner | null;
 };
 
+export type WholesalerMapFilters = {
+  country: string | null;
+  ownerId: string | null;
+  postcode: string | null;
+  state: string | null;
+};
+
 export type WholesalerMapFeature = {
   type: 'Feature';
   geometry: {
