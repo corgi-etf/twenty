@@ -444,6 +444,7 @@ export const assertAuditedCanonicalizationSnapshot = (
 };
 
 const WORKFLOW_REFERENCE_PATH = /trigger|steps?|filters?|actions?/i;
+const WORKFLOW_OUTPUT_SCHEMA_KEY = /^outputSchema$/i;
 
 const referenceStrings = (
   value: unknown,
@@ -455,10 +456,12 @@ const referenceStrings = (
   if (!value || typeof value !== 'object') return [];
 
   return Object.entries(value).flatMap(([key, item]) =>
-    referenceStrings(
-      item,
-      isReferencePath || WORKFLOW_REFERENCE_PATH.test(key),
-    ),
+    WORKFLOW_OUTPUT_SCHEMA_KEY.test(key)
+      ? []
+      : referenceStrings(
+          item,
+          isReferencePath || WORKFLOW_REFERENCE_PATH.test(key),
+        ),
   );
 };
 

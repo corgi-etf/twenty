@@ -1025,6 +1025,137 @@ test('blocks before mutation when a workflow references cleanup metadata', () =>
   ).not.toThrow();
 });
 
+test('ignores generated trigger and step output schemas', () => {
+  const plan = buildFetchMetadataCleanupPlan(metadataFixture());
+  const generatedCountryField = {
+    isLeaf: true,
+    type: 'TEXT',
+    label: 'Country',
+    value: 'France',
+    fieldMetadataId: 'company-country-id',
+  };
+
+  expect(() =>
+    assertNoWorkflowReferences(
+      [
+        {
+          id: 'workflow-version-generated-schemas',
+          trigger: {
+            type: 'DATABASE_EVENT',
+            settings: {
+              eventName: 'company.updated',
+              outputSchema: {
+                object: {
+                  label: 'Company',
+                  objectMetadataId: 'company-id',
+                },
+                fields: {
+                  'properties.after.country': generatedCountryField,
+                },
+                _outputSchemaType: 'RECORD',
+              },
+            },
+          },
+          steps: [
+            {
+              type: 'FIND_RECORDS',
+              settings: {
+                OutputSchema: {
+                  object: {
+                    label: 'Company',
+                    objectMetadataId: 'company-id',
+                  },
+                  fields: { country: generatedCountryField },
+                  _outputSchemaType: 'RECORD',
+                },
+              },
+            },
+          ],
+        },
+      ],
+      plan,
+    ),
+  ).not.toThrow();
+});
+
+test('still blocks executable workflow references outside output schemas', () => {
+  const plan = buildFetchMetadataCleanupPlan(metadataFixture());
+
+  for (const [id, workflow] of [
+    ['trigger-field-name', { trigger: { settings: { fields: ['country'] } } }],
+    [
+      'trigger-filter-id',
+      {
+        trigger: {
+          settings: {
+            filter: {
+              stepFilters: [
+                { fieldMetadataId: 'company-country-id', value: 'US' },
+              ],
+            },
+          },
+        },
+      },
+    ],
+    [
+      'step-field-name',
+      {
+        steps: [
+          {
+            settings: {
+              input: {
+                objectName: 'company',
+                fieldsToUpdate: ['country'],
+              },
+            },
+          },
+        ],
+      },
+    ],
+    [
+      'step-variable',
+      {
+        steps: [
+          {
+            settings: {
+              input: {
+                body: '{{trigger.properties.after.country}}',
+              },
+            },
+          },
+        ],
+      },
+    ],
+  ] as const) {
+    expect(() =>
+      assertNoWorkflowReferences([{ id, ...workflow }], plan),
+    ).toThrow(/references cleanup metadata/i);
+  }
+});
+
+test('only skips exact outputSchema property names', () => {
+  const plan = buildFetchMetadataCleanupPlan(metadataFixture());
+
+  expect(() =>
+    assertNoWorkflowReferences(
+      [
+        {
+          id: 'workflow-version-output-schema-copy',
+          trigger: {
+            settings: {
+              outputSchemaCopy: {
+                label: 'Country',
+                fieldMetadataId: 'company-country-id',
+              },
+            },
+          },
+        },
+      ],
+      plan,
+    ),
+  ).toThrow(/references cleanup metadata/i);
+});
+
 test('requires the audited counts, hashes, and exact legacy relationships', () => {
   const snapshot = auditedSnapshot();
   const report = {
