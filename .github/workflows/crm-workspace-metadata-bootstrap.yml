@@ -122,7 +122,7 @@ jobs:
             ' "${run_json}" >/dev/null
           cleanup_sha="$(jq -r '.head_sha' "${run_json}")"
           git cat-file -e "${cleanup_sha}^{commit}"
-          git merge-base --is-ancestor "${DEPLOYED_SHA}" "${cleanup_sha}"
+          git merge-base --is-ancestor "${cleanup_sha}" "${DEPLOYED_SHA}"
           git merge-base --is-ancestor "${cleanup_sha}" "${GITHUB_SHA}"
 
       - name: Download the completed metadata-cleanup journal

@@ -194,7 +194,7 @@ jobs:
 
           cleanup_head_sha="$(jq -r '.head_sha' "${cleanup_run_json}")"
           git cat-file -e "${cleanup_head_sha}^{commit}"
-          git merge-base --is-ancestor "${DEPLOYED_SHA}" "${cleanup_head_sha}"
+          git merge-base --is-ancestor "${cleanup_head_sha}" "${DEPLOYED_SHA}"
           git merge-base --is-ancestor "${cleanup_head_sha}" "${GITHUB_SHA}"
 
       - name: Verify exact-SHA territory identity discovery lineage

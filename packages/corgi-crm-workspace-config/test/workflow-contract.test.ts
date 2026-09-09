@@ -43,11 +43,11 @@ test('workspace configuration requires the exact deployed workflow revision', as
   );
   assert.match(
     workflow,
-    /git merge-base --is-ancestor "\$\{DEPLOYED_SHA\}" "\$\{cleanup_head_sha\}"/,
+    /git merge-base --is-ancestor "\$\{cleanup_head_sha\}" "\$\{DEPLOYED_SHA\}"/,
   );
-  assert.match(
+  assert.doesNotMatch(
     workflow,
-    /git merge-base --is-ancestor "\$\{cleanup_head_sha\}" "\$\{GITHUB_SHA\}"/,
+    /git merge-base --is-ancestor "\$\{DEPLOYED_SHA\}" "\$\{cleanup_head_sha\}"/,
   );
   for (const identity of ['grace', 'kelly', 'nash']) {
     assert.match(
@@ -86,6 +86,14 @@ test('metadata bootstrap is exact-SHA, metadata-only, and precedes app preflight
   assert.match(
     bootstrapWorkflow,
     /Verify the completed metadata-cleanup workflow lineage/,
+  );
+  assert.match(
+    bootstrapWorkflow,
+    /git merge-base --is-ancestor "\$\{cleanup_sha\}" "\$\{DEPLOYED_SHA\}"/,
+  );
+  assert.doesNotMatch(
+    bootstrapWorkflow,
+    /git merge-base --is-ancestor "\$\{DEPLOYED_SHA\}" "\$\{cleanup_sha\}"/,
   );
   assert.match(
     bootstrapWorkflow,
