@@ -160,14 +160,12 @@ describe('QuickLogCompanyActivityAction', () => {
     ).toBeInTheDocument();
   });
 
-  it('does not render on non-Company records', () => {
+  it('does not require Company providers on non-Company records', () => {
     const { container } = render(
-      <I18nProvider i18n={i18n}>
-        <QuickLogCompanyActivityAction
-          objectNameSingular="person"
-          companyId="person-1"
-        />
-      </I18nProvider>,
+      <QuickLogCompanyActivityAction
+        objectNameSingular="person"
+        companyId="person-1"
+      />,
     );
 
     expect(container).toBeEmptyDOMElement();

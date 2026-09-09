@@ -18,6 +18,10 @@ type ReadyQuickLogCompanyActivityActionProps = {
   companyId: string;
 };
 
+type CompanyQuickLogActivityActionProps = {
+  companyId: string;
+};
+
 const ReadyQuickLogCompanyActivityAction = ({
   companyId,
 }: ReadyQuickLogCompanyActivityActionProps) => {
@@ -42,17 +46,11 @@ const ReadyQuickLogCompanyActivityAction = ({
   );
 };
 
-export const QuickLogCompanyActivityAction = ({
-  objectNameSingular,
+const CompanyQuickLogActivityAction = ({
   companyId,
-}: QuickLogCompanyActivityActionProps) => {
+}: CompanyQuickLogActivityActionProps) => {
   const { t } = useLingui();
   const { objectMetadataItems } = useObjectMetadataItems();
-
-  if (objectNameSingular !== CoreObjectNameSingular.Company) {
-    return null;
-  }
-
   const metadataStatus = getQuickLogActivityMetadataStatus(objectMetadataItems);
 
   if (!metadataStatus.isAvailable) {
@@ -79,4 +77,15 @@ export const QuickLogCompanyActivityAction = ({
   }
 
   return <ReadyQuickLogCompanyActivityAction companyId={companyId} />;
+};
+
+export const QuickLogCompanyActivityAction = ({
+  objectNameSingular,
+  companyId,
+}: QuickLogCompanyActivityActionProps) => {
+  if (objectNameSingular !== CoreObjectNameSingular.Company) {
+    return null;
+  }
+
+  return <CompanyQuickLogActivityAction companyId={companyId} />;
 };
