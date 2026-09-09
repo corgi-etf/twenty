@@ -6,7 +6,7 @@ const selection = {
   id: true,
   name: true,
   email: true,
-  role: true,
+  wholesalerRole: true,
   workspaceMemberId: true,
 } as const;
 
@@ -24,10 +24,7 @@ export const findWholesalersByWorkspaceMemberId = (
     },
   });
 
-export const findWholesalersByEmail = (
-  client: CoreApiClient,
-  email: string,
-) =>
+export const findWholesalersByEmail = (client: CoreApiClient, email: string) =>
   client.query({
     wholesalers: {
       __args: {

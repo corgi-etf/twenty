@@ -12,7 +12,7 @@ const wholesaler = {
   id: 'wholesaler-1',
   name: 'Damien Wiese',
   email: 'damien@corgi.com',
-  role: 'Wholesaler',
+  wholesalerRole: 'Wholesaler',
   workspaceMemberId: 'member-1',
 };
 
@@ -50,6 +50,17 @@ describe('production reconciliation verification', () => {
           wholesalers: [wholesaler],
         }),
       /link to absent workspace members/,
+    );
+  });
+
+  it('rejects identities without the custom wholesaler role field', () => {
+    assert.throws(
+      () =>
+        verifyReconciliation({
+          members: [member],
+          wholesalers: [{ ...wholesaler, wholesalerRole: null }],
+        }),
+      /stale identity/,
     );
   });
 });

@@ -14,7 +14,9 @@ const member = {
   lastName: ' Wiese ',
 };
 
-const repository = (records: WholesalerRecord[] = []): WholesalerRepository => ({
+const repository = (
+  records: WholesalerRecord[] = [],
+): WholesalerRepository => ({
   findByWorkspaceMemberId: vi.fn(async (memberId) =>
     records.filter((record) => record.workspaceMemberId === memberId),
   ),
@@ -48,7 +50,7 @@ describe('reconcileWorkspaceMember', () => {
     expect(repo.create).toHaveBeenCalledWith(member.id, {
       name: 'Damien Wiese',
       email: 'damien@corgi.com',
-      role: 'Wholesaler',
+      wholesalerRole: 'Wholesaler',
       workspaceMemberId: member.id,
     });
   });
@@ -59,7 +61,7 @@ describe('reconcileWorkspaceMember', () => {
         id: 'wholesaler-1',
         name: 'Damien W.',
         email: 'DAMIEN@CORGI.COM',
-        role: null,
+        wholesalerRole: null,
         workspaceMemberId: null,
       },
     ]);
@@ -76,7 +78,7 @@ describe('reconcileWorkspaceMember', () => {
     expect(repo.update).toHaveBeenCalledWith('wholesaler-1', {
       name: 'Damien Wiese',
       email: 'damien@corgi.com',
-      role: 'Wholesaler',
+      wholesalerRole: 'Wholesaler',
       workspaceMemberId: member.id,
     });
   });
@@ -86,7 +88,7 @@ describe('reconcileWorkspaceMember', () => {
       id: 'wholesaler-1',
       name: 'Damien Wiese',
       email: 'damien@corgi.com',
-      role: 'Wholesaler',
+      wholesalerRole: 'Wholesaler',
       workspaceMemberId: member.id,
     };
     const repo = repository([record]);

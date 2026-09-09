@@ -23,25 +23,22 @@ const parseResponse = async (response, operationName) => {
   return body.data;
 };
 
-const createGraphqlClient = ({ origin, apiKey }) => async ({
-  endpoint,
-  operationName,
-  query,
-  variables = {},
-}) =>
-  parseResponse(
-    await fetch(new URL(endpoint, origin), {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-        Origin: origin,
-      },
-      body: JSON.stringify({ operationName, query, variables }),
-      redirect: 'error',
-    }),
-    operationName,
-  );
+const createGraphqlClient =
+  ({ origin, apiKey }) =>
+  async ({ endpoint, operationName, query, variables = {} }) =>
+    parseResponse(
+      await fetch(new URL(endpoint, origin), {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+          Origin: origin,
+        },
+        body: JSON.stringify({ operationName, query, variables }),
+        redirect: 'error',
+      }),
+      operationName,
+    );
 
 const verifyTargetWorkspace = async ({ graphql, expectedWorkspaceId }) => {
   const data = await graphql({
@@ -52,7 +49,9 @@ const verifyTargetWorkspace = async ({ graphql, expectedWorkspaceId }) => {
     }`,
   });
   if (data.currentWorkspace?.id !== expectedWorkspaceId) {
-    throw new Error('Authenticated credential is not scoped to the approved workspace');
+    throw new Error(
+      'Authenticated credential is not scoped to the approved workspace',
+    );
   }
 };
 
@@ -65,7 +64,7 @@ const verifyRequiredSchema = async ({ graphql }) => {
         edges { node { id userEmail name { firstName lastName } } }
       }
       wholesalers(first: 1) {
-        edges { node { id name email role workspaceMemberId } }
+        edges { node { id name email wholesalerRole workspaceMemberId } }
       }
     }`,
   });
@@ -83,7 +82,11 @@ const parseTriggerSettings = (settings) => {
   }
 };
 
-const verifyInstalledApplication = async ({ graphql, version, workspaceId }) => {
+const verifyInstalledApplication = async ({
+  graphql,
+  version,
+  workspaceId,
+}) => {
   const data = await graphql({
     endpoint: '/metadata',
     operationName: 'VerifyCorgiCrmInstalledApplication',
@@ -103,7 +106,9 @@ const verifyInstalledApplication = async ({ graphql, version, workspaceId }) => 
     (application) => application.universalIdentifier === APPLICATION_ID,
   );
   if (applications.length !== 1) {
-    throw new Error(`Expected one installed Corgi CRM app, found ${applications.length}`);
+    throw new Error(
+      `Expected one installed Corgi CRM app, found ${applications.length}`,
+    );
   }
   const application = applications[0];
   if (application.state !== 'INSTALLED' || application.version !== version) {
@@ -113,13 +118,20 @@ const verifyInstalledApplication = async ({ graphql, version, workspaceId }) => 
     (variable) => variable.key === 'CORGI_CRM_WORKSPACE_ID',
   );
   if (workspaceVariable?.value !== workspaceId) {
-    throw new Error('Installed app workspace variable does not match the approved workspace');
+    throw new Error(
+      'Installed app workspace variable does not match the approved workspace',
+    );
   }
   const triggers = (application.logicFunctions ?? []).filter(
     (logicFunction) => logicFunction.universalIdentifier === TRIGGER_ID,
   );
-  const settings = parseTriggerSettings(triggers[0]?.databaseEventTriggerSettings);
-  if (triggers.length !== 1 || settings?.eventName !== 'workspaceMember.created') {
+  const settings = parseTriggerSettings(
+    triggers[0]?.databaseEventTriggerSettings,
+  );
+  if (
+    triggers.length !== 1 ||
+    settings?.eventName !== 'workspaceMember.created'
+  ) {
     throw new Error('Corgi CRM member-created database trigger is not active');
   }
 };
@@ -162,7 +174,9 @@ const expectedName = (member) => {
     .map(normalizeNamePart)
     .filter(Boolean)
     .join(' ');
-  return fullName || normalizeEmail(member.userEmail).split('@')[0] || 'Wholesaler';
+  return (
+    fullName || normalizeEmail(member.userEmail).split('@')[0] || 'Wholesaler'
+  );
 };
 
 const verifyReconciliation = ({ members, wholesalers }) => {
@@ -180,14 +194,16 @@ const verifyReconciliation = ({ members, wholesalers }) => {
         normalizeEmail(wholesaler.email ?? '') === email,
     );
     if (matches.length !== 1) {
-      throw new Error(`Workspace member ${member.id} has ${matches.length} identities`);
+      throw new Error(
+        `Workspace member ${member.id} has ${matches.length} identities`,
+      );
     }
     const wholesaler = matches[0];
     if (
       wholesaler.workspaceMemberId !== member.id ||
       normalizeEmail(wholesaler.email ?? '') !== email ||
       normalizeNamePart(wholesaler.name) !== expectedName(member) ||
-      !wholesaler.role?.trim()
+      !wholesaler.wholesalerRole?.trim()
     ) {
       throw new Error(`Workspace member ${member.id} has a stale identity`);
     }
@@ -198,7 +214,9 @@ const verifyReconciliation = ({ members, wholesalers }) => {
       !memberIds.has(wholesaler.workspaceMemberId),
   ).length;
   if (orphanCount > 0) {
-    throw new Error(`${orphanCount} identities link to absent workspace members`);
+    throw new Error(
+      `${orphanCount} identities link to absent workspace members`,
+    );
   }
   return { members: usableMembers.length, wholesalers: wholesalers.length };
 };
@@ -240,7 +258,7 @@ const main = async () => {
       graphql,
       operationName: 'VerifyCorgiCrmWholesalers',
       root: 'wholesalers',
-      selection: 'id name email role workspaceMemberId',
+      selection: 'id name email wholesalerRole workspaceMemberId',
     }),
   ]);
   const result = verifyReconciliation({ members, wholesalers });

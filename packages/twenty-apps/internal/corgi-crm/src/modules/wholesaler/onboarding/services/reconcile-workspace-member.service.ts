@@ -64,7 +64,7 @@ export const reconcileWorkspaceMember = async ({
     await repository.create(member.id, {
       name,
       email,
-      role: DEFAULT_WHOLESALER_ROLE,
+      wholesalerRole: DEFAULT_WHOLESALER_ROLE,
       workspaceMemberId: member.id,
     });
     return { status: 'created', wholesalerId: member.id };
@@ -82,7 +82,9 @@ export const reconcileWorkspaceMember = async ({
   const changes: WholesalerWrite = {};
   if (existing.name?.trim().replace(/\s+/g, ' ') !== name) changes.name = name;
   if (existing.email?.trim() !== email) changes.email = email;
-  if (!nonEmpty(existing.role)) changes.role = DEFAULT_WHOLESALER_ROLE;
+  if (!nonEmpty(existing.wholesalerRole)) {
+    changes.wholesalerRole = DEFAULT_WHOLESALER_ROLE;
+  }
   if (!nonEmpty(existing.workspaceMemberId)) {
     changes.workspaceMemberId = member.id;
   }
