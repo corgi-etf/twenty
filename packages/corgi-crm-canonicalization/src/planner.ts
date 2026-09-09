@@ -125,6 +125,21 @@ const effectiveValue = (
 const isEmptyValue = (value: unknown): boolean =>
   value === undefined || value === null || value === '';
 
+const includesNewlineDelimitedBlock = (
+  value: string,
+  block: string,
+): boolean => {
+  const normalizedValue = value.replace(/\r\n/g, '\n');
+  const normalizedBlock = block.replace(/\r\n/g, '\n');
+
+  return (
+    normalizedValue === normalizedBlock ||
+    normalizedValue.startsWith(`${normalizedBlock}\n`) ||
+    normalizedValue.endsWith(`\n${normalizedBlock}`) ||
+    normalizedValue.includes(`\n${normalizedBlock}\n`)
+  );
+};
+
 const setPreservingNative = (
   accumulator: RecordAccumulator,
   name: string,
@@ -2111,14 +2126,19 @@ export const buildCanonicalizationPlan = (
         confidenceByCompany.get(accumulator.record.id)?.has(description) ??
         false;
       if (!isConfidence) {
-        setPreservingNative(
-          accumulator,
-          'description',
-          description,
-          unresolved,
-          accumulator.record.id,
-          'DESCRIPTION_CONFLICT',
+        const currentDescription = asString(
+          effectiveValue(accumulator, 'description'),
         );
+        if (!currentDescription) {
+          mergeFact(accumulator, 'description', description);
+        } else if (
+          !includesNewlineDelimitedBlock(currentDescription, description)
+        ) {
+          unresolved.push({
+            code: 'DESCRIPTION_CONFLICT',
+            rowKey: accumulator.record.id,
+          });
+        }
       }
     }
     const website = accumulator.record.legacyWebsite;
