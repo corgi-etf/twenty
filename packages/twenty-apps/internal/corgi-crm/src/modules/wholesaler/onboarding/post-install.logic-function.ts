@@ -3,18 +3,15 @@ import {
   type InstallPayload,
   definePostInstallLogicFunction,
 } from 'twenty-sdk/define';
+import { type LogicFunctionExecutionContext } from 'twenty-sdk/logic-function';
 
 import { POST_INSTALL_UNIVERSAL_IDENTIFIER } from 'src/constants';
 import { CoreWholesalerRepository } from 'src/modules/wholesaler/onboarding/graphql/core-wholesaler.repository';
 import { reconcileAllWorkspaceMembers } from 'src/modules/wholesaler/onboarding/services/reconcile-all-workspace-members.service';
 
-type InstallExecutionContext = {
-  workspaceId: string;
-};
-
 export const handler = async (
   _payload: InstallPayload,
-  context?: InstallExecutionContext,
+  context?: LogicFunctionExecutionContext,
 ) => {
   const expectedWorkspaceId = process.env.CORGI_CRM_WORKSPACE_ID?.trim();
   if (!expectedWorkspaceId) {
