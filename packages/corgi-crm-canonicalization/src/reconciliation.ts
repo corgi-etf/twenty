@@ -48,8 +48,17 @@ export type ReconciliationReport = {
   remainingMutations: number;
   remainingMutationsByObject: Record<string, number>;
   unresolvedByCode: Record<string, number>;
+  unresolvedSchemaDiagnostics: UnresolvedSchemaDiagnostic[];
   rowCoverageHash: string;
   businessContentHash: string;
+};
+
+export type UnresolvedSchemaDiagnostic = {
+  code: string;
+  normalizedRawKey: string | null;
+  canonicalTarget: string | null;
+  canonicalField: string | null;
+  count: number;
 };
 
 export type ReconciliationManifest = Pick<
@@ -96,6 +105,37 @@ const countBy = (values: readonly string[]): Record<string, number> =>
         values.filter((candidate) => candidate === value).length,
       ]),
   );
+
+const unresolvedSchemaDiagnostics = (
+  unresolved: ReturnType<typeof buildCanonicalizationPlan>['unresolved'],
+): UnresolvedSchemaDiagnostic[] => {
+  const diagnosticCodes = new Set([
+    'DISPOSITION_VALUE_NOT_PRESERVED',
+    'HOLDING_FIELD_CONFLICT',
+    'UNHANDLED_RAW_FIELD',
+  ]);
+  const aggregates = new Map<
+    string,
+    Omit<UnresolvedSchemaDiagnostic, 'count'> & { count: number }
+  >();
+  for (const item of unresolved) {
+    if (!diagnosticCodes.has(item.code)) continue;
+    const diagnostic = {
+      code: item.code,
+      normalizedRawKey: item.normalizedRawKey ?? null,
+      canonicalTarget: item.canonicalTarget ?? null,
+      canonicalField: item.canonicalField ?? null,
+    };
+    const key = stableStringify(diagnostic);
+    const aggregate = aggregates.get(key);
+    if (aggregate) aggregate.count += 1;
+    else aggregates.set(key, { ...diagnostic, count: 1 });
+  }
+
+  return [...aggregates.entries()]
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([, diagnostic]) => diagnostic);
+};
 
 const uniqueIdByPreviousId = (records: readonly Record<string, unknown>[]) => {
   const grouped = new Map<string, Set<string>>();
@@ -294,6 +334,7 @@ export const buildReconciliationReport = (
     remainingMutations: plan.mutations.length,
     remainingMutationsByObject,
     unresolvedByCode,
+    unresolvedSchemaDiagnostics: unresolvedSchemaDiagnostics(plan.unresolved),
     rowCoverageHash: sha256(stableStringify(rowKeys)),
     businessContentHash: sha256(
       stableStringify({ staging: contentKeys, holdings: holdingContentKeys }),

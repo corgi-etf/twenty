@@ -39,6 +39,9 @@ export type RecordMutation = {
 export type UnresolvedItem = {
   code: string;
   rowKey: string;
+  normalizedRawKey?: string;
+  canonicalTarget?: string;
+  canonicalField?: string;
 };
 
 export type RawKeyDisposition = {
@@ -137,7 +140,13 @@ const setPreservingNative = (
     return;
   }
   if (!valuesEqual(current, value)) {
-    unresolved.push({ code: conflictCode, rowKey });
+    unresolved.push({
+      code: conflictCode,
+      rowKey,
+      ...(conflictCode === 'HOLDING_FIELD_CONFLICT'
+        ? { canonicalField: name }
+        : {}),
+    });
   }
 };
 
@@ -1232,6 +1241,20 @@ const targetPreservesResult = (
   return atoms.has(expectedText) || atoms.has(expectedText.toLowerCase());
 };
 
+const diagnosticTarget = (concreteTarget: string): string =>
+  [
+    ...new Set(
+      concreteTarget.split('|').map((target) => {
+        const slash = target.indexOf('/');
+        const dot = target.indexOf('.', slash + 1);
+
+        return `${target.slice(0, slash)}.${target.slice(dot + 1)}`;
+      }),
+    ),
+  ]
+    .sort()
+    .join('|');
+
 type DispositionContext = {
   companyId?: string;
   personId?: string;
@@ -1967,7 +1990,11 @@ export const buildCanonicalizationPlan = (
       );
       if (!disposition) {
         if (!selectedRecordIds.has(row.record.id)) {
-          unresolved.push({ code: 'UNHANDLED_RAW_FIELD', rowKey: row.rowKey });
+          unresolved.push({
+            code: 'UNHANDLED_RAW_FIELD',
+            rowKey: row.rowKey,
+            normalizedRawKey: key,
+          });
         }
       } else if (duplicateOf.has(row.record.id)) {
         const selectedRow = duplicateOf.get(row.record.id)!;
@@ -2231,7 +2258,11 @@ export const buildCanonicalizationPlan = (
       const symbolic = dispositionForKey(key, value, isPerson, isHolding);
       const concrete = symbolic ? concreteDisposition(symbolic, context) : null;
       if (!concrete) {
-        unresolved.push({ code: 'UNHANDLED_RAW_FIELD', rowKey: row.rowKey });
+        unresolved.push({
+          code: 'UNHANDLED_RAW_FIELD',
+          rowKey: row.rowKey,
+          normalizedRawKey: key,
+        });
       } else {
         const rowKey = stagingOccurrenceKey(row);
         dispositions.push({
@@ -2305,6 +2336,8 @@ export const buildCanonicalizationPlan = (
       unresolved.push({
         code: 'DISPOSITION_VALUE_NOT_PRESERVED',
         rowKey: disposition.rowKey,
+        normalizedRawKey: disposition.key,
+        canonicalTarget: diagnosticTarget(disposition.target),
       });
       continue;
     }

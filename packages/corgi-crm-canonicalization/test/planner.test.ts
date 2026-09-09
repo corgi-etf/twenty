@@ -593,6 +593,7 @@ test('native business values are preserved and conflicting staging values fail c
   input.outreachActivities[0]!.followUpDate = '2026-06-16';
 
   const plan = buildCanonicalizationPlan(input);
+  const report = buildReconciliationReport(input);
 
   assert.equal(
     plan.unresolved.some(({ code }) => code === 'DESCRIPTION_CONFLICT'),
@@ -621,6 +622,29 @@ test('native business values are preserved and conflicting staging values fail c
   assert.equal(
     mutationFor(plan, 'outreachActivities', 'activity-1')?.data.followUpTaskId,
     undefined,
+  );
+  assert.deepEqual(
+    report.unresolvedSchemaDiagnostics.filter(
+      ({ code }) =>
+        code === 'DISPOSITION_VALUE_NOT_PRESERVED' ||
+        code === 'HOLDING_FIELD_CONFLICT',
+    ),
+    [
+      {
+        code: 'HOLDING_FIELD_CONFLICT',
+        normalizedRawKey: null,
+        canonicalTarget: null,
+        canonicalField: 'averagePrice',
+        count: 1,
+      },
+      {
+        code: 'DISPOSITION_VALUE_NOT_PRESERVED',
+        normalizedRawKey: 'avg price',
+        canonicalTarget: 'holdingObservations.averagePrice',
+        canonicalField: null,
+        count: 1,
+      },
+    ],
   );
 });
 
