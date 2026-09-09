@@ -425,6 +425,44 @@ test('apply refetches metadata, writes one record, and proves zero work', async 
   assert.equal(api.checkpoint?.status, 'complete');
 });
 
+test('apply rereads a composed imported description and converges', async () => {
+  const input = emptySnapshot();
+  input.companies.push({
+    id: 'company-1',
+    name: 'Example Advisors',
+    updatedAt: '2026-01-01T00:00:00.000Z',
+    fetchDescription: 'Imported company profile',
+  });
+  input.sourceRecords.push({
+    id: 'source-description-facts',
+    companyId: 'company-1',
+    sourceFile: 'firms.csv',
+    sourceRow: 16,
+    rawData: JSON.stringify({
+      'Firm Name': 'Example Advisors',
+      'Lead Score': 'A',
+    }),
+  });
+  const api = new MemoryApi(input);
+  const dryRun = await runCanonicalization(api, options);
+
+  const result = await runCanonicalization(api, {
+    ...options,
+    mode: 'apply',
+    confirmation: 'CANONICALIZE_CRM_DATA',
+    expectedManifest: dryRun.manifest,
+  });
+
+  assert.match(
+    String(api.snapshot.companies[0]?.description),
+    /Imported company profile/,
+  );
+  assert.match(String(api.snapshot.companies[0]?.description), /Lead score: A/);
+  assert.equal(result.reconciliation.remainingMutations, 0);
+  assert.deepEqual(result.reconciliation.unresolvedByCode, {});
+  assert.equal(api.checkpoint?.status, 'complete');
+});
+
 test('metadata-stage checkpoint resumes the reserved role hotfix after eight renames', async () => {
   const api = new MemoryApi(emptySnapshot());
   api.metadata = metadataWithLegacyRenames();
