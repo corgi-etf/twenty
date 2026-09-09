@@ -91,6 +91,57 @@ test('tenant preflight accepts only the expected non-impersonated metadata role'
   assert.equal(request.calls[0]?.url, 'https://crm.corgiinvest.com/metadata');
 });
 
+test('tenant preflight accepts an admin when the member has multiple assigned roles', async () => {
+  const request = new TenantRequest(
+    response({
+      data: {
+        currentUser: {
+          currentWorkspace: {
+            id: CANONICALIZATION_APPROVED_WORKSPACE_ID,
+            displayName: 'Corgi ETF',
+          },
+          currentUserWorkspace: {
+            id: CANONICALIZATION_APPROVED_USER_WORKSPACE_ID,
+            permissionFlags: ['DATA_MODEL'],
+            isImpersonating: false,
+          },
+        },
+        getRoles: [
+          {
+            canUpdateAllSettings: false,
+            canReadAllObjectRecords: true,
+            canUpdateAllObjectRecords: true,
+            workspaceMembers: [
+              {
+                userWorkspaceId: CANONICALIZATION_APPROVED_USER_WORKSPACE_ID,
+              },
+            ],
+          },
+          {
+            canUpdateAllSettings: true,
+            canReadAllObjectRecords: true,
+            canUpdateAllObjectRecords: true,
+            workspaceMembers: [
+              {
+                userWorkspaceId: CANONICALIZATION_APPROVED_USER_WORKSPACE_ID,
+              },
+            ],
+          },
+        ],
+      },
+    }),
+  );
+
+  await assertCanonicalizationTenant({
+    request,
+    requestGate: immediateGate,
+    origin: 'https://crm.corgiinvest.com',
+    expectedWorkspaceId: CANONICALIZATION_APPROVED_WORKSPACE_ID,
+  });
+
+  assert.equal(request.calls.length, 1);
+});
+
 test('wrong workspace and non-admin sessions fail without a mutation', async () => {
   for (const currentUser of [
     {
