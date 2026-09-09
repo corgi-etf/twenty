@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import {
   lstat,
   mkdir,
+  readFile,
   realpath,
   rename,
   unlink,
@@ -12,6 +13,13 @@ import { dirname, resolve, sep } from 'node:path';
 export type CanonicalizationArtifactPaths = {
   checkpointPath: string;
   resultPath: string;
+};
+
+export type CanonicalizationArtifactExecutionIdentity = {
+  workflowRunId: string;
+  workflowRunAttempt: string;
+  commitSha: string;
+  mode: 'dry-run' | 'apply';
 };
 
 const strictDescendant = (root: string, candidate: string): string => {
@@ -57,22 +65,64 @@ const proveAtomicWrite = async (targetPath: string): Promise<void> => {
   }
 };
 
+const assertExecutionIdentity = (
+  identity: CanonicalizationArtifactExecutionIdentity,
+): void => {
+  if (
+    !/^[1-9][0-9]*$/.test(identity.workflowRunId) ||
+    !/^[1-9][0-9]*$/.test(identity.workflowRunAttempt) ||
+    !/^[a-f0-9]{40}$/.test(identity.commitSha) ||
+    (identity.mode !== 'dry-run' && identity.mode !== 'apply')
+  ) {
+    throw new Error('Canonicalization artifact execution identity is invalid');
+  }
+};
+
+const assertRetryLease = async (
+  leasePath: string,
+  executionIdentity: CanonicalizationArtifactExecutionIdentity,
+): Promise<void> => {
+  await assertTargetType(leasePath, true);
+
+  let lease: unknown;
+  try {
+    lease = JSON.parse(await readFile(leasePath, 'utf8'));
+  } catch {
+    throw new Error('Canonicalization retry lease is missing or invalid');
+  }
+
+  if (JSON.stringify(lease) !== JSON.stringify(executionIdentity)) {
+    throw new Error(
+      'Canonicalization retry lease does not match this workflow attempt',
+    );
+  }
+};
+
 export const preflightCanonicalizationArtifacts = async ({
   runnerTemp,
   checkpointPath,
   resultPath,
+  executionIdentity,
+  playwrightRetry,
 }: {
   runnerTemp: string;
   checkpointPath: string;
   resultPath: string;
+  executionIdentity: CanonicalizationArtifactExecutionIdentity;
+  playwrightRetry: number;
 }): Promise<CanonicalizationArtifactPaths> => {
   if (!runnerTemp || !checkpointPath || !resultPath) {
     throw new Error('Canonicalization artifact paths are required');
+  }
+  assertExecutionIdentity(executionIdentity);
+  if (!Number.isSafeInteger(playwrightRetry) || playwrightRetry < 0) {
+    throw new Error('Canonicalization Playwright retry index is invalid');
   }
   const lexicalRoot = resolve(runnerTemp);
   const physicalRoot = await realpath(lexicalRoot);
   const checkpoint = strictDescendant(lexicalRoot, checkpointPath);
   const result = strictDescendant(lexicalRoot, resultPath);
+  const retryLease = `${result}.retry-lease.json`;
   if (checkpoint === result) {
     throw new Error('Canonicalization artifact paths must be distinct');
   }
@@ -89,9 +139,19 @@ export const preflightCanonicalizationArtifacts = async ({
     }
   }
   await assertTargetType(checkpoint, true);
-  await assertTargetType(result, false);
+  await assertTargetType(result, playwrightRetry > 0);
+  await assertTargetType(retryLease, playwrightRetry > 0);
   await proveAtomicWrite(checkpoint);
   await proveAtomicWrite(result);
+
+  if (playwrightRetry === 0) {
+    await writeFile(retryLease, `${JSON.stringify(executionIdentity)}\n`, {
+      encoding: 'utf8',
+      flag: 'wx',
+    });
+  } else {
+    await assertRetryLease(retryLease, executionIdentity);
+  }
 
   return { checkpointPath: checkpoint, resultPath: result };
 };

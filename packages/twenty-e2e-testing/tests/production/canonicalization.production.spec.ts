@@ -35,7 +35,7 @@ const expectedManifest = (): ReconciliationManifest | undefined => {
 
 test('runs the guarded CRM canonicalization maintenance operation', async ({
   page,
-}) => {
+}, testInfo) => {
   test.skip(
     process.env.CRM_CANONICALIZATION_ENABLED !== 'true',
     'Canonicalization is disabled unless explicitly enabled',
@@ -58,6 +58,13 @@ test('runs the guarded CRM canonicalization maintenance operation', async ({
     runnerTemp: process.env.RUNNER_TEMP ?? '',
     checkpointPath: process.env.CRM_CANONICALIZATION_CHECKPOINT_PATH ?? '',
     resultPath: process.env.CRM_CANONICALIZATION_RESULT_PATH ?? '',
+    executionIdentity: {
+      workflowRunId: process.env.GITHUB_RUN_ID ?? '',
+      workflowRunAttempt: process.env.GITHUB_RUN_ATTEMPT ?? '',
+      commitSha: process.env.GITHUB_SHA ?? '',
+      mode,
+    },
+    playwrightRetry: testInfo.retry,
   });
   const expectedWorkspaceId =
     process.env.CRM_CANONICALIZATION_WORKSPACE_ID ?? '';
