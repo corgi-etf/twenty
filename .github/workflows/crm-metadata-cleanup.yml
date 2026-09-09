@@ -13,23 +13,23 @@ on:
         required: true
         type: string
       row_coverage_sha256:
-        description: Row coverage SHA-256 from the successful canonicalization dry-run
+        description: Row coverage SHA-256 from the successful canonicalization result
         required: true
         type: string
       business_content_sha256:
-        description: Business content SHA-256 from the successful canonicalization dry-run
+        description: Business content SHA-256 from the successful canonicalization result
         required: true
         type: string
       company_count:
-        description: Exact post-canonicalization Company count from the dry-run manifest
+        description: Exact Company count from the successful canonicalization result
         required: true
         type: number
       people_count:
-        description: Exact post-canonicalization People count from the dry-run manifest
+        description: Exact People count from the successful canonicalization result
         required: true
         type: number
       holding_count:
-        description: Exact post-canonicalization Holding count from the dry-run manifest
+        description: Exact Holding count from the successful canonicalization result
         required: true
         type: number
       resume_run_id:

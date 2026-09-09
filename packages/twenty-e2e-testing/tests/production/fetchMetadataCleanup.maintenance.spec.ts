@@ -1,5 +1,10 @@
 import { expect, test } from '@playwright/test';
 
+import { createCanonicalizationRequestGate } from '../../../corgi-crm-canonicalization/src/request-gate.ts';
+import {
+  assertCanonicalizationTenant,
+  CANONICALIZATION_APPROVED_WORKSPACE_ID,
+} from '../../../corgi-crm-canonicalization/src/tenant-preflight.ts';
 import {
   FETCH_METADATA_CLEANUP_CONFIRMATION,
   runFetchMetadataCleanup,
@@ -22,6 +27,13 @@ test('permanently removes Fetch migration metadata from the production CRM', asy
   );
   const { BACKEND_BASE_URL, FRONTEND_BASE_URL } =
     requireProductionEnvironment();
+  const requestGate = createCanonicalizationRequestGate();
+  await assertCanonicalizationTenant({
+    request: page.request,
+    requestGate,
+    origin: new URL(FRONTEND_BASE_URL).origin,
+    expectedWorkspaceId: CANONICALIZATION_APPROVED_WORKSPACE_ID,
+  });
   const currentWorkspaceResponse = await page.request.post(
     new URL('/metadata', BACKEND_BASE_URL).toString(),
     {

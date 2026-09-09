@@ -94,6 +94,9 @@ jobs:
                 .sourceRecordRows,
                 .reviewItemRows,
                 .holdingRawRows,
+                .companyRecords,
+                .personRecords,
+                .holdingRecords,
                 .stagingRows,
                 .distinctBusinessRows,
                 .duplicateRows,
@@ -101,7 +104,14 @@ jobs:
                 .disposedRawValues
               ] | all(type == "number" and . >= 0 and floor == .)) and
               (.dispositionsByKind | type == "object") and
-              ([.rowCoverageHash, .businessContentHash, .dispositionHash] |
+              ([
+                .rowCoverageHash,
+                .businessContentHash,
+                .dispositionHash,
+                .companyIdSetHash,
+                .personIdSetHash,
+                .holdingIdSetHash
+              ] |
                 all(type == "string" and test("^[a-f0-9]{64}$")))
             ' <<< "${EXPECTED_MANIFEST}" >/dev/null
           else
@@ -219,6 +229,7 @@ jobs:
           CRM_E2E_WORKSPACE_NAME: ${{ secrets.CRM_E2E_WORKSPACE_NAME }}
           CRM_CANONICALIZATION_ENABLED: 'true'
           CRM_CANONICALIZATION_MODE: ${{ inputs.mode }}
+          CRM_CANONICALIZATION_WORKSPACE_ID: eabf5d9d-fc99-4acb-b160-710ecb1db996
           CRM_CANONICALIZATION_CONFIRMATION: ${{ inputs.confirmation }}
           CRM_CANONICALIZATION_EXPECTED_MANIFEST: ${{ inputs.expected_manifest }}
           CRM_CANONICALIZATION_CHECKPOINT_PATH: ${{ runner.temp }}/crm-canonicalization/canonicalization-checkpoint.json
