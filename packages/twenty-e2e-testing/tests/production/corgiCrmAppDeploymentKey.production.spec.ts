@@ -3,6 +3,7 @@ import { chmod, readFile, writeFile } from 'node:fs/promises';
 
 import {
   createDeploymentApiKey,
+  deleteEphemeralDeploymentRole,
   generateDeploymentApiKeyToken,
   revokeDeploymentApiKey,
 } from '../../../twenty-apps/internal/corgi-crm/scripts/deployment-api-key.mjs';
@@ -18,8 +19,16 @@ type GraphqlRequest = {
 };
 
 type DeploymentKeyFile = {
-  id: string;
+  id?: string;
+  name?: string;
+  expiresAt?: string;
   token?: string;
+  role?: {
+    id: string;
+    label?: string;
+    description?: string;
+    ephemeral: boolean;
+  };
 };
 
 const requiredEnvironment = (name: string): string => {
@@ -67,19 +76,21 @@ test('manage the short-lived Corgi CRM deployment key', async ({ page }) => {
   };
 
   if (operation === 'acquire') {
+    const recordLease = async (lease: DeploymentKeyFile): Promise<void> => {
+      await writeFile(keyPath, JSON.stringify(lease), { mode: 0o600 });
+      await chmod(keyPath, 0o600);
+    };
     const key = await createDeploymentApiKey({
       graphql,
       expectedWorkspaceId: APPROVED_WORKSPACE_ID,
       expectedUserWorkspaceId: APPROVED_USER_WORKSPACE_ID,
+      repository: requiredEnvironment('GITHUB_REPOSITORY'),
       runId: requiredEnvironment('GITHUB_RUN_ID'),
       runAttempt: requiredEnvironment('GITHUB_RUN_ATTEMPT'),
+      recordLease,
     });
-    await writeFile(keyPath, JSON.stringify({ id: key.id }), { mode: 0o600 });
     const token = await generateDeploymentApiKeyToken({ graphql, key });
-    await writeFile(keyPath, JSON.stringify({ id: key.id, token }), {
-      mode: 0o600,
-    });
-    await chmod(keyPath, 0o600);
+    await recordLease({ ...key, token });
     return;
   }
 
@@ -95,8 +106,18 @@ test('manage the short-lived Corgi CRM deployment key', async ({ page }) => {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
     throw error;
   }
-  if (!keyFile.id?.trim()) {
-    throw new Error('Deployment key file does not contain a key ID');
+  let cleanupError: unknown;
+  if (keyFile.id?.trim()) {
+    try {
+      await revokeDeploymentApiKey({ graphql, apiKeyId: keyFile.id });
+    } catch (error) {
+      cleanupError = error;
+    }
   }
-  await revokeDeploymentApiKey({ graphql, apiKeyId: keyFile.id });
+  try {
+    await deleteEphemeralDeploymentRole({ graphql, role: keyFile.role });
+  } catch (error) {
+    cleanupError ??= error;
+  }
+  if (cleanupError) throw cleanupError;
 });
