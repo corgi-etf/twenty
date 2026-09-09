@@ -1,0 +1,296 @@
+name: Manual territory-first CRM workspace configuration
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: Type APPLY_TERRITORY_FIRST_CRM_CONFIGURATION
+        required: true
+        type: string
+      deployed_sha:
+        description: Exact 40-character SHA currently deployed to both CRM services
+        required: true
+        type: string
+      company_count:
+        description: Exact Company count from the completed canonicalization cleanup
+        required: true
+        type: number
+      row_coverage_sha256:
+        description: Exact row coverage SHA-256 from the completed cleanup
+        required: true
+        type: string
+      business_content_sha256:
+        description: Exact business content SHA-256 from the completed cleanup
+        required: true
+        type: string
+      cleanup_run_id:
+        description: Successful metadata-cleanup workflow run ID
+        required: true
+        type: string
+      cleanup_run_attempt:
+        description: Successful metadata-cleanup workflow attempt number
+        required: true
+        type: string
+      resume_run_id:
+        description: Prior failed workspace-config run ID to resume
+        required: false
+        default: ''
+        type: string
+      resume_attempt:
+        description: Prior failed workspace-config attempt number to resume
+        required: false
+        default: ''
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+  id-token: write
+
+concurrency:
+  # This mutates production metadata and records and must not overlap a deploy.
+  group: crm-production-deploy
+  cancel-in-progress: false
+
+env:
+  AWS_ACCOUNT_ID: '182018075072'
+  AWS_REGION: us-east-2
+  AWS_ROLE_ARN: arn:aws:iam::182018075072:role/crm-production-github-deploy
+  ECS_CLUSTER: crm-production
+  ECR_REPOSITORY: crm-production-twenty
+  SERVER_SERVICE: crm-production-server
+  SERVER_CONTAINER: server
+  WORKER_SERVICE: crm-production-worker
+  WORKER_CONTAINER: worker
+
+jobs:
+  preflight:
+    name: Verify cleanup lineage and deployed production revision
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: production
+    steps:
+      - name: Check out the exact workflow revision
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          fetch-depth: 0
+
+      - name: Validate guarded inputs
+        shell: bash
+        env:
+          REQUESTED_CONFIRMATION: ${{ inputs.confirmation }}
+          REQUIRED_CONFIRMATION: APPLY_TERRITORY_FIRST_CRM_CONFIGURATION
+          DEPLOYED_SHA: ${{ inputs.deployed_sha }}
+          COMPANY_COUNT: ${{ inputs.company_count }}
+          ROW_COVERAGE_SHA256: ${{ inputs.row_coverage_sha256 }}
+          BUSINESS_CONTENT_SHA256: ${{ inputs.business_content_sha256 }}
+          CLEANUP_RUN_ID: ${{ inputs.cleanup_run_id }}
+          CLEANUP_RUN_ATTEMPT: ${{ inputs.cleanup_run_attempt }}
+          RESUME_RUN_ID: ${{ inputs.resume_run_id }}
+          RESUME_ATTEMPT: ${{ inputs.resume_attempt }}
+        run: |
+          set -euo pipefail
+          [[ "${REQUESTED_CONFIRMATION}" == "${REQUIRED_CONFIRMATION}" ]]
+          [[ "${DEPLOYED_SHA}" =~ ^[0-9a-f]{40}$ ]]
+          [[ "${COMPANY_COUNT}" =~ ^[1-9][0-9]*$ ]]
+          [[ "${ROW_COVERAGE_SHA256}" =~ ^[0-9a-f]{64}$ ]]
+          [[ "${BUSINESS_CONTENT_SHA256}" =~ ^[0-9a-f]{64}$ ]]
+          [[ "${CLEANUP_RUN_ID}" =~ ^[1-9][0-9]*$ ]]
+          [[ "${CLEANUP_RUN_ATTEMPT}" =~ ^[1-9][0-9]*$ ]]
+          if [[ -n "${RESUME_RUN_ID}" || -n "${RESUME_ATTEMPT}" ]]; then
+            [[ "${RESUME_RUN_ID}" =~ ^[1-9][0-9]*$ ]]
+            [[ "${RESUME_ATTEMPT}" =~ ^[1-9][0-9]*$ ]]
+          fi
+          git cat-file -e "${DEPLOYED_SHA}^{commit}"
+          git merge-base --is-ancestor "${DEPLOYED_SHA}" "${GITHUB_SHA}"
+
+      - name: Configure read-only AWS deployment inspection
+        uses: aws-actions/configure-aws-credentials@61815dcd50bd041e203e49132bacad1fd04d2708 # v5.1.1
+        with:
+          role-to-assume: ${{ env.AWS_ROLE_ARN }}
+          role-duration-seconds: 900
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Prove both live services use the approved deployed SHA
+        shell: bash
+        env:
+          DEPLOYED_SHA: ${{ inputs.deployed_sha }}
+        run: |
+          set -euo pipefail
+          CALLER_ACCOUNT="$(aws sts get-caller-identity --query Account --output text)"
+          [[ "${CALLER_ACCOUNT}" == "${AWS_ACCOUNT_ID}" ]]
+
+          EXPECTED_DIGEST="$(aws ecr describe-images \
+            --repository-name "${ECR_REPOSITORY}" \
+            --image-ids "imageTag=git-${DEPLOYED_SHA}" \
+            --query 'imageDetails[0].imageDigest' \
+            --output text)"
+          [[ "${EXPECTED_DIGEST}" == sha256:* ]]
+          EXPECTED_IMAGE="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPOSITORY}@${EXPECTED_DIGEST}"
+
+          assert_service_image() {
+            local service="$1"
+            local container="$2"
+            local task_definition
+            local live_image
+            task_definition="$(aws ecs describe-services \
+              --cluster "${ECS_CLUSTER}" \
+              --services "${service}" \
+              --query 'services[0].taskDefinition' \
+              --output text)"
+            live_image="$(aws ecs describe-task-definition \
+              --task-definition "${task_definition}" \
+              --query "taskDefinition.containerDefinitions[?name=='${container}'].image | [0]" \
+              --output text)"
+            [[ "${live_image}" == "${EXPECTED_IMAGE}" ]]
+          }
+
+          assert_service_image "${SERVER_SERVICE}" "${SERVER_CONTAINER}"
+          assert_service_image "${WORKER_SERVICE}" "${WORKER_CONTAINER}"
+
+  configure:
+    name: Apply and verify territory-first CRM workspace configuration
+    needs: preflight
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    environment: production
+    steps:
+      - name: Check out the preflighted main revision
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - name: Download the completed metadata-cleanup journal
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: crm-metadata-cleanup-${{ inputs.cleanup_run_id }}-${{ inputs.cleanup_run_attempt }}
+          path: ${{ runner.temp }}/crm-cleanup-prerequisite
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.cleanup_run_id }}
+
+      - name: Restore the durable workspace-config checkpoint
+        if: inputs.resume_run_id != ''
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: crm-workspace-config-${{ inputs.resume_run_id }}-${{ inputs.resume_attempt }}
+          path: ${{ runner.temp }}/crm-workspace-config
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.resume_run_id }}
+
+      - name: Install Node and Yarn dependencies
+        uses: ./.github/actions/crm-yarn-install
+
+      - name: Install the Chromium test browser
+        run: npx playwright install --with-deps chromium
+
+      - name: Configure immediate AWS deployment inspection
+        uses: aws-actions/configure-aws-credentials@61815dcd50bd041e203e49132bacad1fd04d2708 # v5.1.1
+        with:
+          role-to-assume: ${{ env.AWS_ROLE_ARN }}
+          role-duration-seconds: 3600
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Recheck every live task immediately before mutation
+        shell: bash
+        env:
+          DEPLOYED_SHA: ${{ inputs.deployed_sha }}
+        run: |
+          set -euo pipefail
+          EXPECTED_DIGEST="$(aws ecr describe-images \
+            --repository-name "${ECR_REPOSITORY}" \
+            --image-ids "imageTag=git-${DEPLOYED_SHA}" \
+            --query 'imageDetails[0].imageDigest' \
+            --output text)"
+          [[ "${EXPECTED_DIGEST}" == sha256:* ]]
+
+          assert_stable_service_tasks() {
+            local service="$1"
+            local container="$2"
+            local service_json="${RUNNER_TEMP}/${service}-service.json"
+            local tasks_json="${RUNNER_TEMP}/${service}-tasks.json"
+            local task_arns
+            local desired
+
+            aws ecs describe-services \
+              --cluster "${ECS_CLUSTER}" \
+              --services "${service}" > "${service_json}"
+            jq -e '
+              (.failures | length) == 0 and
+              (.services | length) == 1 and
+              .services[0].status == "ACTIVE" and
+              .services[0].desiredCount > 0 and
+              .services[0].runningCount == .services[0].desiredCount and
+              .services[0].pendingCount == 0 and
+              ([.services[0].deployments[] | select(.status == "PRIMARY")] | length) == 1 and
+              ([.services[0].deployments[] | select(.status == "ACTIVE")] | length) == 0
+            ' "${service_json}" >/dev/null
+            desired="$(jq -r '.services[0].desiredCount' "${service_json}")"
+
+            task_arns="$(aws ecs list-tasks \
+              --cluster "${ECS_CLUSTER}" \
+              --service-name "${service}" \
+              --desired-status RUNNING \
+              --query 'taskArns' \
+              --output text)"
+            # shellcheck disable=SC2086
+            aws ecs describe-tasks \
+              --cluster "${ECS_CLUSTER}" \
+              --tasks ${task_arns} > "${tasks_json}"
+            jq -e \
+              --arg container "${container}" \
+              --arg digest "${EXPECTED_DIGEST}" \
+              --argjson desired "${desired}" '
+                (.failures | length) == 0 and
+                (.tasks | length) == $desired and
+                all(.tasks[]; .lastStatus == "RUNNING") and
+                all(
+                  .tasks[];
+                  ([.containers[] | select(
+                    .name == $container and
+                    .lastStatus == "RUNNING" and
+                    .imageDigest == $digest
+                  )] | length) == 1
+                )
+              ' "${tasks_json}" >/dev/null
+          }
+
+          assert_stable_service_tasks "${SERVER_SERVICE}" "${SERVER_CONTAINER}"
+          assert_stable_service_tasks "${WORKER_SERVICE}" "${WORKER_CONTAINER}"
+
+      - name: Apply fail-closed territory-first workspace configuration
+        env:
+          FRONTEND_BASE_URL: https://crm.corgiinvest.com
+          BACKEND_BASE_URL: https://crm.corgiinvest.com
+          CRM_E2E_LOGIN: ${{ secrets.CRM_E2E_LOGIN }}
+          CRM_E2E_PASSWORD: ${{ secrets.CRM_E2E_PASSWORD }}
+          CRM_E2E_WORKSPACE_NAME: ${{ secrets.CRM_E2E_WORKSPACE_NAME }}
+          CRM_WORKSPACE_CONFIG_ENABLED: 'true'
+          CRM_WORKSPACE_CONFIG_CONFIRMATION: ${{ inputs.confirmation }}
+          CRM_WORKSPACE_CONFIG_COMPANY_COUNT: ${{ inputs.company_count }}
+          CRM_CANONICALIZATION_ROW_COVERAGE_SHA256: ${{ inputs.row_coverage_sha256 }}
+          CRM_CANONICALIZATION_BUSINESS_CONTENT_SHA256: ${{ inputs.business_content_sha256 }}
+          CRM_METADATA_CLEANUP_JOURNAL_PATH: ${{ runner.temp }}/crm-cleanup-prerequisite/metadata-cleanup-journal.json
+          CRM_WORKSPACE_CONFIG_CHECKPOINT_PATH: ${{ runner.temp }}/crm-workspace-config/checkpoint.json
+        run: >-
+          npx nx test:production twenty-e2e-testing --
+          tests/production/workspaceConfiguration.maintenance.spec.ts
+          --project=production-chromium
+
+      - name: Record required one-time workflow retirement
+        if: success()
+        shell: bash
+        run: |
+          {
+            echo '## Territory-first workspace configuration completed'
+            echo
+            echo 'Remove this one-time workflow and maintenance spec after production verification.'
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Upload the PII-free durable checkpoint
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: crm-workspace-config-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/crm-workspace-config/checkpoint.json
+          if-no-files-found: ignore
+          retention-days: 30
