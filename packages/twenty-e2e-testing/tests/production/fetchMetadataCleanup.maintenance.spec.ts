@@ -92,7 +92,7 @@ test('permanently removes Fetch migration metadata from the production CRM', asy
 
   await page.goto('/wholesalers/map');
   await expect(
-    page.getByRole('heading', { name: 'Wholesaler coverage' }),
+    page.getByRole('heading', { name: 'Territory map' }),
   ).toBeVisible({ timeout: 60_000 });
   await expect(page.getByTestId('wholesaler-coverage-map-ready')).toBeVisible({
     timeout: 60_000,

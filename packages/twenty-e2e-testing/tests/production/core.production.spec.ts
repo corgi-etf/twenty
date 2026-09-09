@@ -43,7 +43,7 @@ test.beforeAll(() => {
   requireProductionEnvironment();
 });
 
-test('loads the authenticated workspace and wholesaler coverage map', async ({
+test('loads the authenticated workspace and territory map', async ({
   page,
 }) => {
   await page.goto('/objects/companies');
@@ -53,7 +53,7 @@ test('loads the authenticated workspace and wholesaler coverage map', async ({
 
   await page.goto('/wholesalers/map');
   await expect(
-    page.getByRole('heading', { name: 'Wholesaler coverage' }),
+    page.getByRole('heading', { name: 'Territory map' }),
   ).toBeVisible();
 
   const map = page.getByTestId('wholesaler-coverage-map');
