@@ -31,8 +31,8 @@ const identityArtifact = {
 };
 
 const source = Buffer.from(
-  '"Acme, Inc.",555,Website,LinkedIn,a@example.com,Alice,$1M,"Called,\nleft voicemail",extra,\r\n' +
-    'Beta,,,,,,,,,\r\n',
+  '"Acme, Inc.",555,Website,LinkedIn,a@example.com,Alice,$1M,"Called,\nleft voicemail",extra,final\r\n' +
+    'Beta,,,LinkedIn,b@example.com,Bob,,first detail,second detail,third detail\r\n',
   'utf8',
 );
 
@@ -52,14 +52,32 @@ test('parses quoted multiline headerless rows and preserves blank activities', (
     {
       rowNumber: 1,
       companyName: 'Acme, Inc.',
-      notes: 'Called,\nleft voicemail',
+      phone: '555',
+      websiteEvidence: 'Website',
+      linkedInEvidence: 'LinkedIn',
+      contactEmail: 'a@example.com',
+      contactName: 'Alice',
+      assetsUnderManagement: '$1M',
+      primaryNotes: 'Called,\nleft voicemail',
+      additionalDetailOne: 'extra',
+      additionalDetailTwo: 'final',
+      notes: 'Called,\nleft voicemail\nextra\nfinal',
       occurredAt: '2026-09-09T17:00:00.000Z',
     },
     {
       rowNumber: 2,
       companyName: 'Beta',
-      notes: null,
-      occurredAt: '2026-09-09T17:00:01.000Z',
+      phone: null,
+      websiteEvidence: null,
+      linkedInEvidence: 'LinkedIn',
+      contactEmail: 'b@example.com',
+      contactName: 'Bob',
+      assetsUnderManagement: null,
+      primaryNotes: 'first detail',
+      additionalDetailOne: 'second detail',
+      additionalDetailTwo: 'third detail',
+      notes: 'first detail\nsecond detail\nthird detail',
+      occurredAt: '2026-09-09T17:00:00.000Z',
     },
   ]);
 });
@@ -127,6 +145,20 @@ const planInput = (existingActivities: OutreachActivityRecord[] = []) => ({
     { id: uuid('6'), workspaceMemberId: identities.Nash },
     { id: uuid('7'), workspaceMemberId: identities.Grace },
   ],
+  people: [
+    {
+      id: uuid('8'),
+      companyId: uuid('4'),
+      name: { firstName: 'Alice', lastName: '' },
+      emails: { primaryEmail: 'A@EXAMPLE.COM', additionalEmails: [] },
+    },
+    {
+      id: uuid('9'),
+      companyId: uuid('4'),
+      name: { firstName: 'Bob', lastName: '' },
+      emails: { primaryEmail: 'b@example.com', additionalEmails: [] },
+    },
+  ],
   existingActivities,
 });
 
@@ -141,11 +173,34 @@ test('plans one call per row with exact company and Nash ownership only', () => 
     wholesalerId: uuid('6'),
     activityType: 'call',
     occurredAt: '2026-09-09T17:00:00.000Z',
-    notes: 'Called,\nleft voicemail',
+    notes: 'Called,\nleft voicemail\nextra\nfinal',
+    contactId: uuid('8'),
   });
-  assert.equal(plan.activities[1]?.record.notes, null);
-  assert.ok(!('contactId' in plan.activities[0]!.record));
+  assert.equal(plan.activities[1]?.record.contactId, null);
   assert.ok(!('outcome' in plan.activities[0]!.record));
+});
+
+test('sets contact null when evidence is missing, ambiguous, or cross-company', () => {
+  const missing = buildActivityImportPlan({ ...planInput(), people: [] });
+  assert.deepEqual(
+    missing.activities.map(({ record }) => record.contactId),
+    [null, null],
+  );
+
+  const ambiguous = buildActivityImportPlan({
+    ...planInput(),
+    people: [
+      ...planInput().people,
+      {
+        id: uuid('a'),
+        companyId: uuid('4'),
+        name: { firstName: 'Alice', lastName: '' },
+        emails: { primaryEmail: 'other@example.com', additionalEmails: [] },
+      },
+    ],
+  });
+  assert.equal(ambiguous.activities[0]?.record.contactId, null);
+  assert.equal(ambiguous.activities[1]?.record.contactId, null);
 });
 
 test('marks exact deterministic records as existing and blocks collisions before apply', () => {
@@ -198,7 +253,7 @@ test('emits a stable PII-free manifest', () => {
   const serialized = JSON.stringify(manifest);
 
   assert.equal(manifest.rowCount, 2);
-  assert.equal(manifest.blankNoteCount, 1);
+  assert.equal(manifest.blankNoteCount, 0);
   assert.equal(manifest.distinctCompanyCount, 2);
   assert.doesNotMatch(serialized, /Acme|Beta|voicemail|555|a@example/);
   for (const hash of [

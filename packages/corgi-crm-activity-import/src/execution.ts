@@ -4,6 +4,7 @@ import {
   type ActivityImportCompany,
   type ActivityImportCsvOptions,
   type ActivityImportManifest,
+  type ActivityImportPerson,
   type ActivityImportWholesaler,
   type OutreachActivityRecord,
   type TerritoryIdentityArtifact,
@@ -82,6 +83,7 @@ export type ActivityImportCheckpoint = {
 export type ActivityImportApi = {
   listCompanies(): Promise<ActivityImportCompany[]>;
   listWholesalers(): Promise<ActivityImportWholesaler[]>;
+  listPeople(): Promise<ActivityImportPerson[]>;
   listOutreachActivities(): Promise<OutreachActivityRecord[]>;
   createOutreachActivity(record: OutreachActivityRecord): Promise<void>;
   readCheckpoint(): Promise<ActivityImportCheckpoint | undefined>;
@@ -113,17 +115,20 @@ export const runActivityImport = async (
     throw new Error('Activity import mode is invalid');
   }
   const rows = parseActivityCsv(input.source, input.csvOptions);
-  const [companies, wholesalers, existingActivities] = await Promise.all([
-    api.listCompanies(),
-    api.listWholesalers(),
-    api.listOutreachActivities(),
-  ]);
+  const [companies, wholesalers, people, existingActivities] =
+    await Promise.all([
+      api.listCompanies(),
+      api.listWholesalers(),
+      api.listPeople(),
+      api.listOutreachActivities(),
+    ]);
   const plan = buildActivityImportPlan({
     rows,
     csvOptions: input.csvOptions,
     identityArtifact: input.identityArtifact,
     companies,
     wholesalers,
+    people,
     existingActivities,
   });
 
@@ -199,18 +204,24 @@ export const runActivityImport = async (
     status: 'verifying',
     completedOperationHashes: [...completedOperationHashes],
   });
-  const [verifiedCompanies, verifiedWholesalers, verifiedActivities] =
-    await Promise.all([
-      api.listCompanies(),
-      api.listWholesalers(),
-      api.listOutreachActivities(),
-    ]);
+  const [
+    verifiedCompanies,
+    verifiedWholesalers,
+    verifiedPeople,
+    verifiedActivities,
+  ] = await Promise.all([
+    api.listCompanies(),
+    api.listWholesalers(),
+    api.listPeople(),
+    api.listOutreachActivities(),
+  ]);
   const verifiedPlan = buildActivityImportPlan({
     rows,
     csvOptions: input.csvOptions,
     identityArtifact: input.identityArtifact,
     companies: verifiedCompanies,
     wholesalers: verifiedWholesalers,
+    people: verifiedPeople,
     existingActivities: verifiedActivities,
   });
   if (

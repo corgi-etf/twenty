@@ -39,9 +39,11 @@ class FakeApi implements ActivityImportApi {
     { id: uuid('5'), name: 'Beta' },
   ];
   wholesalers = [{ id: uuid('6'), workspaceMemberId: identities.Nash }];
+  people = [];
   activities: OutreachActivityRecord[] = [];
   checkpoints: ActivityImportCheckpoint[] = [];
   creates: OutreachActivityRecord[] = [];
+  failOnCreateNumber: number | undefined;
 
   async listCompanies() {
     return this.companies;
@@ -49,10 +51,16 @@ class FakeApi implements ActivityImportApi {
   async listWholesalers() {
     return this.wholesalers;
   }
+  async listPeople() {
+    return this.people;
+  }
   async listOutreachActivities() {
     return this.activities;
   }
   async createOutreachActivity(record: OutreachActivityRecord) {
+    if (this.creates.length + 1 === this.failOnCreateNumber) {
+      throw new Error('injected create failure');
+    }
     this.creates.push(record);
     this.activities.push(record);
   }
@@ -174,4 +182,22 @@ test('fails before mutation when any deterministic record collides', async () =>
 
   await assert.rejects(run(api, 'apply', dryRun.manifest), /ID collision/);
   assert.equal(api.creates.length, 0);
+});
+
+test('a failure after one create leaves a PII-free resumable checkpoint', async () => {
+  const api = new FakeApi();
+  const dryRun = await run(api, 'dry-run');
+  api.checkpoints = [];
+  api.failOnCreateNumber = 2;
+
+  await assert.rejects(run(api, 'apply', dryRun.manifest), /injected create/);
+
+  assert.equal(api.creates.length, 1);
+  const checkpoint = api.checkpoints[api.checkpoints.length - 1];
+  assert.equal(checkpoint?.status, 'applying');
+  assert.equal(checkpoint?.completedOperationHashes.length, 1);
+  assert.doesNotMatch(
+    JSON.stringify(checkpoint),
+    /Acme|Beta|Reached|companyName|notes/,
+  );
 });

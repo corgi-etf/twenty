@@ -9,6 +9,7 @@ import {
 } from './execution.ts';
 import type {
   ActivityImportCompany,
+  ActivityImportPerson,
   ActivityImportWholesaler,
   OutreachActivityRecord,
 } from './importer.ts';
@@ -44,8 +45,9 @@ export const createActivityImportRequestGate = ({
   wait?: (delay: number) => Promise<void>;
 } = {}) => {
   let lastRequestAt: number | undefined;
+  let queue = Promise.resolve();
 
-  return async (
+  const runRequest = async (
     request: () => Promise<ActivityImportResponse>,
   ): Promise<ActivityImportResponse> => {
     for (let attempt = 0; attempt < 5; attempt += 1) {
@@ -69,6 +71,18 @@ export const createActivityImportRequestGate = ({
     }
 
     throw new Error('Activity import API remained rate limited after retries');
+  };
+
+  return (
+    request: () => Promise<ActivityImportResponse>,
+  ): Promise<ActivityImportResponse> => {
+    const result = queue.then(() => runRequest(request));
+    queue = result.then(
+      () => undefined,
+      () => undefined,
+    );
+
+    return result;
   };
 };
 
@@ -192,6 +206,7 @@ export const createTwentyActivityImportApi = (options: {
       listAll<ActivityImportCompany>('companies', 'List companies'),
     listWholesalers: () =>
       listAll<ActivityImportWholesaler>('wholesalers', 'List wholesalers'),
+    listPeople: () => listAll<ActivityImportPerson>('people', 'List people'),
     listOutreachActivities: () =>
       listAll<OutreachActivityRecord>(
         'outreachActivities',

@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+
 export type ActivityImportCsvOptions = {
   sourceSha256: string;
   expectedRows: number;
@@ -9,11 +11,27 @@ export type ActivityImportCsvOptions = {
 export type SourceActivity = {
   rowNumber: number;
   companyName: string;
+  phone: string | null;
+  websiteEvidence: string | null;
+  linkedInEvidence: string | null;
+  contactEmail: string | null;
+  contactName: string | null;
+  assetsUnderManagement: string | null;
+  primaryNotes: string | null;
+  additionalDetailOne: string | null;
+  additionalDetailTwo: string | null;
   notes: string | null;
   occurredAt: string;
 };
 
 export type ActivityImportCompany = { id: string; name: unknown };
+export type ActivityImportPerson = {
+  id: string;
+  companyId?: unknown;
+  company?: { id?: unknown } | null;
+  name?: unknown;
+  emails?: unknown;
+};
 export type ActivityImportWholesaler = {
   id: string;
   workspaceMemberId?: unknown;
@@ -187,17 +205,13 @@ const parseCsvRows = (input: string): string[][] => {
   return rows;
 };
 
-const localNoonForRow = (
-  activityDate: string,
-  timeZone: string,
-  rowIndex: number,
-): string => {
+const localNoon = (activityDate: string, timeZone: string): string => {
   const [year, month, day] = activityDate.split('-').map(Number) as [
     number,
     number,
     number,
   ];
-  const requestedLocal = Date.UTC(year, month - 1, day, 12, 0, rowIndex);
+  const requestedLocal = Date.UTC(year, month - 1, day, 12);
   const formatter = new Intl.DateTimeFormat('en-CA', {
     timeZone,
     year: 'numeric',
@@ -236,8 +250,8 @@ const localNoonForRow = (
     verification.month !== month ||
     verification.day !== day ||
     verification.hour !== 12 ||
-    verification.minute !== Math.floor(rowIndex / 60) % 60 ||
-    verification.second !== rowIndex % 60
+    verification.minute !== 0 ||
+    verification.second !== 0
   ) {
     throw new Error('Activity import date could not be represented safely');
   }
@@ -264,6 +278,8 @@ export const parseActivityCsv = (
     throw new Error('Activity import logical row count mismatch');
   }
 
+  const occurredAt = localNoon(options.activityDate, options.timeZone);
+
   return rows.map((columns, rowIndex) => {
     if (columns.length !== 10) {
       throw new Error(
@@ -274,17 +290,38 @@ export const parseActivityCsv = (
     if (!companyName) {
       throw new Error(`Activity import row ${rowIndex + 1} has no company`);
     }
-    const normalizedNotes = columns[7]!.trim().normalize('NFKC');
+    const optionalColumn = (index: number): string | null => {
+      const normalized = columns[index]!.trim().normalize('NFKC');
+
+      return normalized || null;
+    };
+    const phone = optionalColumn(1);
+    const websiteEvidence = optionalColumn(2);
+    const linkedInEvidence = optionalColumn(3);
+    const contactEmail = optionalColumn(4);
+    const contactName = optionalColumn(5);
+    const assetsUnderManagement = optionalColumn(6);
+    const primaryNotes = optionalColumn(7);
+    const additionalDetailOne = optionalColumn(8);
+    const additionalDetailTwo = optionalColumn(9);
+    const notes = [primaryNotes, additionalDetailOne, additionalDetailTwo]
+      .filter((value): value is string => value !== null)
+      .join('\n');
 
     return {
       rowNumber: rowIndex + 1,
       companyName,
-      notes: normalizedNotes || null,
-      occurredAt: localNoonForRow(
-        options.activityDate,
-        options.timeZone,
-        rowIndex,
-      ),
+      phone,
+      websiteEvidence,
+      linkedInEvidence,
+      contactEmail,
+      contactName,
+      assetsUnderManagement,
+      primaryNotes,
+      additionalDetailOne,
+      additionalDetailTwo,
+      notes: notes || null,
+      occurredAt,
     };
   });
 };
@@ -359,6 +396,78 @@ const relationWorkspaceMemberId = (
   wholesaler: ActivityImportWholesaler,
 ): unknown => wholesaler.workspaceMemberId ?? wholesaler.workspaceMember?.id;
 
+const personCompanyId = (person: ActivityImportPerson): unknown =>
+  person.companyId ?? person.company?.id;
+
+const normalizedName = (value: unknown): string | null => {
+  let name: string | undefined;
+  if (typeof value === 'string') {
+    name = value;
+  } else if (value && typeof value === 'object' && !Array.isArray(value)) {
+    const candidate = value as { firstName?: unknown; lastName?: unknown };
+    name = [candidate.firstName, candidate.lastName]
+      .filter((part): part is string => typeof part === 'string')
+      .join(' ');
+  }
+  const normalized = name?.trim().normalize('NFKC').replace(/\s+/g, ' ');
+
+  return normalized ? normalized.toLocaleLowerCase('en-US') : null;
+};
+
+const normalizedEmail = (value: unknown): string | null => {
+  if (typeof value !== 'string') return null;
+  const normalized = value.trim().normalize('NFKC').toLocaleLowerCase('en-US');
+
+  return normalized.includes('@') ? normalized : null;
+};
+
+const personEmails = (person: ActivityImportPerson): string[] => {
+  if (!person.emails || typeof person.emails !== 'object') return [];
+  const emails = person.emails as {
+    primaryEmail?: unknown;
+    additionalEmails?: unknown;
+  };
+
+  return [
+    normalizedEmail(emails.primaryEmail),
+    ...(Array.isArray(emails.additionalEmails)
+      ? emails.additionalEmails.map(normalizedEmail)
+      : []),
+  ].filter((email): email is string => email !== null);
+};
+
+const resolveContactId = ({
+  row,
+  companyId,
+  people,
+}: {
+  row: SourceActivity;
+  companyId: string;
+  people: readonly ActivityImportPerson[];
+}): string | null => {
+  const sourceName = normalizedName(row.contactName);
+  const sourceEmail = normalizedEmail(row.contactEmail);
+  if (!sourceName && !sourceEmail) return null;
+  const evidenceMatches = people.filter((person) => {
+    if (!UUID_PATTERN.test(person.id)) {
+      throw new Error('Activity import person snapshot is invalid');
+    }
+
+    return (
+      (sourceName !== null && normalizedName(person.name) === sourceName) ||
+      (sourceEmail !== null && personEmails(person).includes(sourceEmail))
+    );
+  });
+  if (
+    evidenceMatches.length !== 1 ||
+    personCompanyId(evidenceMatches[0]!) !== companyId
+  ) {
+    return null;
+  }
+
+  return evidenceMatches[0]!.id;
+};
+
 const collisionProjection = (record: OutreachActivityRecord) => ({
   id: record.id,
   name: record.name,
@@ -377,6 +486,7 @@ export const buildActivityImportPlan = (input: {
   identityArtifact: unknown;
   companies: readonly ActivityImportCompany[];
   wholesalers: readonly ActivityImportWholesaler[];
+  people: readonly ActivityImportPerson[];
   existingActivities: readonly OutreachActivityRecord[];
 }): ActivityImportPlan => {
   assertCsvOptions(input.csvOptions);
@@ -423,14 +533,16 @@ export const buildActivityImportPlan = (input: {
         `Activity import row ${row.rowNumber} must match exactly one company`,
       );
     }
+    const companyId = companyMatches[0]!.id;
     const record: OutreachActivityRecord = {
       id: deterministicActivityId(input.csvOptions.importId, row.rowNumber),
       name: 'Call',
-      companyId: companyMatches[0]!.id,
+      companyId,
       wholesalerId,
       activityType: 'call',
       occurredAt: row.occurredAt,
       notes: row.notes,
+      contactId: resolveContactId({ row, companyId, people: input.people }),
     };
     const existingMatches = existingById.get(record.id) ?? [];
     if (
@@ -475,4 +587,3 @@ export const buildActivityImportPlan = (input: {
 
   return { manifest, activities };
 };
-import { createHash } from 'node:crypto';
