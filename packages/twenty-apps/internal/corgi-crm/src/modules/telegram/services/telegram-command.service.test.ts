@@ -13,7 +13,9 @@ const base = () => {
   });
   const store = {
     get: vi.fn(async (key: string) => values.get(key) ?? null),
-    set: vi.fn(async (key: string, value: unknown) => values.set(key, value)),
+    set: vi.fn(async (key: string, value: unknown) => {
+      values.set(key, value);
+    }),
     delete: vi.fn(async (key: string) => values.delete(key)),
   };
   const repository: OutreachRepository = {
@@ -23,6 +25,7 @@ const base = () => {
     listActivities: vi.fn().mockResolvedValue([]),
   };
   return {
+    values,
     store,
     repository,
     timeZone: 'America/Chicago',
@@ -44,7 +47,7 @@ const update = (text: string) => ({
 describe('processTelegramCommand', () => {
   it('requires a linked CRM identity before reads or writes', async () => {
     const dependencies = base();
-    dependencies.store.get.mockResolvedValue(null);
+    dependencies.values.delete('telegram:user:101');
 
     await expect(
       processTelegramCommand(update('/log call | Acme | connected'), dependencies),

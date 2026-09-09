@@ -8,7 +8,7 @@ export type ParsedTelegramUpdate = {
 };
 
 export type KeyValueStore = {
-  get<T>(key: string): Promise<T | null>;
+  get(key: string): Promise<unknown | null>;
   set<T>(key: string, value: T): Promise<void>;
   delete(key: string): Promise<boolean>;
 };

@@ -43,8 +43,11 @@ export class CoreOutreachRepository implements OutreachRepository {
         edges: { node: { id: true, name: true } },
       },
     });
-    return (result.companies?.edges ?? [])
-      .map((edge: { node?: { id?: string | null; name?: string | null } | null }) => edge?.node)
+    const edges = (result.companies?.edges ?? []) as Array<{
+      node?: { id?: string | null; name?: string | null } | null;
+    }>;
+    return edges
+      .map((edge) => edge?.node)
       .filter(
         (node): node is { id: string; name: string } =>
           Boolean(node?.id && node.name?.trim()),
@@ -63,8 +66,17 @@ export class CoreOutreachRepository implements OutreachRepository {
       },
     });
     const normalizedQuery = query.trim().toLowerCase();
-    return (result.people?.edges ?? [])
-      .map((edge: { node?: { id?: string | null; name?: { firstName?: string | null; lastName?: string | null } | null } | null }) => edge?.node)
+    const edges = (result.people?.edges ?? []) as Array<{
+      node?: {
+        id?: string | null;
+        name?: {
+          firstName?: string | null;
+          lastName?: string | null;
+        } | null;
+      } | null;
+    }>;
+    return edges
+      .map((edge) => edge?.node)
       .map((node) => ({ id: node?.id ?? '', name: fullName(node?.name) }))
       .filter(
         ({ id, name }) => id && name.toLowerCase().includes(normalizedQuery),

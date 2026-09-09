@@ -33,7 +33,8 @@ const object = (value: unknown): Record<string, unknown> | undefined =>
 
 export const parseTelegramUpdate = (value: unknown): ParsedTelegramUpdate => {
   const envelope = object(value) as TelegramEnvelope | undefined;
-  if (!Number.isSafeInteger(envelope?.update_id)) {
+  const updateId = envelope?.update_id;
+  if (!Number.isSafeInteger(updateId)) {
     throw new Error('Invalid Telegram update id');
   }
 
@@ -59,7 +60,7 @@ export const parseTelegramUpdate = (value: unknown): ParsedTelegramUpdate => {
   }
 
   return {
-    updateId: envelope.update_id as number,
+    updateId: updateId as number,
     userId: String(from.id),
     chatId: String(chat.id),
     firstName:

@@ -50,7 +50,7 @@ export const deliverDailySummaries = async ({
 
   for (const delivery of deliveries) {
     const key = `telegram:daily-summary:${localDate}:${delivery.wholesalerId}`;
-    const state = await store.get<DeliveryState>(key);
+    const state = (await store.get(key)) as DeliveryState | null;
     if (state?.status === 'complete') {
       skipped += 1;
       continue;

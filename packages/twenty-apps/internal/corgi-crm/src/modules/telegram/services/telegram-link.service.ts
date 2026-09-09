@@ -36,12 +36,20 @@ export const parseTelegramLinkCodes = (raw: string | undefined) => {
 export const getTelegramLink = (
   store: KeyValueStore,
   userId: string,
-): Promise<TelegramLink | null> => store.get<TelegramLink>(`telegram:user:${userId}`);
+): Promise<TelegramLink | null> =>
+  store.get(`telegram:user:${userId}`).then((value) =>
+    isRecord(value) &&
+    ['wholesalerId', 'wholesalerName', 'userId', 'chatId'].every(
+      (key) => typeof value[key] === 'string' && Boolean(value[key].trim()),
+    )
+      ? (value as TelegramLink)
+      : null,
+  );
 
 export const getTelegramDeliveryRoster = async (
   store: KeyValueStore,
 ): Promise<TelegramLink[]> => {
-  const roster = await store.get<unknown>('telegram:delivery-roster');
+  const roster = await store.get('telegram:delivery-roster');
   if (!Array.isArray(roster)) return [];
   return roster.filter((entry): entry is TelegramLink => {
     if (!isRecord(entry)) return false;
@@ -75,7 +83,9 @@ export const linkTelegramAccount = async ({
   }
   const wholesaler = wholesalers[0]!;
   const claimKey = `telegram:workspace-member:${workspaceMemberId}`;
-  const existingClaim = await store.get<{ userId: string }>(claimKey);
+  const existingClaim = (await store.get(claimKey)) as {
+    userId?: string;
+  } | null;
   if (existingClaim && existingClaim.userId !== userId) {
     throw new Error('This link code has already been claimed');
   }
