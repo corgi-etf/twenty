@@ -31,6 +31,7 @@ describe('Telegram application contract', () => {
       path: '/telegram/webhook',
       httpMethod: 'POST',
       isAuthRequired: false,
+      forwardedRequestHeaders: ['x-telegram-bot-api-secret-token'],
     });
     expect(webhook.config.timeoutSeconds).toBe(15);
   });

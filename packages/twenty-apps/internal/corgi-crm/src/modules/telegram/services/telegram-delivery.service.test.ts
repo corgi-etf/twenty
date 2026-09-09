@@ -17,9 +17,11 @@ describe('enqueueTelegramUpdateOnce', () => {
     await expect(
       enqueueTelegramUpdateOnce({ updateId: 42, payload: { update_id: 42 }, store, enqueue }),
     ).resolves.toEqual({ status: 'enqueued' });
-    expect(store.set).toHaveBeenCalledWith('telegram:update:42', {
-      status: 'queued',
-    });
+    expect(enqueue).toHaveBeenCalledWith(
+      { update_id: 42 },
+      'telegram-update-42',
+    );
+    expect(store.set).not.toHaveBeenCalled();
 
     store.get.mockResolvedValue({ status: 'queued' });
     await expect(
@@ -28,22 +30,49 @@ describe('enqueueTelegramUpdateOnce', () => {
     expect(enqueue).toHaveBeenCalledTimes(1);
   });
 
-  it('releases a claim when queueing fails so Telegram can retry', async () => {
+  it('reuses the deterministic job id after a crash following queue acceptance', async () => {
     const store = {
       get: vi.fn().mockResolvedValue(null),
       set: vi.fn().mockResolvedValue(undefined),
       delete: vi.fn().mockResolvedValue(true),
     };
 
-    await expect(
-      enqueueTelegramUpdateOnce({
-        updateId: 42,
-        payload: { update_id: 42 },
-        store,
-        enqueue: vi.fn().mockRejectedValue(new Error('queue unavailable')),
-      }),
-    ).rejects.toThrow('queue unavailable');
-    expect(store.delete).toHaveBeenCalledWith('telegram:update:42');
+    const acceptedJobIds = new Set<string>();
+    let first = true;
+    const enqueue = vi.fn(async (_payload: unknown, jobId: string) => {
+      acceptedJobIds.add(jobId);
+      if (first) {
+        first = false;
+        throw new Error('request crashed after acceptance');
+      }
+      return { enqueued: true };
+    });
+    const input = { updateId: 42, payload: { update_id: 42 }, store, enqueue };
+    await expect(enqueueTelegramUpdateOnce(input)).rejects.toThrow(/crashed/);
+    await expect(enqueueTelegramUpdateOnce(input)).resolves.toEqual({
+      status: 'enqueued',
+    });
+    expect(acceptedJobIds).toEqual(new Set(['telegram-update-42']));
+    expect(store.set).not.toHaveBeenCalled();
+    expect(store.delete).not.toHaveBeenCalled();
+  });
+
+  it('concurrent webhook attempts address the same authoritative queue job', async () => {
+    const store = {
+      get: vi.fn().mockResolvedValue(null),
+      set: vi.fn(),
+      delete: vi.fn(),
+    };
+    const jobIds: string[] = [];
+    const enqueue = vi.fn(async (_payload: unknown, jobId: string) => {
+      jobIds.push(jobId);
+      return { enqueued: true };
+    });
+    await Promise.all([
+      enqueueTelegramUpdateOnce({ updateId: 42, payload: { update_id: 42 }, store, enqueue }),
+      enqueueTelegramUpdateOnce({ updateId: 42, payload: { update_id: 42 }, store, enqueue }),
+    ]);
+    expect(jobIds).toEqual(['telegram-update-42', 'telegram-update-42']);
   });
 });
 

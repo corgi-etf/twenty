@@ -32,6 +32,7 @@ const base = () => {
     linkCodesJson: '{}',
     findWholesalers: vi.fn(),
     send: vi.fn().mockResolvedValue(undefined),
+    onCrmCommitted: vi.fn().mockResolvedValue(undefined),
     now: () => new Date('2026-09-09T16:30:00.000Z'),
   };
 };
@@ -72,6 +73,68 @@ describe('processTelegramCommand', () => {
       '101',
       'Logged Acme. Use /today to review your day.',
     );
+  });
+
+  it('marks the CRM commit before attempting a confirmation', async () => {
+    const dependencies = base();
+    const order: string[] = [];
+    dependencies.onCrmCommitted = vi.fn(async () => {
+      order.push('committed');
+    });
+    dependencies.send.mockImplementation(async () => {
+      order.push('confirm');
+      throw new Error('Telegram timed out');
+    });
+
+    await expect(
+      processTelegramCommand(
+        update('/log call | Acme | connected | renewal chat'),
+        dependencies,
+      ),
+    ).rejects.toThrow('Telegram timed out');
+    expect(order).toEqual(['committed', 'confirm']);
+  });
+
+  it('surfaces CRM failure for retry instead of claiming a parse error', async () => {
+    const dependencies = base();
+    dependencies.repository.createActivity = vi
+      .fn()
+      .mockRejectedValue(new Error('CRM unavailable'));
+
+    await expect(
+      processTelegramCommand(
+        update('/log call | Acme | connected'),
+        dependencies,
+      ),
+    ).rejects.toThrow('CRM unavailable');
+    expect(dependencies.send).not.toHaveBeenCalled();
+  });
+
+  it('retries confirmation after a committed deterministic write without a second activity', async () => {
+    const dependencies = base();
+    const records = new Map<string, unknown>();
+    dependencies.repository.createActivity = vi.fn(async (data) => {
+      records.set(data.id, data);
+      return { id: data.id };
+    });
+    dependencies.send
+      .mockRejectedValueOnce(new Error('confirmation timeout'))
+      .mockResolvedValueOnce(undefined);
+
+    await expect(
+      processTelegramCommand(
+        update('/log call | Acme | connected'),
+        dependencies,
+      ),
+    ).rejects.toThrow('confirmation timeout');
+    await expect(
+      processTelegramCommand(
+        update('/log call | Acme | connected'),
+        dependencies,
+      ),
+    ).resolves.toMatchObject({ status: 'logged' });
+    expect(records.size).toBe(1);
+    expect([...records.keys()]).toEqual(['telegram-update-42']);
   });
 
   it('returns an empty current-day summary using the configured timezone', async () => {
