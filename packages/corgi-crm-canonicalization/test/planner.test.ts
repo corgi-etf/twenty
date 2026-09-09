@@ -304,7 +304,7 @@ test('planner output is deterministic under unordered input', () => {
   );
 });
 
-test('ambiguous name-only company matches fail closed without writes', () => {
+test('ambiguous company matches create an isolated deterministic company', () => {
   const input = snapshot();
   input.companies.push({ id: 'company-2', name: 'Acme Advisors' });
   input.importReviewItems = [
@@ -326,9 +326,141 @@ test('ambiguous name-only company matches fail closed without writes', () => {
 
   assert.equal(
     plan.unresolved.some(({ code }) => code === 'AMBIGUOUS_COMPANY'),
+    false,
+  );
+  assertPlanCanApply(plan);
+  const created = plan.mutations.find(
+    ({ objectPlural, id }) =>
+      objectPlural === 'companies' &&
+      !input.companies.some((company) => company.id === id),
+  );
+  assert.equal(created?.data.name, 'Acme Advisors');
+  assert.equal(
+    buildCanonicalizationPlan(input).mutations.find(
+      ({ objectPlural, id }) =>
+        objectPlural === 'companies' && id === created?.id,
+    )?.id,
+    created?.id,
+  );
+});
+
+test('ambiguous person identities create an isolated person and retain contacts', () => {
+  const input = snapshot();
+  input.people.push({
+    id: 'person-2',
+    companyId: 'company-1',
+    name: { firstName: 'Different', lastName: 'Person' },
+    emails: { primaryEmail: '', additionalEmails: [] },
+    phones: {
+      primaryPhoneNumber: '3125550198',
+      primaryPhoneCountryCode: 'US',
+      primaryPhoneCallingCode: '+1',
+      additionalPhones: [],
+    },
+    linkedinLink: {
+      primaryLinkLabel: '',
+      primaryLinkUrl: '',
+      secondaryLinks: [],
+    },
+  });
+  input.sourceRecords = [
+    {
+      id: 'source-ambiguous-person',
+      companyId: 'company-1',
+      sourceFile: 'people.csv',
+      sourceRow: 15,
+      rawData: JSON.stringify({
+        RIA: 'Acme Advisors',
+        'First Name': 'Casey',
+        'Last Name': 'Jones',
+        'Email 1': 'alex@acme.example',
+        'Mobile Phone': '(312) 555-0198',
+      }),
+    },
+  ];
+  input.importReviewItems = [];
+
+  const plan = buildCanonicalizationPlan(input);
+
+  assert.equal(
+    plan.unresolved.some(({ code }) => code === 'AMBIGUOUS_PERSON_IDENTITY'),
+    false,
+  );
+  assertPlanCanApply(plan);
+  const created = plan.mutations.find(
+    ({ objectPlural, id }) =>
+      objectPlural === 'people' &&
+      !input.people.some((person) => person.id === id),
+  );
+  assert.deepEqual(created?.data.name, {
+    firstName: 'Casey',
+    lastName: 'Jones',
+  });
+  assert.match(String(created?.data.otherContactDetails), /alex@acme\.example/);
+  assert.match(String(created?.data.otherContactDetails), /312.*555.*0198/);
+});
+
+test('identical source content anchored to different companies remains distinct', () => {
+  const input = snapshot();
+  input.companies.push({ id: 'company-2', name: 'Second Acme' });
+  const rawData = JSON.stringify({
+    'Firm Name': 'Shared Trading Name',
+    'Firm AUM': '$1,000',
+  });
+  input.sourceRecords = [
+    {
+      id: 'source-company-1',
+      companyId: 'company-1',
+      sourceFile: 'companies.csv',
+      sourceRow: 16,
+      rawData,
+    },
+    {
+      id: 'source-company-2',
+      companyId: 'company-2',
+      sourceFile: 'companies.csv',
+      sourceRow: 17,
+      rawData,
+    },
+  ];
+  input.importReviewItems = [];
+
+  const plan = buildCanonicalizationPlan(input);
+
+  assert.equal(
+    plan.unresolved.some(({ code }) => code === 'CONTENT_IDENTITY_COLLISION'),
+    false,
+  );
+  assertPlanCanApply(plan);
+  assert.equal(
+    mutationFor(plan, 'companies', 'company-1')?.data.assetsUnderManagement,
+    '$1,000',
+  );
+  assert.equal(
+    mutationFor(plan, 'companies', 'company-2')?.data.assetsUnderManagement,
+    '$1,000',
+  );
+
+  const contradictory = snapshot();
+  contradictory.companies.push({ id: 'company-2', name: 'Second Acme' });
+  contradictory.sourceRecords = [
+    {
+      id: 'source-contradictory-company',
+      companyId: 'company-1',
+      candidateCompanyId: 'company-2',
+      rawData,
+    },
+  ];
+  contradictory.importReviewItems = [];
+  const contradictoryPlan = buildCanonicalizationPlan(contradictory);
+
+  assert.equal(
+    contradictoryPlan.unresolved.some(
+      ({ code }) => code === 'CONTENT_IDENTITY_COLLISION',
+    ),
     true,
   );
-  assert.throws(() => assertPlanCanApply(plan), /unresolved/i);
+  assert.throws(() => assertPlanCanApply(contradictoryPlan), /unresolved/i);
 });
 
 test('a fully applied plan produces zero mutations on its second run', () => {
@@ -742,9 +874,24 @@ test('person address promotion preserves values that are still under pre-DDL nam
   );
 });
 
-test('a nonempty but unrelated target value does not prove raw fact preservation', () => {
+test('conflicting company facts use explicit neutral fallback fields', () => {
   const input = snapshot();
   input.companies[0]!.employees = 1000;
+  input.companies[0]!.domainName = {
+    primaryLinkLabel: 'Existing',
+    primaryLinkUrl: 'https://existing.example',
+    secondaryLinks: [],
+  };
+  input.companies[0]!.address = {
+    addressStreet1: '1 Existing Road',
+    addressStreet2: '',
+    addressCity: 'Chicago',
+    addressState: 'IL',
+    addressPostcode: '60601',
+    addressCountry: 'US',
+    addressLat: null,
+    addressLng: null,
+  };
   input.sourceRecords = [
     {
       id: 'source-employee-conflict',
@@ -754,15 +901,147 @@ test('a nonempty but unrelated target value does not prove raw fact preservation
       rawData: JSON.stringify({
         'Firm Name': 'Acme Advisors',
         'Firm Total Employees': '100',
+        'Firm Website': 'other.example',
+        'Firm Address': '2 Source Street',
+        'Firm City': 'Evanston',
+        'Firm State': 'IL',
+        'Firm Zip': '60201',
       }),
     },
   ];
   input.importReviewItems = [];
 
+  const plan = buildCanonicalizationPlan(input);
+  const company = mutationFor(plan, 'companies', 'company-1');
+
+  assert.equal(plan.unresolved.length, 0);
+  assertPlanCanApply(plan);
+  assert.match(String(company?.data.description), /Employees: 100/);
+  assert.match(String(company?.data.websiteNotes), /acme\.example/);
+  assert.match(String(company?.data.websiteNotes), /other\.example/);
+  assert.match(String(company?.data.alternateAddresses), /2 Source Street/);
+});
+
+test('invalid contact structures are retained in other contact details', () => {
+  const input = snapshot();
+  input.sourceRecords = [
+    {
+      id: 'source-residual-contacts',
+      companyId: 'company-1',
+      sourceFile: 'people.csv',
+      sourceRow: 18,
+      rawData: JSON.stringify({
+        RIA: 'Acme Advisors',
+        'First Name': 'Alex',
+        'Last Name': 'Smith',
+        'Email 3': 'ask assistant for email',
+        Phone: 'call the main office',
+        LinkedIn: 'not supplied',
+      }),
+    },
+  ];
+  input.importReviewItems = [];
+
+  const plan = buildCanonicalizationPlan(input);
+  const person = mutationFor(plan, 'people', 'person-1');
+
   assert.equal(
-    buildCanonicalizationPlan(input).unresolved.some(
-      ({ code }) => code === 'DISPOSITION_VALUE_NOT_PRESERVED',
+    plan.unresolved.some(
+      ({ code }) =>
+        code === 'DISPOSITION_TARGET_EMPTY' ||
+        code === 'DISPOSITION_VALUE_NOT_PRESERVED' ||
+        code === 'UNHANDLED_RAW_FIELD',
     ),
-    true,
+    false,
+    plan.unresolved.map(({ code }) => code).join(', '),
+  );
+  assertPlanCanApply(plan);
+  assert.match(
+    String(person?.data.otherContactDetails),
+    /ask assistant for email/,
+  );
+  assert.match(
+    String(person?.data.otherContactDetails),
+    /call the main office/,
+  );
+  assert.match(String(person?.data.otherContactDetails), /not supplied/);
+});
+
+test('holding dates normalize and invalid placeholders are explicitly disposed', () => {
+  const input = snapshot();
+  const rawData = JSON.parse(
+    String(input.holdingObservations[0]!.rawData),
+  ) as Record<string, unknown>;
+  rawData['Source Date'] = '2026-06-30T00:00:00.000Z';
+  input.holdingObservations[0]!.rawData = JSON.stringify(rawData);
+  input.holdingObservations[0]!.sourceDate = '2026-06-30';
+
+  const normalizedPlan = buildCanonicalizationPlan(input);
+
+  assert.equal(
+    normalizedPlan.unresolved.some(
+      ({ code }) =>
+        code === 'HOLDING_DATE_INVALID' || code === 'HOLDING_FIELD_CONFLICT',
+    ),
+    false,
+  );
+  assertPlanCanApply(normalizedPlan);
+
+  rawData['Source Date'] = 'not reported';
+  input.holdingObservations[0]!.rawData = JSON.stringify(rawData);
+  delete input.holdingObservations[0]!.sourceDate;
+  const placeholderPlan = buildCanonicalizationPlan(input);
+  const sourceDateDisposition = placeholderPlan.dispositions.find(
+    ({ key }) => key === 'source date',
+  );
+
+  assert.equal(
+    placeholderPlan.unresolved.some(
+      ({ code }) => code === 'HOLDING_DATE_INVALID',
+    ),
+    false,
+  );
+  assert.equal(sourceDateDisposition?.kind, 'ignored');
+  assert.match(String(sourceDateDisposition?.target), /invalid date/i);
+});
+
+test('known optional source fields have explicit business dispositions', () => {
+  const input = snapshot();
+  input.sourceRecords = [
+    {
+      id: 'source-optional-fields',
+      companyId: 'company-1',
+      sourceFile: 'people.csv',
+      sourceRow: 19,
+      rawData: JSON.stringify({
+        RIA: 'Acme Advisors',
+        'First Name': 'Alex',
+        'Last Name': 'Smith',
+        Notes: 'Call after the conference',
+        Disclosures: 'Public disclosure detail',
+        'Person Tag - Expertise': 'Retirement planning',
+        'Lead Score': 'A',
+        'Connection Name': 'Introduced by partner',
+      }),
+    },
+  ];
+  input.importReviewItems = [];
+
+  const plan = buildCanonicalizationPlan(input);
+  const person = mutationFor(plan, 'people', 'person-1');
+  const company = mutationFor(plan, 'companies', 'company-1');
+
+  assert.equal(
+    plan.unresolved.some(({ code }) => code === 'UNHANDLED_RAW_FIELD'),
+    false,
+  );
+  assertPlanCanApply(plan);
+  assert.match(String(person?.data.notes), /Call after the conference/);
+  assert.match(String(person?.data.notes), /Public disclosure detail/);
+  assert.match(String(person?.data.notes), /Retirement planning/);
+  assert.match(String(company?.data.description), /Lead score: A/);
+  assert.match(
+    String(person?.data.otherContactDetails),
+    /Introduced by partner/,
   );
 });

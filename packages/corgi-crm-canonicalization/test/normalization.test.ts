@@ -10,6 +10,7 @@ import {
   normalizeLinkedIn,
   normalizeKey,
   normalizeDomain,
+  normalizeDate,
   normalizePhone,
   stableStringify,
   textValue,
@@ -151,4 +152,12 @@ test('serialization rejects undefined and structured text stays lossless', () =>
 test('raw key normalization handles live camelCase control keys', () => {
   assert.equal(normalizeKey('followUpId'), 'follow up id');
   assert.equal(normalizeKey('follow_up_id'), 'follow up id');
+});
+
+test('dates normalize losslessly without inventing invalid calendar values', () => {
+  assert.equal(normalizeDate('2026-06-30'), '2026-06-30');
+  assert.equal(normalizeDate('2026-06-30T00:00:00.000Z'), '2026-06-30');
+  assert.equal(normalizeDate('06/30/2026'), '2026-06-30');
+  assert.equal(normalizeDate('2026-02-30'), null);
+  assert.equal(normalizeDate('not reported'), null);
 });
