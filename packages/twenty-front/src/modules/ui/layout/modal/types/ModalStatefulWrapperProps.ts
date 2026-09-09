@@ -11,6 +11,7 @@ export type ModalStatefulWrapperProps = Pick<
   | 'narrowWidth'
   | 'autoHeight'
   | 'width'
+  | 'ariaLabel'
 > &
   React.PropsWithChildren & {
     modalInstanceId: string;

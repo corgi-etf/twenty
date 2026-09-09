@@ -32,6 +32,7 @@ export const ModalStatefulWrapper = ({
   narrowWidth,
   autoHeight,
   width,
+  ariaLabel,
 }: ModalStatefulWrapperProps) => {
   const scopedModalInstanceId =
     useWorkspaceSurfaceScopedComponentInstanceId(modalInstanceId);
@@ -87,6 +88,7 @@ export const ModalStatefulWrapper = ({
           narrowWidth={narrowWidth}
           autoHeight={autoHeight}
           width={width}
+          ariaLabel={ariaLabel}
           modalZIndex={RootStackingContextZIndices.RootModal}
           backdropZIndex={RootStackingContextZIndices.RootModalBackDrop}
           backdropClickOutsideId={MODAL_BACKDROP_CLICK_OUTSIDE_ID}

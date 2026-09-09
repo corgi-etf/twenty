@@ -32,6 +32,7 @@ export const QuickLogCompanyActivityModal = ({
   return (
     <ModalStatefulWrapper
       modalInstanceId={modalInstanceId}
+      ariaLabel={t`Log follow-up`}
       onClose={handleClose}
       isClosable
       size="medium"
