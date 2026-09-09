@@ -105,6 +105,65 @@ jobs:
           git cat-file -e "${DEPLOYED_SHA}^{commit}"
           git merge-base --is-ancestor "${DEPLOYED_SHA}" "${GITHUB_SHA}"
 
+      - name: Verify the completed metadata-cleanup workflow lineage
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CLEANUP_RUN_ID: ${{ inputs.cleanup_run_id }}
+          CLEANUP_RUN_ATTEMPT: ${{ inputs.cleanup_run_attempt }}
+          DEPLOYED_SHA: ${{ inputs.deployed_sha }}
+          EXPECTED_CLEANUP_WORKFLOW_NAME: Manual CRM migration metadata cleanup
+          EXPECTED_CLEANUP_WORKFLOW_PATH: .github/workflows/crm-metadata-cleanup.yml
+        run: |
+          set -euo pipefail
+          cleanup_run_json="${RUNNER_TEMP}/crm-metadata-cleanup-run.json"
+          cleanup_workflow_json="${RUNNER_TEMP}/crm-metadata-cleanup-workflow.json"
+          gh api \
+            --method GET \
+            --header 'Accept: application/vnd.github+json' \
+            --header 'X-GitHub-Api-Version: 2022-11-28' \
+            "repos/${GITHUB_REPOSITORY}/actions/workflows/crm-metadata-cleanup.yml" \
+            > "${cleanup_workflow_json}"
+          gh api \
+            --method GET \
+            --header 'Accept: application/vnd.github+json' \
+            --header 'X-GitHub-Api-Version: 2022-11-28' \
+            "repos/${GITHUB_REPOSITORY}/actions/runs/${CLEANUP_RUN_ID}/attempts/${CLEANUP_RUN_ATTEMPT}" \
+            > "${cleanup_run_json}"
+
+          jq -e \
+            --arg workflow_name "${EXPECTED_CLEANUP_WORKFLOW_NAME}" \
+            --arg workflow_path "${EXPECTED_CLEANUP_WORKFLOW_PATH}" '
+              .name == $workflow_name and
+              .path == $workflow_path and
+              .state == "active" and
+              (.id | type == "number")
+            ' "${cleanup_workflow_json}" >/dev/null
+
+          cleanup_workflow_id="$(jq -r '.id' "${cleanup_workflow_json}")"
+          jq -e \
+            --arg repository "${GITHUB_REPOSITORY}" \
+            --arg run_id "${CLEANUP_RUN_ID}" \
+            --argjson run_attempt "${CLEANUP_RUN_ATTEMPT}" \
+            --arg workflow_id "${cleanup_workflow_id}" \
+            --arg workflow_name "${EXPECTED_CLEANUP_WORKFLOW_NAME}" '
+              (.id | tostring) == $run_id and
+              .run_attempt == $run_attempt and
+              (.workflow_id | tostring) == $workflow_id and
+              .name == $workflow_name and
+              .event == "workflow_dispatch" and
+              .head_branch == "main" and
+              .head_repository.full_name == $repository and
+              .status == "completed" and
+              .conclusion == "success" and
+              (.head_sha | type == "string" and test("^[0-9a-f]{40}$"))
+            ' "${cleanup_run_json}" >/dev/null
+
+          cleanup_head_sha="$(jq -r '.head_sha' "${cleanup_run_json}")"
+          git cat-file -e "${cleanup_head_sha}^{commit}"
+          git merge-base --is-ancestor "${DEPLOYED_SHA}" "${cleanup_head_sha}"
+          git merge-base --is-ancestor "${cleanup_head_sha}" "${GITHUB_SHA}"
+
       - name: Configure read-only AWS deployment inspection
         uses: aws-actions/configure-aws-credentials@61815dcd50bd041e203e49132bacad1fd04d2708 # v5.1.1
         with:
