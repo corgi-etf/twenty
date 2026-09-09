@@ -3,8 +3,6 @@ const CLEANUP_OBJECT_NAMES = [
   'importReviewItem',
   'importBatch',
   'sourceRecord',
-  'teamMembership',
-  'salesTeam',
 ] as const;
 
 const SURVIVING_MIGRATED_OBJECT_NAMES = [
@@ -13,6 +11,8 @@ const SURVIVING_MIGRATED_OBJECT_NAMES = [
   'task',
   'taskTarget',
   'wholesaler',
+  'salesTeam',
+  'teamMembership',
   'leadAssignment',
   'outreachActivity',
   'holdingObservation',
@@ -53,6 +53,8 @@ const ADDITIONAL_FIELDS_TO_DELETE = {
   task: ['legacyCompanyId', 'legacyContactId', 'legacyWholesalerId'],
   taskTarget: [],
   wholesaler: [],
+  salesTeam: [],
+  teamMembership: [],
   leadAssignment: ['replacementOfLegacyId'],
   outreachActivity: ['fetchMetadata'],
   holdingObservation: [
@@ -76,6 +78,8 @@ const PRESERVED_FIELDS = {
   task: ['title'],
   taskTarget: ['task', 'targetCompany'],
   wholesaler: ['name'],
+  salesTeam: ['name', 'description'],
+  teamMembership: ['name', 'membershipRole', 'salesTeam', 'wholesaler'],
   leadAssignment: ['name', 'company', 'contact', 'wholesaler'],
   outreachActivity: ['name', 'company', 'contact', 'wholesaler', 'assignment'],
   holdingObservation: [
@@ -136,7 +140,6 @@ const RETAINED_FIELD_RENAMES = [
   ['holdingObservation', 'sourceDate', 'Source Date', 'asOfDate', 'As Of Date'],
 ] as const;
 
-const EMPTY_ONLY_OBJECT_NAMES = ['salesTeam', 'teamMembership'] as const;
 const FORBIDDEN_METADATA_PATTERN =
   /fetch|legacy|migration|import\s*batch|source\s*row|hmac|raw\s*data/i;
 
@@ -771,25 +774,6 @@ export const assertCompanyValuesCanonicalized = (
   }
 };
 
-const assertCleanupObjectRecordsAreSafe = async (
-  api: MetadataCleanupApi,
-  plan: MetadataCleanupPlan,
-): Promise<void> => {
-  const cleanupObjectByName = new Map(
-    plan.objectsToDelete.map((object) => [object.nameSingular, object]),
-  );
-
-  for (const objectName of EMPTY_ONLY_OBJECT_NAMES) {
-    const object = cleanupObjectByName.get(objectName);
-    if (!object) continue;
-    if ((await api.listRecords(object.namePlural)).length > 0) {
-      throw new Error(
-        `Refusing to delete non-empty migration-only object ${objectName}`,
-      );
-    }
-  }
-};
-
 const assertCleanupComplete = (objects: MetadataObject[]): void => {
   if (
     objects.some(({ nameSingular }) =>
@@ -885,7 +869,6 @@ export const runFetchMetadataCleanup = async (
         'Completed cleanup journal conflicts with current metadata',
       );
     }
-    await assertCleanupObjectRecordsAreSafe(api, plan);
     if (operations.length > 0) {
       preflightEvidence = await api.assertCanonicalizationComplete();
     }

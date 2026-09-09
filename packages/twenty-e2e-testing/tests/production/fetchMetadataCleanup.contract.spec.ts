@@ -78,10 +78,11 @@ const metadataFixture = (): MetadataObject[] => {
         isSystem: ['company', 'person', 'task', 'taskTarget'].includes(
           objectName,
         ),
-        applicationId:
-          objectName === 'wholesaler'
-            ? MIGRATION_APPLICATION_ID
-            : STANDARD_APPLICATION_ID,
+        applicationId: ['wholesaler', 'salesTeam', 'teamMembership'].includes(
+          objectName,
+        )
+          ? MIGRATION_APPLICATION_ID
+          : STANDARD_APPLICATION_ID,
         fields: [
           ...standardFieldNames.map((fieldName) =>
             metadataField(objectName, fieldName, STANDARD_APPLICATION_ID),
@@ -344,8 +345,6 @@ test('builds the exact object and field purge allowlist', () => {
     'importReviewItem',
     'importBatch',
     'sourceRecord',
-    'teamMembership',
-    'salesTeam',
   ]);
   expect(groupedDeletedFieldNames(plan)).toEqual({
     company: [
@@ -401,6 +400,20 @@ test('builds the exact object and field purge allowlist', () => {
       'sourceRowHmac',
       'sourceUpdatedAt',
     ],
+    salesTeam: [
+      'legacyFetchId',
+      'migrationRunId',
+      'sourceCreatedAt',
+      'sourceRowHmac',
+      'sourceUpdatedAt',
+    ],
+    teamMembership: [
+      'legacyFetchId',
+      'migrationRunId',
+      'sourceCreatedAt',
+      'sourceRowHmac',
+      'sourceUpdatedAt',
+    ],
     leadAssignment: [
       'legacyFetchId',
       'migrationRunId',
@@ -429,7 +442,7 @@ test('builds the exact object and field purge allowlist', () => {
       'sourceUpdatedAt',
     ],
   });
-  expect(plan.fieldsToDelete).toHaveLength(64);
+  expect(plan.fieldsToDelete).toHaveLength(74);
   expect(plan.fieldsToRename).toHaveLength(9);
   expect(
     plan.fieldsToRename.map(
@@ -478,10 +491,10 @@ test('applies once and a second run is an idempotent no-op', async () => {
     api.updatedFields.length;
   const secondPlan = await runFetchMetadataCleanup(api);
 
-  expect(firstPlan.objectsToDelete).toHaveLength(6);
-  expect(firstPlan.fieldsToDelete).toHaveLength(64);
+  expect(firstPlan.objectsToDelete).toHaveLength(4);
+  expect(firstPlan.fieldsToDelete).toHaveLength(74);
   expect(firstPlan.fieldsToRename).toHaveLength(9);
-  expect(firstMutationCount).toBe(79);
+  expect(firstMutationCount).toBe(87);
   expect(api.reconciliationChecks).toBe(1);
   expect(api.events.slice(0, 4)).toEqual([
     'reconciliation',
@@ -497,7 +510,7 @@ test('applies once and a second run is an idempotent no-op', async () => {
     status: 'complete',
     completedOperationKeys: expect.any(Array),
   });
-  expect(completedMutationJournal?.completedOperationKeys).toHaveLength(79);
+  expect(completedMutationJournal?.completedOperationKeys).toHaveLength(87);
   expect(secondPlan).toEqual({
     objectsToDelete: [],
     fieldsToDelete: [],
@@ -567,17 +580,34 @@ test('resumes an interrupted journal without rerunning a destroyed staging prefl
       `delete-object:${firstObject.id}`,
     ]),
   });
-  expect(api.journals.at(-1)?.completedOperationKeys).toHaveLength(79);
+  expect(api.journals.at(-1)?.completedOperationKeys).toHaveLength(87);
 });
 
-test('blocks before mutation when empty-only migration objects have records', async () => {
+test('preserves populated sales teams and memberships while removing provenance fields', async () => {
   const api = new FakeMetadataCleanupApi();
-  api.records.salesTeams = [{ id: 'team-1' }];
+  api.records.salesTeams = [{ id: 'team-1', name: 'Midwest' }];
+  api.records.teamMemberships = [{ id: 'membership-1' }];
 
-  await expect(runFetchMetadataCleanup(api)).rejects.toThrow(
-    /non-empty migration-only object salesTeam/i,
+  await runFetchMetadataCleanup(api);
+
+  const salesTeam = api.objects.find(
+    ({ nameSingular }) => nameSingular === 'salesTeam',
   );
-  expect(api.deletedObjectIds).toEqual([]);
+  const teamMembership = api.objects.find(
+    ({ nameSingular }) => nameSingular === 'teamMembership',
+  );
+  expect(salesTeam).toBeDefined();
+  expect(salesTeam?.fields.map(({ name }) => name)).toEqual([
+    'name',
+    'description',
+  ]);
+  expect(teamMembership).toBeDefined();
+  expect(teamMembership?.fields.map(({ name }) => name)).toEqual([
+    'name',
+    'membershipRole',
+    'salesTeam',
+    'wholesaler',
+  ]);
 });
 
 test('blocks before mutation when aggregate reconciliation is incomplete', async () => {
