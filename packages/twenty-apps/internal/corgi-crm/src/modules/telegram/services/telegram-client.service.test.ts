@@ -1,9 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import {
-  TelegramClient,
-  TelegramDeliveryError,
-} from 'src/modules/telegram/services/telegram-client.service';
+import { TelegramClient } from 'src/modules/telegram/services/telegram-client.service';
 
 describe('TelegramClient', () => {
   afterEach(() => vi.restoreAllMocks());
@@ -52,12 +49,12 @@ describe('TelegramClient', () => {
       .mockResolvedValueOnce(new Response('{}', { status: 503 }));
     const client = new TelegramClient({ token: 'bot-secret', timeoutMs: 1_000 });
 
-    await expect(client.sendMessage('101', 'Daily report')).rejects.toMatchObject<
-      Partial<TelegramDeliveryError>
-    >({ mayHaveSucceeded: true });
-    await expect(client.sendMessage('101', 'Daily report')).rejects.toMatchObject<
-      Partial<TelegramDeliveryError>
-    >({ mayHaveSucceeded: false });
+    await expect(client.sendMessage('101', 'Daily report')).rejects.toMatchObject({
+      mayHaveSucceeded: true,
+    });
+    await expect(client.sendMessage('101', 'Daily report')).rejects.toMatchObject({
+      mayHaveSucceeded: false,
+    });
     expect(fetchSpy).toHaveBeenCalledTimes(2);
   });
 });

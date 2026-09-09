@@ -141,8 +141,11 @@ export class CoreOutreachRepository implements OutreachRepository {
         },
       },
     });
-    const nodes = (result.outreachActivities?.edges ?? [])
-      .map((edge: { node?: Record<string, unknown> | null }) => edge?.node)
+    const edges = (result.outreachActivities?.edges ?? []) as Array<{
+      node?: Record<string, unknown> | null;
+    }>;
+    const nodes = edges
+      .map((edge) => edge.node)
       .filter((node): node is Record<string, unknown> => Boolean(node));
     if (nodes.length > 1) throw new Error(`Duplicate outreach activity ID ${id}`);
     return nodes[0] ?? null;
