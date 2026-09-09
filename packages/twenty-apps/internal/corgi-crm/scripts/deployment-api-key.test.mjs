@@ -11,9 +11,7 @@ const workspaceId = 'eabf5d9d-fc99-4acb-b160-710ecb1db996';
 const userWorkspaceId = '767771e9-834d-4a89-88ca-1df32d101a40';
 const role = {
   id: 'role-1',
-  canUpdateAllSettings: true,
   canReadAllObjectRecords: true,
-  canUpdateAllObjectRecords: true,
   canBeAssignedToApiKeys: true,
   permissionFlags: [
     { flag: 'API_KEYS_AND_WEBHOOKS' },
@@ -21,7 +19,6 @@ const role = {
     { flag: 'MARKETPLACE_APPS' },
     { flag: 'ROLES' },
   ],
-  workspaceMembers: [{ userWorkspaceId }],
 };
 const tenantData = {
   currentUser: {
@@ -101,6 +98,35 @@ describe('deployment API key helpers', () => {
       /not the approved non-impersonated tenant membership/,
     );
     assert.equal(calls, 1);
+  });
+
+  it('fails closed when no assignable role has the token permissions', async () => {
+    await assert.rejects(
+      createDeploymentApiKey({
+        graphql: async () => ({ ...tenantData, getRoles: [] }),
+        expectedWorkspaceId: workspaceId,
+        expectedUserWorkspaceId: userWorkspaceId,
+        runId: '123',
+        runAttempt: '1',
+      }),
+      /found 0/,
+    );
+  });
+
+  it('fails closed when the deployment role selection is ambiguous', async () => {
+    await assert.rejects(
+      createDeploymentApiKey({
+        graphql: async () => ({
+          ...tenantData,
+          getRoles: [role, { ...role, id: 'role-2' }],
+        }),
+        expectedWorkspaceId: workspaceId,
+        expectedUserWorkspaceId: userWorkspaceId,
+        runId: '123',
+        runAttempt: '1',
+      }),
+      /found 2/,
+    );
   });
 
   it('generates a token bound to the key expiry', async () => {

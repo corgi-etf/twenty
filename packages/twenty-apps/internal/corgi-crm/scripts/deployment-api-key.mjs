@@ -20,12 +20,9 @@ const assertExactTenantAndSelectRole = async ({
       }
       getRoles {
         id
-        canUpdateAllSettings
         canReadAllObjectRecords
-        canUpdateAllObjectRecords
         canBeAssignedToApiKeys
         permissionFlags { flag }
-        workspaceMembers { userWorkspaceId }
       }
     }`,
   });
@@ -46,26 +43,22 @@ const assertExactTenantAndSelectRole = async ({
     throw new Error('Deployment session lacks required settings permissions');
   }
 
-  const assignedRoles = (data.getRoles ?? []).filter((role) =>
-    role.workspaceMembers?.some(
-      ({ userWorkspaceId }) => userWorkspaceId === expectedUserWorkspaceId,
-    ),
-  );
-  const role = assignedRoles[0];
-  const roleFlags = new Set(
-    (role?.permissionFlags ?? []).map(({ flag }) => flag),
-  );
-  if (
-    assignedRoles.length !== 1 ||
-    role?.canUpdateAllSettings !== true ||
-    role.canReadAllObjectRecords !== true ||
-    role.canUpdateAllObjectRecords !== true ||
-    role.canBeAssignedToApiKeys !== true ||
-    !REQUIRED_PERMISSION_FLAGS.every((flag) => roleFlags.has(flag))
-  ) {
-    throw new Error('Deployment membership does not have one assignable administrator role');
+  const candidateRoles = (data.getRoles ?? []).filter((role) => {
+    const roleFlags = new Set(
+      (role.permissionFlags ?? []).map(({ flag }) => flag),
+    );
+    return (
+      role.canBeAssignedToApiKeys === true &&
+      role.canReadAllObjectRecords === true &&
+      REQUIRED_PERMISSION_FLAGS.every((flag) => roleFlags.has(flag))
+    );
+  });
+  if (candidateRoles.length !== 1) {
+    throw new Error(
+      `Expected one API-key-assignable deployment role, found ${candidateRoles.length}`,
+    );
   }
-  return role.id;
+  return candidateRoles[0].id;
 };
 
 const deploymentKeyName = ({ runId, runAttempt }) => {
