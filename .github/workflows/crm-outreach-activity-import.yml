@@ -327,6 +327,7 @@ jobs:
           --project=production-chromium --retries=0
 
       - name: Delete private source and identity material
+        id: private_cleanup
         if: always()
         shell: bash
         run: |
@@ -338,7 +339,7 @@ jobs:
           fi
 
       - name: Upload the PII-free manifest and checkpoint
-        if: success()
+        if: ${{ always() && steps.private_cleanup.outcome == 'success' }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: crm-outreach-activity-import-${{ github.run_id }}-${{ github.run_attempt }}

@@ -12,6 +12,8 @@ const maintenanceSpecPath = new URL(
 );
 const importerPath = new URL('../src/importer.ts', import.meta.url);
 const restApiPath = new URL('../src/twenty-rest-api.ts', import.meta.url);
+const rootPackagePath = new URL('../../../package.json', import.meta.url);
+const yarnLockPath = new URL('../../../yarn.lock', import.meta.url);
 
 test('workflow is exact-SHA, serialized, two-phase, and secret-backed', async () => {
   const workflow = await readFile(workflowPath, 'utf8');
@@ -84,13 +86,41 @@ test('runtime is create-only, collision-checked, and uploads no source PII', asy
   assert.doesNotMatch(restApi, /upsert=true/);
   assert.match(maintenanceSpec, /runActivityImport/);
   assert.match(workflow, /Delete private source and identity material/);
-  const upload = workflow.slice(
-    workflow.indexOf('Upload the PII-free manifest and checkpoint'),
+  const deletePosition = workflow.indexOf(
+    'Delete private source and identity material',
+  );
+  const uploadPosition = workflow.indexOf(
+    'Upload the PII-free manifest and checkpoint',
+  );
+  assert.ok(deletePosition > 0);
+  assert.ok(uploadPosition > deletePosition);
+  const upload = workflow.slice(uploadPosition);
+  assert.match(
+    upload,
+    /if:.*always\(\).*private_cleanup\.outcome == 'success'/,
   );
   assert.doesNotMatch(
     upload,
-    /private|activities\.csv|workspace-member-identities/,
+    /\/private\/|activities\.csv|workspace-member-identities/,
   );
   assert.match(upload, /activity-import-checkpoint\.json/);
   assert.match(upload, /activity-import-result\.json/);
+});
+
+test('package is a locked root workspace for immutable installs', async () => {
+  const [rootPackage, yarnLock] = await Promise.all([
+    readFile(rootPackagePath, 'utf8'),
+    readFile(yarnLockPath, 'utf8'),
+  ]);
+
+  const root = JSON.parse(rootPackage) as {
+    workspaces?: { packages?: string[] };
+  };
+  assert.ok(
+    root.workspaces?.packages?.includes('packages/corgi-crm-activity-import'),
+  );
+  assert.match(
+    yarnLock,
+    /"corgi-crm-activity-import@workspace:packages\/corgi-crm-activity-import"/,
+  );
 });
