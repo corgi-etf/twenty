@@ -4,6 +4,7 @@ import { describe, it } from 'node:test';
 
 import {
   resolveCorgiRoleObjectIdentifiers,
+  verifyApplicationRoleContract,
   verifyReconciliation,
   verifyTelegramApplicationContract,
 } from './verify-production-install.mjs';
@@ -294,6 +295,84 @@ describe('application release contract', () => {
           },
         ]),
       /exactly one|uuid/i,
+    );
+  });
+});
+
+describe('installed application role verification', () => {
+  const objects = [
+    'workspaceMember',
+    'company',
+    'person',
+    'wholesaler',
+    'outreachActivity',
+  ].map((nameSingular, index) => ({
+    id: `00000000-0000-4000-8000-00000000000${index}`,
+    nameSingular,
+  }));
+  const writable = new Set(['wholesaler', 'outreachActivity']);
+  const role = {
+    canReadAllObjectRecords: false,
+    canUpdateAllObjectRecords: false,
+    canSoftDeleteAllObjectRecords: false,
+    canDestroyAllObjectRecords: false,
+    canUpdateAllSettings: false,
+    objectPermissions: objects.map(({ id, nameSingular }) => ({
+      objectMetadataId: id,
+      canReadObjectRecords: true,
+      canUpdateObjectRecords: writable.has(nameSingular),
+      canSoftDeleteObjectRecords: false,
+      canDestroyObjectRecords: false,
+    })),
+  };
+
+  it('accepts only the exact five-object least-privilege role', () => {
+    assert.doesNotThrow(() => verifyApplicationRoleContract(role, objects));
+  });
+
+  it('rejects a global, extra, or excessive object permission', () => {
+    assert.throws(
+      () =>
+        verifyApplicationRoleContract(
+          { ...role, canReadAllObjectRecords: true },
+          objects,
+        ),
+      /global/i,
+    );
+    assert.throws(
+      () =>
+        verifyApplicationRoleContract(
+          {
+            ...role,
+            objectPermissions: [
+              ...role.objectPermissions,
+              {
+                objectMetadataId: '99999999-9999-4999-8999-999999999999',
+                canReadObjectRecords: true,
+                canUpdateObjectRecords: false,
+                canSoftDeleteObjectRecords: false,
+                canDestroyObjectRecords: false,
+              },
+            ],
+          },
+          objects,
+        ),
+      /exactly five/i,
+    );
+    assert.throws(
+      () =>
+        verifyApplicationRoleContract(
+          {
+            ...role,
+            objectPermissions: role.objectPermissions.map((permission) =>
+              permission.objectMetadataId === objects[1].id
+                ? { ...permission, canUpdateObjectRecords: true }
+                : permission,
+            ),
+          },
+          objects,
+        ),
+      /company/i,
     );
   });
 });
