@@ -1,0 +1,31 @@
+{
+  "name": "corgi-crm",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "license": "UNLICENSED",
+  "engines": {
+    "node": "^24.5.0",
+    "npm": "please-use-yarn",
+    "yarn": ">=4.0.2",
+    "twenty": ">=2.39.0"
+  },
+  "packageManager": "yarn@4.13.0",
+  "scripts": {
+    "twenty": "twenty",
+    "lint": "oxlint -c .oxlintrc.json .",
+    "test:unit": "vitest run",
+    "test:verification": "node --test scripts/*.test.mjs",
+    "typecheck": "tsc --noEmit",
+    "verify:production": "node scripts/verify-production-install.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "^24.7.2",
+    "oxlint": "^0.16.0",
+    "twenty-client-sdk": "2.39.0",
+    "twenty-sdk": "2.39.0",
+    "typescript": "^5.9.3",
+    "vite-tsconfig-paths": "^4.2.1",
+    "vitest": "^4.0.0"
+  }
+}

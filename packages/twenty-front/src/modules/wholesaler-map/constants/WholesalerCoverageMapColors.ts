@@ -6,6 +6,8 @@ export const WHOLESALER_COVERAGE_MAP_COLORS = {
   clusterLow: '#4263eb',
   clusterMedium: '#2f9e44',
   invertedText: '#ffffff',
+  selectedLead: '#111827',
+  territoryBoundary: '#475569',
   owners: [
     '#4263eb',
     '#e03131',

@@ -1,0 +1,290 @@
+name: Publish and install Corgi CRM app in production
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: Type PUBLISH_AND_INSTALL_CORGI_CRM_APP
+        required: true
+        type: string
+      deployed_sha:
+        description: Exact 40-character SHA deployed to both CRM services
+        required: true
+        type: string
+      metadata_bootstrap_run_id:
+        description: Successful metadata-bootstrap workflow run ID
+        required: true
+        type: string
+      metadata_bootstrap_run_attempt:
+        description: Successful metadata-bootstrap workflow attempt number
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+  id-token: write
+
+concurrency:
+  group: crm-production-deploy
+  cancel-in-progress: false
+
+env:
+  APP_PATH: packages/twenty-apps/internal/corgi-crm
+  AWS_ACCOUNT_ID: '182018075072'
+  AWS_REGION: us-east-2
+  AWS_ROLE_ARN: arn:aws:iam::182018075072:role/crm-production-github-deploy
+  ECS_CLUSTER: crm-production
+  ECR_REPOSITORY: crm-production-twenty
+  SERVER_SERVICE: crm-production-server
+  SERVER_CONTAINER: server
+  WORKER_SERVICE: crm-production-worker
+  WORKER_CONTAINER: worker
+  CORGI_CRM_API_URL: https://crm.corgiinvest.com
+  CORGI_CRM_EXPECTED_WORKSPACE_ID: eabf5d9d-fc99-4acb-b160-710ecb1db996
+
+jobs:
+  publish-and-install:
+    name: Guard, publish, install, and verify Corgi CRM app
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    environment: production
+    steps:
+      - name: Check out the exact workflow revision
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          fetch-depth: 0
+
+      - name: Validate explicit production approval and revision
+        shell: bash
+        env:
+          CONFIRMATION: ${{ inputs.confirmation }}
+          DEPLOYED_SHA: ${{ inputs.deployed_sha }}
+          BOOTSTRAP_RUN_ID: ${{ inputs.metadata_bootstrap_run_id }}
+          BOOTSTRAP_RUN_ATTEMPT: ${{ inputs.metadata_bootstrap_run_attempt }}
+        run: |
+          set -euo pipefail
+          [[ "${CONFIRMATION}" == "PUBLISH_AND_INSTALL_CORGI_CRM_APP" ]]
+          [[ "${DEPLOYED_SHA}" =~ ^[0-9a-f]{40}$ ]]
+          [[ "${DEPLOYED_SHA}" == "${GITHUB_SHA}" ]]
+          [[ "${BOOTSTRAP_RUN_ID}" =~ ^[1-9][0-9]*$ ]]
+          [[ "${BOOTSTRAP_RUN_ATTEMPT}" =~ ^[1-9][0-9]*$ ]]
+          git cat-file -e "${DEPLOYED_SHA}^{commit}"
+
+      - name: Verify exact-SHA metadata bootstrap lineage
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BOOTSTRAP_RUN_ID: ${{ inputs.metadata_bootstrap_run_id }}
+          BOOTSTRAP_RUN_ATTEMPT: ${{ inputs.metadata_bootstrap_run_attempt }}
+        run: |
+          set -euo pipefail
+          workflow_json="${RUNNER_TEMP}/metadata-bootstrap-workflow.json"
+          run_json="${RUNNER_TEMP}/metadata-bootstrap-run.json"
+          gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/crm-workspace-metadata-bootstrap.yml" > "${workflow_json}"
+          gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${BOOTSTRAP_RUN_ID}/attempts/${BOOTSTRAP_RUN_ATTEMPT}" > "${run_json}"
+          workflow_id="$(jq -r '.id' "${workflow_json}")"
+          jq -e '
+            .name == "Manual CRM workspace metadata bootstrap" and
+            .path == ".github/workflows/crm-workspace-metadata-bootstrap.yml" and
+            .state == "active" and (.id | type == "number")
+          ' "${workflow_json}" >/dev/null
+          jq -e \
+            --arg repository "${GITHUB_REPOSITORY}" \
+            --arg run_id "${BOOTSTRAP_RUN_ID}" \
+            --argjson run_attempt "${BOOTSTRAP_RUN_ATTEMPT}" \
+            --arg workflow_id "${workflow_id}" \
+            --arg deployed_sha "${{ inputs.deployed_sha }}" '
+              (.id | tostring) == $run_id and .run_attempt == $run_attempt and
+              (.workflow_id | tostring) == $workflow_id and
+              .name == "Manual CRM workspace metadata bootstrap" and
+              .event == "workflow_dispatch" and .head_branch == "main" and
+              .head_repository.full_name == $repository and
+              .head_sha == $deployed_sha and
+              .status == "completed" and .conclusion == "success"
+            ' "${run_json}" >/dev/null
+
+      - name: Download PII-free metadata bootstrap evidence
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: crm-workspace-metadata-bootstrap-${{ inputs.metadata_bootstrap_run_id }}-${{ inputs.metadata_bootstrap_run_attempt }}
+          path: ${{ runner.temp }}/crm-workspace-metadata-bootstrap
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.metadata_bootstrap_run_id }}
+
+      - name: Read the app version from the approved revision
+        id: app
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(jq -er '.version | select(type == "string" and length > 0)' "${APP_PATH}/package.json")"
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+
+      - name: Install repository dependencies
+        uses: ./.github/actions/crm-yarn-install
+
+      - name: Install the Chromium authentication browser
+        run: npx playwright install --with-deps chromium
+
+      - name: Configure immediate AWS deployment inspection
+        uses: aws-actions/configure-aws-credentials@61815dcd50bd041e203e49132bacad1fd04d2708 # v5.1.1
+        with:
+          role-to-assume: ${{ env.AWS_ROLE_ARN }}
+          role-duration-seconds: 1800
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Prove every live task uses the approved deployed SHA
+        shell: bash
+        env:
+          DEPLOYED_SHA: ${{ inputs.deployed_sha }}
+        run: |
+          set -euo pipefail
+          caller_account="$(aws sts get-caller-identity --query Account --output text)"
+          [[ "${caller_account}" == "${AWS_ACCOUNT_ID}" ]]
+          expected_digest="$(aws ecr describe-images \
+            --repository-name "${ECR_REPOSITORY}" \
+            --image-ids "imageTag=git-${DEPLOYED_SHA}" \
+            --query 'imageDetails[0].imageDigest' \
+            --output text)"
+          [[ "${expected_digest}" == sha256:* ]]
+
+          assert_stable_service_tasks() {
+            local service="$1"
+            local container="$2"
+            local service_json="${RUNNER_TEMP}/${service}-service.json"
+            local tasks_json="${RUNNER_TEMP}/${service}-tasks.json"
+            local task_arns
+            local desired
+
+            aws ecs describe-services \
+              --cluster "${ECS_CLUSTER}" \
+              --services "${service}" > "${service_json}"
+            jq -e '
+              (.failures | length) == 0 and
+              (.services | length) == 1 and
+              .services[0].status == "ACTIVE" and
+              .services[0].desiredCount > 0 and
+              .services[0].runningCount == .services[0].desiredCount and
+              .services[0].pendingCount == 0 and
+              ([.services[0].deployments[] | select(.status == "PRIMARY")] | length) == 1 and
+              ([.services[0].deployments[] | select(.status == "ACTIVE")] | length) == 0
+            ' "${service_json}" >/dev/null
+            desired="$(jq -r '.services[0].desiredCount' "${service_json}")"
+            task_arns="$(aws ecs list-tasks \
+              --cluster "${ECS_CLUSTER}" \
+              --service-name "${service}" \
+              --desired-status RUNNING \
+              --query 'taskArns' \
+              --output text)"
+            [[ -n "${task_arns}" && "${task_arns}" != "None" ]]
+            # shellcheck disable=SC2086
+            aws ecs describe-tasks \
+              --cluster "${ECS_CLUSTER}" \
+              --tasks ${task_arns} > "${tasks_json}"
+            jq -e \
+              --arg container "${container}" \
+              --arg digest "${expected_digest}" \
+              --argjson desired "${desired}" '
+                (.failures | length) == 0 and
+                (.tasks | length) == $desired and
+                all(.tasks[]; .lastStatus == "RUNNING") and
+                all(
+                  .tasks[];
+                  ([.containers[] | select(
+                    .name == $container and
+                    .lastStatus == "RUNNING" and
+                    .imageDigest == $digest
+                  )] | length) == 1
+                )
+              ' "${tasks_json}" >/dev/null
+          }
+
+          assert_stable_service_tasks "${SERVER_SERVICE}" "${SERVER_CONTAINER}"
+          assert_stable_service_tasks "${WORKER_SERVICE}" "${WORKER_CONTAINER}"
+
+      - name: Verify metadata bootstrap before app preflight
+        env:
+          FRONTEND_BASE_URL: ${{ env.CORGI_CRM_API_URL }}
+          BACKEND_BASE_URL: ${{ env.CORGI_CRM_API_URL }}
+          CRM_E2E_LOGIN: ${{ secrets.CRM_E2E_LOGIN }}
+          CRM_E2E_PASSWORD: ${{ secrets.CRM_E2E_PASSWORD }}
+          CRM_E2E_WORKSPACE_NAME: ${{ secrets.CRM_E2E_WORKSPACE_NAME }}
+          CRM_WORKSPACE_METADATA_PREREQUISITE_ENABLED: 'true'
+          CRM_DEPLOYED_SHA: ${{ inputs.deployed_sha }}
+          CRM_WORKSPACE_METADATA_BOOTSTRAP_ARTIFACT_PATH: ${{ runner.temp }}/crm-workspace-metadata-bootstrap/bootstrap.json
+        run: >-
+          npx nx test:production twenty-e2e-testing --
+          tests/production/workspaceMetadataBootstrapPrerequisite.production.spec.ts
+          --project=production-chromium
+
+      - name: Acquire a short-lived deployment API key
+        env:
+          FRONTEND_BASE_URL: ${{ env.CORGI_CRM_API_URL }}
+          BACKEND_BASE_URL: ${{ env.CORGI_CRM_API_URL }}
+          CRM_E2E_LOGIN: ${{ secrets.CRM_E2E_LOGIN }}
+          CRM_E2E_PASSWORD: ${{ secrets.CRM_E2E_PASSWORD }}
+          CRM_E2E_WORKSPACE_NAME: ${{ secrets.CRM_E2E_WORKSPACE_NAME }}
+          CORGI_CRM_DEPLOYMENT_KEY_OPERATION: acquire
+          CORGI_CRM_DEPLOYMENT_KEY_PATH: ${{ runner.temp }}/corgi-crm-deployment-key.json
+        run: >-
+          npx nx test:production twenty-e2e-testing --
+          tests/production/corgiCrmAppDeploymentKey.production.spec.ts
+          --project=production-chromium
+
+      - name: Mask the deployment token for subsequent steps
+        id: credential
+        shell: bash
+        run: |
+          set -euo pipefail
+          token="$(jq -er '.token | select(type == "string" and length > 0)' "${RUNNER_TEMP}/corgi-crm-deployment-key.json")"
+          echo "::add-mask::${token}"
+          echo "token=${token}" >> "${GITHUB_OUTPUT}"
+
+      - name: Verify the authenticated production workspace
+        env:
+          CORGI_CRM_API_KEY: ${{ steps.credential.outputs.token }}
+        run: node "${APP_PATH}/scripts/verify-production-install.mjs" target
+
+      - name: Publish the private Corgi CRM app
+        uses: ./.github/actions/deploy-twenty-app
+        with:
+          api-url: ${{ env.CORGI_CRM_API_URL }}
+          api-key: ${{ steps.credential.outputs.token }}
+          app-path: ${{ env.APP_PATH }}
+
+      - name: Install or upgrade the Corgi CRM app
+        uses: ./.github/actions/install-twenty-app
+        with:
+          api-url: ${{ env.CORGI_CRM_API_URL }}
+          api-key: ${{ steps.credential.outputs.token }}
+          app-path: ${{ env.APP_PATH }}
+
+      - name: Verify installed application, trigger, and reconciliation
+        env:
+          CORGI_CRM_API_KEY: ${{ steps.credential.outputs.token }}
+          CORGI_CRM_EXPECTED_VERSION: ${{ steps.app.outputs.version }}
+        run: node "${APP_PATH}/scripts/verify-production-install.mjs" installed
+
+      - name: Revoke the short-lived deployment API key
+        if: always()
+        env:
+          FRONTEND_BASE_URL: ${{ env.CORGI_CRM_API_URL }}
+          BACKEND_BASE_URL: ${{ env.CORGI_CRM_API_URL }}
+          CRM_E2E_LOGIN: ${{ secrets.CRM_E2E_LOGIN }}
+          CRM_E2E_PASSWORD: ${{ secrets.CRM_E2E_PASSWORD }}
+          CRM_E2E_WORKSPACE_NAME: ${{ secrets.CRM_E2E_WORKSPACE_NAME }}
+          CORGI_CRM_DEPLOYMENT_KEY_OPERATION: revoke
+          CORGI_CRM_DEPLOYMENT_KEY_PATH: ${{ runner.temp }}/corgi-crm-deployment-key.json
+        run: >-
+          npx nx test:production twenty-e2e-testing --
+          tests/production/corgiCrmAppDeploymentKey.production.spec.ts
+          --project=production-chromium
+
+      - name: Remove local authentication artifacts
+        if: always()
+        shell: bash
+        run: |
+          rm -f "${RUNNER_TEMP}/corgi-crm-deployment-key.json"
+          rm -f /home/runner/.twenty/config.json
+          rm -f packages/twenty-e2e-testing/.auth/production-user.json

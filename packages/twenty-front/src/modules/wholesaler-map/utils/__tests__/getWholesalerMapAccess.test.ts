@@ -48,8 +48,18 @@ describe('getWholesalerMapAccess', () => {
       getWholesalerMapAccess({
         canReadCompanyRecords: true,
         canReadWholesalerRecords: true,
-        readableCompanyFieldNames: ['id', 'name', 'address', 'historicalOwner'],
-        readableWholesalerFieldNames: ['id', 'name'],
+        readableCompanyFieldNames: [
+          'id',
+          'name',
+          'address',
+          'description',
+          'firmPhone',
+          'historicalOwner',
+          'leadStatus',
+          'linkedinLink',
+          'websiteNotes',
+        ],
+        readableWholesalerFieldNames: ['id', 'name', 'territory'],
       }),
     ).toEqual({
       canViewMap: true,
@@ -58,10 +68,16 @@ describe('getWholesalerMapAccess', () => {
         id: true,
         name: true,
         address: true,
+        description: true,
+        firmPhone: true,
         historicalOwner: {
           id: true,
           name: true,
+          territory: true,
         },
+        leadStatus: true,
+        linkedinLink: true,
+        websiteNotes: true,
       },
     });
   });

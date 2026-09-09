@@ -107,6 +107,7 @@ describe('WholesalerMapPage', () => {
           address: {
             addressCity: 'Chicago',
             addressState: 'IL',
+            addressPostcode: '60601',
             addressCountry: 'US',
             addressLat: 41.8781,
             addressLng: -87.6298,

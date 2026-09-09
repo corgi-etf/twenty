@@ -1,0 +1,17 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "extends": ["../../.oxlintrc.base.json"],
+  "plugins": ["typescript", "import", "unicorn"],
+  "categories": { "correctness": "off" },
+  "ignorePatterns": ["node_modules", "dist"],
+  "rules": {
+    "no-debugger": "error",
+    "no-duplicate-imports": "error",
+    "no-undef": "off",
+    "no-unused-vars": "off",
+    "import/no-duplicates": "error",
+    "typescript/no-redeclare": "error",
+    "typescript/consistent-type-imports": "error",
+    "typescript/no-unused-vars": ["warn", { "argsIgnorePattern": "^_" }]
+  }
+}

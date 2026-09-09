@@ -10,18 +10,21 @@ import { WHOLESALER_COVERAGE_MAP_IDS } from '@/wholesaler-map/constants/Wholesal
 import { WHOLESALER_MAP_DATA_CONTRACT } from '@/wholesaler-map/constants/WholesalerMapDataContract';
 import { type WholesalerMapFeatureCollection } from '@/wholesaler-map/types/WholesalerMapCompany';
 import { addWholesalerCoverageMapLayers } from '@/wholesaler-map/utils/addWholesalerCoverageMapLayers';
+import { getWholesalerMapDisplayFeatures } from '@/wholesaler-map/utils/getWholesalerMapDisplayFeatures';
 import { registerWholesalerCoverageMapInteractions } from '@/wholesaler-map/utils/registerWholesalerCoverageMapInteractions';
 
 type UseWholesalerCoverageMapArgs = {
   containerRef: RefObject<HTMLDivElement | null>;
   featureCollection: WholesalerMapFeatureCollection;
   onCompanySelect: (companyId: string) => void;
+  selectedCompanyId: string | null;
 };
 
 export const useWholesalerCoverageMap = ({
   containerRef,
   featureCollection,
   onCompanySelect,
+  selectedCompanyId,
 }: UseWholesalerCoverageMapArgs) => {
   // MapLibre owns mutable resources outside React's render lifecycle.
   // oxlint-disable-next-line twenty/no-state-useref
@@ -31,11 +34,14 @@ export const useWholesalerCoverageMap = ({
   // oxlint-disable-next-line twenty/no-state-useref
   const featureCollectionRef = useRef(featureCollection);
   // oxlint-disable-next-line twenty/no-state-useref
+  const selectedCompanyIdRef = useRef(selectedCompanyId);
+  // oxlint-disable-next-line twenty/no-state-useref
   const onCompanySelectRef = useRef(onCompanySelect);
   const [hasMapError, setHasMapError] = useState(false);
   const [isMapReady, setIsMapReady] = useState(false);
 
   featureCollectionRef.current = featureCollection;
+  selectedCompanyIdRef.current = selectedCompanyId;
   onCompanySelectRef.current = onCompanySelect;
 
   useEffect(() => {
@@ -81,7 +87,10 @@ export const useWholesalerCoverageMap = ({
     const handleLoad = () => {
       try {
         addWholesalerCoverageMapLayers({
-          featureCollection: featureCollectionRef.current,
+          featureCollection: getWholesalerMapDisplayFeatures(
+            featureCollectionRef.current,
+            selectedCompanyIdRef.current,
+          ),
           map,
         });
         isMapReadyRef.current = true;
@@ -118,8 +127,24 @@ export const useWholesalerCoverageMap = ({
       WHOLESALER_COVERAGE_MAP_IDS.source,
     ) as GeoJSONSource | undefined;
 
-    source?.setData(featureCollection);
-  }, [featureCollection]);
+    const displayFeatures = getWholesalerMapDisplayFeatures(
+      featureCollection,
+      selectedCompanyId,
+    );
+
+    source?.setData(displayFeatures);
+
+    const selectedFeature = displayFeatures.features.find(
+      ({ properties }) => properties.isSelected,
+    );
+    if (selectedFeature !== undefined) {
+      mapRef.current?.easeTo({
+        center: selectedFeature.geometry.coordinates,
+        zoom: 11,
+        duration: 450,
+      });
+    }
+  }, [featureCollection, selectedCompanyId]);
 
   return { hasMapError, isMapReady };
 };

@@ -22,6 +22,7 @@ jobs:
       CRM_RUNTIME_PROJECTS: twenty-server,twenty-front
       CRM_MIGRATION_PROJECT: corgi-fetch-migration
       CRM_CANONICALIZATION_PROJECT: corgi-crm-canonicalization
+      CRM_WORKSPACE_CONFIG_PROJECT: corgi-crm-workspace-config
       NX_CLOUD_ACCESS_TOKEN: ''
     steps:
       - name: Check out the exact head with full history
@@ -124,6 +125,14 @@ jobs:
           npx nx run-many
           --nxBail
           --projects="${CRM_CANONICALIZATION_PROJECT}"
+          --targets=lint,typecheck,test
+          --parallel=1
+
+      - name: Validate territory-first CRM workspace configuration
+        run: >-
+          npx nx run-many
+          --nxBail
+          --projects="${CRM_WORKSPACE_CONFIG_PROJECT}"
           --targets=lint,typecheck,test
           --parallel=1
 

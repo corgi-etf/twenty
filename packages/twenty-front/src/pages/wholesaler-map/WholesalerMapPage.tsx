@@ -1,6 +1,5 @@
 import { styled } from '@linaria/react';
 import { useLingui } from '@lingui/react/macro';
-import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AppPath, CoreObjectNameSingular } from 'twenty-shared/types';
 import { getAppPath, isDefined } from 'twenty-shared/utils';
@@ -13,8 +12,7 @@ import { PageTitle } from '@/ui/utilities/page-title/components/PageTitle';
 import { WholesalerMapContent } from '@/wholesaler-map/components/WholesalerMapContent';
 import { WHOLESALER_COVERAGE_MAP_COLORS } from '@/wholesaler-map/constants/WholesalerCoverageMapColors';
 import { useWholesalerMapCompanies } from '@/wholesaler-map/hooks/useWholesalerMapCompanies';
-import { getWholesalerMapOwnerOptions } from '@/wholesaler-map/utils/getWholesalerMapOwnerOptions';
-import { normalizeWholesalerMapCompanies } from '@/wholesaler-map/utils/normalizeWholesalerMapCompanies';
+import { useWholesalerMapFilters } from '@/wholesaler-map/hooks/useWholesalerMapFilters';
 
 const StyledPageHeading = styled.h1`
   color: inherit;
@@ -25,7 +23,6 @@ const StyledPageHeading = styled.h1`
 export const WholesalerMapPage = () => {
   const { t } = useLingui();
   const navigate = useNavigate();
-  const [selectedOwnerId, setSelectedOwnerId] = useState<string | null>(null);
   const {
     canViewMap,
     error,
@@ -36,26 +33,30 @@ export const WholesalerMapPage = () => {
     totalCount,
   } = useWholesalerMapCompanies();
   const unassignedOwnerName = t`Unassigned`;
-  const featureCollection = useMemo(
-    () =>
-      normalizeWholesalerMapCompanies(
-        records,
-        selectedOwnerId,
-        unassignedOwnerName,
-        WHOLESALER_COVERAGE_MAP_COLORS.owners,
-        WHOLESALER_COVERAGE_MAP_COLORS.unassignedOwner,
-      ),
-    [records, selectedOwnerId, unassignedOwnerName],
-  );
-  const ownerOptions = useMemo(
-    () => getWholesalerMapOwnerOptions(records, unassignedOwnerName),
-    [records, unassignedOwnerName],
-  );
+  const {
+    countryOptions,
+    featureCollection,
+    filters,
+    hasActiveFilters,
+    ownerOptions,
+    postcodeOptions,
+    resetFilters,
+    setSelectedCountry,
+    setSelectedOwnerId,
+    setSelectedPostcode,
+    setSelectedState,
+    stateOptions,
+  } = useWholesalerMapFilters({
+    companies: records,
+    ownerColors: WHOLESALER_COVERAGE_MAP_COLORS.owners,
+    unassignedOwnerColor: WHOLESALER_COVERAGE_MAP_COLORS.unassignedOwner,
+    unassignedOwnerName,
+  });
   const loadError = isDefined(error) ? new Error(error.message) : null;
 
   // Canvas points cannot render React Router links.
   // oxlint-disable-next-line twenty/no-navigate-prefer-link
-  const handleCompanySelect = (companyId: string) => {
+  const handleCompanyOpen = (companyId: string) => {
     navigate(
       getAppPath(AppPath.RecordShowPage, {
         objectNameSingular: CoreObjectNameSingular.Company,
@@ -87,15 +88,26 @@ export const WholesalerMapPage = () => {
       <PageTitle title={t`Territory map | Twenty`} />
       <PageCardLayout header={header}>
         <WholesalerMapContent
+          countryOptions={countryOptions}
           featureCollection={featureCollection}
+          hasActiveFilters={hasActiveFilters}
           hasWholesalerRelation={hasWholesalerRelation}
           isLoading={isLoadingAllCompanies}
           loadError={loadError}
-          onCompanySelect={handleCompanySelect}
+          onCompanyOpen={handleCompanyOpen}
+          onCountryChange={setSelectedCountry}
           onOwnerChange={setSelectedOwnerId}
+          onPostcodeChange={setSelectedPostcode}
+          onResetFilters={resetFilters}
           onRetry={() => void refetch()}
+          onStateChange={setSelectedState}
           ownerOptions={ownerOptions}
-          selectedOwnerId={selectedOwnerId}
+          postcodeOptions={postcodeOptions}
+          selectedCountry={filters.country}
+          selectedOwnerId={filters.ownerId}
+          selectedPostcode={filters.postcode}
+          selectedState={filters.state}
+          stateOptions={stateOptions}
           totalCompanyCount={totalCount ?? records.length}
         />
       </PageCardLayout>

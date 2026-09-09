@@ -1,0 +1,211 @@
+name: Manual CRM territory identity discovery
+
+on:
+  workflow_dispatch:
+    inputs:
+      app_install_run_id:
+        description: Successful Corgi CRM app production workflow run ID
+        required: true
+        type: string
+      app_install_run_attempt:
+        description: Successful Corgi CRM app production workflow attempt number
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+  id-token: write
+
+concurrency:
+  # Hold the deployment lock so the live revision cannot change mid-discovery.
+  group: crm-production-deploy
+  cancel-in-progress: false
+
+env:
+  AWS_ACCOUNT_ID: '182018075072'
+  AWS_REGION: us-east-2
+  AWS_ROLE_ARN: arn:aws:iam::182018075072:role/crm-production-github-deploy
+  ECS_CLUSTER: crm-production
+  ECR_REPOSITORY: crm-production-twenty
+  SERVER_SERVICE: crm-production-server
+  SERVER_CONTAINER: server
+  WORKER_SERVICE: crm-production-worker
+  WORKER_CONTAINER: worker
+
+jobs:
+  discover:
+    name: Discover immutable territory member identities
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: production
+    env:
+      DEPLOYED_SHA: ${{ github.sha }}
+    steps:
+      - name: Check out the exact discovery revision
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - name: Require the exact deployed workflow revision
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "${DEPLOYED_SHA}" =~ ^[0-9a-f]{40}$ ]]
+          [[ "${DEPLOYED_SHA}" == "${GITHUB_SHA}" ]]
+          git cat-file -e "${DEPLOYED_SHA}^{commit}"
+
+      - name: Verify exact-SHA app install lineage
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          APP_RUN_ID: ${{ inputs.app_install_run_id }}
+          APP_RUN_ATTEMPT: ${{ inputs.app_install_run_attempt }}
+        run: |
+          set -euo pipefail
+          [[ "${APP_RUN_ID}" =~ ^[1-9][0-9]*$ ]]
+          [[ "${APP_RUN_ATTEMPT}" =~ ^[1-9][0-9]*$ ]]
+          workflow_json="${RUNNER_TEMP}/app-workflow.json"
+          run_json="${RUNNER_TEMP}/app-run.json"
+          gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/corgi-crm-app-production.yml" > "${workflow_json}"
+          gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${APP_RUN_ID}/attempts/${APP_RUN_ATTEMPT}" > "${run_json}"
+          workflow_id="$(jq -r '.id' "${workflow_json}")"
+          jq -e '
+            .name == "Publish and install Corgi CRM app in production" and
+            .path == ".github/workflows/corgi-crm-app-production.yml" and
+            .state == "active" and (.id | type == "number")
+          ' "${workflow_json}" >/dev/null
+          jq -e \
+            --arg repository "${GITHUB_REPOSITORY}" \
+            --arg run_id "${APP_RUN_ID}" \
+            --argjson run_attempt "${APP_RUN_ATTEMPT}" \
+            --arg workflow_id "${workflow_id}" \
+            --arg deployed_sha "${DEPLOYED_SHA}" '
+              (.id | tostring) == $run_id and .run_attempt == $run_attempt and
+              (.workflow_id | tostring) == $workflow_id and
+              .name == "Publish and install Corgi CRM app in production" and
+              .event == "workflow_dispatch" and .head_branch == "main" and
+              .head_repository.full_name == $repository and
+              .head_sha == $deployed_sha and
+              .status == "completed" and .conclusion == "success"
+            ' "${run_json}" >/dev/null
+
+      - name: Install Node and Yarn dependencies
+        uses: ./.github/actions/crm-yarn-install
+
+      - name: Install the Chromium test browser
+        run: npx playwright install --with-deps chromium
+
+      - name: Configure read-only AWS deployment inspection
+        uses: aws-actions/configure-aws-credentials@61815dcd50bd041e203e49132bacad1fd04d2708 # v5.1.1
+        with:
+          role-to-assume: ${{ env.AWS_ROLE_ARN }}
+          role-duration-seconds: 1800
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Prove every live task uses the exact discovery revision
+        shell: bash
+        run: |
+          set -euo pipefail
+          CALLER_ACCOUNT="$(aws sts get-caller-identity --query Account --output text)"
+          [[ "${CALLER_ACCOUNT}" == "${AWS_ACCOUNT_ID}" ]]
+
+          EXPECTED_DIGEST="$(aws ecr describe-images \
+            --repository-name "${ECR_REPOSITORY}" \
+            --image-ids "imageTag=git-${DEPLOYED_SHA}" \
+            --query 'imageDetails[0].imageDigest' \
+            --output text)"
+          [[ "${EXPECTED_DIGEST}" == sha256:* ]]
+          EXPECTED_IMAGE="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPOSITORY}@${EXPECTED_DIGEST}"
+
+          assert_stable_service_tasks() {
+            local service="$1"
+            local container="$2"
+            local service_json="${RUNNER_TEMP}/${service}-service.json"
+            local tasks_json="${RUNNER_TEMP}/${service}-tasks.json"
+            local task_definition
+            local live_image
+            local task_arns
+            local desired
+
+            aws ecs describe-services \
+              --cluster "${ECS_CLUSTER}" \
+              --services "${service}" > "${service_json}"
+            jq -e '
+              (.failures | length) == 0 and
+              (.services | length) == 1 and
+              .services[0].status == "ACTIVE" and
+              .services[0].desiredCount > 0 and
+              .services[0].runningCount == .services[0].desiredCount and
+              .services[0].pendingCount == 0 and
+              ([.services[0].deployments[] | select(.status == "PRIMARY")] | length) == 1 and
+              ([.services[0].deployments[] | select(.status == "ACTIVE")] | length) == 0
+            ' "${service_json}" >/dev/null
+            desired="$(jq -r '.services[0].desiredCount' "${service_json}")"
+            task_definition="$(jq -r '.services[0].taskDefinition' "${service_json}")"
+            live_image="$(aws ecs describe-task-definition \
+              --task-definition "${task_definition}" \
+              --query "taskDefinition.containerDefinitions[?name=='${container}'].image | [0]" \
+              --output text)"
+            [[ "${live_image}" == "${EXPECTED_IMAGE}" ]]
+
+            task_arns="$(aws ecs list-tasks \
+              --cluster "${ECS_CLUSTER}" \
+              --service-name "${service}" \
+              --desired-status RUNNING \
+              --query 'taskArns' \
+              --output text)"
+            # shellcheck disable=SC2086
+            aws ecs describe-tasks \
+              --cluster "${ECS_CLUSTER}" \
+              --tasks ${task_arns} > "${tasks_json}"
+            jq -e \
+              --arg container "${container}" \
+              --arg digest "${EXPECTED_DIGEST}" \
+              --argjson desired "${desired}" '
+                (.failures | length) == 0 and
+                (.tasks | length) == $desired and
+                all(.tasks[]; .lastStatus == "RUNNING") and
+                all(
+                  .tasks[];
+                  ([.containers[] | select(
+                    .name == $container and
+                    .lastStatus == "RUNNING" and
+                    .imageDigest == $digest
+                  )] | length) == 1
+                )
+              ' "${tasks_json}" >/dev/null
+          }
+
+          assert_stable_service_tasks "${SERVER_SERVICE}" "${SERVER_CONTAINER}"
+          assert_stable_service_tasks "${WORKER_SERVICE}" "${WORKER_CONTAINER}"
+
+      - name: Discover exact linked workspace member identities
+        env:
+          FRONTEND_BASE_URL: https://crm.corgiinvest.com
+          BACKEND_BASE_URL: https://crm.corgiinvest.com
+          CRM_E2E_LOGIN: ${{ secrets.CRM_E2E_LOGIN }}
+          CRM_E2E_PASSWORD: ${{ secrets.CRM_E2E_PASSWORD }}
+          CRM_E2E_WORKSPACE_NAME: ${{ secrets.CRM_E2E_WORKSPACE_NAME }}
+          CRM_TERRITORY_IDENTITY_DISCOVERY_ENABLED: 'true'
+          CRM_TERRITORY_IDENTITY_ARTIFACT_PATH: ${{ runner.temp }}/crm-territory-identity-discovery/workspace-member-identities.json
+        run: >-
+          npx nx test:production twenty-e2e-testing --
+          tests/production/workspaceTerritoryIdentityDiscovery.maintenance.spec.ts
+          --project=production-chromium
+
+      - name: Upload the PII-safe immutable identity mapping
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: crm-territory-member-identities-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/crm-territory-identity-discovery/workspace-member-identities.json
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Record discovery completion
+        shell: bash
+        run: |
+          {
+            echo '## Territory member identity discovery completed'
+            echo
+            echo 'The PII-safe UUID mapping is available in the workflow artifact.'
+          } >> "${GITHUB_STEP_SUMMARY}"
