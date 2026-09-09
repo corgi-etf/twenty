@@ -2,6 +2,8 @@ import { createHash } from 'node:crypto';
 
 export const ADDRESS_STATE_SUBFIELD = 'addressState';
 export const MANAGED_FOLLOW_UP_VIEW_ID = 'c0671000-0000-4000-8000-000000000001';
+export const MANAGED_FOLLOW_UP_VIEW_UNIVERSAL_IDENTIFIER =
+  'c0671000-0000-4000-8000-000000000006';
 export const MANAGED_FOLLOW_UP_FILTER_ID =
   'c0671000-0000-4000-8000-000000000002';
 export const MANAGED_FOLLOW_UP_NAVIGATION_ID =
@@ -31,12 +33,6 @@ export const WHOLESALER_TERRITORY_FIELD_DEFINITION = {
   label: 'Territory',
   type: 'TEXT',
 } as const;
-
-export const WHOLESALER_TERRITORY_SEEDS = [
-  { memberNameToken: 'Grace', territory: 'Chicago' },
-  { memberNameToken: 'Kelly', territory: 'Chicago' },
-  { memberNameToken: 'Nash', territory: 'Florida' },
-] as const;
 
 export const VISIBLE_COMPANY_FIELD_NAMES = [
   'name',
@@ -215,8 +211,20 @@ export type TerritoryProjectionPlan = {
 export type WholesalerTerritoryRecord = {
   id: string;
   updatedAt: string;
-  name: string;
+  name?: unknown;
   territory?: unknown;
+  workspaceMember?: { id?: unknown } | null;
+};
+
+export type WholesalerTerritoryAssignment = {
+  workspaceMemberId: string;
+  territory: string;
+};
+
+export type ApprovedWholesalerTerritoryIdentityInput = {
+  graceWorkspaceMemberId: string;
+  kellyWorkspaceMemberId: string;
+  nashWorkspaceMemberId: string;
 };
 
 export type WholesalerTerritoryMutation = {
@@ -255,6 +263,7 @@ export type WorkspaceLayoutPlan = {
   visiblePersonFieldNames: string[];
   viewsToCreate: Array<{
     id: string;
+    universalIdentifier: string;
     name: string;
     objectMetadataId: string;
     type: 'TABLE';
@@ -416,52 +425,114 @@ export const buildTerritoryProjectionPlan = (
   };
 };
 
-const normalizedNameTokens = (name: string): string[] =>
-  name
-    .normalize('NFKD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .toLocaleLowerCase()
-    .split(/[^a-z0-9]+/)
-    .filter(Boolean);
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+
+export const buildApprovedWholesalerTerritoryAssignments = (
+  input: ApprovedWholesalerTerritoryIdentityInput,
+): WholesalerTerritoryAssignment[] => {
+  const assignments = [
+    {
+      workspaceMemberId: input.graceWorkspaceMemberId,
+      territory: 'Chicago',
+    },
+    {
+      workspaceMemberId: input.kellyWorkspaceMemberId,
+      territory: 'Chicago',
+    },
+    {
+      workspaceMemberId: input.nashWorkspaceMemberId,
+      territory: 'Florida',
+    },
+  ];
+  if (
+    assignments.some(
+      ({ workspaceMemberId }) => !UUID_PATTERN.test(workspaceMemberId),
+    ) ||
+    new Set(assignments.map(({ workspaceMemberId }) => workspaceMemberId))
+      .size !== assignments.length
+  ) {
+    throw new Error(
+      'Approved wholesaler territory workspace member identities are invalid',
+    );
+  }
+
+  return assignments;
+};
 
 export const buildWholesalerTerritoryPlan = (
   wholesalers: WholesalerTerritoryRecord[],
+  assignments: readonly WholesalerTerritoryAssignment[],
 ): WholesalerTerritoryPlan => {
   const ids = new Set<string>();
+  const linkedWorkspaceMemberIds = new Set<string>();
   for (const wholesaler of wholesalers) {
     if (
       !wholesaler.id ||
       ids.has(wholesaler.id) ||
-      !wholesaler.name?.trim() ||
       !wholesaler.updatedAt ||
       Number.isNaN(Date.parse(wholesaler.updatedAt))
     ) {
       throw new Error('Wholesaler territory source records are invalid');
     }
     ids.add(wholesaler.id);
+    const workspaceMember = wholesaler.workspaceMember;
+    if (workspaceMember === undefined || workspaceMember === null) continue;
+    if (typeof workspaceMember !== 'object' || Array.isArray(workspaceMember)) {
+      throw new Error('Wholesaler linked workspace member shape is invalid');
+    }
+    const workspaceMemberId = workspaceMember.id;
+    if (
+      typeof workspaceMemberId !== 'string' ||
+      !UUID_PATTERN.test(workspaceMemberId) ||
+      linkedWorkspaceMemberIds.has(workspaceMemberId)
+    ) {
+      throw new Error(
+        'Wholesaler linked workspace member identities are invalid or ambiguous',
+      );
+    }
+    linkedWorkspaceMemberIds.add(workspaceMemberId);
   }
 
+  if (
+    assignments.length === 0 ||
+    assignments.some(
+      ({ workspaceMemberId, territory }) =>
+        typeof workspaceMemberId !== 'string' ||
+        !UUID_PATTERN.test(workspaceMemberId) ||
+        typeof territory !== 'string' ||
+        territory.length === 0 ||
+        territory.trim() !== territory,
+    ) ||
+    new Set(assignments.map(({ workspaceMemberId }) => workspaceMemberId))
+      .size !== assignments.length
+  ) {
+    throw new Error('Wholesaler territory assignment identities are invalid');
+  }
   const seededTerritoryById = new Map<string, string>();
-  for (const seed of WHOLESALER_TERRITORY_SEEDS) {
-    const normalizedToken = seed.memberNameToken.toLocaleLowerCase();
-    const matches = wholesalers.filter((wholesaler) =>
-      normalizedNameTokens(wholesaler.name).includes(normalizedToken),
+  for (const assignment of assignments) {
+    const matches = wholesalers.filter(
+      (wholesaler) =>
+        wholesaler.workspaceMember?.id === assignment.workspaceMemberId,
     );
     if (matches.length !== 1) {
       throw new Error(
-        `Territory seed ${seed.memberNameToken} must match exactly one wholesaler`,
+        `Territory assignment for workspace member ${assignment.workspaceMemberId} must match exactly one wholesaler`,
       );
     }
     const [match] = matches;
     if (seededTerritoryById.has(match.id)) {
-      throw new Error('Territory seeds must resolve to distinct wholesalers');
+      throw new Error(
+        'Territory assignments must resolve to distinct wholesalers',
+      );
     }
-    seededTerritoryById.set(match.id, seed.territory);
+    seededTerritoryById.set(match.id, assignment.territory);
   }
 
   const expectedRows = wholesalers
     .map((wholesaler) => ({
       id: wholesaler.id,
+      workspaceMemberId: wholesaler.workspaceMember?.id ?? null,
       territory:
         seededTerritoryById.get(wholesaler.id) ??
         trimmedText(wholesaler.territory),
@@ -487,7 +558,14 @@ export const buildWholesalerTerritoryPlan = (
 
   return {
     wholesalerCount: wholesalers.length,
-    wholesalerIdentityHash: sha256([...ids].sort()),
+    wholesalerIdentityHash: sha256(
+      wholesalers
+        .map((wholesaler) => ({
+          id: wholesaler.id,
+          workspaceMemberId: wholesaler.workspaceMember?.id ?? null,
+        }))
+        .sort((left, right) => left.id.localeCompare(right.id)),
+    ),
     expectedTerritoryHash: sha256(expectedRows),
     mutations,
   };
@@ -576,6 +654,7 @@ const createFollowUpViewPlan = ({
   return {
     view: {
       id: MANAGED_FOLLOW_UP_VIEW_ID,
+      universalIdentifier: MANAGED_FOLLOW_UP_VIEW_UNIVERSAL_IDENTIFIER,
       name: 'Follow-ups',
       objectMetadataId: outreachActivity.id,
       type: 'TABLE' as const,
@@ -614,47 +693,36 @@ const selectFollowUpView = ({
   views: WorkspaceView[];
   outreachActivity: WorkspaceMetadataObject;
 }): WorkspaceView | undefined => {
-  const managedIdViews = views.filter(
-    (view) => view.id === MANAGED_FOLLOW_UP_VIEW_ID,
-  );
-  if (managedIdViews.length > 1) {
-    throw new Error('Duplicate managed Follow-ups views are ambiguous');
-  }
-  if (
-    managedIdViews[0] &&
-    managedIdViews[0].objectMetadataId !== outreachActivity.id
-  ) {
-    throw new Error('Managed Follow-ups view ID belongs to another object');
-  }
-  const managed = managedIdViews.filter(
-    (view) => view.objectMetadataId === outreachActivity.id,
-  );
-  if (managed.length === 1) {
-    const [managedView] = managed;
-    if (
-      managedView.type !== 'TABLE' ||
-      managedView.visibility !== 'WORKSPACE'
-    ) {
-      throw new Error('Managed Follow-ups view is not a workspace table');
-    }
-    return managedView;
-  }
-  const namedViews = views.filter(
+  const managedIdentityViews = views.filter(
     (view) =>
-      view.objectMetadataId === outreachActivity.id &&
-      view.name === 'Follow-ups',
+      view.id === MANAGED_FOLLOW_UP_VIEW_ID ||
+      view.universalIdentifier === MANAGED_FOLLOW_UP_VIEW_UNIVERSAL_IDENTIFIER,
   );
-  if (namedViews.length > 1) {
-    throw new Error('Duplicate Follow-ups views are ambiguous');
+  if (managedIdentityViews.length === 0) {
+    return undefined;
   }
-  const [namedView] = namedViews;
+  if (managedIdentityViews.length !== 1) {
+    throw new Error('Managed Follow-ups view identity is ambiguous');
+  }
+  const [managedView] = managedIdentityViews;
   if (
-    namedView &&
-    (namedView.type !== 'TABLE' || namedView.visibility !== 'WORKSPACE')
+    managedView.id !== MANAGED_FOLLOW_UP_VIEW_ID ||
+    managedView.universalIdentifier !==
+      MANAGED_FOLLOW_UP_VIEW_UNIVERSAL_IDENTIFIER
   ) {
-    throw new Error('Existing Follow-ups view is not a workspace table');
+    throw new Error('Managed Follow-ups view has an invalid managed identity');
   }
-  return namedView;
+  if (managedView.objectMetadataId !== outreachActivity.id) {
+    throw new Error('Managed Follow-ups view belongs to another object');
+  }
+  if (managedView.type !== 'TABLE' || managedView.visibility !== 'WORKSPACE') {
+    throw new Error('Managed Follow-ups view is not a workspace table');
+  }
+  if (managedView.createdByUserWorkspaceId !== null) {
+    throw new Error('Managed Follow-ups view must be workspace-owned');
+  }
+
+  return managedView;
 };
 
 export const buildWorkspaceConfigPlan = (

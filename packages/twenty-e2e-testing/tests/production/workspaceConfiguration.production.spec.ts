@@ -2,7 +2,6 @@ import { expect, test } from '@playwright/test';
 
 import {
   buildTerritoryProjectionPlan,
-  buildWholesalerTerritoryPlan,
   buildWorkspaceConfigPlan,
   workspaceConfigOperationCount,
 } from '../../../corgi-crm-workspace-config/src/planner.ts';
@@ -46,11 +45,6 @@ test('keeps the production CRM territory-first and free of helper navigation', a
   expect(companies.length).toBeGreaterThanOrEqual(2191);
   const projection = buildTerritoryProjectionPlan(companies, companies.length);
   expect(projection.mutations).toHaveLength(0);
-  const territoryAssignments = buildWholesalerTerritoryPlan(
-    await api.listWholesalers(),
-  );
-  expect(territoryAssignments.mutations).toHaveLength(0);
-
   await page.goto('/objects/companies');
   await expect(
     page.getByRole('button', { name: 'Create new Company' }),
@@ -88,6 +82,12 @@ test('keeps the production CRM territory-first and free of helper navigation', a
     ).toBeVisible();
   }
   await expect(page.getByTestId('wholesaler-map-located-count')).toBeVisible();
+  await expect(page.getByTestId('wholesaler-coverage-map-ready')).toBeVisible();
+  await expect(
+    page
+      .getByRole('alert')
+      .filter({ hasText: 'The interactive map could not load' }),
+  ).toHaveCount(0);
   const mappedLeads = page.locator('aside[aria-label="Mapped leads"]');
   await expect(mappedLeads).toBeVisible();
   const mappedLeadList = mappedLeads.getByRole('list');

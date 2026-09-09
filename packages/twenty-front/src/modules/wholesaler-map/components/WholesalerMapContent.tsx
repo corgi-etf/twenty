@@ -215,7 +215,7 @@ export const WholesalerMapContent = ({
     [featureCollection, normalizedSearch],
   );
   const selectedFeature =
-    featureCollection.features.find(
+    visibleFeatureCollection.features.find(
       ({ properties }) => properties.companyId === selectedCompanyId,
     ) ?? null;
 

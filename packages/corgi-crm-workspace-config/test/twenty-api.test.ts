@@ -309,6 +309,42 @@ test('uses an updatedAt compare-and-set for each company projection', async () =
   assert.match(decodedUrl, /updatedAt\[eq\]:"2026-09-08T00:00:00.000Z"/);
 });
 
+test('creates a deterministic workspace-owned Follow-ups view through metadata REST', async () => {
+  const request = new FakeRequest();
+  const view = {
+    id: 'c0671000-0000-4000-8000-000000000001',
+    universalIdentifier: 'c0671000-0000-4000-8000-000000000006',
+    name: 'Follow-ups',
+    objectMetadataId: 'outreach-object-id',
+    type: 'TABLE' as const,
+    icon: 'IconChecklist',
+    position: 2,
+    visibility: 'WORKSPACE' as const,
+  };
+  request.responses.push(
+    response({
+      ...view,
+      createdByUserWorkspaceId: null,
+    }),
+  );
+  const api = createTwentyWorkspaceConfigApi({
+    request,
+    backendBaseUrl: 'https://crm.corgiinvest.com',
+    frontendBaseUrl: 'https://crm.corgiinvest.com',
+    checkpointFilePath: join(tmpdir(), 'unused-workspace-config.json'),
+    requestGate: immediateGate,
+  });
+
+  await api.createView(view);
+
+  assert.equal(request.calls[0]?.method, 'POST');
+  assert.equal(
+    request.calls[0]?.url,
+    'https://crm.corgiinvest.com/rest/metadata/views',
+  );
+  assert.deepEqual(request.calls[0]?.data, view);
+});
+
 test('lists and compare-and-set updates wholesaler territory assignments', async () => {
   const request = new FakeRequest();
   request.responses.push(
@@ -318,6 +354,9 @@ test('lists and compare-and-set updates wholesaler territory assignments', async
           {
             id: 'grace-id',
             name: 'Grace Hopper',
+            workspaceMember: {
+              id: '11111111-1111-4111-8111-111111111111',
+            },
             updatedAt: '2026-09-08T00:00:00.000Z',
             territory: null,
           },
@@ -340,8 +379,11 @@ test('lists and compare-and-set updates wholesaler territory assignments', async
     territory: 'Chicago',
   });
 
-  assert.equal(wholesalers[0]?.name, 'Grace Hopper');
-  assert.match(request.calls[0]!.url, /\/rest\/wholesalers\?/);
+  assert.equal(
+    wholesalers[0]?.workspaceMember?.id,
+    '11111111-1111-4111-8111-111111111111',
+  );
+  assert.match(request.calls[0]!.url, /\/rest\/wholesalers\?.*depth=1/);
   assert.deepEqual(request.calls[1]?.data, { territory: 'Chicago' });
   const decodedUrl = decodeURIComponent(request.calls[1]!.url);
   assert.match(decodedUrl, /id\[eq\]:"grace-id"/);

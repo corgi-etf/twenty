@@ -23,6 +23,18 @@ on:
         description: Exact business content SHA-256 from the completed cleanup
         required: true
         type: string
+      grace_workspace_member_id:
+        description: Immutable workspace member UUID approved for Grace's Chicago territory
+        required: true
+        type: string
+      kelly_workspace_member_id:
+        description: Immutable workspace member UUID approved for Kelly's Chicago territory
+        required: true
+        type: string
+      nash_workspace_member_id:
+        description: Immutable workspace member UUID approved for Nash's Florida territory
+        required: true
+        type: string
       cleanup_run_id:
         description: Successful metadata-cleanup workflow run ID
         required: true
@@ -85,6 +97,9 @@ jobs:
           COMPANY_COUNT: ${{ inputs.company_count }}
           ROW_COVERAGE_SHA256: ${{ inputs.row_coverage_sha256 }}
           BUSINESS_CONTENT_SHA256: ${{ inputs.business_content_sha256 }}
+          GRACE_WORKSPACE_MEMBER_ID: ${{ inputs.grace_workspace_member_id }}
+          KELLY_WORKSPACE_MEMBER_ID: ${{ inputs.kelly_workspace_member_id }}
+          NASH_WORKSPACE_MEMBER_ID: ${{ inputs.nash_workspace_member_id }}
           CLEANUP_RUN_ID: ${{ inputs.cleanup_run_id }}
           CLEANUP_RUN_ATTEMPT: ${{ inputs.cleanup_run_attempt }}
           RESUME_RUN_ID: ${{ inputs.resume_run_id }}
@@ -96,6 +111,12 @@ jobs:
           [[ "${COMPANY_COUNT}" =~ ^[1-9][0-9]*$ ]]
           [[ "${ROW_COVERAGE_SHA256}" =~ ^[0-9a-f]{64}$ ]]
           [[ "${BUSINESS_CONTENT_SHA256}" =~ ^[0-9a-f]{64}$ ]]
+          [[ "${GRACE_WORKSPACE_MEMBER_ID}" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$ ]]
+          [[ "${KELLY_WORKSPACE_MEMBER_ID}" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$ ]]
+          [[ "${NASH_WORKSPACE_MEMBER_ID}" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$ ]]
+          [[ "${GRACE_WORKSPACE_MEMBER_ID}" != "${KELLY_WORKSPACE_MEMBER_ID}" ]]
+          [[ "${GRACE_WORKSPACE_MEMBER_ID}" != "${NASH_WORKSPACE_MEMBER_ID}" ]]
+          [[ "${KELLY_WORKSPACE_MEMBER_ID}" != "${NASH_WORKSPACE_MEMBER_ID}" ]]
           [[ "${CLEANUP_RUN_ID}" =~ ^[1-9][0-9]*$ ]]
           [[ "${CLEANUP_RUN_ATTEMPT}" =~ ^[1-9][0-9]*$ ]]
           if [[ -n "${RESUME_RUN_ID}" || -n "${RESUME_ATTEMPT}" ]]; then
@@ -103,7 +124,7 @@ jobs:
             [[ "${RESUME_ATTEMPT}" =~ ^[1-9][0-9]*$ ]]
           fi
           git cat-file -e "${DEPLOYED_SHA}^{commit}"
-          git merge-base --is-ancestor "${DEPLOYED_SHA}" "${GITHUB_SHA}"
+          [[ "${DEPLOYED_SHA}" == "${GITHUB_SHA}" ]]
 
       - name: Verify the completed metadata-cleanup workflow lineage
         shell: bash
@@ -328,6 +349,9 @@ jobs:
           CRM_WORKSPACE_CONFIG_COMPANY_COUNT: ${{ inputs.company_count }}
           CRM_CANONICALIZATION_ROW_COVERAGE_SHA256: ${{ inputs.row_coverage_sha256 }}
           CRM_CANONICALIZATION_BUSINESS_CONTENT_SHA256: ${{ inputs.business_content_sha256 }}
+          CRM_GRACE_WORKSPACE_MEMBER_ID: ${{ inputs.grace_workspace_member_id }}
+          CRM_KELLY_WORKSPACE_MEMBER_ID: ${{ inputs.kelly_workspace_member_id }}
+          CRM_NASH_WORKSPACE_MEMBER_ID: ${{ inputs.nash_workspace_member_id }}
           CRM_METADATA_CLEANUP_JOURNAL_PATH: ${{ runner.temp }}/crm-cleanup-prerequisite/metadata-cleanup-journal.json
           CRM_WORKSPACE_CONFIG_CHECKPOINT_PATH: ${{ runner.temp }}/crm-workspace-config/checkpoint.json
         run: >-

@@ -3,6 +3,7 @@ import { test } from 'node:test';
 
 import {
   ADDRESS_STATE_SUBFIELD,
+  buildApprovedWholesalerTerritoryAssignments,
   buildTerritoryProjectionPlan,
   buildWholesalerTerritoryPlan,
   buildWorkspaceConfigPlan,
@@ -290,34 +291,47 @@ test('projects State and ZIP from the native address for every company', () => {
 });
 
 test('assigns Grace and Kelly to Chicago and Nash to Florida deterministically', () => {
+  const graceWorkspaceMemberId = '11111111-1111-4111-8111-111111111111';
+  const kellyWorkspaceMemberId = '22222222-2222-4222-8222-222222222222';
+  const nashWorkspaceMemberId = '33333333-3333-4333-8333-333333333333';
   const wholesalers = [
     {
       id: 'grace-id',
       updatedAt: '2026-09-08T00:00:00.000Z',
-      name: 'Grace Hopper',
+      name: 'Names are not identity',
+      workspaceMember: { id: graceWorkspaceMemberId },
       territory: null,
     },
     {
       id: 'kelly-id',
       updatedAt: '2026-09-08T00:00:00.000Z',
-      name: 'Kelly Johnson',
+      name: 'Grace Nash',
+      workspaceMember: { id: kellyWorkspaceMemberId },
       territory: '  Chicago  ',
     },
     {
       id: 'nash-id',
       updatedAt: '2026-09-08T00:00:00.000Z',
-      name: 'Morgan Nash',
+      name: 'Kelly Grace',
+      workspaceMember: { id: nashWorkspaceMemberId },
       territory: 'Midwest',
     },
     {
       id: 'other-id',
       updatedAt: '2026-09-08T00:00:00.000Z',
       name: 'Taylor Smith',
+      workspaceMember: {
+        id: '44444444-4444-4444-8444-444444444444',
+      },
       territory: 'West',
     },
   ];
 
-  const plan = buildWholesalerTerritoryPlan(wholesalers);
+  const plan = buildWholesalerTerritoryPlan(wholesalers, [
+    { workspaceMemberId: graceWorkspaceMemberId, territory: 'Chicago' },
+    { workspaceMemberId: kellyWorkspaceMemberId, territory: 'Chicago' },
+    { workspaceMemberId: nashWorkspaceMemberId, territory: 'Florida' },
+  ]);
 
   assert.deepEqual(plan.mutations, [
     {
@@ -336,30 +350,90 @@ test('assigns Grace and Kelly to Chicago and Nash to Florida deterministically',
   assert.match(plan.expectedTerritoryHash, /^[a-f0-9]{64}$/);
 });
 
-test('fails closed when a territory seed is missing, ambiguous, or reused', () => {
-  const record = (id: string, name: string) => ({
+test('builds approved territory assignments only from distinct immutable member IDs', () => {
+  assert.deepEqual(
+    buildApprovedWholesalerTerritoryAssignments({
+      graceWorkspaceMemberId: '11111111-1111-4111-8111-111111111111',
+      kellyWorkspaceMemberId: '22222222-2222-4222-8222-222222222222',
+      nashWorkspaceMemberId: '33333333-3333-4333-8333-333333333333',
+    }),
+    [
+      {
+        workspaceMemberId: '11111111-1111-4111-8111-111111111111',
+        territory: 'Chicago',
+      },
+      {
+        workspaceMemberId: '22222222-2222-4222-8222-222222222222',
+        territory: 'Chicago',
+      },
+      {
+        workspaceMemberId: '33333333-3333-4333-8333-333333333333',
+        territory: 'Florida',
+      },
+    ],
+  );
+  assert.throws(
+    () =>
+      buildApprovedWholesalerTerritoryAssignments({
+        graceWorkspaceMemberId: 'not-a-uuid',
+        kellyWorkspaceMemberId: '22222222-2222-4222-8222-222222222222',
+        nashWorkspaceMemberId: '33333333-3333-4333-8333-333333333333',
+      }),
+    /identities are invalid/i,
+  );
+});
+
+test('fails closed when immutable territory identities are missing, ambiguous, or reused', () => {
+  const graceWorkspaceMemberId = '11111111-1111-4111-8111-111111111111';
+  const kellyWorkspaceMemberId = '22222222-2222-4222-8222-222222222222';
+  const nashWorkspaceMemberId = '33333333-3333-4333-8333-333333333333';
+  const assignments = [
+    { workspaceMemberId: graceWorkspaceMemberId, territory: 'Chicago' },
+    { workspaceMemberId: kellyWorkspaceMemberId, territory: 'Chicago' },
+    { workspaceMemberId: nashWorkspaceMemberId, territory: 'Florida' },
+  ];
+  const record = (id: string, workspaceMemberId: string) => ({
     id,
-    name,
+    name: 'Mutable display name',
     updatedAt: '2026-09-08T00:00:00.000Z',
+    workspaceMember: { id: workspaceMemberId },
   });
 
   assert.throws(
     () =>
-      buildWholesalerTerritoryPlan([
-        record('grace-1', 'Grace One'),
-        record('grace-2', 'Grace Two'),
-        record('kelly', 'Kelly Person'),
-        record('nash', 'Nash Person'),
-      ]),
+      buildWholesalerTerritoryPlan(
+        [
+          record('kelly', kellyWorkspaceMemberId),
+          record('nash', nashWorkspaceMemberId),
+        ],
+        assignments,
+      ),
     /exactly one/i,
   );
   assert.throws(
     () =>
-      buildWholesalerTerritoryPlan([
-        record('grace-kelly', 'Grace Kelly'),
-        record('nash', 'Nash Person'),
-      ]),
-    /distinct/i,
+      buildWholesalerTerritoryPlan(
+        [
+          record('grace-1', graceWorkspaceMemberId),
+          record('grace-2', graceWorkspaceMemberId),
+          record('kelly', kellyWorkspaceMemberId),
+          record('nash', nashWorkspaceMemberId),
+        ],
+        assignments,
+      ),
+    /linked workspace member/i,
+  );
+  assert.throws(
+    () =>
+      buildWholesalerTerritoryPlan(
+        [
+          record('grace', graceWorkspaceMemberId),
+          record('kelly', kellyWorkspaceMemberId),
+          record('nash', nashWorkspaceMemberId),
+        ],
+        [assignments[0]!, assignments[0]!, assignments[2]!],
+      ),
+    /assignment identities/i,
   );
 });
 
@@ -496,6 +570,7 @@ test('converges navigation, Follow-ups, company fields, and state sorting', () =
   assert.deepEqual(plan.layout.viewsToCreate, [
     {
       id: 'c0671000-0000-4000-8000-000000000001',
+      universalIdentifier: 'c0671000-0000-4000-8000-000000000006',
       name: 'Follow-ups',
       objectMetadataId: 'outreachActivity-object-id',
       type: 'TABLE',
@@ -532,7 +607,7 @@ test('converges navigation, Follow-ups, company fields, and state sorting', () =
   );
 });
 
-test('rejects incompatible metadata and ambiguous outreach Follow-ups views', () => {
+test('never adopts or rewrites user-owned Follow-ups views', () => {
   const incompatible = snapshot();
   incompatible.objects[0]!.fields.push({
     id: 'bad-state-id',
@@ -581,31 +656,36 @@ test('rejects incompatible metadata and ambiguous outreach Follow-ups views', ()
     emptyView('follow-up-a'),
     emptyView('follow-up-b'),
   );
+  const namedPlan = buildWorkspaceConfigPlan(ambiguousFollowUps);
+  assert.ok(namedPlan.layout);
+  assert.equal(namedPlan.layout.viewsToCreate.length, 1);
+  assert.deepEqual(namedPlan.layout.viewUpdates, []);
+
+  const managedIdUserView = structuredClone(ambiguousFollowUps);
+  managedIdUserView.views[2] = {
+    ...emptyView('c0671000-0000-4000-8000-000000000001'),
+    universalIdentifier: 'c0671000-0000-4000-8000-000000000006',
+    createdByUserWorkspaceId: 'another-user-workspace-id',
+  };
   assert.throws(
-    () => buildWorkspaceConfigPlan(ambiguousFollowUps),
-    /ambiguous/i,
+    () => buildWorkspaceConfigPlan(managedIdUserView),
+    /workspace-owned/i,
   );
 
-  const privateFollowUps = structuredClone(ambiguousFollowUps);
-  privateFollowUps.views = [
-    privateFollowUps.views[0]!,
-    privateFollowUps.views[1]!,
-    {
-      ...emptyView('private-follow-up'),
-      visibility: 'UNLISTED',
-      createdByUserWorkspaceId: 'another-user-workspace-id',
-    },
-  ];
+  const wrongUniversalIdentifier = structuredClone(managedIdUserView);
+  wrongUniversalIdentifier.views[2]!.createdByUserWorkspaceId = null;
+  wrongUniversalIdentifier.views[2]!.universalIdentifier =
+    '99999999-9999-4999-8999-999999999999';
   assert.throws(
-    () => buildWorkspaceConfigPlan(privateFollowUps),
-    /workspace table/i,
+    () => buildWorkspaceConfigPlan(wrongUniversalIdentifier),
+    /managed.*identity/i,
   );
 
-  const kanbanFollowUps = structuredClone(privateFollowUps);
-  kanbanFollowUps.views[2]!.visibility = 'WORKSPACE';
-  kanbanFollowUps.views[2]!.type = 'KANBAN';
+  const privateManagedView = structuredClone(managedIdUserView);
+  privateManagedView.views[2]!.createdByUserWorkspaceId = null;
+  privateManagedView.views[2]!.visibility = 'UNLISTED';
   assert.throws(
-    () => buildWorkspaceConfigPlan(kanbanFollowUps),
+    () => buildWorkspaceConfigPlan(privateManagedView),
     /workspace table/i,
   );
 });
@@ -739,8 +819,8 @@ test('converges company and Follow-ups column widths', () => {
   addWorkspaceMemberRelation(value);
   const outreachActivity = value.objects[6]!;
   value.views.push({
-    id: 'existing-follow-up-view-id',
-    universalIdentifier: 'existing-follow-up-view-universal-id',
+    id: 'c0671000-0000-4000-8000-000000000001',
+    universalIdentifier: 'c0671000-0000-4000-8000-000000000006',
     name: 'Follow-ups',
     objectMetadataId: outreachActivity.id,
     type: 'TABLE',
@@ -763,7 +843,10 @@ test('converges company and Follow-ups column widths', () => {
   const plan = buildWorkspaceConfigPlan(value);
   assert.ok(plan.layout);
   assert.deepEqual(plan.layout.viewUpdates, [
-    { id: 'existing-follow-up-view-id', update: { position: 2 } },
+    {
+      id: 'c0671000-0000-4000-8000-000000000001',
+      update: { position: 2 },
+    },
   ]);
   assert.deepEqual(
     plan.layout.viewFieldUpdates

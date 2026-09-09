@@ -5,6 +5,7 @@ import {
   buildWholesalerTerritoryPlan,
   buildWorkspaceConfigPlan,
   type CompanyTerritoryRecord,
+  type WholesalerTerritoryAssignment,
   type WholesalerTerritoryRecord,
   type WorkspaceConfigPlan,
   type WorkspaceConfigSnapshot,
@@ -90,6 +91,7 @@ export type WorkspaceConfigRunOptions = {
   expectedOrigin: string;
   expectedCompanyCount: number;
   confirmation: string;
+  wholesalerTerritoryAssignments: WholesalerTerritoryAssignment[];
 };
 
 export type WorkspaceConfigRunResult = {
@@ -353,7 +355,10 @@ export const runWorkspaceConfiguration = async (
     options.expectedCompanyCount,
   );
   const initialWholesalers = await api.listWholesalers();
-  const initialTerritories = buildWholesalerTerritoryPlan(initialWholesalers);
+  const initialTerritories = buildWholesalerTerritoryPlan(
+    initialWholesalers,
+    options.wholesalerTerritoryAssignments,
+  );
   const resumedCheckpoint = await api.readCheckpoint();
   const checkpoint = resumedCheckpoint
     ? assertWorkspaceConfigCheckpoint(resumedCheckpoint)
@@ -464,6 +469,7 @@ export const runWorkspaceConfiguration = async (
 
   const verifiedTerritories = buildWholesalerTerritoryPlan(
     await api.listWholesalers(),
+    options.wholesalerTerritoryAssignments,
   );
   if (
     verifiedTerritories.wholesalerIdentityHash !==
@@ -500,6 +506,7 @@ export const runWorkspaceConfiguration = async (
   }
   const finalTerritories = buildWholesalerTerritoryPlan(
     await api.listWholesalers(),
+    options.wholesalerTerritoryAssignments,
   );
   if (
     finalTerritories.mutations.length > 0 ||

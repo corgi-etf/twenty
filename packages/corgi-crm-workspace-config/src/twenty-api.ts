@@ -453,7 +453,7 @@ export const createTwentyWorkspaceConfigApi = ({
     const wholesalers: WholesalerTerritoryRecord[] = [];
     let cursor: string | undefined;
     do {
-      const query = new URLSearchParams({ limit: '100', depth: '0' });
+      const query = new URLSearchParams({ limit: '100', depth: '1' });
       if (cursor) query.set('starting_after', cursor);
       const response = await requestGate(() =>
         request.get(`${restUrl('wholesalers')}?${query.toString()}`, {
@@ -638,19 +638,29 @@ export const createTwentyWorkspaceConfigApi = ({
     },
 
     async createView(input) {
-      const data = await graphql<{ createView?: { id?: string } }>(
-        'CreateManagedFollowUpsView',
-        `
-          mutation CreateManagedFollowUpsView($input: CreateViewInput!) {
-            createView(input: $input) {
-              id
-            }
-          }
-        `,
-        { input },
+      const response = await requestGate(() =>
+        request.post(restUrl('metadata/views'), {
+          headers,
+          data: input,
+        }),
       );
-      if (data.createView?.id !== input.id) {
-        throw new Error('Create Follow-ups view returned an unexpected ID');
+      await assertSuccessfulResponse(
+        response,
+        'Create managed Follow-ups view',
+      );
+      const created = await disposeAfterJson<{
+        id?: unknown;
+        universalIdentifier?: unknown;
+        createdByUserWorkspaceId?: unknown;
+      }>(response, 'Create managed Follow-ups view');
+      if (
+        created.id !== input.id ||
+        created.universalIdentifier !== input.universalIdentifier ||
+        created.createdByUserWorkspaceId !== null
+      ) {
+        throw new Error(
+          'Create Follow-ups view returned a non-workspace managed identity',
+        );
       }
     },
 

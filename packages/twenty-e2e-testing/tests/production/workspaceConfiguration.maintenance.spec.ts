@@ -5,6 +5,7 @@ import {
   runWorkspaceConfiguration,
 } from '../../../corgi-crm-workspace-config/src/execution.ts';
 import { assertCompletedMetadataCleanup } from '../../../corgi-crm-workspace-config/src/cleanup-prerequisite.ts';
+import { buildApprovedWholesalerTerritoryAssignments } from '../../../corgi-crm-workspace-config/src/planner.ts';
 import {
   assertWorkspaceConfigTenant,
   createTwentyWorkspaceConfigApi,
@@ -41,6 +42,18 @@ test('applies the territory-first workspace configuration', async ({
   );
   expect(Number.isSafeInteger(expectedCompanyCount)).toBe(true);
   expect(expectedCompanyCount).toBeGreaterThan(0);
+  const wholesalerTerritoryAssignments =
+    buildApprovedWholesalerTerritoryAssignments({
+      graceWorkspaceMemberId: requiredEnvironmentValue(
+        'CRM_GRACE_WORKSPACE_MEMBER_ID',
+      ),
+      kellyWorkspaceMemberId: requiredEnvironmentValue(
+        'CRM_KELLY_WORKSPACE_MEMBER_ID',
+      ),
+      nashWorkspaceMemberId: requiredEnvironmentValue(
+        'CRM_NASH_WORKSPACE_MEMBER_ID',
+      ),
+    });
   await assertCompletedMetadataCleanup({
     journalPath: requiredEnvironmentValue('CRM_METADATA_CLEANUP_JOURNAL_PATH'),
     expectedCompanyCount,
@@ -80,6 +93,7 @@ test('applies the territory-first workspace configuration', async ({
       expectedOrigin: 'https://crm.corgiinvest.com',
       expectedCompanyCount,
       confirmation,
+      wholesalerTerritoryAssignments,
     },
   );
 

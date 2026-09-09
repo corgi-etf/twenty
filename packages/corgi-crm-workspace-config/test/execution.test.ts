@@ -7,11 +7,24 @@ import {
   type WorkspaceConfigApi,
   type WorkspaceConfigCheckpoint,
 } from '../src/execution.ts';
-import type {
-  CompanyTerritoryRecord,
-  WholesalerTerritoryRecord,
-  WorkspaceConfigSnapshot,
+import {
+  buildApprovedWholesalerTerritoryAssignments,
+  MANAGED_FOLLOW_UP_VIEW_ID,
+  MANAGED_FOLLOW_UP_VIEW_UNIVERSAL_IDENTIFIER,
+  type CompanyTerritoryRecord,
+  type WholesalerTerritoryRecord,
+  type WorkspaceConfigSnapshot,
 } from '../src/planner.ts';
+
+const graceWorkspaceMemberId = '11111111-1111-4111-8111-111111111111';
+const kellyWorkspaceMemberId = '22222222-2222-4222-8222-222222222222';
+const nashWorkspaceMemberId = '33333333-3333-4333-8333-333333333333';
+const wholesalerTerritoryAssignments =
+  buildApprovedWholesalerTerritoryAssignments({
+    graceWorkspaceMemberId,
+    kellyWorkspaceMemberId,
+    nashWorkspaceMemberId,
+  });
 
 const fixture = (): WorkspaceConfigSnapshot => {
   const field = (objectName: string, name: string, type: string) => ({
@@ -158,7 +171,7 @@ const fixture = (): WorkspaceConfigSnapshot => {
     },
   ];
   const companyViewId = 'company-index-view-id';
-  const followUpViewId = 'follow-up-view-id';
+  const followUpViewId = MANAGED_FOLLOW_UP_VIEW_ID;
 
   return {
     objects,
@@ -220,7 +233,7 @@ const fixture = (): WorkspaceConfigSnapshot => {
       },
       {
         id: followUpViewId,
-        universalIdentifier: 'follow-up-universal-id',
+        universalIdentifier: MANAGED_FOLLOW_UP_VIEW_UNIVERSAL_IDENTIFIER,
         name: 'Follow-ups',
         objectMetadataId: objects[6]!.id,
         type: 'TABLE',
@@ -299,18 +312,21 @@ class FakeApi implements WorkspaceConfigApi {
     {
       id: 'grace-id',
       name: 'Grace Hopper',
+      workspaceMember: { id: graceWorkspaceMemberId },
       updatedAt: '2026-09-08T00:00:00.000Z',
       territory: null,
     },
     {
       id: 'kelly-id',
       name: 'Kelly Johnson',
+      workspaceMember: { id: kellyWorkspaceMemberId },
       updatedAt: '2026-09-08T00:00:00.000Z',
       territory: 'Chicago',
     },
     {
       id: 'nash-id',
       name: 'Morgan Nash',
+      workspaceMember: { id: nashWorkspaceMemberId },
       updatedAt: '2026-09-08T00:00:00.000Z',
       territory: null,
     },
@@ -418,6 +434,7 @@ test('backfills companies and seeded territories before layout and records a ver
     expectedOrigin: 'https://crm.corgiinvest.com',
     expectedCompanyCount: 1,
     confirmation: APPLY_WORKSPACE_CONFIG_CONFIRMATION,
+    wholesalerTerritoryAssignments,
   });
 
   assert.deepEqual(api.events, [
@@ -440,6 +457,7 @@ test('backfills companies and seeded territories before layout and records a ver
     expectedOrigin: 'https://crm.corgiinvest.com',
     expectedCompanyCount: 1,
     confirmation: APPLY_WORKSPACE_CONFIG_CONFIRMATION,
+    wholesalerTerritoryAssignments,
   });
   assert.deepEqual(api.events, []);
   assert.equal(rerun.companyMutations, 0);
@@ -454,6 +472,7 @@ test('rejects an unapproved origin and confirmation before reading data', async 
       expectedOrigin: 'https://crm.corgiinvest.com',
       expectedCompanyCount: 1,
       confirmation: APPLY_WORKSPACE_CONFIG_CONFIRMATION,
+      wholesalerTerritoryAssignments,
     }),
     /origin/i,
   );
@@ -463,6 +482,7 @@ test('rejects an unapproved origin and confirmation before reading data', async 
       expectedOrigin: 'https://crm.corgiinvest.com',
       expectedCompanyCount: 1,
       confirmation: 'wrong',
+      wholesalerTerritoryAssignments,
     }),
     /confirmation/i,
   );

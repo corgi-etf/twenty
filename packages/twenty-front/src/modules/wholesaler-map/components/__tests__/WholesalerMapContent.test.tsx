@@ -258,6 +258,33 @@ describe('WholesalerMapContent', () => {
     expect(screen.getByText('1 company')).toBeInTheDocument();
   });
 
+  it('makes a selected company non-actionable when search hides it', () => {
+    renderContent(<ContentFixture />);
+
+    fireEvent.click(
+      within(
+        screen.getByRole('complementary', { name: 'Mapped leads' }),
+      ).getByRole('button', { name: /northstar capital/i }),
+    );
+    expect(screen.getByTestId('territory-company-details')).toHaveTextContent(
+      'Northstar Capital',
+    );
+
+    fireEvent.change(screen.getByRole('textbox', { name: 'Find a company' }), {
+      target: { value: 'Seabreeze' },
+    });
+
+    expect(
+      screen.queryByTestId('territory-company-details'),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByTestId('territory-company-details-empty'),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: 'Open full company record' }),
+    ).not.toBeInTheDocument();
+  });
+
   it('clears all active territory filters with one action', () => {
     const onResetFilters = jest.fn();
 
