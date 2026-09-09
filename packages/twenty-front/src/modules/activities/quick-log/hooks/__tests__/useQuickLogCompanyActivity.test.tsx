@@ -10,11 +10,16 @@ const mockEnqueueErrorSnackBar = jest.fn();
 const mockEnqueueSuccessSnackBar = jest.fn();
 const mockUseFindManyRecords = jest.fn();
 
-let mockCurrentUserEmail = 'BDR@CORGI.COM';
-let mockWholesalers = [{ id: 'wholesaler-1', email: 'bdr@corgi.com' }];
+let mockCurrentWorkspaceMemberId: string | undefined = 'workspace-member-1';
+let mockWholesalers = [
+  { id: 'wholesaler-1', workspaceMemberId: 'workspace-member-1' },
+];
 
 jest.mock('@/ui/utilities/state/jotai/hooks/useAtomStateValue', () => ({
-  useAtomStateValue: () => ({ userEmail: mockCurrentUserEmail }),
+  useAtomStateValue: () =>
+    mockCurrentWorkspaceMemberId
+      ? { id: mockCurrentWorkspaceMemberId }
+      : undefined,
 }));
 
 jest.mock('@/object-record/hooks/useFindManyRecords', () => ({
@@ -40,8 +45,10 @@ describe('useQuickLogCompanyActivity', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
-    mockCurrentUserEmail = 'BDR@CORGI.COM';
-    mockWholesalers = [{ id: 'wholesaler-1', email: 'bdr@corgi.com' }];
+    mockCurrentWorkspaceMemberId = 'workspace-member-1';
+    mockWholesalers = [
+      { id: 'wholesaler-1', workspaceMemberId: 'workspace-member-1' },
+    ];
     mockUseFindManyRecords.mockImplementation(
       ({ objectNameSingular }: { objectNameSingular: string }) =>
         objectNameSingular === 'wholesaler'
@@ -77,7 +84,8 @@ describe('useQuickLogCompanyActivity', () => {
     expect(mockUseFindManyRecords).toHaveBeenCalledWith(
       expect.objectContaining({
         objectNameSingular: 'wholesaler',
-        filter: { email: { eq: 'bdr@corgi.com' } },
+        filter: { workspaceMemberId: { eq: 'workspace-member-1' } },
+        recordGqlFields: { id: true, workspaceMemberId: true },
       }),
     );
 
@@ -115,7 +123,7 @@ describe('useQuickLogCompanyActivity', () => {
     );
 
     expect(result.current.ownershipError).toBe(
-      'No wholesaler profile is linked to your email.',
+      'No wholesaler profile is linked to your workspace member.',
     );
 
     await act(async () => {
@@ -130,14 +138,13 @@ describe('useQuickLogCompanyActivity', () => {
 
     expect(mockCreateOneRecord).not.toHaveBeenCalled();
     expect(mockEnqueueErrorSnackBar).toHaveBeenCalledWith({
-      message: 'No wholesaler profile is linked to your email.',
+      message: 'No wholesaler profile is linked to your workspace member.',
     });
   });
 
-  it('rejects a wildcard lookalike instead of guessing ownership', async () => {
-    mockCurrentUserEmail = 'sales_ops@corgi.com';
+  it('rejects a wholesaler linked to another workspace member', async () => {
     mockWholesalers = [
-      { id: 'wrong-wholesaler', email: 'salesXops@corgi.com' },
+      { id: 'wrong-wholesaler', workspaceMemberId: 'workspace-member-2' },
     ];
     const { result } = renderHook(
       () => useQuickLogCompanyActivity({ companyId: 'company-1' }),
@@ -145,7 +152,7 @@ describe('useQuickLogCompanyActivity', () => {
     );
 
     expect(result.current.ownershipError).toBe(
-      'No wholesaler profile is linked to your email.',
+      'No wholesaler profile is linked to your workspace member.',
     );
 
     await act(async () => {
@@ -159,5 +166,24 @@ describe('useQuickLogCompanyActivity', () => {
     });
 
     expect(mockCreateOneRecord).not.toHaveBeenCalled();
+  });
+
+  it('does not query or guess ownership without a workspace member ID', () => {
+    mockCurrentWorkspaceMemberId = undefined;
+
+    const { result } = renderHook(
+      () => useQuickLogCompanyActivity({ companyId: 'company-1' }),
+      { wrapper: Wrapper },
+    );
+
+    expect(mockUseFindManyRecords).toHaveBeenCalledWith(
+      expect.objectContaining({
+        objectNameSingular: 'wholesaler',
+        skip: true,
+      }),
+    );
+    expect(result.current.ownershipError).toBe(
+      'Your workspace member identity is unavailable.',
+    );
   });
 });

@@ -96,8 +96,18 @@ const configuredMetadata = [
   { nameSingular: 'person', fields: [] },
   {
     nameSingular: 'wholesaler',
-    fields: [{ name: 'email', type: FieldMetadataType.TEXT }],
+    fields: [
+      {
+        name: 'workspaceMember',
+        type: FieldMetadataType.RELATION,
+        relation: {
+          type: RelationType.MANY_TO_ONE,
+          targetObjectMetadata: { nameSingular: 'workspaceMember' },
+        },
+      },
+    ],
   },
+  { nameSingular: 'workspaceMember', fields: [] },
 ];
 
 describe('QuickLogCompanyActivityAction', () => {

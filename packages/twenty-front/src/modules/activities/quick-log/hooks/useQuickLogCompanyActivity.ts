@@ -38,9 +38,7 @@ export const useQuickLogCompanyActivity = ({
   const { enqueueErrorSnackBar, enqueueSuccessSnackBar } = useSnackBar();
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const currentUserEmail = currentWorkspaceMember?.userEmail
-    ?.trim()
-    .toLowerCase();
+  const currentWorkspaceMemberId = currentWorkspaceMember?.id;
 
   const {
     records: wholesalerRecords,
@@ -48,10 +46,10 @@ export const useQuickLogCompanyActivity = ({
     error: wholesalerError,
   } = useFindManyRecords({
     objectNameSingular: 'wholesaler',
-    filter: { email: { eq: currentUserEmail ?? '' } },
-    recordGqlFields: { id: true, email: true },
+    filter: { workspaceMemberId: { eq: currentWorkspaceMemberId ?? '' } },
+    recordGqlFields: { id: true, workspaceMemberId: true },
     limit: 2,
-    skip: !currentUserEmail,
+    skip: !currentWorkspaceMemberId,
   });
 
   const {
@@ -75,21 +73,19 @@ export const useQuickLogCompanyActivity = ({
     label: getPersonLabel(person),
   }));
   const matchingWholesalerRecords = wholesalerRecords.filter(
-    (wholesaler) =>
-      typeof wholesaler.email === 'string' &&
-      wholesaler.email.trim().toLowerCase() === currentUserEmail,
+    (wholesaler) => wholesaler.workspaceMemberId === currentWorkspaceMemberId,
   );
 
   let ownershipError: string | null = null;
 
-  if (!currentUserEmail) {
-    ownershipError = t`Your signed-in email is unavailable.`;
+  if (!currentWorkspaceMemberId) {
+    ownershipError = t`Your workspace member identity is unavailable.`;
   } else if (wholesalerError) {
     ownershipError = t`Your wholesaler profile could not be verified.`;
   } else if (!isWholesalerLoading && matchingWholesalerRecords.length === 0) {
-    ownershipError = t`No wholesaler profile is linked to your email.`;
+    ownershipError = t`No wholesaler profile is linked to your workspace member.`;
   } else if (!isWholesalerLoading && matchingWholesalerRecords.length > 1) {
-    ownershipError = t`More than one wholesaler profile is linked to your email.`;
+    ownershipError = t`More than one wholesaler profile is linked to your workspace member.`;
   }
 
   const submitActivity = async (

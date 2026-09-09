@@ -27,8 +27,9 @@ const configuredMetadata = [
   { nameSingular: 'person', fields: [] },
   {
     nameSingular: 'wholesaler',
-    fields: [{ name: 'email', type: FieldMetadataType.TEXT }],
+    fields: [relationField('workspaceMember', 'workspaceMember')],
   },
+  { nameSingular: 'workspaceMember', fields: [] },
 ];
 
 describe('getQuickLogActivityMetadataStatus', () => {
@@ -54,16 +55,32 @@ describe('getQuickLogActivityMetadataStatus', () => {
     });
   });
 
-  it('rejects a workspace without a wholesaler email field', () => {
-    const metadataWithoutWholesalerEmail = configuredMetadata.map((item) =>
-      item.nameSingular === 'wholesaler' ? { ...item, fields: [] } : item,
+  it('rejects a workspace without immutable member ownership', () => {
+    const metadataWithoutWorkspaceMemberRelation = configuredMetadata.map(
+      (item) =>
+        item.nameSingular === 'wholesaler' ? { ...item, fields: [] } : item,
     );
 
     expect(
-      getQuickLogActivityMetadataStatus(metadataWithoutWholesalerEmail),
+      getQuickLogActivityMetadataStatus(metadataWithoutWorkspaceMemberRelation),
     ).toEqual({
       isAvailable: false,
-      reason: 'Wholesaler email matching is not configured.',
+      reason: 'Wholesaler workspace member ownership is not configured.',
+    });
+  });
+
+  it('rejects a wholesaler ownership relation with the wrong target', () => {
+    const metadataWithWrongOwnershipTarget = configuredMetadata.map((item) =>
+      item.nameSingular === 'wholesaler'
+        ? { ...item, fields: [relationField('workspaceMember', 'person')] }
+        : item,
+    );
+
+    expect(
+      getQuickLogActivityMetadataStatus(metadataWithWrongOwnershipTarget),
+    ).toEqual({
+      isAvailable: false,
+      reason: 'Wholesaler workspace member ownership is not configured.',
     });
   });
 

@@ -40,8 +40,11 @@ export const getQuickLogActivityMetadataStatus = (
   const wholesaler = objectMetadataItems.find(
     ({ nameSingular }) => nameSingular === 'wholesaler',
   );
+  const workspaceMember = objectMetadataItems.find(
+    ({ nameSingular }) => nameSingular === 'workspaceMember',
+  );
 
-  if (!outreachActivity || !person || !wholesaler) {
+  if (!outreachActivity || !person || !wholesaler || !workspaceMember) {
     return {
       isAvailable: false,
       reason: 'Follow-up data is not configured for this workspace.',
@@ -87,14 +90,19 @@ export const getQuickLogActivityMetadataStatus = (
     };
   }
 
-  const hasWholesalerEmail = wholesaler.fields.some(
-    (field) => field.name === 'email' && field.type === FieldMetadataType.TEXT,
+  const workspaceMemberRelation = wholesaler.fields.find(
+    (field) => field.name === 'workspaceMember',
   );
 
-  if (!hasWholesalerEmail) {
+  if (
+    workspaceMemberRelation?.type !== FieldMetadataType.RELATION ||
+    workspaceMemberRelation.relation?.type !== RelationType.MANY_TO_ONE ||
+    workspaceMemberRelation.relation.targetObjectMetadata.nameSingular !==
+      'workspaceMember'
+  ) {
     return {
       isAvailable: false,
-      reason: 'Wholesaler email matching is not configured.',
+      reason: 'Wholesaler workspace member ownership is not configured.',
     };
   }
 
