@@ -392,6 +392,7 @@ test('builds the exact object and field purge allowlist', () => {
       'sourceCreatedAt',
       'sourceRowHmac',
       'sourceUpdatedAt',
+      'targetImportBatch',
     ],
     wholesaler: [
       'legacyFetchId',
@@ -442,7 +443,7 @@ test('builds the exact object and field purge allowlist', () => {
       'sourceUpdatedAt',
     ],
   });
-  expect(plan.fieldsToDelete).toHaveLength(74);
+  expect(plan.fieldsToDelete).toHaveLength(75);
   expect(plan.fieldsToRename).toHaveLength(9);
   expect(
     plan.fieldsToRename.map(
@@ -502,6 +503,34 @@ test('never plans deletion of the retained sales and map contract', () => {
   }
 });
 
+test('deletes the import-batch task target while preserving canonical relations', async () => {
+  const api = new FakeMetadataCleanupApi();
+  const taskTarget = api.objects.find(
+    ({ nameSingular }) => nameSingular === 'taskTarget',
+  );
+
+  expect(taskTarget).toBeDefined();
+  if (!taskTarget!.fields.some(({ name }) => name === 'targetImportBatch')) {
+    taskTarget!.fields.push(metadataField('taskTarget', 'targetImportBatch'));
+  }
+  if (!taskTarget!.fields.some(({ name }) => name === 'targetPerson')) {
+    taskTarget!.fields.push(
+      metadataField('taskTarget', 'targetPerson', STANDARD_APPLICATION_ID),
+    );
+  }
+
+  await runFetchMetadataCleanup(api);
+
+  expect(api.deletedFieldIds).toContain('taskTarget-targetImportBatch-id');
+  const remainingTaskTargetFields = api.objects
+    .find(({ nameSingular }) => nameSingular === 'taskTarget')
+    ?.fields.map(({ name }) => name);
+
+  expect(remainingTaskTargetFields).toEqual(
+    expect.arrayContaining(['task', 'targetCompany', 'targetPerson']),
+  );
+});
+
 test('applies once and a second run is an idempotent no-op', async () => {
   const api = new FakeMetadataCleanupApi();
   const firstPlan = await runFetchMetadataCleanup(api);
@@ -512,9 +541,9 @@ test('applies once and a second run is an idempotent no-op', async () => {
   const secondPlan = await runFetchMetadataCleanup(api);
 
   expect(firstPlan.objectsToDelete).toHaveLength(4);
-  expect(firstPlan.fieldsToDelete).toHaveLength(74);
+  expect(firstPlan.fieldsToDelete).toHaveLength(75);
   expect(firstPlan.fieldsToRename).toHaveLength(9);
-  expect(firstMutationCount).toBe(87);
+  expect(firstMutationCount).toBe(88);
   expect(api.reconciliationChecks).toBe(1);
   expect(api.events.slice(0, 4)).toEqual([
     'reconciliation',
@@ -530,7 +559,7 @@ test('applies once and a second run is an idempotent no-op', async () => {
     status: 'complete',
     completedOperationKeys: expect.any(Array),
   });
-  expect(completedMutationJournal?.completedOperationKeys).toHaveLength(87);
+  expect(completedMutationJournal?.completedOperationKeys).toHaveLength(88);
   expect(secondPlan).toEqual({
     objectsToDelete: [],
     fieldsToDelete: [],
@@ -600,7 +629,7 @@ test('resumes an interrupted journal without rerunning a destroyed staging prefl
       `delete-object:${firstObject.id}`,
     ]),
   });
-  expect(api.journals.at(-1)?.completedOperationKeys).toHaveLength(87);
+  expect(api.journals.at(-1)?.completedOperationKeys).toHaveLength(88);
 });
 
 test('preserves populated sales teams and memberships while removing provenance fields', async () => {
