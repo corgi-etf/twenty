@@ -12,6 +12,11 @@ import {
 } from '../../../corgi-crm-workspace-config/src/twenty-api.ts';
 import { requireProductionEnvironment } from './requireProductionEnvironment';
 
+test.skip(
+  process.env.CRM_WORKSPACE_CONFIG_VERIFICATION_ENABLED !== 'true',
+  'Workspace configuration verification runs after the guarded configuration workflow.',
+);
+
 test.beforeAll(() => {
   requireProductionEnvironment();
 });

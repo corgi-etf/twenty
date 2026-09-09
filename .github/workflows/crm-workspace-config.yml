@@ -414,6 +414,19 @@ jobs:
           tests/production/workspaceConfiguration.maintenance.spec.ts
           --project=production-chromium
 
+      - name: Verify the converged territory-first workspace
+        env:
+          FRONTEND_BASE_URL: https://crm.corgiinvest.com
+          BACKEND_BASE_URL: https://crm.corgiinvest.com
+          CRM_E2E_LOGIN: ${{ secrets.CRM_E2E_LOGIN }}
+          CRM_E2E_PASSWORD: ${{ secrets.CRM_E2E_PASSWORD }}
+          CRM_E2E_WORKSPACE_NAME: ${{ secrets.CRM_E2E_WORKSPACE_NAME }}
+          CRM_WORKSPACE_CONFIG_VERIFICATION_ENABLED: 'true'
+        run: >-
+          npx nx test:production twenty-e2e-testing --
+          tests/production/workspaceConfiguration.production.spec.ts
+          --project=production-chromium
+
       - name: Record required one-time workflow retirement
         if: success()
         shell: bash

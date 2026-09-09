@@ -30,6 +30,10 @@ const workspaceConfigSpecPath = new URL(
   '../../twenty-e2e-testing/tests/production/workspaceConfiguration.maintenance.spec.ts',
   import.meta.url,
 );
+const workspaceConfigVerificationSpecPath = new URL(
+  '../../twenty-e2e-testing/tests/production/workspaceConfiguration.production.spec.ts',
+  import.meta.url,
+);
 
 test('workspace configuration requires the exact deployed workflow revision', async () => {
   const [workflow, workspaceConfigSpec] = await Promise.all([
@@ -162,4 +166,26 @@ test('territory identity discovery is read-only and bound to the exact live revi
     discoverySpec,
     /createTwentyWorkspaceConfigApi|conditionalPatch|createMetadata|updateMetadata|deleteView/,
   );
+});
+
+test('runs workspace convergence verification only after guarded configuration', async () => {
+  const [workflow, verificationSpec] = await Promise.all([
+    readFile(workflowPath, 'utf8'),
+    readFile(workspaceConfigVerificationSpecPath, 'utf8'),
+  ]);
+
+  assert.match(
+    verificationSpec,
+    /CRM_WORKSPACE_CONFIG_VERIFICATION_ENABLED !== 'true'/,
+  );
+  const applyPosition = workflow.indexOf(
+    'Apply fail-closed territory-first workspace configuration',
+  );
+  const verificationPosition = workflow.indexOf(
+    'Verify the converged territory-first workspace',
+  );
+  assert.ok(applyPosition > 0);
+  assert.ok(verificationPosition > applyPosition);
+  assert.match(workflow, /CRM_WORKSPACE_CONFIG_VERIFICATION_ENABLED: 'true'/);
+  assert.match(workflow, /workspaceConfiguration\.production\.spec\.ts/);
 });
