@@ -117,6 +117,17 @@ test('metadata plan renames useful fields and creates explicit business fields',
         objectName === 'holdingObservation' && name === 'form13f',
     ),
   );
+  for (const [objectName, name] of [
+    ['person', 'alternateNames'],
+    ['holdingObservation', 'alternateStateRegions'],
+  ]) {
+    assert.ok(
+      plan.creates.some(
+        (create) => create.objectName === objectName && create.name === name,
+      ),
+      `${objectName}.${name}`,
+    );
+  }
   assert.ok(
     plan.creates.some(
       ({ objectName, name }) => objectName === 'task' && name === 'wholesaler',

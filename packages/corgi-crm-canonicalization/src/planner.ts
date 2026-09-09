@@ -815,7 +815,7 @@ const COMPANY_FACTS: ReadonlyArray<[string, string[]]> = [
   ['totalAccounts', ['firm total accounts']],
   ['ownership', ['firm ownership']],
   ['accreditedInvestorFocus', ['firm tag accredited investors']],
-  ['assetClasses', ['firm tag asset classes']],
+  ['assetClasses', ['firm tag asset classes', 'family office asset class']],
   ['clientPersonas', ['firm tag client personas']],
   ['crmSystem', ['firm tag crm']],
   ['fundManagers', ['firm tag fund managers']],
@@ -827,7 +827,10 @@ const COMPANY_FACTS: ReadonlyArray<[string, string[]]> = [
   ['familyOfficeType', ['family office type']],
   ['familyOfficeGeneration', ['family office generation']],
   ['familyOfficeWealthOrigin', ['family office wealth source']],
-  ['familyOfficeFocus', ['family office focus']],
+  [
+    'familyOfficeFocus',
+    ['family office focus', 'family office industry focus'],
+  ],
   ['familyOfficeGeography', ['family office geography']],
 ];
 
@@ -906,6 +909,10 @@ const COMPANY_TARGET_BY_KEY: Readonly<Record<string, string>> = {
   'family office wealth source': 'company.familyOfficeWealthOrigin',
   'family office focus': 'company.familyOfficeFocus',
   'family office geography': 'company.familyOfficeGeography',
+  'family office asset class': 'company.assetClasses',
+  'family office bio': 'company.description',
+  'family office industry focus': 'company.familyOfficeFocus',
+  'family office years founded': 'company.description',
 };
 
 const PERSON_TARGET_BY_KEY: Readonly<Record<string, string>> = {
@@ -979,8 +986,10 @@ const HOLDING_TARGET_BY_KEY: Readonly<Record<string, string>> = {
   'street address': 'holdingObservation.streetAddress',
   'street address2': 'holdingObservation.addressLine2',
   city: 'holdingObservation.city',
-  state: 'holdingObservation.stateRegion',
-  'filer state': 'holdingObservation.stateRegion',
+  state:
+    'holdingObservation.stateRegion+holdingObservation.alternateStateRegions',
+  'filer state':
+    'holdingObservation.stateRegion+holdingObservation.alternateStateRegions',
   zip: 'holdingObservation.postalCode',
   'zip code': 'holdingObservation.postalCode',
   'shares held': 'holdingObservation.sharesHeld',
@@ -1136,7 +1145,7 @@ const dispositionForKey = (
     if (!isPerson) return null;
     return {
       kind: 'identity',
-      target: 'person.name',
+      target: 'person.name+person.alternateNames',
       sourceValueHash,
       resultValueHash: valueHash(companyNameKey(value)),
     };
@@ -1296,7 +1305,9 @@ const applyCompanyRaw = (
   isPerson = false,
 ): void => {
   for (const [field, aliases] of COMPANY_FACTS) {
-    mergeFact(accumulator, field, rawValue(index, ...aliases));
+    for (const alias of aliases) {
+      mergeFact(accumulator, field, rawValue(index, alias));
+    }
   }
   mergeFact(accumulator, 'geography', rawValue(index, 'region'));
   const employeeCount = numberValue(rawValue(index, 'firm total employees'));
@@ -1321,6 +1332,18 @@ const applyCompanyRaw = (
     'description',
     'Lead score',
     rawValue(index, 'lead score'),
+  );
+  mergeLabeledFact(
+    accumulator,
+    'description',
+    'Family office bio',
+    rawValue(index, 'family office bio'),
+  );
+  mergeLabeledFact(
+    accumulator,
+    'description',
+    'Family office years founded',
+    rawValue(index, 'family office years founded'),
   );
   if (!isPerson) {
     for (const [key, label] of PERSON_NOTE_SOURCE_FIELDS) {
@@ -1406,8 +1429,20 @@ const applyCompanyRaw = (
       companyNameKey(currentAddress[field]) !== companyNameKey(value),
   );
   if (conflicts.length > 0) {
-    const alternate = Object.values(rawAddress).filter(Boolean).join(', ');
-    if (alternate) mergeFact(accumulator, 'alternateAddresses', alternate);
+    for (const [field, label] of [
+      ['addressStreet1', 'Street'],
+      ['addressStreet2', 'Street 2'],
+      ['addressCity', 'City'],
+      ['addressState', 'State / Region'],
+      ['addressPostcode', 'Postal Code'],
+    ] as const) {
+      mergeLabeledFact(
+        accumulator,
+        'alternateAddresses',
+        label,
+        rawAddress[field],
+      );
+    }
   } else {
     const nextAddress = {
       addressStreet1:
@@ -1439,8 +1474,29 @@ const applyPersonRaw = (
   index: ReadonlyMap<string, unknown>,
 ): void => {
   for (const [field, aliases] of PERSON_FACTS) {
-    mergeFact(accumulator, field, rawValue(index, ...aliases));
+    for (const alias of aliases) {
+      mergeFact(accumulator, field, rawValue(index, alias));
+    }
   }
+  const currentName = personName({
+    ...accumulator.record,
+    ...accumulator.data,
+    id: accumulator.record.id,
+  });
+  const nextName = { ...currentName };
+  for (const [sourceKey, field, label] of [
+    ['first name', 'firstName', 'First name'],
+    ['last name', 'lastName', 'Last name'],
+  ] as const) {
+    const source = textValue(rawValue(index, sourceKey));
+    if (!source) continue;
+    if (!nextName[field]) {
+      nextName[field] = source;
+    } else if (companyNameKey(source) !== companyNameKey(nextName[field])) {
+      mergeLabeledFact(accumulator, 'alternateNames', label, source);
+    }
+  }
+  setIfChanged(accumulator, 'name', nextName);
   mergeFact(accumulator, 'jobTitle', rawValue(index, 'title'));
   const phoneType = textValue(rawValue(index, 'phone type'));
   if (phoneType) accumulator.residualContacts!.add(`Phone type: ${phoneType}`);
@@ -1857,7 +1913,6 @@ const holdingPatch = (
     ['crd', ['filer crd']],
     ['filerIrsNumber', ['filer irs number']],
     ['city', ['city']],
-    ['stateRegion', ['filer state', 'state']],
     ['streetAddress', ['street address', 'address']],
     ['addressLine2', ['street address2']],
     ['postalCode', ['zip', 'zip code']],
@@ -1887,6 +1942,16 @@ const holdingPatch = (
       'HOLDING_FIELD_CONFLICT',
       previousName,
     );
+  }
+  for (const sourceKey of ['filer state', 'state']) {
+    const value = textValue(rawValue(index, sourceKey));
+    if (!value) continue;
+    const current = effectiveValue(accumulator, 'stateRegion');
+    if (isEmptyValue(current)) {
+      setIfChanged(accumulator, 'stateRegion', value);
+    } else if (companyNameKey(current) !== companyNameKey(value)) {
+      mergeFact(accumulator, 'alternateStateRegions', value);
+    }
   }
 
   return accumulator;
@@ -2283,6 +2348,8 @@ export const buildCanonicalizationPlan = (
   for (const accumulator of companyAccumulators.values())
     finalizeFacts(accumulator);
   for (const accumulator of personAccumulators.values())
+    finalizeFacts(accumulator);
+  for (const accumulator of holdingAccumulators.values())
     finalizeFacts(accumulator);
 
   const canonicalRecords = new Map<string, CrmRecord>();
