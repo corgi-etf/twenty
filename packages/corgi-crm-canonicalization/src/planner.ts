@@ -1035,6 +1035,19 @@ const dispositionForKey = (
       sourceValueHash,
     };
   }
+  if (
+    isHolding &&
+    NUMERIC_HOLDING_KEYS.has(key) &&
+    textValue(value) &&
+    numberValue(value) === null
+  ) {
+    return {
+      kind: 'ignored',
+      target:
+        'non-numeric source placeholder excluded from numeric business field',
+      sourceValueHash,
+    };
+  }
   const targets = [
     includeCompany ? COMPANY_TARGET_BY_KEY[key] : undefined,
     isPerson ? PERSON_TARGET_BY_KEY[key] : undefined,
@@ -1610,8 +1623,6 @@ const holdingPatch = (
   for (const [field, aliases] of numeric) {
     const raw = rawValue(index, ...aliases);
     const value = numberValue(raw);
-    if (textValue(raw) && value === null)
-      throw new Error(`Invalid numeric holding field ${field}`);
     if (value !== null) {
       setPreservingNative(
         accumulator,
