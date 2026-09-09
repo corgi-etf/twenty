@@ -1,4 +1,5 @@
 import { type KeyValueStore } from 'src/modules/telegram/types';
+import { TelegramDeliveryError } from 'src/modules/telegram/services/telegram-client.service';
 
 export const enqueueTelegramUpdateOnce = async ({
   updateId,
@@ -24,47 +25,65 @@ export const enqueueTelegramUpdateOnce = async ({
 };
 
 type Delivery = {
-  wholesalerId: string;
+  workspaceMemberId: string;
   chatId: string;
   messages: string[];
 };
 
 type DeliveryState = {
-  status: 'sending' | 'complete';
-  sentParts: number;
+  status: 'ready' | 'intent' | 'unknown' | 'complete';
+  nextPart: number;
 };
 
-export const deliverDailySummaries = async ({
+export const deliverDailySummary = async ({
   localDate,
-  deliveries,
+  delivery,
   store,
   send,
 }: {
   localDate: string;
-  deliveries: Delivery[];
+  delivery: Delivery;
   store: KeyValueStore;
   send(chatId: string, text: string): Promise<void>;
 }) => {
-  let delivered = 0;
-  let skipped = 0;
-
-  for (const delivery of deliveries) {
-    const key = `telegram:daily-summary:${localDate}:${delivery.wholesalerId}`;
-    const state = (await store.get(key)) as DeliveryState | null;
-    if (state?.status === 'complete') {
-      skipped += 1;
-      continue;
+  const key = `telegram:daily-summary:${localDate}:${delivery.workspaceMemberId}`;
+  const state = (await store.get(key)) as DeliveryState | null;
+  const nextPart = Math.min(state?.nextPart ?? 0, delivery.messages.length);
+  if (state?.status === 'complete') {
+    return { status: 'complete', sentParts: nextPart } as const;
+  }
+  if (state?.status === 'intent' || state?.status === 'unknown') {
+    if (state.status === 'intent') {
+      await store.set(key, { status: 'unknown', nextPart });
     }
-    let sentParts = Math.min(state?.sentParts ?? 0, delivery.messages.length);
-    await store.set(key, { status: 'sending', sentParts });
-    for (const message of delivery.messages.slice(sentParts)) {
-      await send(delivery.chatId, message);
-      sentParts += 1;
-      await store.set(key, { status: 'sending', sentParts });
-    }
-    await store.set(key, { status: 'complete', sentParts });
-    delivered += 1;
+    return { status: 'unknown', sentParts: nextPart } as const;
   }
 
-  return { delivered, skipped };
+  let part = nextPart;
+  for (const message of delivery.messages.slice(part)) {
+    // Persist intent before contacting Telegram. If the worker crashes or the
+    // provider response is ambiguous, a retry skips this part rather than
+    // risking a duplicate daily message.
+    await store.set(key, { status: 'intent', nextPart: part });
+    try {
+      await send(delivery.chatId, message);
+    } catch (error) {
+      if (
+        error instanceof TelegramDeliveryError &&
+        error.mayHaveSucceeded === false
+      ) {
+        await store.set(key, { status: 'ready', nextPart: part });
+        throw error;
+      }
+      await store.set(key, { status: 'unknown', nextPart: part });
+      return { status: 'unknown', sentParts: part } as const;
+    }
+    part += 1;
+    await store.set(key, {
+      status: part === delivery.messages.length ? 'complete' : 'ready',
+      nextPart: part,
+    });
+  }
+
+  return { status: 'complete', sentParts: part } as const;
 };

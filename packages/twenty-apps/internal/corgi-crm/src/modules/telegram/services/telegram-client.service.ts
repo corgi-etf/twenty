@@ -5,6 +5,16 @@ type TelegramClientOptions = {
   timeoutMs?: number;
 };
 
+export class TelegramDeliveryError extends Error {
+  public constructor(
+    message: string,
+    public readonly mayHaveSucceeded: boolean,
+  ) {
+    super(message);
+    this.name = 'TelegramDeliveryError';
+  }
+}
+
 export class TelegramClient {
   private readonly token: string;
   private readonly timeoutMs: number;
@@ -29,17 +39,28 @@ export class TelegramClient {
         },
       );
     } catch {
-      throw new Error(`Telegram ${method} request failed`);
+      // Once fetch starts, a timeout or socket failure cannot tell us whether
+      // Telegram accepted the request. Callers must not retry that ambiguity.
+      throw new TelegramDeliveryError(
+        `Telegram ${method} request outcome is unknown`,
+        true,
+      );
     }
     if (!response.ok) {
       // Provider bodies may echo request data. Do not include any provider body,
       // URL, token, chat ID, or message text in the surfaced error.
-      throw new Error(
+      throw new TelegramDeliveryError(
         `Telegram ${method} failed with HTTP ${response.status}`,
+        false,
       );
     }
     const result = (await response.json()) as { ok?: boolean };
-    if (result.ok !== true) throw new Error(`Telegram ${method} was rejected`);
+    if (result.ok !== true) {
+      throw new TelegramDeliveryError(
+        `Telegram ${method} was rejected`,
+        false,
+      );
+    }
   }
 
   public sendMessage(chatId: string, text: string): Promise<void> {

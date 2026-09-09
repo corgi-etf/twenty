@@ -1,11 +1,16 @@
 import { CoreApiClient } from 'twenty-client-sdk/core';
 import { defineLogicFunction } from 'twenty-sdk/define';
-import { kv, type LogicFunctionExecutionContext } from 'twenty-sdk/logic-function';
+import {
+  enqueueJob,
+  kv,
+  type LogicFunctionExecutionContext,
+} from 'twenty-sdk/logic-function';
 
-import { TELEGRAM_DAILY_SUMMARY_UNIVERSAL_IDENTIFIER } from 'src/constants';
-import { CoreOutreachRepository } from 'src/modules/outreach/graphql/core-outreach.repository';
+import {
+  TELEGRAM_DAILY_SUMMARY_UNIVERSAL_IDENTIFIER,
+  TELEGRAM_DAILY_SUMMARY_WORKER_UNIVERSAL_IDENTIFIER,
+} from 'src/constants';
 import { runDailySummaryCron } from 'src/modules/telegram/services/daily-summary-cron.service';
-import { TelegramClient } from 'src/modules/telegram/services/telegram-client.service';
 import {
   getValidatedTelegramDeliveryRoster,
   parseTelegramLinkBindings,
@@ -26,9 +31,6 @@ export const handler = async (
   if (context?.workspaceId !== expectedWorkspaceId) {
     throw new Error('Telegram daily summary refused an unexpected workspace');
   }
-  const telegram = new TelegramClient({
-    token: requiredEnvironment('CORGI_CRM_TELEGRAM_BOT_TOKEN'),
-  });
   const coreClient = new CoreApiClient();
   const wholesalerRepository = new CoreWholesalerRepository(coreClient);
   const identity = {
@@ -57,9 +59,14 @@ export const handler = async (
       ),
       identity,
     }),
-    repository: new CoreOutreachRepository(coreClient),
-    store: kv,
-    send: (chatId, text) => telegram.sendMessage(chatId, text),
+    enqueue: (payload, jobId) =>
+      enqueueJob({
+        logicFunctionUniversalIdentifier:
+          TELEGRAM_DAILY_SUMMARY_WORKER_UNIVERSAL_IDENTIFIER,
+        payload,
+        jobId,
+        retryLimit: 5,
+      }),
   });
 };
 
@@ -67,7 +74,7 @@ export default defineLogicFunction({
   universalIdentifier: TELEGRAM_DAILY_SUMMARY_UNIVERSAL_IDENTIFIER,
   name: 'telegram-daily-outreach-summary',
   description:
-    'Runs every 15 minutes, gates on configured IANA local time, and sends one durable per-person daily outreach breakdown.',
+    'Runs every 15 minutes, gates on configured IANA local time, and admits one deterministic delivery job per linked person.',
   timeoutSeconds: 300,
   handler,
   cronTriggerSettings: { pattern: '*/15 * * * *' },
