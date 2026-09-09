@@ -50,16 +50,36 @@ const snapshot = (): WorkspaceConfigSnapshot => {
       ['company', 'RELATION'],
       ['contact', 'RELATION'],
       ['wholesaler', 'RELATION'],
-      ['outcome', 'SELECT'],
-      ['followUpDate', 'DATE_TIME'],
+      ['activityType', 'TEXT'],
+      ['outcome', 'TEXT'],
+      ['followUpDate', 'DATE'],
       ['occurredAt', 'DATE_TIME'],
-      ['notes', 'RICH_TEXT_V2'],
+      ['notes', 'TEXT'],
       ['createdAt', 'DATE_TIME'],
     ]),
     object('workspaceMember'),
     object('importBatch'),
   ];
   const company = objects[0]!;
+  const person = objects[1]!;
+  const wholesaler = objects[2]!;
+  const historicalOwner = company.fields.find(
+    ({ name }) => name === 'historicalOwner',
+  )!;
+  historicalOwner.relationTargetObjectMetadataId = wholesaler.id;
+  historicalOwner.settings = { relationType: 'MANY_TO_ONE' };
+  const outreachActivity = objects[6]!;
+  for (const [fieldName, targetObject] of [
+    ['company', company],
+    ['contact', person],
+    ['wholesaler', wholesaler],
+  ] as const) {
+    const relationField = outreachActivity.fields.find(
+      ({ name }) => name === fieldName,
+    )!;
+    relationField.relationTargetObjectMetadataId = targetObject.id;
+    relationField.settings = { relationType: 'MANY_TO_ONE' };
+  }
   const task = objects[5]!;
   const companyViewFields = company.fields.map((field, position) => ({
     id: `company-view-field-${position}`,
@@ -443,6 +463,116 @@ test('rejects incompatible metadata and ambiguous outreach Follow-ups views', ()
     () => buildWorkspaceConfigPlan(kanbanFollowUps),
     /workspace table/i,
   );
+});
+
+test('requires the exact quick-log scalar field types before planning mutations', () => {
+  for (const [fieldName, expectedType] of [
+    ['activityType', 'TEXT'],
+    ['outcome', 'TEXT'],
+    ['notes', 'TEXT'],
+    ['occurredAt', 'DATE_TIME'],
+    ['followUpDate', 'DATE'],
+  ] as const) {
+    const value = snapshot();
+    const field = value.objects[6]!.fields.find(
+      ({ name }) => name === fieldName,
+    )!;
+    field.type = 'INCOMPATIBLE';
+
+    assert.throws(
+      () => buildWorkspaceConfigPlan(value),
+      new RegExp(`${fieldName}.*${expectedType}`, 'i'),
+    );
+  }
+
+  const missingActivityType = snapshot();
+  missingActivityType.objects[6]!.fields =
+    missingActivityType.objects[6]!.fields.filter(
+      ({ name }) => name !== 'activityType',
+    );
+  assert.throws(
+    () => buildWorkspaceConfigPlan(missingActivityType),
+    /quick-log.*activityType.*missing/i,
+  );
+});
+
+test('requires exact quick-log MANY_TO_ONE relation targets and cardinality', () => {
+  for (const [fieldName, targetObjectName] of [
+    ['company', 'company'],
+    ['contact', 'person'],
+    ['wholesaler', 'wholesaler'],
+  ] as const) {
+    const wrongTarget = snapshot();
+    const wrongTargetField = wrongTarget.objects[6]!.fields.find(
+      ({ name }) => name === fieldName,
+    )!;
+    wrongTargetField.relationTargetObjectMetadataId =
+      'workspaceMember-object-id';
+    assert.throws(
+      () => buildWorkspaceConfigPlan(wrongTarget),
+      new RegExp(`${fieldName}.*MANY_TO_ONE.*${targetObjectName}`, 'i'),
+    );
+
+    const wrongCardinality = snapshot();
+    const wrongCardinalityField = wrongCardinality.objects[6]!.fields.find(
+      ({ name }) => name === fieldName,
+    )!;
+    wrongCardinalityField.settings = { relationType: 'ONE_TO_MANY' };
+    assert.throws(
+      () => buildWorkspaceConfigPlan(wrongCardinality),
+      new RegExp(`${fieldName}.*MANY_TO_ONE.*${targetObjectName}`, 'i'),
+    );
+  }
+});
+
+test('converges historicalOwner label without renaming its compatible field', () => {
+  const value = snapshot();
+  const historicalOwner = value.objects[0]!.fields.find(
+    ({ name }) => name === 'historicalOwner',
+  )!;
+
+  const plan = buildWorkspaceConfigPlan(value);
+  assert.deepEqual(
+    plan.metadataFieldsToUpdate.find(({ id }) => id === historicalOwner.id),
+    { id: historicalOwner.id, label: 'Wholesaler' },
+  );
+  assert.equal(historicalOwner.name, 'historicalOwner');
+
+  historicalOwner.label = 'Wholesaler';
+  const convergedPlan = buildWorkspaceConfigPlan(value);
+  assert.equal(
+    convergedPlan.metadataFieldsToUpdate.some(
+      ({ id }) => id === historicalOwner.id,
+    ),
+    false,
+  );
+});
+
+test('rejects an incompatible historicalOwner relation before planning mutations', () => {
+  for (const mutate of [
+    (value: WorkspaceConfigSnapshot) => {
+      value.objects[0]!.fields.find(
+        ({ name }) => name === 'historicalOwner',
+      )!.type = 'TEXT';
+    },
+    (value: WorkspaceConfigSnapshot) => {
+      value.objects[0]!.fields.find(
+        ({ name }) => name === 'historicalOwner',
+      )!.relationTargetObjectMetadataId = 'person-object-id';
+    },
+    (value: WorkspaceConfigSnapshot) => {
+      value.objects[0]!.fields.find(
+        ({ name }) => name === 'historicalOwner',
+      )!.settings = { relationType: 'ONE_TO_MANY' };
+    },
+  ]) {
+    const value = snapshot();
+    mutate(value);
+    assert.throws(
+      () => buildWorkspaceConfigPlan(value),
+      /historicalOwner.*MANY_TO_ONE.*wholesaler/i,
+    );
+  }
 });
 
 test('converges company and Follow-ups column widths', () => {

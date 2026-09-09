@@ -58,6 +58,20 @@ const FOLLOW_UP_VIEW_FIELD_NAMES = [
   'notes',
 ] as const;
 
+const QUICK_LOG_SCALAR_FIELD_DEFINITIONS = [
+  { name: 'activityType', type: 'TEXT' },
+  { name: 'outcome', type: 'TEXT' },
+  { name: 'notes', type: 'TEXT' },
+  { name: 'occurredAt', type: 'DATE_TIME' },
+  { name: 'followUpDate', type: 'DATE' },
+] as const;
+
+const QUICK_LOG_RELATION_FIELD_DEFINITIONS = [
+  { name: 'company', targetObjectName: 'company' },
+  { name: 'contact', targetObjectName: 'person' },
+  { name: 'wholesaler', targetObjectName: 'wholesaler' },
+] as const;
+
 const companyViewFieldSize = (fieldName: string): number =>
   fieldName === 'address' ? 250 : 150;
 
@@ -385,6 +399,32 @@ const uniqueFieldMap = (
   return result;
 };
 
+const relationTargetObjectMetadataId = (
+  field: WorkspaceMetadataField,
+): string | null | undefined =>
+  field.relationTargetObjectMetadataId ??
+  field.settings?.relationTargetObjectMetadataId;
+
+const validateManyToOneRelation = ({
+  field,
+  sourceFieldName,
+  targetObject,
+}: {
+  field: WorkspaceMetadataField;
+  sourceFieldName: string;
+  targetObject: WorkspaceMetadataObject;
+}): void => {
+  if (
+    field.type !== 'RELATION' ||
+    field.settings?.relationType !== 'MANY_TO_ONE' ||
+    relationTargetObjectMetadataId(field) !== targetObject.id
+  ) {
+    throw new Error(
+      `${sourceFieldName} must be a MANY_TO_ONE relation to ${targetObject.nameSingular}`,
+    );
+  }
+};
+
 const createFollowUpViewPlan = ({
   outreachActivity,
   outreachFields,
@@ -521,6 +561,52 @@ export const buildWorkspaceConfigPlan = (
 
   const wholesaler = objectsByName.get('wholesaler')!;
   const workspaceMember = objectsByName.get('workspaceMember')!;
+
+  const historicalOwner = companyFields.get('historicalOwner');
+  if (!historicalOwner) {
+    throw new Error('Required company field historicalOwner is missing');
+  }
+  validateManyToOneRelation({
+    field: historicalOwner,
+    sourceFieldName: 'Company historicalOwner',
+    targetObject: wholesaler,
+  });
+  if (historicalOwner.label !== 'Wholesaler') {
+    metadataFieldsToUpdate.push({
+      id: historicalOwner.id,
+      label: 'Wholesaler',
+    });
+  }
+
+  const outreachActivity = objectsByName.get('outreachActivity')!;
+  const outreachFields = uniqueFieldMap(outreachActivity);
+  for (const definition of QUICK_LOG_SCALAR_FIELD_DEFINITIONS) {
+    const field = outreachFields.get(definition.name);
+    if (!field) {
+      throw new Error(
+        `Required quick-log field outreachActivity.${definition.name} is missing`,
+      );
+    }
+    if (field.type !== definition.type) {
+      throw new Error(
+        `Outreach Activity ${definition.name} must be ${definition.type}, found ${field.type}`,
+      );
+    }
+  }
+  for (const definition of QUICK_LOG_RELATION_FIELD_DEFINITIONS) {
+    const field = outreachFields.get(definition.name);
+    if (!field) {
+      throw new Error(
+        `Required quick-log field outreachActivity.${definition.name} is missing`,
+      );
+    }
+    validateManyToOneRelation({
+      field,
+      sourceFieldName: `Outreach Activity ${definition.name}`,
+      targetObject: objectsByName.get(definition.targetObjectName)!,
+    });
+  }
+
   const wholesalerFields = uniqueFieldMap(wholesaler);
   const workspaceMemberRelation = wholesalerFields.get('workspaceMember');
   if (!workspaceMemberRelation) {
@@ -537,9 +623,9 @@ export const buildWorkspaceConfigPlan = (
       },
     });
   } else {
-    const relationTargetObjectMetadataId =
-      workspaceMemberRelation.relationTargetObjectMetadataId ??
-      workspaceMemberRelation.settings?.relationTargetObjectMetadataId;
+    const targetObjectMetadataId = relationTargetObjectMetadataId(
+      workspaceMemberRelation,
+    );
     const inverseRelation =
       workspaceMemberRelation.relationTargetFieldMetadataId
         ? workspaceMember.fields.find(
@@ -553,7 +639,7 @@ export const buildWorkspaceConfigPlan = (
     if (
       workspaceMemberRelation.type !== 'RELATION' ||
       workspaceMemberRelation.settings?.relationType !== 'MANY_TO_ONE' ||
-      relationTargetObjectMetadataId !== workspaceMember.id ||
+      targetObjectMetadataId !== workspaceMember.id ||
       inverseRelation?.type !== 'RELATION' ||
       inverseRelation.settings?.relationType !== 'ONE_TO_MANY' ||
       inverseTargetObjectMetadataId !== wholesaler.id ||
@@ -691,8 +777,6 @@ export const buildWorkspaceConfigPlan = (
           },
         ];
 
-  const outreachActivity = objectsByName.get('outreachActivity')!;
-  const outreachFields = uniqueFieldMap(outreachActivity);
   for (const fieldName of FOLLOW_UP_VIEW_FIELD_NAMES) {
     if (!outreachFields.has(fieldName)) {
       throw new Error(
@@ -701,11 +785,6 @@ export const buildWorkspaceConfigPlan = (
     }
   }
   const followUpDate = outreachFields.get('followUpDate')!;
-  if (!['DATE', 'DATE_TIME'].includes(followUpDate.type)) {
-    throw new Error(
-      'Follow-ups followUpDate must be a DATE or DATE_TIME field',
-    );
-  }
   const followUpView = selectFollowUpView({
     views: snapshot.views,
     outreachActivity,

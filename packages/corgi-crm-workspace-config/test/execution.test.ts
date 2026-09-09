@@ -23,12 +23,18 @@ const fixture = (): WorkspaceConfigSnapshot => {
           ? 'ZIP Code'
           : name === 'workspaceMember'
             ? 'Workspace Member'
-            : name,
+            : name === 'historicalOwner'
+              ? 'Wholesaler'
+              : name,
     type,
   });
   const companyFields = [
     field('company', 'name', 'FULL_NAME'),
-    field('company', 'historicalOwner', 'RELATION'),
+    {
+      ...field('company', 'historicalOwner', 'RELATION'),
+      relationTargetObjectMetadataId: 'wholesaler-object-id',
+      settings: { relationType: 'MANY_TO_ONE' },
+    },
     field('company', 'stateRegion', 'TEXT'),
     field('company', 'postalCode', 'TEXT'),
     field('company', 'address', 'ADDRESS'),
@@ -46,13 +52,26 @@ const fixture = (): WorkspaceConfigSnapshot => {
     field('task', 'bodyV2', 'RICH_TEXT_V2'),
   ];
   const outreachFields = [
-    field('outreachActivity', 'company', 'RELATION'),
-    field('outreachActivity', 'contact', 'RELATION'),
-    field('outreachActivity', 'wholesaler', 'RELATION'),
-    field('outreachActivity', 'outcome', 'SELECT'),
-    field('outreachActivity', 'followUpDate', 'DATE_TIME'),
+    {
+      ...field('outreachActivity', 'company', 'RELATION'),
+      relationTargetObjectMetadataId: 'company-object-id',
+      settings: { relationType: 'MANY_TO_ONE' },
+    },
+    {
+      ...field('outreachActivity', 'contact', 'RELATION'),
+      relationTargetObjectMetadataId: 'person-object-id',
+      settings: { relationType: 'MANY_TO_ONE' },
+    },
+    {
+      ...field('outreachActivity', 'wholesaler', 'RELATION'),
+      relationTargetObjectMetadataId: 'wholesaler-object-id',
+      settings: { relationType: 'MANY_TO_ONE' },
+    },
+    field('outreachActivity', 'outcome', 'TEXT'),
+    field('outreachActivity', 'followUpDate', 'DATE'),
     field('outreachActivity', 'occurredAt', 'DATE_TIME'),
-    field('outreachActivity', 'notes', 'RICH_TEXT_V2'),
+    field('outreachActivity', 'notes', 'TEXT'),
+    field('outreachActivity', 'activityType', 'TEXT'),
   ];
   const objects = [
     {
@@ -168,18 +187,20 @@ const fixture = (): WorkspaceConfigSnapshot => {
         position: 2,
         visibility: 'WORKSPACE',
         createdByUserWorkspaceId: null,
-        viewFields: outreachFields.map((metadataField, position) => ({
-          id: `outreach-view-field-${position}`,
-          fieldMetadataId: metadataField.id,
-          isVisible: true,
-          position,
-          size:
-            metadataField.name === 'company'
-              ? 210
-              : metadataField.name === 'notes'
-                ? 250
-                : 150,
-        })),
+        viewFields: outreachFields
+          .filter(({ name }) => name !== 'activityType')
+          .map((metadataField, position) => ({
+            id: `outreach-view-field-${position}`,
+            fieldMetadataId: metadataField.id,
+            isVisible: true,
+            position,
+            size:
+              metadataField.name === 'company'
+                ? 210
+                : metadataField.name === 'notes'
+                  ? 250
+                  : 150,
+          })),
         viewFilters: [
           {
             id: 'follow-up-date-filter-id',
