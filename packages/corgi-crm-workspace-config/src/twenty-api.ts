@@ -276,12 +276,13 @@ export const assertWorkspaceConfigTenant = async ({
       ({ userWorkspaceId }) => userWorkspaceId === membership.id,
     ),
   );
-  if (
-    assignedRoles.length !== 1 ||
-    assignedRoles[0]?.canUpdateAllSettings !== true ||
-    assignedRoles[0]?.canReadAllObjectRecords !== true ||
-    assignedRoles[0]?.canUpdateAllObjectRecords !== true
-  ) {
+  const hasAdministrativeRole = assignedRoles.some(
+    (role) =>
+      role.canUpdateAllSettings === true &&
+      role.canReadAllObjectRecords === true &&
+      role.canUpdateAllObjectRecords === true,
+  );
+  if (!hasAdministrativeRole) {
     throw new Error('Workspace configuration session is not an admin');
   }
 };

@@ -57,7 +57,7 @@ const immediateGate = createWorkspaceConfigRequestGate({
   minimumIntervalMs: 0,
 });
 
-test('tenant preflight binds the exact workspace member and admin role', async () => {
+test('tenant preflight accepts multiple assigned roles when one is administrative', async () => {
   const request = new FakeRequest();
   request.responses.push(
     response({
@@ -74,6 +74,14 @@ test('tenant preflight binds the exact workspace member and admin role', async (
           },
         },
         getRoles: [
+          {
+            canUpdateAllSettings: false,
+            canReadAllObjectRecords: true,
+            canUpdateAllObjectRecords: false,
+            workspaceMembers: [
+              { userWorkspaceId: WORKSPACE_CONFIG_APPROVED_USER_WORKSPACE_ID },
+            ],
+          },
           {
             canUpdateAllSettings: true,
             canReadAllObjectRecords: true,
