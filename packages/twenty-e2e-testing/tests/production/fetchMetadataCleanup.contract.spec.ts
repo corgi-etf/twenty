@@ -457,9 +457,29 @@ test('builds the exact object and field purge allowlist', () => {
     'person.legacyStateRegion->stateRegion:State / Region',
     'person.legacyPostalCode->postalCode:Postal Code',
     'person.fetchNotes->notes:Notes',
-    'wholesaler.fetchRole->role:Role',
+    'wholesaler.fetchRole->wholesalerRole:Role',
     'holdingObservation.sourceDate->asOfDate:As Of Date',
   ]);
+});
+
+test('accepts an already canonical wholesaler role field without a reserved target', () => {
+  const objects = metadataFixture();
+  const wholesaler = objects.find(
+    ({ nameSingular }) => nameSingular === 'wholesaler',
+  );
+  const roleField = wholesaler?.fields.find(({ name }) => name === 'fetchRole');
+  expect(roleField).toBeDefined();
+  roleField!.name = 'wholesalerRole';
+  roleField!.label = 'Role';
+
+  const plan = buildFetchMetadataCleanupPlan(objects);
+
+  expect(
+    plan.fieldsToRename.some(
+      ({ objectNameSingular }) => objectNameSingular === 'wholesaler',
+    ),
+  ).toBe(false);
+  expect(plan.fieldsToRename.some(({ name }) => name === 'role')).toBe(false);
 });
 
 test('never plans deletion of the retained sales and map contract', () => {

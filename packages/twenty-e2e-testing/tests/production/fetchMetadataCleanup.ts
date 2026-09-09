@@ -136,7 +136,7 @@ const RETAINED_FIELD_RENAMES = [
     'Postal Code',
   ],
   ['person', 'fetchNotes', 'Fetch Notes', 'notes', 'Notes'],
-  ['wholesaler', 'fetchRole', 'Fetch Role', 'role', 'Role'],
+  ['wholesaler', 'fetchRole', 'Fetch Role', 'wholesalerRole', 'Role'],
   ['holdingObservation', 'sourceDate', 'Source Date', 'asOfDate', 'As Of Date'],
 ] as const;
 
