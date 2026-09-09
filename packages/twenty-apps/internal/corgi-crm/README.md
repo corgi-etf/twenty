@@ -19,6 +19,27 @@ existing `Wholesaler` object, which was created before this app.
 5. The manifest defaults `CORGI_CRM_WORKSPACE_ID` to the approved Corgi CRM
    workspace. Do not publish or install this tenant-specific app elsewhere.
 
+Version `1.1.0` adds the Telegram channel and must be published as a new
+immutable app version; it must not reuse the baseline `1.0.0` release.
+
+The two custom CRM objects predate this app, so their universal identifiers are
+not guessed or committed. Immediately before packaging, use the short-lived
+deployment credential to resolve them from live metadata into the job
+environment:
+
+```text
+CORGI_CRM_ROLE_ENV_PATH=$GITHUB_ENV node packages/twenty-apps/internal/corgi-crm/scripts/verify-production-install.mjs role-env
+```
+
+That mode fails unless it finds exactly one active `wholesaler` and one active
+`outreachActivity` object with UUID universal identifiers. It exports
+`CORGI_CRM_WHOLESALER_OBJECT_UNIVERSAL_IDENTIFIER` and
+`CORGI_CRM_OUTREACH_ACTIVITY_OBJECT_UNIVERSAL_IDENTIFIER`; the least-privilege
+role requires both at build time. The installed verifier then checks the actual
+role has read-only access to WorkspaceMember, Company, and Person; read/write
+access to Wholesaler and OutreachActivity; and no other object, delete, global,
+or settings permission.
+
 The post-install function reconciles all existing WorkspaceMembers. The
 `workspaceMember.created` trigger keeps future members synchronized. Both paths
 reuse a case-insensitive email match, create a deterministic record ID from the
@@ -48,8 +69,21 @@ source:
 - `CORGI_CRM_TELEGRAM_BOT_TOKEN` (secret): token from BotFather.
 - `CORGI_CRM_TELEGRAM_WEBHOOK_SECRET` (secret): a new random Telegram webhook
   secret token.
-- `CORGI_CRM_TELEGRAM_LINK_CODES` (secret): JSON mapping one-time codes to
-  WorkspaceMember UUIDs, for example `{ "random-code": "member-uuid" }`.
+- `CORGI_CRM_TELEGRAM_LINK_CODES` (secret): explicit one-to-one bindings of a
+  code, WorkspaceMember UUID, and Telegram user ID. Codes, members, and users
+  must each be unique:
+
+```json
+{
+  "bindings": [
+    {
+      "code": "random-one-time-code",
+      "workspaceMemberId": "11111111-1111-4111-8111-111111111111",
+      "telegramUserId": "101"
+    }
+  ]
+}
+```
 - `CORGI_CRM_TELEGRAM_TIME_ZONE`: an IANA zone such as `America/Chicago`.
 - `CORGI_CRM_TELEGRAM_DAILY_SUMMARY_TIME`: `HH:MM` on a 15-minute boundary.
 
@@ -62,8 +96,21 @@ argument, workflow input, source file, or log.
 
 Run `yarn verify:telegram` with the same short-lived production verification
 environment used by `verify:production`. It checks the installed variable
-configuration and the exact webhook → queued worker plus 15-minute cron topology
-without printing any secret values.
+configuration, forwarded secret header, least-privilege role, and exact webhook
+→ queued worker plus 15-minute cron → queued delivery-worker topology without
+printing any secret values.
+
+Optional live checks are isolated behind `yarn verify:telegram:live`. The script
+does no network work unless
+`CORGI_CRM_TELEGRAM_LIVE_VERIFICATION_CONFIRM=VERIFY_TELEGRAM_LIVE` is set. It
+checks `getMe` and `getWebhookInfo` against
+`CORGI_CRM_TELEGRAM_WEBHOOK_URL`. The invalid-update signed/unsigned route
+canary additionally requires
+`CORGI_CRM_TELEGRAM_SIGNED_CANARY_CONFIRM=RUN_SIGNED_CANARY`. A real test message
+requires all three of `CORGI_CRM_TELEGRAM_TEST_DELIVERY_ENABLED=true`,
+`CORGI_CRM_TELEGRAM_TEST_DELIVERY_CONFIRM=SEND_TELEGRAM_TEST`, and an explicit
+`CORGI_CRM_TELEGRAM_TEST_CHAT_ID`. Load the token and webhook secret from the
+secret store; never put them in arguments or logs.
 
 Users start a private chat with `/link CODE`. Successful linking persists only
 the Telegram/CRM identities, never the code or a code hash. The quickest logging
@@ -77,5 +124,10 @@ optional contact and follow-up:
 `/today` (or `/summary`) returns that person's current local-day breakdown.
 `/cancel` clears any draft without a CRM write and `/help` shows the syntax. The
 cron runs every 15 minutes, gates on the configured local time using IANA rules,
-and stores resumable per-person/per-day delivery claims so retries do not resend
-already confirmed message parts.
+and admits deterministic per-member/day delivery jobs. Each worker revalidates
+the WorkspaceMember-to-Wholesaler ownership immediately before reading or
+sending. It records intent before every Telegram API call. A proven HTTP/API
+rejection is retryable; a timeout, network failure, crash after intent, or other
+ambiguous result is marked unknown and is never resent. This deliberate
+at-most-once policy prevents duplicate daily messages, but an ambiguous delivery
+can omit that part and all later parts until an operator reviews it.

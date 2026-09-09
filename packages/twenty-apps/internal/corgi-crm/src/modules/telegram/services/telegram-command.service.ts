@@ -21,7 +21,7 @@ const HELP = [
   'Corgi CRM outreach bot',
   '/link CODE — securely link your CRM identity',
   '/log call | Company | outcome | notes',
-  '/log type=meeting; company=Company; contact=Name; outcome=interested; notes=Next step; followup=YYYY-MM-DD',
+  '/log type=meeting; company=Company; contact=Name; outcome=follow_up_scheduled; notes=Next step; followup=YYYY-MM-DD',
   '/today — your activity breakdown for the current local day',
   '/cancel — cancel the current entry',
   '/help — show this guide',

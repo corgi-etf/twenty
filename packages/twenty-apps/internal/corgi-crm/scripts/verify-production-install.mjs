@@ -1,12 +1,18 @@
+import { appendFile } from 'node:fs/promises';
+import { pathToFileURL } from 'node:url';
+
 const APPLICATION_ID = 'ca87ad48-b62a-41be-a790-7c17707ff1b4';
 const TRIGGER_ID = '65f68f6b-e130-4292-ab05-3ef48458d7de';
 const TELEGRAM_WEBHOOK_ID = 'a7693988-ab2a-4f07-b865-b4d4808c814a';
 const TELEGRAM_WORKER_ID = '32cf139c-a4bf-4d87-84f4-f70ac39a3942';
 const TELEGRAM_CRON_ID = 'e61bb12c-a0f5-421b-97d2-e2596e56cf59';
+const TELEGRAM_DAILY_WORKER_ID = 'a518c1f8-d80c-4260-8ef6-bd51a86b4eda';
 const APPROVED_ORIGIN = 'https://crm.corgiinvest.com';
 const APPROVED_WORKSPACE_ID = 'eabf5d9d-fc99-4acb-b160-710ecb1db996';
 const PAGE_SIZE = 100;
 const MAX_PAGES = 100;
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 const requiredEnvironment = (name) => {
   const value = process.env[name]?.trim();
@@ -101,6 +107,145 @@ const exactlyOne = (values, predicate, label) => {
   return matches[0];
 };
 
+const parseTelegramLinkBindings = (raw) => {
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new Error('Telegram link configuration must be valid JSON');
+  }
+  if (
+    !parsed ||
+    typeof parsed !== 'object' ||
+    Array.isArray(parsed) ||
+    !Array.isArray(parsed.bindings)
+  ) {
+    throw new Error('Telegram link configuration needs a bindings array');
+  }
+  const bindings = parsed.bindings.map((binding) => {
+    if (!binding || typeof binding !== 'object' || Array.isArray(binding)) {
+      throw new Error('Telegram link binding must be an object');
+    }
+    const code = typeof binding.code === 'string' ? binding.code.trim() : '';
+    const workspaceMemberId =
+      typeof binding.workspaceMemberId === 'string'
+        ? binding.workspaceMemberId.trim()
+        : '';
+    const telegramUserId =
+      typeof binding.telegramUserId === 'string'
+        ? binding.telegramUserId.trim()
+        : '';
+    if (!code) throw new Error('Telegram link binding code is required');
+    if (!UUID_PATTERN.test(workspaceMemberId)) {
+      throw new Error('Telegram link workspace member must be a UUID');
+    }
+    if (!/^[1-9][0-9]*$/.test(telegramUserId)) {
+      throw new Error('Telegram link user must be a numeric ID');
+    }
+    return { code, workspaceMemberId, telegramUserId };
+  });
+  for (const property of ['code', 'workspaceMemberId', 'telegramUserId']) {
+    const values = bindings.map((binding) => binding[property]);
+    if (new Set(values).size !== values.length) {
+      throw new Error(`Duplicate Telegram link ${property} binding`);
+    }
+  }
+  return bindings;
+};
+
+const assertIanaTimeZone = (value) => {
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: value }).format();
+  } catch {
+    throw new Error('Telegram time zone must be a valid IANA zone');
+  }
+};
+
+const assertQuarterHour = (value) => {
+  const match = /^(?:[01][0-9]|2[0-3]):([0-5][0-9])$/.exec(value);
+  if (!match || Number(match[1]) % 15 !== 0) {
+    throw new Error('Telegram summary time must be on a 15-minute boundary');
+  }
+};
+
+const resolveCorgiRoleObjectIdentifiers = (objects) => {
+  const resolve = (nameSingular, environmentKey) => {
+    const object = exactlyOne(
+      objects,
+      (candidate) =>
+        candidate?.nameSingular === nameSingular && candidate.isActive === true,
+      `${nameSingular} metadata object`,
+    );
+    if (!UUID_PATTERN.test(object.universalIdentifier ?? '')) {
+      throw new Error(`${nameSingular} object universal identifier is not a UUID`);
+    }
+    return [environmentKey, object.universalIdentifier];
+  };
+  return Object.fromEntries([
+    resolve(
+      'wholesaler',
+      'CORGI_CRM_WHOLESALER_OBJECT_UNIVERSAL_IDENTIFIER',
+    ),
+    resolve(
+      'outreachActivity',
+      'CORGI_CRM_OUTREACH_ACTIVITY_OBJECT_UNIVERSAL_IDENTIFIER',
+    ),
+  ]);
+};
+
+const verifyApplicationRoleContract = (role, objects) => {
+  if (!role || typeof role !== 'object') {
+    throw new Error('Installed application role is missing');
+  }
+  if (
+    role.canReadAllObjectRecords !== false ||
+    role.canUpdateAllObjectRecords !== false ||
+    role.canSoftDeleteAllObjectRecords !== false ||
+    role.canDestroyAllObjectRecords !== false ||
+    role.canUpdateAllSettings !== false
+  ) {
+    throw new Error('Installed application role has a global permission');
+  }
+  const permissions = role.objectPermissions ?? [];
+  if (permissions.length !== 5) {
+    throw new Error('Installed application role must have exactly five object permissions');
+  }
+  const expected = new Map(
+    [
+      ['workspaceMember', false],
+      ['company', false],
+      ['person', false],
+      ['wholesaler', true],
+      ['outreachActivity', true],
+    ].map(([nameSingular, writable]) => {
+      const object = exactlyOne(
+        objects,
+        (candidate) => candidate?.nameSingular === nameSingular,
+        `${nameSingular} metadata object`,
+      );
+      return [object.id, { nameSingular, writable }];
+    }),
+  );
+  const seen = new Set();
+  for (const permission of permissions) {
+    const contract = expected.get(permission.objectMetadataId);
+    if (!contract || seen.has(permission.objectMetadataId)) {
+      throw new Error('Installed application role has an unexpected object permission');
+    }
+    seen.add(permission.objectMetadataId);
+    if (
+      permission.canReadObjectRecords !== true ||
+      permission.canUpdateObjectRecords !== contract.writable ||
+      permission.canSoftDeleteObjectRecords !== false ||
+      permission.canDestroyObjectRecords !== false
+    ) {
+      throw new Error(
+        `Installed application role has excessive ${contract.nameSingular} permission`,
+      );
+    }
+  }
+};
+
 const verifyTelegramApplicationContract = (application, workspaceId) => {
   const variables = application.applicationVariables ?? [];
   const workspaceVariable = exactlyOne(
@@ -121,6 +266,22 @@ const verifyTelegramApplicationContract = (application, workspaceId) => {
       throw new Error(`Telegram variable ${key} is not configured`);
     }
   }
+  const variableValue = (key) =>
+    exactlyOne(
+      variables,
+      (candidate) => candidate.key === key,
+      `Telegram variable ${key}`,
+    ).value.trim();
+  const linkBindings = parseTelegramLinkBindings(
+    variableValue('CORGI_CRM_TELEGRAM_LINK_CODES'),
+  );
+  if (linkBindings.length === 0) {
+    throw new Error('Telegram link configuration must include at least one binding');
+  }
+  assertIanaTimeZone(variableValue('CORGI_CRM_TELEGRAM_TIME_ZONE'));
+  assertQuarterHour(
+    variableValue('CORGI_CRM_TELEGRAM_DAILY_SUMMARY_TIME'),
+  );
 
   const functions = application.logicFunctions ?? [];
   const webhook = exactlyOne(
@@ -135,9 +296,15 @@ const verifyTelegramApplicationContract = (application, workspaceId) => {
   if (
     webhookSettings?.path !== '/telegram/webhook' ||
     webhookSettings?.httpMethod !== 'POST' ||
-    webhookSettings?.isAuthRequired !== false
+    webhookSettings?.isAuthRequired !== false ||
+    !Array.isArray(webhookSettings?.forwardedRequestHeaders) ||
+    webhookSettings.forwardedRequestHeaders.length !== 1 ||
+    webhookSettings.forwardedRequestHeaders[0]?.toLowerCase() !==
+      'x-telegram-bot-api-secret-token'
   ) {
-    throw new Error('Telegram webhook route contract is not active');
+    throw new Error(
+      'Telegram webhook route/header forwarding contract is not active',
+    );
   }
 
   exactlyOne(
@@ -155,6 +322,12 @@ const verifyTelegramApplicationContract = (application, workspaceId) => {
   if (cronSettings?.pattern !== '*/15 * * * *') {
     throw new Error('Telegram cron contract is not active');
   }
+  exactlyOne(
+    functions,
+    (logicFunction) =>
+      logicFunction.universalIdentifier === TELEGRAM_DAILY_WORKER_ID,
+    'Telegram daily queued worker function',
+  );
 };
 
 const verifyInstalledApplication = async ({
@@ -170,6 +343,20 @@ const verifyInstalledApplication = async ({
       findManyApplications {
         universalIdentifier version state
         applicationVariables { key value }
+        defaultLogicFunctionRole {
+          canReadAllObjectRecords
+          canUpdateAllObjectRecords
+          canSoftDeleteAllObjectRecords
+          canDestroyAllObjectRecords
+          canUpdateAllSettings
+          objectPermissions {
+            objectMetadataId
+            canReadObjectRecords
+            canUpdateObjectRecords
+            canSoftDeleteObjectRecords
+            canDestroyObjectRecords
+          }
+        }
         logicFunctions {
           universalIdentifier
           databaseEventTriggerSettings
@@ -215,6 +402,37 @@ const verifyInstalledApplication = async ({
     throw new Error('Corgi CRM member-created database trigger is not active');
   }
   return application;
+};
+
+const listAllMetadataObjects = async ({ graphql }) => {
+  const objects = [];
+  let cursor;
+  const seenCursors = new Set();
+  for (let page = 0; page < MAX_PAGES; page += 1) {
+    const data = await graphql({
+      endpoint: '/metadata',
+      operationName: 'VerifyCorgiCrmMetadataObjects',
+      query: `query VerifyCorgiCrmMetadataObjects($after: String) {
+        objects(paging: { first: ${PAGE_SIZE}, after: $after }, filter: {}) {
+          edges { node { id nameSingular universalIdentifier isActive } }
+          pageInfo { hasNextPage endCursor }
+        }
+      }`,
+      variables: { after: cursor ?? null },
+    });
+    const connection = data.objects;
+    if (!connection || !Array.isArray(connection.edges)) {
+      throw new Error('Metadata object verification returned an invalid connection');
+    }
+    objects.push(...connection.edges.map((edge) => edge?.node).filter(Boolean));
+    if (!connection.pageInfo?.hasNextPage) return objects;
+    cursor = connection.pageInfo.endCursor;
+    if (!cursor || seenCursors.has(cursor)) {
+      throw new Error('Metadata object verification returned an invalid cursor');
+    }
+    seenCursors.add(cursor);
+  }
+  throw new Error(`Metadata object verification exceeded ${MAX_PAGES} pages`);
 };
 
 const listAllRecords = async ({ graphql, operationName, root, selection }) => {
@@ -304,9 +522,14 @@ const verifyReconciliation = ({ members, wholesalers }) => {
 
 const main = async () => {
   const mode = process.argv[2];
-  if (mode !== 'target' && mode !== 'installed' && mode !== 'telegram') {
+  if (
+    mode !== 'target' &&
+    mode !== 'role-env' &&
+    mode !== 'installed' &&
+    mode !== 'telegram'
+  ) {
     throw new Error(
-      'Usage: verify-production-install.mjs <target|installed|telegram>',
+      'Usage: verify-production-install.mjs <target|role-env|installed|telegram>',
     );
   }
   const origin = new URL(requiredEnvironment('CORGI_CRM_API_URL')).origin;
@@ -325,11 +548,30 @@ const main = async () => {
     return;
   }
 
+  const metadataObjects = await listAllMetadataObjects({ graphql });
+  if (mode === 'role-env') {
+    const outputPath = requiredEnvironment('CORGI_CRM_ROLE_ENV_PATH');
+    const identifiers = resolveCorgiRoleObjectIdentifiers(metadataObjects);
+    await appendFile(
+      outputPath,
+      `${Object.entries(identifiers)
+        .map(([key, value]) => `${key}=${value}`)
+        .join('\n')}\n`,
+      'utf8',
+    );
+    console.log('Resolved Corgi CRM role object identifiers for packaging.');
+    return;
+  }
+
   const application = await verifyInstalledApplication({
     graphql,
     version: requiredEnvironment('CORGI_CRM_EXPECTED_VERSION'),
     workspaceId,
   });
+  verifyApplicationRoleContract(
+    application.defaultLogicFunctionRole,
+    metadataObjects,
+  );
   const [members, wholesalers] = await Promise.all([
     listAllRecords({
       graphql,
@@ -360,5 +602,9 @@ if (
   await main();
 }
 
-export { verifyReconciliation, verifyTelegramApplicationContract };
-import { pathToFileURL } from 'node:url';
+export {
+  resolveCorgiRoleObjectIdentifiers,
+  verifyApplicationRoleContract,
+  verifyReconciliation,
+  verifyTelegramApplicationContract,
+};

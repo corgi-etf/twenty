@@ -273,10 +273,12 @@ describe('application release contract', () => {
         {
           nameSingular: 'wholesaler',
           universalIdentifier: '33333333-3333-4333-8333-333333333333',
+          isActive: true,
         },
         {
           nameSingular: 'outreachActivity',
           universalIdentifier: '44444444-4444-4444-8444-444444444444',
+          isActive: true,
         },
       ]),
       {
@@ -292,6 +294,7 @@ describe('application release contract', () => {
           {
             nameSingular: 'wholesaler',
             universalIdentifier: 'not-a-uuid',
+            isActive: true,
           },
         ]),
       /exactly one|uuid/i,

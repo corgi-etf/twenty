@@ -32,7 +32,7 @@ export default defineApplication({
     CORGI_CRM_TELEGRAM_LINK_CODES: {
       universalIdentifier: '6bb517bc-1aa5-444a-ac98-6a35627d250b',
       description:
-        'JSON object mapping one-time /link codes to WorkspaceMember UUIDs. Codes are read at runtime and never persisted or logged.',
+        'Secret JSON bindings of one-time /link codes to unique WorkspaceMember UUIDs and Telegram user IDs. Codes are read at runtime and never persisted or logged.',
       isSecret: true,
     },
     CORGI_CRM_TELEGRAM_TIME_ZONE: {
