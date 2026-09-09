@@ -9,6 +9,7 @@ const base = () => {
   values.set('telegram:user:101', {
     userId: '101',
     chatId: '101',
+    workspaceMemberId: '11111111-1111-4111-8111-111111111111',
     wholesalerId: 'wholesaler-1',
     wholesalerName: 'Nash',
   });
@@ -31,7 +32,19 @@ const base = () => {
     repository,
     timeZone: 'America/Chicago',
     linkCodesJson: '{}',
-    findWholesalers: vi.fn(),
+    identity: {
+      findWorkspaceMember: vi.fn().mockResolvedValue({
+        id: '11111111-1111-4111-8111-111111111111',
+        active: true,
+      }),
+      findWholesalers: vi.fn().mockResolvedValue([
+        {
+          id: 'wholesaler-1',
+          name: 'Nash',
+          workspaceMemberId: '11111111-1111-4111-8111-111111111111',
+        },
+      ]),
+    },
     send: vi.fn().mockResolvedValue(undefined),
     onCrmCommitted: vi.fn().mockResolvedValue(undefined),
     now: () => new Date('2026-09-09T16:30:00.000Z'),
@@ -59,6 +72,32 @@ describe('processTelegramCommand', () => {
       '101',
       'Link your CRM identity first with /link CODE.',
     );
+  });
+
+  it('revalidates CRM ownership before every linked read or write', async () => {
+    const writeDependencies = base();
+    writeDependencies.identity.findWorkspaceMember.mockResolvedValue(null);
+
+    await expect(
+      processTelegramCommand(
+        update('/log call | Acme | connected'),
+        writeDependencies,
+      ),
+    ).resolves.toEqual({ status: 'not_linked' });
+    expect(writeDependencies.repository.createActivity).not.toHaveBeenCalled();
+
+    const readDependencies = base();
+    readDependencies.identity.findWholesalers.mockResolvedValue([
+      {
+        id: 'wholesaler-2',
+        name: 'Reassigned',
+        workspaceMemberId: '11111111-1111-4111-8111-111111111111',
+      },
+    ]);
+    await expect(
+      processTelegramCommand(update('/today'), readDependencies),
+    ).resolves.toEqual({ status: 'not_linked' });
+    expect(readDependencies.repository.listActivities).not.toHaveBeenCalled();
   });
 
   it('logs the fast syntax and confirms the company', async () => {
