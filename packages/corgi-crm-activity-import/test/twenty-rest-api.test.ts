@@ -11,10 +11,7 @@ import {
   type ActivityImportResponse,
 } from '../src/twenty-rest-api.ts';
 
-const response = (
-  body: unknown,
-  status = 200,
-): ActivityImportResponse => ({
+const response = (body: unknown, status = 200): ActivityImportResponse => ({
   ok: () => status >= 200 && status < 300,
   status: () => status,
   headers: () => ({}),
@@ -36,9 +33,8 @@ class FakeRequest implements ActivityImportRequestContext {
   }
 }
 
-const immediateGate = async (
-  request: () => Promise<ActivityImportResponse>,
-) => request();
+const immediateGate = async (request: () => Promise<ActivityImportResponse>) =>
+  request();
 
 test('paginates only the three required record collections', async () => {
   const request = new FakeRequest();
@@ -161,5 +157,8 @@ test('rejects non-production origins and HTTP failures with redacted errors', as
     checkpointPath: join(tmpdir(), 'unused.json'),
     requestGate: immediateGate,
   });
-  await assert.rejects(api.listCompanies(), /List companies failed with HTTP 500/);
+  await assert.rejects(
+    api.listCompanies(),
+    /List companies failed with HTTP 500/,
+  );
 });

@@ -56,8 +56,7 @@ const HASH_PATTERN = /^[a-f0-9]{64}$/;
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const IMPORT_ID_PATTERN = /^[a-z0-9][a-z0-9._-]{2,127}$/;
-const ACTIVITY_IMPORT_UUID_NAMESPACE =
-  'c0671000-75d5-5df7-a950-50da7105b2dd';
+const ACTIVITY_IMPORT_UUID_NAMESPACE = 'c0671000-75d5-5df7-a950-50da7105b2dd';
 
 const stableStringify = (value: unknown): string => {
   if (Array.isArray(value)) return `[${value.map(stableStringify).join(',')}]`;
@@ -179,7 +178,8 @@ const parseCsvRows = (input: string): string[][] => {
       fieldStarted = true;
     }
   }
-  if (inQuotes) throw new Error('Activity import CSV has an unterminated quote');
+  if (inQuotes)
+    throw new Error('Activity import CSV has an unterminated quote');
   if (!endedWithRowBreak || row.length > 0 || field.length > 0 || afterQuote) {
     finishRow();
   }
@@ -222,7 +222,9 @@ const localNoonForRow = (
     localParts.minute!,
     localParts.second!,
   );
-  const instant = new Date(requestedLocal - (representedLocal - requestedLocal));
+  const instant = new Date(
+    requestedLocal - (representedLocal - requestedLocal),
+  );
   const verification = Object.fromEntries(
     formatter
       .formatToParts(instant)
@@ -316,13 +318,14 @@ export const assertTerritoryIdentityArtifact = (
   }
 
   return {
-    workspaceMemberIds: workspaceMemberIds as TerritoryIdentityArtifact['workspaceMemberIds'],
+    workspaceMemberIds:
+      workspaceMemberIds as TerritoryIdentityArtifact['workspaceMemberIds'],
     aggregateIdentityHash: expectedHash,
   };
 };
 
 const uuidBytes = (uuid: string): Buffer =>
-  Buffer.from(uuid.replaceAll('-', ''), 'hex');
+  Buffer.from(uuid.replace(/-/g, ''), 'hex');
 
 const formatUuid = (bytes: Buffer): string => {
   const hex = bytes.toString('hex');

@@ -57,7 +57,7 @@ class FakeApi implements ActivityImportApi {
     this.activities.push(record);
   }
   async readCheckpoint() {
-    return this.checkpoints.at(-1);
+    return this.checkpoints[this.checkpoints.length - 1];
   }
   async writeCheckpoint(checkpoint: ActivityImportCheckpoint) {
     this.checkpoints.push(structuredClone(checkpoint));
@@ -87,7 +87,7 @@ test('dry-run creates no CRM records and emits a PII-free approved plan', async 
   assert.equal(result.plannedCount, 2);
   assert.equal(result.createdCount, 0);
   assert.equal(api.creates.length, 0);
-  assert.equal(api.checkpoints.at(-1)?.status, 'planned');
+  assert.equal(api.checkpoints[api.checkpoints.length - 1]?.status, 'planned');
   const serialized = JSON.stringify({ result, checkpoint: api.checkpoints });
   assert.doesNotMatch(serialized, /Acme|Beta|Reached/);
 });
@@ -143,7 +143,11 @@ test('apply creates every missing record, checkpoints each operation, and verifi
     api.checkpoints.map(({ status }) => status),
     ['applying', 'applying', 'applying', 'verifying', 'complete'],
   );
-  assert.equal(api.checkpoints.at(-1)?.completedOperationHashes.length, 2);
+  assert.equal(
+    api.checkpoints[api.checkpoints.length - 1]?.completedOperationHashes
+      .length,
+    2,
+  );
 });
 
 test('an exact rerun is idempotent and creates nothing', async () => {

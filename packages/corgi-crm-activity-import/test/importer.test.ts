@@ -109,7 +109,10 @@ test('derives stable distinct RFC 4122 version 5 IDs from import ID and row', ()
   assert.equal(first, deterministicActivityId(options().importId, 1));
   assert.notEqual(first, deterministicActivityId(options().importId, 2));
   assert.notEqual(first, deterministicActivityId('another-import', 1));
-  assert.match(first, /^[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+  assert.match(
+    first,
+    /^[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+  );
 });
 
 const planInput = (existingActivities: OutreachActivityRecord[] = []) => ({
@@ -176,10 +179,7 @@ test('fails closed on missing or ambiguous exact company and Nash matches', () =
     () =>
       buildActivityImportPlan({
         ...planInput(),
-        companies: [
-          ...planInput().companies,
-          { id: uuid('8'), name: 'Beta' },
-        ],
+        companies: [...planInput().companies, { id: uuid('8'), name: 'Beta' }],
       }),
     /row 2 must match exactly one company/,
   );

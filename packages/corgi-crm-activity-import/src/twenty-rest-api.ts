@@ -2,10 +2,10 @@ import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 
-import { assertActivityImportManifest } from './execution.ts';
-import type {
-  ActivityImportApi,
-  ActivityImportCheckpoint,
+import {
+  assertActivityImportManifest,
+  type ActivityImportApi,
+  type ActivityImportCheckpoint,
 } from './execution.ts';
 import type {
   ActivityImportCompany,
@@ -165,10 +165,9 @@ export const createTwentyActivityImportApi = (options: {
       const query = new URLSearchParams({ limit: '100', depth: '0' });
       if (cursor) query.set('starting_after', cursor);
       const response = await gate(() =>
-        options.request.get(
-          `${restUrl(objectPlural)}?${query.toString()}`,
-          { headers },
-        ),
+        options.request.get(`${restUrl(objectPlural)}?${query.toString()}`, {
+          headers,
+        }),
       );
       await assertSuccessfulResponse(response, operation);
       const body = await disposeAfterJson<ListResponse>(response, operation);
@@ -217,7 +216,8 @@ export const createTwentyActivityImportApi = (options: {
       try {
         raw = await readFile(options.checkpointPath, 'utf8');
       } catch (error) {
-        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT')
+          return undefined;
         throw error;
       }
       let envelope: { sha256?: unknown; checkpoint?: unknown };
@@ -228,7 +228,9 @@ export const createTwentyActivityImportApi = (options: {
       }
       const checkpoint = assertCheckpoint(envelope.checkpoint);
       if (envelope.sha256 !== checkpointHash(checkpoint)) {
-        throw new Error('Activity import checkpoint failed its integrity check');
+        throw new Error(
+          'Activity import checkpoint failed its integrity check',
+        );
       }
 
       return checkpoint;

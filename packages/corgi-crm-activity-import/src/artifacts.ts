@@ -9,8 +9,10 @@ import {
 } from 'node:fs/promises';
 import { dirname, resolve, sep } from 'node:path';
 
-import { assertActivityImportManifest } from './execution.ts';
-import type { ActivityImportRunResult } from './execution.ts';
+import {
+  assertActivityImportManifest,
+  type ActivityImportRunResult,
+} from './execution.ts';
 
 export type ActivityImportArtifactPaths = {
   sourcePath: string;
@@ -106,9 +108,11 @@ export const writeActivityImportResult = async (
     result?.schemaVersion !== 1 ||
     !['dry-run', 'apply'].includes(result.mode) ||
     !['planned', 'complete'].includes(result.status) ||
-    ![result.plannedCount, result.createdCount, result.alreadyPresentCount].every(
-      (count) => Number.isSafeInteger(count) && count >= 0,
-    ) ||
+    ![
+      result.plannedCount,
+      result.createdCount,
+      result.alreadyPresentCount,
+    ].every((count) => Number.isSafeInteger(count) && count >= 0) ||
     (result.mode === 'apply' &&
       result.plannedCount !==
         result.createdCount + result.alreadyPresentCount) ||

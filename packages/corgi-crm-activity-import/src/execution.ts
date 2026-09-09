@@ -1,14 +1,12 @@
 import {
   buildActivityImportPlan,
   parseActivityCsv,
-} from './importer.ts';
-import type {
-  ActivityImportCompany,
-  ActivityImportCsvOptions,
-  ActivityImportManifest,
-  ActivityImportWholesaler,
-  OutreachActivityRecord,
-  TerritoryIdentityArtifact,
+  type ActivityImportCompany,
+  type ActivityImportCsvOptions,
+  type ActivityImportManifest,
+  type ActivityImportWholesaler,
+  type OutreachActivityRecord,
+  type TerritoryIdentityArtifact,
 } from './importer.ts';
 
 const HASH_PATTERN = /^[a-f0-9]{64}$/;
