@@ -56,6 +56,24 @@ const verifyTargetWorkspace = async ({ graphql, expectedWorkspaceId }) => {
   }
 };
 
+const verifyRequiredSchema = async ({ graphql }) => {
+  const data = await graphql({
+    endpoint: '/graphql',
+    operationName: 'VerifyCorgiCrmRequiredSchema',
+    query: `query VerifyCorgiCrmRequiredSchema {
+      workspaceMembers(first: 1) {
+        edges { node { id userEmail name { firstName lastName } } }
+      }
+      wholesalers(first: 1) {
+        edges { node { id name email role workspaceMemberId } }
+      }
+    }`,
+  });
+  if (!data.workspaceMembers?.edges || !data.wholesalers?.edges) {
+    throw new Error('Required Corgi CRM core schema is unavailable');
+  }
+};
+
 const parseTriggerSettings = (settings) => {
   if (typeof settings !== 'string') return settings;
   try {
@@ -200,6 +218,7 @@ const main = async () => {
     apiKey: requiredEnvironment('CORGI_CRM_API_KEY'),
   });
   await verifyTargetWorkspace({ graphql, expectedWorkspaceId: workspaceId });
+  await verifyRequiredSchema({ graphql });
   if (mode === 'target') {
     console.log('Verified Corgi CRM production target workspace.');
     return;
