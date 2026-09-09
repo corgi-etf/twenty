@@ -3,6 +3,8 @@ import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 
 import {
+  assertIdentityCommitmentsBoundToManifests,
+  assertRecordIdentityCommitments,
   assertTrustedManifestShape,
   type CanonicalizationApi,
   type CanonicalizationCheckpoint,
@@ -99,7 +101,7 @@ const assertCheckpoint = (value: unknown): CanonicalizationCheckpoint => {
     // The shape check below emits a redacted error.
   }
   if (
-    checkpoint?.schemaVersion !== 1 ||
+    checkpoint?.schemaVersion !== 2 ||
     typeof checkpoint.origin !== 'string' ||
     canonicalOrigin !== checkpoint.origin ||
     !['metadata', 'records', 'verifying', 'complete'].includes(
@@ -119,6 +121,13 @@ const assertCheckpoint = (value: unknown): CanonicalizationCheckpoint => {
     throw new Error('Canonicalization checkpoint has an invalid shape');
   }
   assertTrustedManifestShape(checkpoint.manifest);
+  assertTrustedManifestShape(checkpoint.expectedFinalManifest);
+  assertRecordIdentityCommitments(checkpoint.recordIdentityCommitments);
+  assertIdentityCommitmentsBoundToManifests(
+    checkpoint.recordIdentityCommitments,
+    checkpoint.manifest,
+    checkpoint.expectedFinalManifest,
+  );
 
   return checkpoint;
 };
@@ -135,6 +144,9 @@ const assertBodyWithinLimit = (operation: string, value: unknown): void => {
 
 const responseSchemaName = (objectName: string): string =>
   `${objectName.charAt(0).toUpperCase()}${objectName.slice(1)}ForResponse`;
+
+const updateManyResponseKey = (objectPlural: string): string =>
+  `update${objectPlural.charAt(0).toUpperCase()}${objectPlural.slice(1)}`;
 
 const referencedSchemaName = (schema: OpenApiSchema): string | undefined => {
   const reference =
@@ -356,6 +368,43 @@ export const createTwentyRestCanonicalizationApi = ({
       );
       await assertSuccessfulResponse(response, `Upsert ${objectPlural}`);
       await response.dispose();
+    },
+
+    async conditionalPatchOne(objectPlural, id, expectedUpdatedAt, data) {
+      if (
+        !id ||
+        !expectedUpdatedAt ||
+        Number.isNaN(Date.parse(expectedUpdatedAt))
+      ) {
+        throw new Error('Conditional canonicalization update is invalid');
+      }
+      assertBodyWithinLimit(`${objectPlural} conditional update`, data);
+      const filter = `and(id[eq]:${JSON.stringify(id)},updatedAt[eq]:${JSON.stringify(expectedUpdatedAt)})`;
+      const query = new URLSearchParams({ filter, depth: '0' });
+      const response = await pacedRequest(() =>
+        request.patch(`${restUrl(objectPlural)}?${query.toString()}`, {
+          headers,
+          data,
+        }),
+      );
+      await assertSuccessfulResponse(
+        response,
+        `Conditionally update ${objectPlural}`,
+      );
+      const body = await disposeAfterJson<RecordListResponse>(
+        response,
+        `${objectPlural} conditional update`,
+      );
+      const records = body.data?.[updateManyResponseKey(objectPlural)];
+      if (
+        !Array.isArray(records) ||
+        records.length !== 1 ||
+        (records[0] as CrmRecord | undefined)?.id !== id
+      ) {
+        throw new Error(
+          `Canonicalization concurrency conflict for ${objectPlural}`,
+        );
+      }
     },
 
     async readCheckpoint() {

@@ -2,6 +2,9 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 import {
+  assertMutationConcurrencyTokens,
+  assertRecordIdentityState,
+  buildRecordIdentityCommitments,
   chunkCanonicalizationMutations,
   loadCanonicalizationSnapshot,
   runCanonicalization,
@@ -9,7 +12,11 @@ import {
   type CanonicalizationCheckpoint,
 } from '../src/execution.ts';
 import type { MetadataCreate, MetadataObject } from '../src/metadata.ts';
-import type { CanonicalizationSnapshot, CrmRecord } from '../src/planner.ts';
+import {
+  buildCanonicalizationPlan,
+  type CanonicalizationSnapshot,
+  type CrmRecord,
+} from '../src/planner.ts';
 
 const emptySnapshot = (): CanonicalizationSnapshot => ({
   companies: [],
@@ -52,6 +59,7 @@ class MemoryApi implements CanonicalizationApi {
   concurrentReads = 0;
   maximumConcurrentReads = 0;
   failAfterNextPersist = false;
+  failAfterNextBatchPersist = false;
   failBeforeNextPersist = false;
 
   constructor(snapshot: CanonicalizationSnapshot) {
@@ -103,6 +111,7 @@ class MemoryApi implements CanonicalizationApi {
         ? {
             relationTargetObjectMetadataId:
               input.relationTargetObjectMetadataId,
+            relationType: input.relationType,
           }
         : undefined,
     });
@@ -116,7 +125,10 @@ class MemoryApi implements CanonicalizationApi {
         name: `${input.name}Inverse`,
         label: input.targetFieldLabel,
         type: 'RELATION',
-        settings: { relationTargetObjectMetadataId: object.id },
+        settings: {
+          relationTargetObjectMetadataId: object.id,
+          relationType: 'ONE_TO_MANY',
+        },
       });
     }
     this.writes.push(`create-field:${input.name}`);
@@ -135,9 +147,43 @@ class MemoryApi implements CanonicalizationApi {
         (candidate) => candidate.id === incoming.id,
       );
       if (record) Object.assign(record, incoming);
-      else this.snapshot[objectPlural].push(structuredClone(incoming));
+      else {
+        this.snapshot[objectPlural].push({
+          ...structuredClone(incoming),
+          updatedAt: '2026-01-01T00:00:00.000Z',
+        });
+      }
     }
     this.writes.push(`batch:${String(objectPlural)}:${records.length}`);
+    if (this.failAfterNextPersist || this.failAfterNextBatchPersist) {
+      this.failAfterNextPersist = false;
+      this.failAfterNextBatchPersist = false;
+      throw new Error('simulated response loss');
+    }
+  }
+
+  async conditionalPatchOne(
+    objectPlural: keyof CanonicalizationSnapshot,
+    id: string,
+    expectedUpdatedAt: string,
+    data: Record<string, unknown>,
+  ): Promise<void> {
+    if (this.failBeforeNextPersist) {
+      this.failBeforeNextPersist = false;
+      throw new Error('simulated request loss');
+    }
+    const record = this.snapshot[objectPlural].find(
+      (candidate) => candidate.id === id,
+    );
+    if (!record || record.updatedAt !== expectedUpdatedAt) {
+      throw new Error(
+        `Canonicalization concurrency conflict for ${objectPlural}`,
+      );
+    }
+    Object.assign(record, data, {
+      updatedAt: new Date(Date.parse(expectedUpdatedAt) + 1).toISOString(),
+    });
+    this.writes.push(`conditional:${String(objectPlural)}:1`);
     if (this.failAfterNextPersist) {
       this.failAfterNextPersist = false;
       throw new Error('simulated response loss');
@@ -205,10 +251,49 @@ test('apply requires exact origin, confirmation, and trusted manifest', async ()
   assert.deepEqual(api.writes, []);
 });
 
+test('changed canonical record counts reject before checkpoint or metadata writes', async () => {
+  const api = new MemoryApi(emptySnapshot());
+  const dryRun = await runCanonicalization(api, options);
+  api.snapshot.companies.push({ id: 'new-company', name: 'New Company' });
+
+  await assert.rejects(
+    runCanonicalization(api, {
+      ...options,
+      mode: 'apply',
+      confirmation: 'CANONICALIZE_CRM_DATA',
+      expectedManifest: dryRun.manifest,
+    }),
+    /trusted dry-run manifest/,
+  );
+  assert.deepEqual(api.writes, []);
+  assert.equal(api.checkpoint, undefined);
+});
+
+test('a same-count canonical ID swap rejects before checkpoint or metadata writes', async () => {
+  const input = emptySnapshot();
+  input.companies.push({ id: 'company-1', name: 'Original Company' });
+  const api = new MemoryApi(input);
+  const dryRun = await runCanonicalization(api, options);
+  api.snapshot.companies = [{ id: 'company-2', name: 'Replacement Company' }];
+
+  await assert.rejects(
+    runCanonicalization(api, {
+      ...options,
+      mode: 'apply',
+      confirmation: 'CANONICALIZE_CRM_DATA',
+      expectedManifest: dryRun.manifest,
+    }),
+    /trusted dry-run manifest/,
+  );
+  assert.deepEqual(api.writes, []);
+  assert.equal(api.checkpoint, undefined);
+});
+
 test('apply refetches metadata, writes one record, and proves zero work', async () => {
   const input = emptySnapshot();
   input.people.push({
     id: 'person-1',
+    updatedAt: '2026-01-01T00:00:00.000Z',
     emails: { primaryEmail: '', additionalEmails: [] },
     phones: {
       primaryPhoneNumber: '',
@@ -230,14 +315,38 @@ test('apply refetches metadata, writes one record, and proves zero work', async 
 
   assert.equal(result.reconciliation.remainingMutations, 0);
   assert.ok(api.writes.some((write) => write.startsWith('create-field:')));
-  assert.ok(api.writes.includes('batch:people:1'));
+  assert.ok(api.writes.includes('conditional:people:1'));
   assert.equal(api.checkpoint?.status, 'complete');
+});
+
+test('an existing mutation without updatedAt fails before metadata or checkpoint writes', async () => {
+  const input = emptySnapshot();
+  input.people.push({
+    id: 'person-1',
+    emails: { primaryEmail: '', additionalEmails: [] },
+    phones: {
+      primaryPhoneNumber: '',
+      primaryPhoneCountryCode: '',
+      primaryPhoneCallingCode: '',
+      additionalPhones: [],
+    },
+    legacyEmail: 'person@example.test',
+  });
+  const api = new MemoryApi(input);
+
+  await assert.rejects(
+    runCanonicalization(api, options),
+    /missing a valid concurrency token/i,
+  );
+  assert.deepEqual(api.writes, []);
+  assert.equal(api.checkpoint, undefined);
 });
 
 test('response loss resumes from fresh state without replaying persisted data', async () => {
   const input = emptySnapshot();
   input.people.push({
     id: 'person-1',
+    updatedAt: '2026-01-01T00:00:00.000Z',
     emails: { primaryEmail: '', additionalEmails: [] },
     phones: {
       primaryPhoneNumber: '',
@@ -259,8 +368,8 @@ test('response loss resumes from fresh state without replaying persisted data', 
     }),
     /response loss/,
   );
-  const persistedBatches = api.writes.filter((write) =>
-    write.startsWith('batch:people:'),
+  const persistedUpdates = api.writes.filter((write) =>
+    write.startsWith('conditional:people:'),
   ).length;
 
   const result = await runCanonicalization(api, {
@@ -272,15 +381,17 @@ test('response loss resumes from fresh state without replaying persisted data', 
 
   assert.equal(result.reconciliation.remainingMutations, 0);
   assert.equal(
-    api.writes.filter((write) => write.startsWith('batch:people:')).length,
-    persistedBatches,
+    api.writes.filter((write) => write.startsWith('conditional:people:'))
+      .length,
+    persistedUpdates,
   );
 });
 
-test('a lost batch request can be replayed safely from the fresh plan', async () => {
+test('a lost conditional request can be replayed safely from the fresh plan', async () => {
   const input = emptySnapshot();
   input.people.push({
     id: 'person-1',
+    updatedAt: '2026-01-01T00:00:00.000Z',
     emails: { primaryEmail: '', additionalEmails: [] },
     phones: {
       primaryPhoneNumber: '',
@@ -312,8 +423,116 @@ test('a lost batch request can be replayed safely from the fresh plan', async ()
 
   assert.equal(result.reconciliation.remainingMutations, 0);
   assert.equal(
-    api.writes.filter((write) => write.startsWith('batch:people:')).length,
+    api.writes.filter((write) => write.startsWith('conditional:people:'))
+      .length,
     1,
+  );
+});
+
+test('a persisted new holding resumes against checkpointed final counts', async () => {
+  const input = emptySnapshot();
+  input.companies.push({
+    id: 'company-1',
+    updatedAt: '2026-01-01T00:00:00.000Z',
+    name: 'Acme Advisors',
+  });
+  input.importReviewItems.push({
+    id: 'review-holding-1',
+    reviewStatus: 'accepted',
+    candidateCompanyId: 'company-1',
+    sourceFile: 'Product A.csv',
+    sourceRow: 1,
+    rawData: JSON.stringify({
+      'Filer Name': 'Acme Advisors',
+      'Shares Held': '100',
+      'Market Value': '5000',
+      'Source Date': '2026-06-30',
+    }),
+  });
+  const api = new MemoryApi(input);
+  const dryRun = await runCanonicalization(api, options);
+  assert.equal(dryRun.manifest.holdingRecords, 0);
+
+  api.failAfterNextBatchPersist = true;
+  await assert.rejects(
+    runCanonicalization(api, {
+      ...options,
+      mode: 'apply',
+      confirmation: 'CANONICALIZE_CRM_DATA',
+      expectedManifest: dryRun.manifest,
+    }),
+    /response loss/,
+  );
+  assert.equal(api.snapshot.holdingObservations.length, 1);
+  assert.equal(api.checkpoint?.expectedFinalManifest.holdingRecords, 1);
+  assert.deepEqual(
+    buildCanonicalizationPlan(api.snapshot).mutations.filter(
+      ({ objectPlural }) => objectPlural === 'holdingObservations',
+    ),
+    [],
+  );
+
+  const result = await runCanonicalization(api, {
+    ...options,
+    mode: 'apply',
+    confirmation: 'CANONICALIZE_CRM_DATA',
+    expectedManifest: dryRun.manifest,
+  });
+
+  assert.equal(result.manifest.holdingRecords, 1);
+  assert.equal(result.reconciliation.remainingMutations, 0);
+  assert.equal(
+    api.writes.filter((write) => write === 'batch:holdingObservations:1')
+      .length,
+    1,
+  );
+});
+
+test('a concurrent user edit aborts before the imported patch can overwrite it', async () => {
+  const input = emptySnapshot();
+  input.people.push({
+    id: 'person-1',
+    updatedAt: '2026-01-01T00:00:00.000Z',
+    jobTitle: 'Original title',
+    emails: { primaryEmail: '', additionalEmails: [] },
+    phones: {
+      primaryPhoneNumber: '',
+      primaryPhoneCountryCode: '',
+      primaryPhoneCallingCode: '',
+      additionalPhones: [],
+    },
+    legacyEmail: 'person@example.test',
+  });
+  const api = new MemoryApi(input);
+  const dryRun = await runCanonicalization(api, options);
+  const originalConditionalPatch = api.conditionalPatchOne.bind(api);
+  api.conditionalPatchOne = async (...args) => {
+    const person = api.snapshot.people[0];
+    person.jobTitle = 'User edit';
+    person.updatedAt = '2026-01-01T00:00:01.000Z';
+    await originalConditionalPatch(...args);
+  };
+
+  await assert.rejects(
+    runCanonicalization(api, {
+      ...options,
+      mode: 'apply',
+      confirmation: 'CANONICALIZE_CRM_DATA',
+      expectedManifest: dryRun.manifest,
+    }),
+    /concurrency conflict/i,
+  );
+
+  assert.equal(api.snapshot.people[0].jobTitle, 'User edit');
+  assert.deepEqual(api.snapshot.people[0].emails, {
+    primaryEmail: '',
+    additionalEmails: [],
+  });
+  assert.equal(
+    api.checkpoint?.completedOperations.some(({ key }) =>
+      key.startsWith('conditional-patch:people:'),
+    ),
+    false,
   );
 });
 
@@ -356,5 +575,45 @@ test('record batches obey count and exact UTF-8 body limits', () => {
         oneRecordBytes - 1,
       ),
     /exceeds.*byte limit/i,
+  );
+});
+
+test('a plan cannot patch the same record twice with one concurrency token', () => {
+  const snapshot = emptySnapshot();
+  snapshot.people.push({
+    id: 'person-1',
+    updatedAt: '2026-01-01T00:00:00.000Z',
+  });
+
+  assert.throws(
+    () =>
+      assertMutationConcurrencyTokens(snapshot, [
+        { objectPlural: 'people', id: 'person-1', data: { bio: 'One' } },
+        { objectPlural: 'people', id: 'person-1', data: { bio: 'Two' } },
+      ]),
+    /duplicate mutations/i,
+  );
+});
+
+test('identity commitments reject a planned create offset by an initial deletion', () => {
+  const initial = emptySnapshot();
+  initial.companies.push({ id: 'company-initial' });
+  const plannedCreate = {
+    objectPlural: 'companies',
+    id: 'company-planned',
+    data: { name: 'Planned Company' },
+  } as const;
+  const commitments = buildRecordIdentityCommitments(initial, [plannedCreate]);
+  const completedCreate = emptySnapshot();
+  completedCreate.companies.push({ id: 'company-planned' });
+
+  assert.throws(
+    () => assertRecordIdentityState(completedCreate, [], commitments),
+    /identity state changed/i,
+  );
+
+  completedCreate.companies.push({ id: 'company-initial' });
+  assert.doesNotThrow(() =>
+    assertRecordIdentityState(completedCreate, [], commitments),
   );
 });

@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { buildMetadataPlan, type MetadataObject } from '../src/metadata.ts';
+import {
+  assertManagedMetadataConverged,
+  buildMetadataPlan,
+  type MetadataObject,
+} from '../src/metadata.ts';
 
 const metadata = (): MetadataObject[] => [
   {
@@ -185,6 +189,10 @@ test('metadata planning is idempotent after fields are neutralized', () => {
         label: create.label,
         type: create.type,
         relationTargetObjectMetadataId: create.relationTargetObjectMetadataId,
+        settings:
+          create.type === 'RELATION'
+            ? { relationType: create.relationType }
+            : undefined,
       });
   }
 
@@ -200,7 +208,10 @@ test('live REST relation settings are recognized on interrupted reruns', () => {
       name: 'wholesaler',
       label: 'Wholesaler',
       type: 'RELATION',
-      settings: { relationTargetObjectMetadataId: 'wholesaler-object' },
+      settings: {
+        relationTargetObjectMetadataId: 'wholesaler-object',
+        relationType: 'MANY_TO_ONE',
+      },
     });
 
   const plan = buildMetadataPlan(objects);
@@ -210,5 +221,52 @@ test('live REST relation settings are recognized on interrupted reruns', () => {
       ({ objectName, name }) => objectName === 'task' && name === 'wholesaler',
     ),
     false,
+  );
+});
+
+test('relation source and inverse cardinalities must match the managed schema', () => {
+  const objects = metadata();
+  const first = buildMetadataPlan(objects);
+  for (const rename of first.renames) {
+    const field = objects
+      .find(({ nameSingular }) => nameSingular === rename.objectName)
+      ?.fields.find(({ id }) => id === rename.fieldId);
+    assert.ok(field);
+    field.name = rename.targetName;
+    field.label = rename.targetLabel;
+  }
+  for (const create of first.creates) {
+    const source = objects.find(({ id }) => id === create.objectMetadataId);
+    assert.ok(source);
+    source.fields.push({
+      id: `created-${create.name}`,
+      name: create.name,
+      label: create.label,
+      type: create.type,
+      relationTargetObjectMetadataId: create.relationTargetObjectMetadataId,
+      settings:
+        create.type === 'RELATION'
+          ? { relationType: create.relationType }
+          : undefined,
+    });
+    if (create.relationTargetObjectMetadataId) {
+      const target = objects.find(
+        ({ id }) => id === create.relationTargetObjectMetadataId,
+      );
+      assert.ok(target);
+      target.fields.push({
+        id: `inverse-${create.name}`,
+        name: `${create.name}Inverse`,
+        label: create.targetFieldLabel ?? '',
+        type: 'RELATION',
+        relationTargetObjectMetadataId: source.id,
+        settings: { relationType: 'MANY_TO_ONE' },
+      });
+    }
+  }
+
+  assert.throws(
+    () => assertManagedMetadataConverged(objects),
+    /relation did not converge/,
   );
 });

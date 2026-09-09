@@ -17,11 +17,16 @@ export type ReconciliationReport = {
   sourceRecordRows: number;
   reviewItemRows: number;
   holdingRawRows: number;
+  companyRecords: number;
+  personRecords: number;
+  companyIdSetHash: string;
+  personIdSetHash: string;
   stagingRows: number;
   distinctBusinessRows: number;
   duplicateRows: number;
   coveredRows: number;
   holdingRecords: number;
+  holdingIdSetHash: string;
   personTaskTargets: number;
   wholesalerTasks: number;
   linkedOutreachActivities: number;
@@ -53,6 +58,12 @@ export type ReconciliationManifest = Pick<
   | 'sourceRecordRows'
   | 'reviewItemRows'
   | 'holdingRawRows'
+  | 'companyRecords'
+  | 'personRecords'
+  | 'holdingRecords'
+  | 'companyIdSetHash'
+  | 'personIdSetHash'
+  | 'holdingIdSetHash'
   | 'distinctBusinessRows'
   | 'duplicateRows'
   | 'nonemptyRawValues'
@@ -65,6 +76,16 @@ export type ReconciliationManifest = Pick<
 
 const sha256 = (value: string): string =>
   createHash('sha256').update(value, 'utf8').digest('hex');
+
+const idSetHash = (
+  objectPlural: 'companies' | 'people' | 'holdingObservations',
+  records: readonly { id: string }[],
+): string =>
+  sha256(
+    stableStringify(
+      records.map(({ id }) => sha256(`${objectPlural}\0${id}`)).sort(),
+    ),
+  );
 
 const countBy = (values: readonly string[]): Record<string, number> =>
   Object.fromEntries(
@@ -230,11 +251,19 @@ export const buildReconciliationReport = (
     sourceRecordRows: snapshot.sourceRecords.length,
     reviewItemRows: snapshot.importReviewItems.length,
     holdingRawRows: holdingRawRecords.length,
+    companyRecords: snapshot.companies.length,
+    personRecords: snapshot.people.length,
+    companyIdSetHash: idSetHash('companies', snapshot.companies),
+    personIdSetHash: idSetHash('people', snapshot.people),
     stagingRows: staging.length,
     distinctBusinessRows: plan.summary.semanticRows,
     duplicateRows: plan.summary.duplicateRows,
     coveredRows: rowKeys.filter((rowKey) => !unresolvedRows.has(rowKey)).length,
     holdingRecords: snapshot.holdingObservations.length,
+    holdingIdSetHash: idSetHash(
+      'holdingObservations',
+      snapshot.holdingObservations,
+    ),
     personTaskTargets: snapshot.taskTargets.filter(
       ({ targetPersonId }) =>
         typeof targetPersonId === 'string' && !!targetPersonId,
@@ -308,6 +337,12 @@ export const createReconciliationManifest = (
   sourceRecordRows: report.sourceRecordRows,
   reviewItemRows: report.reviewItemRows,
   holdingRawRows: report.holdingRawRows,
+  companyRecords: report.companyRecords,
+  personRecords: report.personRecords,
+  holdingRecords: report.holdingRecords,
+  companyIdSetHash: report.companyIdSetHash,
+  personIdSetHash: report.personIdSetHash,
+  holdingIdSetHash: report.holdingIdSetHash,
   stagingRows: report.stagingRows,
   distinctBusinessRows: report.distinctBusinessRows,
   duplicateRows: report.duplicateRows,

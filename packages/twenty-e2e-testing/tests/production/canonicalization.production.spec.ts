@@ -12,7 +12,10 @@ import { preflightCanonicalizationArtifacts } from '../../../corgi-crm-canonical
 import type { ReconciliationManifest } from '../../../corgi-crm-canonicalization/src/reconciliation.ts';
 import { CANONICALIZATION_APPROVED_ORIGIN } from '../../../corgi-crm-canonicalization/src/twenty-rest-api.ts';
 import { createCanonicalizationRequestGate } from '../../../corgi-crm-canonicalization/src/request-gate.ts';
-import { assertCanonicalizationTenant } from '../../../corgi-crm-canonicalization/src/tenant-preflight.ts';
+import {
+  assertCanonicalizationTenant,
+  CANONICALIZATION_APPROVED_WORKSPACE_ID,
+} from '../../../corgi-crm-canonicalization/src/tenant-preflight.ts';
 import { createPlaywrightCanonicalizationApi } from './playwrightCanonicalizationApi.ts';
 import { requireProductionEnvironment } from './requireProductionEnvironment.ts';
 
@@ -58,6 +61,9 @@ test('runs the guarded CRM canonicalization maintenance operation', async ({
   });
   const expectedWorkspaceId =
     process.env.CRM_CANONICALIZATION_WORKSPACE_ID ?? '';
+  if (expectedWorkspaceId !== CANONICALIZATION_APPROVED_WORKSPACE_ID) {
+    throw new Error('Canonicalization workspace ID is not approved');
+  }
   const requestGate = createCanonicalizationRequestGate();
   await assertCanonicalizationTenant({
     request: page.request,

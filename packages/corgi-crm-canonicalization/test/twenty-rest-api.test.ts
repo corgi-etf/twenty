@@ -93,6 +93,9 @@ const manifest = {
   sourceRecordRows: 0,
   reviewItemRows: 0,
   holdingRawRows: 0,
+  companyRecords: 0,
+  personRecords: 0,
+  holdingRecords: 0,
   stagingRows: 0,
   distinctBusinessRows: 0,
   duplicateRows: 0,
@@ -102,6 +105,12 @@ const manifest = {
   rowCoverageHash: 'a'.repeat(64),
   businessContentHash: 'b'.repeat(64),
   dispositionHash: 'c'.repeat(64),
+  companyIdSetHash:
+    '4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945',
+  personIdSetHash:
+    '4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945',
+  holdingIdSetHash:
+    '4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945',
 };
 
 const createApi = (request: FakeRequest, checkpointFilePath = '/unused') =>
@@ -281,6 +290,66 @@ test('record batches use upsert and reject count or byte overflow before request
   assert.equal(request.calls.length, 1);
 });
 
+test('existing records use an atomic id and updatedAt conditional patch', async () => {
+  const request = new FakeRequest();
+  request.responses.push(
+    new FakeResponse(200, {
+      data: { updatePeople: [{ id: 'person-1' }] },
+    }),
+  );
+  const api = createApi(request);
+
+  await api.conditionalPatchOne(
+    'people',
+    'person-1',
+    '2026-01-01T00:00:00.000Z',
+    { bio: 'Imported biography' },
+  );
+
+  const call = request.calls[0];
+  assert.equal(call?.method, 'PATCH');
+  assert.deepEqual(call?.options, {
+    headers: { Origin: 'https://crm.corgiinvest.com' },
+    data: { bio: 'Imported biography' },
+  });
+  const url = new URL(call?.url ?? '');
+  assert.equal(
+    url.origin + url.pathname,
+    'https://crm.corgiinvest.com/rest/people',
+  );
+  assert.equal(url.searchParams.get('depth'), '0');
+  assert.equal(
+    url.searchParams.get('filter'),
+    'and(id[eq]:"person-1",updatedAt[eq]:"2026-01-01T00:00:00.000Z")',
+  );
+});
+
+test('conditional patches fail closed on zero, multiple, or wrong records', async () => {
+  for (const records of [
+    [],
+    [{ id: 'person-1' }, { id: 'person-2' }],
+    [{ id: 'person-2' }],
+  ]) {
+    const request = new FakeRequest();
+    request.responses.push(
+      new FakeResponse(200, { data: { updatePeople: records } }),
+    );
+
+    await assert.rejects(
+      createApi(request).conditionalPatchOne(
+        'people',
+        'person-1',
+        '2026-01-01T00:00:00.000Z',
+        { bio: 'Imported biography' },
+      ),
+      (error: Error) =>
+        error.message === 'Canonicalization concurrency conflict for people' &&
+        !error.message.includes('person-1'),
+    );
+    assert.equal(request.calls.length, 1);
+  }
+});
+
 test('hostile and noncanonical endpoints fail before any request', () => {
   for (const [frontendBaseUrl, backendBaseUrl] of [
     ['https://lookalike.example', 'https://crm.corgiinvest.com'],
@@ -325,9 +394,18 @@ test('checkpoint writes are atomic, shape checked, and integrity protected', asy
   const directory = await mkdtemp(join(tmpdir(), 'crm-canonicalization-'));
   const path = join(directory, 'checkpoint.json');
   const checkpoint: CanonicalizationCheckpoint = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     origin: 'https://crm.corgiinvest.com',
     manifest,
+    expectedFinalManifest: manifest,
+    recordIdentityCommitments: {
+      companies: { initialIdHashes: [], allowedCreateIdHashes: [] },
+      people: { initialIdHashes: [], allowedCreateIdHashes: [] },
+      holdingObservations: {
+        initialIdHashes: [],
+        allowedCreateIdHashes: [],
+      },
+    },
     status: 'records',
     completedOperations: [{ key: 'batch:people:abc', sha256: 'd'.repeat(64) }],
   };
@@ -352,6 +430,19 @@ test('checkpoint writes are atomic, shape checked, and integrity protected', asy
         ],
       }),
       /invalid shape/,
+    );
+    await assert.rejects(
+      api.writeCheckpoint({
+        ...checkpoint,
+        recordIdentityCommitments: {
+          ...checkpoint.recordIdentityCommitments,
+          companies: {
+            initialIdHashes: [],
+            allowedCreateIdHashes: ['e'.repeat(64)],
+          },
+        },
+      }),
+      /do not match the manifests/,
     );
   } finally {
     await rm(directory, { recursive: true, force: true });

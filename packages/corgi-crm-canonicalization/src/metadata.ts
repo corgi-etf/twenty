@@ -4,7 +4,10 @@ export type MetadataField = {
   label: string;
   type: string;
   relationTargetObjectMetadataId?: string | null;
-  settings?: { relationTargetObjectMetadataId?: string | null } | null;
+  settings?: {
+    relationTargetObjectMetadataId?: string | null;
+    relationType?: string | null;
+  } | null;
 };
 
 export type MetadataObject = {
@@ -231,7 +234,7 @@ const objectByName = (objects: readonly MetadataObject[]) =>
 
 const assertCompatible = (
   objectName: string,
-  definition: Pick<FieldDefinition, 'name' | 'type'>,
+  definition: Pick<FieldDefinition, 'name' | 'type' | 'relationType'>,
   field: MetadataField,
   expectedRelationTargetId?: string,
 ): void => {
@@ -248,6 +251,14 @@ const assertCompatible = (
   ) {
     throw new Error(
       `${objectName}.${definition.name} points to an incompatible relation target`,
+    );
+  }
+  if (
+    definition.relationType !== undefined &&
+    field.settings?.relationType !== definition.relationType
+  ) {
+    throw new Error(
+      `${objectName}.${definition.name} has incompatible relation cardinality`,
     );
   }
 };
@@ -370,7 +381,8 @@ export const assertManagedMetadataConverged = (
         (candidate) =>
           candidate.type === 'RELATION' &&
           candidate.label === definition.targetFieldLabel &&
-          relationTargetId(candidate) === object?.id,
+          relationTargetId(candidate) === object?.id &&
+          candidate.settings?.relationType === 'ONE_TO_MANY',
       )
     ) {
       throw new Error(

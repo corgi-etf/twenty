@@ -24,12 +24,27 @@ import {
 } from './reconciliation.ts';
 
 export type CanonicalizationCheckpoint = {
-  schemaVersion: 1;
+  schemaVersion: 2;
   origin: string;
   manifest: ReconciliationManifest;
+  expectedFinalManifest: ReconciliationManifest;
+  recordIdentityCommitments: RecordIdentityCommitments;
   status: 'metadata' | 'records' | 'verifying' | 'complete';
   completedOperations: Array<{ key: string; sha256: string }>;
 };
+
+const TRACKED_RECORD_COLLECTIONS = [
+  'companies',
+  'people',
+  'holdingObservations',
+] as const;
+
+type TrackedRecordCollection = (typeof TRACKED_RECORD_COLLECTIONS)[number];
+
+export type RecordIdentityCommitments = Record<
+  TrackedRecordCollection,
+  { initialIdHashes: string[]; allowedCreateIdHashes: string[] }
+>;
 
 export type CanonicalizationApi = {
   listMetadataObjects(): Promise<MetadataObject[]>;
@@ -43,6 +58,12 @@ export type CanonicalizationApi = {
   upsertBatch(
     objectPlural: keyof CanonicalizationSnapshot,
     records: Array<CrmRecord>,
+  ): Promise<void>;
+  conditionalPatchOne(
+    objectPlural: keyof CanonicalizationSnapshot,
+    id: string,
+    expectedUpdatedAt: string,
+    data: Record<string, unknown>,
   ): Promise<void>;
   readCheckpoint(): Promise<CanonicalizationCheckpoint | undefined>;
   writeCheckpoint(checkpoint: CanonicalizationCheckpoint): Promise<void>;
@@ -224,6 +245,9 @@ export function assertTrustedManifestShape(
     'sourceRecordRows',
     'reviewItemRows',
     'holdingRawRows',
+    'companyRecords',
+    'personRecords',
+    'holdingRecords',
     'stagingRows',
     'distinctBusinessRows',
     'duplicateRows',
@@ -234,6 +258,9 @@ export function assertTrustedManifestShape(
     'rowCoverageHash',
     'businessContentHash',
     'dispositionHash',
+    'companyIdSetHash',
+    'personIdSetHash',
+    'holdingIdSetHash',
   ];
   const dispositions = manifest.dispositionsByKind;
   if (
@@ -261,14 +288,102 @@ export function assertTrustedManifestShape(
   }
 }
 
+const recordIdHash = (
+  objectPlural: TrackedRecordCollection,
+  id: string,
+): string =>
+  createHash('sha256').update(`${objectPlural}\0${id}`, 'utf8').digest('hex');
+
+const sortedUniqueHashes = (hashes: Iterable<string>): string[] =>
+  [...new Set(hashes)].sort();
+
+export function assertRecordIdentityCommitments(
+  value: unknown,
+): asserts value is RecordIdentityCommitments {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('Canonicalization record identity commitments are invalid');
+  }
+  const commitments = value as Record<string, unknown>;
+  if (
+    Object.keys(commitments).sort().join('\0') !==
+    [...TRACKED_RECORD_COLLECTIONS].sort().join('\0')
+  ) {
+    throw new Error('Canonicalization record identity commitments are invalid');
+  }
+  for (const objectPlural of TRACKED_RECORD_COLLECTIONS) {
+    const commitment = commitments[objectPlural] as
+      | Record<string, unknown>
+      | undefined;
+    if (
+      !commitment ||
+      Object.keys(commitment).sort().join('\0') !==
+        ['allowedCreateIdHashes', 'initialIdHashes'].join('\0')
+    ) {
+      throw new Error(
+        'Canonicalization record identity commitments are invalid',
+      );
+    }
+    for (const field of ['initialIdHashes', 'allowedCreateIdHashes']) {
+      const hashes = commitment[field];
+      if (
+        !Array.isArray(hashes) ||
+        hashes.some(
+          (hash) => typeof hash !== 'string' || !HASH_PATTERN.test(hash),
+        ) ||
+        stableStringify(hashes) !== stableStringify(sortedUniqueHashes(hashes))
+      ) {
+        throw new Error(
+          'Canonicalization record identity commitments are invalid',
+        );
+      }
+    }
+  }
+}
+
+export const buildRecordIdentityCommitments = (
+  snapshot: CanonicalizationSnapshot,
+  mutations: readonly RecordMutation[],
+): RecordIdentityCommitments =>
+  Object.fromEntries(
+    TRACKED_RECORD_COLLECTIONS.map((objectPlural) => {
+      const initialIds = new Set(snapshot[objectPlural].map(({ id }) => id));
+
+      return [
+        objectPlural,
+        {
+          initialIdHashes: sortedUniqueHashes(
+            [...initialIds].map((id) => recordIdHash(objectPlural, id)),
+          ),
+          allowedCreateIdHashes: sortedUniqueHashes(
+            mutations
+              .filter(
+                (mutation) =>
+                  mutation.objectPlural === objectPlural &&
+                  !initialIds.has(mutation.id),
+              )
+              .map(({ id }) => recordIdHash(objectPlural, id)),
+          ),
+        },
+      ];
+    }),
+  ) as RecordIdentityCommitments;
+
 const checkpointMatches = (
   checkpoint: CanonicalizationCheckpoint,
   origin: string,
   manifest: ReconciliationManifest,
+  expectedFinalManifest: ReconciliationManifest,
 ): void => {
   assertTrustedManifestShape(checkpoint.manifest);
+  assertTrustedManifestShape(checkpoint.expectedFinalManifest);
+  assertRecordIdentityCommitments(checkpoint.recordIdentityCommitments);
+  assertIdentityCommitmentsBoundToManifests(
+    checkpoint.recordIdentityCommitments,
+    checkpoint.manifest,
+    checkpoint.expectedFinalManifest,
+  );
   if (
-    checkpoint.schemaVersion !== 1 ||
+    checkpoint.schemaVersion !== 2 ||
     checkpoint.origin !== origin ||
     !Array.isArray(checkpoint.completedOperations) ||
     checkpoint.completedOperations.some(
@@ -276,9 +391,167 @@ const checkpointMatches = (
     ) ||
     new Set(checkpoint.completedOperations.map(({ key }) => key)).size !==
       checkpoint.completedOperations.length ||
-    stableStringify(checkpoint.manifest) !== stableStringify(manifest)
+    stableStringify(checkpoint.manifest) !== stableStringify(manifest) ||
+    stableStringify(checkpoint.expectedFinalManifest) !==
+      stableStringify(expectedFinalManifest)
   ) {
     throw new Error('Canonicalization checkpoint does not match this run');
+  }
+};
+
+const RECORD_COUNT_FIELDS = [
+  ['companies', 'companyRecords', 'companyIdSetHash'],
+  ['people', 'personRecords', 'personIdSetHash'],
+  ['holdingObservations', 'holdingRecords', 'holdingIdSetHash'],
+] as const satisfies ReadonlyArray<
+  [
+    TrackedRecordCollection,
+    keyof ReconciliationManifest,
+    keyof ReconciliationManifest,
+  ]
+>;
+
+const recordSetHash = (ids: Iterable<string>): string =>
+  createHash('sha256')
+    .update(stableStringify(sortedUniqueHashes(ids)), 'utf8')
+    .digest('hex');
+
+export const assertIdentityCommitmentsBoundToManifests = (
+  commitments: RecordIdentityCommitments,
+  initialManifest: ReconciliationManifest,
+  expectedFinalManifest: ReconciliationManifest,
+): void => {
+  assertRecordIdentityCommitments(commitments);
+  assertTrustedManifestShape(initialManifest);
+  assertTrustedManifestShape(expectedFinalManifest);
+  for (const [
+    objectPlural,
+    countField,
+    idSetHashField,
+  ] of RECORD_COUNT_FIELDS) {
+    const { initialIdHashes, allowedCreateIdHashes } =
+      commitments[objectPlural];
+    const initialSet = new Set(initialIdHashes);
+    if (
+      allowedCreateIdHashes.some((hash) => initialSet.has(hash)) ||
+      initialIdHashes.length !== initialManifest[countField] ||
+      allowedCreateIdHashes.length !==
+        expectedFinalManifest[countField] - initialManifest[countField] ||
+      recordSetHash(initialIdHashes) !== initialManifest[idSetHashField] ||
+      recordSetHash([...initialIdHashes, ...allowedCreateIdHashes]) !==
+        expectedFinalManifest[idSetHashField]
+    ) {
+      throw new Error(
+        'Canonicalization record identity commitments do not match the manifests',
+      );
+    }
+  }
+};
+
+export const projectExpectedFinalManifest = (
+  snapshot: CanonicalizationSnapshot,
+  mutations: readonly RecordMutation[],
+  currentManifest: ReconciliationManifest,
+): ReconciliationManifest => {
+  const projected = structuredClone(currentManifest);
+  for (const [
+    objectPlural,
+    countField,
+    idSetHashField,
+  ] of RECORD_COUNT_FIELDS) {
+    const existingIds = new Set(snapshot[objectPlural].map(({ id }) => id));
+    const creationIds = mutations
+      .filter(
+        (mutation) =>
+          mutation.objectPlural === objectPlural &&
+          !existingIds.has(mutation.id),
+      )
+      .map(({ id }) => id);
+    projected[countField] = currentManifest[countField] + creationIds.length;
+    projected[idSetHashField] = recordSetHash(
+      [...existingIds, ...creationIds].map((id) =>
+        recordIdHash(objectPlural, id),
+      ),
+    );
+  }
+
+  return projected;
+};
+
+const withoutCanonicalRecordCounts = (manifest: ReconciliationManifest) => {
+  const copy: Partial<ReconciliationManifest> = { ...manifest };
+  for (const [, countField, idSetHashField] of RECORD_COUNT_FIELDS) {
+    delete copy[countField];
+    delete copy[idSetHashField];
+  }
+
+  return copy;
+};
+
+const assertResumableRunState = (
+  report: ReconciliationReport,
+  snapshot: CanonicalizationSnapshot,
+  mutations: readonly RecordMutation[],
+  trustedManifest: ReconciliationManifest,
+  expectedFinalManifest: ReconciliationManifest,
+): void => {
+  const currentManifest = createReconciliationManifest(report);
+  if (
+    stableStringify(withoutCanonicalRecordCounts(currentManifest)) !==
+    stableStringify(withoutCanonicalRecordCounts(trustedManifest))
+  ) {
+    throw new Error(
+      'Canonicalization source state changed after the trusted dry-run',
+    );
+  }
+  const projected = projectExpectedFinalManifest(
+    snapshot,
+    mutations,
+    currentManifest,
+  );
+  if (stableStringify(projected) !== stableStringify(expectedFinalManifest)) {
+    throw new Error(
+      'Canonicalization record counts do not match the checkpointed final state',
+    );
+  }
+};
+
+export const assertRecordIdentityState = (
+  snapshot: CanonicalizationSnapshot,
+  mutations: readonly RecordMutation[],
+  commitments: RecordIdentityCommitments,
+): void => {
+  assertRecordIdentityCommitments(commitments);
+  for (const objectPlural of TRACKED_RECORD_COLLECTIONS) {
+    const currentHashes = new Set(
+      snapshot[objectPlural].map(({ id }) => recordIdHash(objectPlural, id)),
+    );
+    const initialHashes = new Set(commitments[objectPlural].initialIdHashes);
+    const allowedCreateHashes = new Set(
+      commitments[objectPlural].allowedCreateIdHashes,
+    );
+    const allowedHashes = new Set([...initialHashes, ...allowedCreateHashes]);
+    const remainingCreateHashes = new Set(
+      mutations
+        .filter(
+          (mutation) =>
+            mutation.objectPlural === objectPlural &&
+            !currentHashes.has(recordIdHash(objectPlural, mutation.id)),
+        )
+        .map(({ id }) => recordIdHash(objectPlural, id)),
+    );
+    if (
+      [...initialHashes].some((hash) => !currentHashes.has(hash)) ||
+      [...currentHashes].some((hash) => !allowedHashes.has(hash)) ||
+      [...remainingCreateHashes].some(
+        (hash) => !allowedCreateHashes.has(hash),
+      ) ||
+      stableStringify(
+        sortedUniqueHashes([...currentHashes, ...remainingCreateHashes]),
+      ) !== stableStringify(sortedUniqueHashes(allowedHashes))
+    ) {
+      throw new Error('Canonicalization record identity state changed');
+    }
   }
 };
 
@@ -348,6 +621,40 @@ export const chunkCanonicalizationMutations = (
   return batches;
 };
 
+const mutationConcurrencyToken = (record: CrmRecord): string => {
+  if (
+    typeof record.updatedAt !== 'string' ||
+    !record.updatedAt.trim() ||
+    Number.isNaN(Date.parse(record.updatedAt))
+  ) {
+    throw new Error(
+      'Existing canonicalization mutation is missing a valid concurrency token',
+    );
+  }
+
+  return record.updatedAt;
+};
+
+export const assertMutationConcurrencyTokens = (
+  snapshot: CanonicalizationSnapshot,
+  mutations: readonly RecordMutation[],
+): void => {
+  const mutationKeys = new Set<string>();
+  for (const mutation of mutations) {
+    const mutationKey = `${mutation.objectPlural}\0${mutation.id}`;
+    if (mutationKeys.has(mutationKey)) {
+      throw new Error(
+        'Canonicalization plan contains duplicate mutations for one record',
+      );
+    }
+    mutationKeys.add(mutationKey);
+    const existing = snapshot[mutation.objectPlural].find(
+      (record) => record.id === mutation.id,
+    );
+    if (existing) mutationConcurrencyToken(existing);
+  }
+};
+
 export const runCanonicalization = async (
   api: CanonicalizationApi,
   options: CanonicalizationRunOptions,
@@ -382,6 +689,7 @@ export const runCanonicalization = async (
   const metadataPlan = buildMetadataPlan(metadata);
   const dataPlan = buildCanonicalizationPlan(snapshot);
   assertPlanCanApply(dataPlan);
+  assertMutationConcurrencyTokens(snapshot, dataPlan.mutations);
   const report = buildReconciliationReport(snapshot);
   const manifest = createReconciliationManifest(report);
   const result: CanonicalizationRunResult = {
@@ -395,16 +703,52 @@ export const runCanonicalization = async (
   };
   if (mode === 'dry-run') return result;
 
-  assertReconciliationManifest(report, options.expectedManifest!);
   const priorCheckpoint = await api.readCheckpoint();
-  const checkpoint: CanonicalizationCheckpoint = priorCheckpoint ?? {
-    schemaVersion: 1,
-    origin,
+  const expectedFinalManifest = projectExpectedFinalManifest(
+    snapshot,
+    dataPlan.mutations,
     manifest,
+  );
+  const recordIdentityCommitments = priorCheckpoint
+    ? priorCheckpoint.recordIdentityCommitments
+    : buildRecordIdentityCommitments(snapshot, dataPlan.mutations);
+  if (priorCheckpoint) {
+    checkpointMatches(
+      priorCheckpoint,
+      origin,
+      options.expectedManifest!,
+      expectedFinalManifest,
+    );
+    assertResumableRunState(
+      report,
+      snapshot,
+      dataPlan.mutations,
+      options.expectedManifest!,
+      priorCheckpoint.expectedFinalManifest,
+    );
+    assertRecordIdentityState(
+      snapshot,
+      dataPlan.mutations,
+      recordIdentityCommitments,
+    );
+  } else {
+    assertReconciliationManifest(report, options.expectedManifest!);
+  }
+  const checkpoint: CanonicalizationCheckpoint = priorCheckpoint ?? {
+    schemaVersion: 2,
+    origin,
+    manifest: options.expectedManifest!,
+    expectedFinalManifest,
+    recordIdentityCommitments,
     status: 'metadata',
     completedOperations: [],
   };
-  checkpointMatches(checkpoint, origin, manifest);
+  checkpointMatches(
+    checkpoint,
+    origin,
+    options.expectedManifest!,
+    expectedFinalManifest,
+  );
   const completed = new Map(
     checkpoint.completedOperations.map((operation) => [
       operation.key,
@@ -443,9 +787,24 @@ export const runCanonicalization = async (
 
   const postMetadataSnapshot = await loadCanonicalizationSnapshot(api);
   const postMetadataReport = buildReconciliationReport(postMetadataSnapshot);
-  assertReconciliationManifest(postMetadataReport, options.expectedManifest!);
   const postMetadataPlan = buildCanonicalizationPlan(postMetadataSnapshot);
   assertPlanCanApply(postMetadataPlan);
+  assertMutationConcurrencyTokens(
+    postMetadataSnapshot,
+    postMetadataPlan.mutations,
+  );
+  assertResumableRunState(
+    postMetadataReport,
+    postMetadataSnapshot,
+    postMetadataPlan.mutations,
+    options.expectedManifest!,
+    checkpoint.expectedFinalManifest,
+  );
+  assertRecordIdentityState(
+    postMetadataSnapshot,
+    postMetadataPlan.mutations,
+    checkpoint.recordIdentityCommitments,
+  );
   checkpoint.status = 'records';
   await api.writeCheckpoint(checkpoint);
 
@@ -465,7 +824,49 @@ export const runCanonicalization = async (
     const objectMutations = workingPlan.mutations.filter(
       (mutation) => mutation.objectPlural === objectPlural,
     );
-    const batches = chunkCanonicalizationMutations(objectMutations);
+    const existingById = new Map(
+      workingSnapshot[objectPlural].map((record) => [record.id, record]),
+    );
+    const existingMutations = objectMutations.filter((mutation) =>
+      existingById.has(mutation.id),
+    );
+    const newMutations = objectMutations.filter(
+      (mutation) => !existingById.has(mutation.id),
+    );
+    for (const mutation of existingMutations) {
+      const expectedUpdatedAt = mutationConcurrencyToken(
+        existingById.get(mutation.id)!,
+      );
+      const operation = {
+        id: mutation.id,
+        expectedUpdatedAt,
+        data: mutation.data,
+      };
+      const operationHash = sha256(operation);
+      const key = operationKey(
+        'conditional-patch',
+        objectPlural,
+        operationHash,
+      );
+      const completedHash = completed.get(key);
+      if (completedHash) {
+        throw new Error(
+          completedHash === operationHash
+            ? 'Checkpoint claims an unfinished conditional update is complete'
+            : 'Checkpoint conditional update hash does not match the fresh plan',
+        );
+      }
+      await api.conditionalPatchOne(
+        objectPlural,
+        mutation.id,
+        expectedUpdatedAt,
+        mutation.data,
+      );
+      await checkpointOperation(api, checkpoint, key, operation);
+      completed.set(key, operationHash);
+    }
+
+    const batches = chunkCanonicalizationMutations(newMutations);
     for (const batch of batches) {
       const batchHash = sha256(batch);
       const key = operationKey('batch', objectPlural, batchHash);
@@ -495,10 +896,19 @@ export const runCanonicalization = async (
   checkpoint.status = 'verifying';
   await api.writeCheckpoint(checkpoint);
   const finalSnapshot = await loadCanonicalizationSnapshot(api);
+  assertRecordIdentityState(
+    finalSnapshot,
+    [],
+    checkpoint.recordIdentityCommitments,
+  );
   const finalReport = assertCanonicalizationComplete(finalSnapshot);
-  assertReconciliationManifest(finalReport, options.expectedManifest!);
+  assertReconciliationManifest(finalReport, checkpoint.expectedFinalManifest);
   checkpoint.status = 'complete';
   await api.writeCheckpoint(checkpoint);
 
-  return { ...result, reconciliation: finalReport };
+  return {
+    ...result,
+    manifest: createReconciliationManifest(finalReport),
+    reconciliation: finalReport,
+  };
 };

@@ -650,6 +650,18 @@ const holdingIdentityKey = (
   });
 };
 
+const structuredHoldingIdentityData = (
+  holding: CrmRecord,
+): Record<string, unknown> => ({
+  'filer name': holding.filerName,
+  'filer id': holding.filerId,
+  'filer cik': holding.cik,
+  'filer crd': holding.crd,
+  'source date': holding.asOfDate ?? holding.sourceDate,
+  'shares held': holding.sharesHeld,
+  'market value': holding.marketValue,
+});
+
 const rowSemanticKey = (row: StagingRow): string => {
   const { index } = rawIndex(row.rawData);
 
@@ -1815,8 +1827,10 @@ export const buildCanonicalizationPlan = (
   const holdingByIdentity = new Map<string, CrmRecord>();
   const holdingCompanyByContent = new Map<string, Set<string>>();
   for (const holding of snapshot.holdingObservations) {
-    if (!textValue(holding.rawData)) continue;
-    const rawData = parseRawData(holding.rawData);
+    const hasRawData = !!textValue(holding.rawData);
+    const rawData = hasRawData
+      ? parseRawData(holding.rawData)
+      : structuredHoldingIdentityData(holding);
     const companyId = asString(holding.companyId);
     if (!companyId) {
       unresolved.push({ code: 'HOLDING_COMPANY_MISSING', rowKey: holding.id });
@@ -1832,14 +1846,17 @@ export const buildCanonicalizationPlan = (
       continue;
     }
     holdingByIdentity.set(identity, holding);
-    const content = canonicalContentKey(rawData);
-    holdingCompanyByContent.set(
-      content,
-      new Set([...(holdingCompanyByContent.get(content) ?? []), companyId]),
-    );
+    if (hasRawData) {
+      const content = canonicalContentKey(rawData);
+      holdingCompanyByContent.set(
+        content,
+        new Set([...(holdingCompanyByContent.get(content) ?? []), companyId]),
+      );
+    }
   }
   const holdingAccumulators = new Map<string, RecordAccumulator>();
   for (const [identity, holding] of holdingByIdentity) {
+    if (!textValue(holding.rawData)) continue;
     const rawData = parseRawData(holding.rawData);
     const accumulator = holdingPatch(holding, rawData, unresolved, holding.id);
     holdingAccumulators.set(holding.id, accumulator);
