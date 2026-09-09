@@ -57,43 +57,33 @@ const immediateGate = createWorkspaceConfigRequestGate({
   minimumIntervalMs: 0,
 });
 
-test('tenant preflight accepts multiple assigned roles when one is administrative', async () => {
-  const request = new FakeRequest();
-  request.responses.push(
-    response({
-      data: {
-        currentUser: {
-          currentWorkspace: {
-            id: WORKSPACE_CONFIG_APPROVED_WORKSPACE_ID,
-            displayName: 'Corgi ETF',
-          },
-          currentUserWorkspace: {
-            id: WORKSPACE_CONFIG_APPROVED_USER_WORKSPACE_ID,
-            permissionFlags: ['DATA_MODEL'],
-            isImpersonating: false,
-          },
-        },
-        getRoles: [
-          {
-            canUpdateAllSettings: false,
-            canReadAllObjectRecords: true,
-            canUpdateAllObjectRecords: false,
-            workspaceMembers: [
-              { userWorkspaceId: WORKSPACE_CONFIG_APPROVED_USER_WORKSPACE_ID },
-            ],
-          },
-          {
-            canUpdateAllSettings: true,
-            canReadAllObjectRecords: true,
-            canUpdateAllObjectRecords: true,
-            workspaceMembers: [
-              { userWorkspaceId: WORKSPACE_CONFIG_APPROVED_USER_WORKSPACE_ID },
-            ],
-          },
-        ],
+const tenantPreflightBody = ({
+  userWorkspaceId = WORKSPACE_CONFIG_APPROVED_USER_WORKSPACE_ID,
+  permissionFlags = ['DATA_MODEL'],
+  isImpersonating = false,
+}: {
+  userWorkspaceId?: string;
+  permissionFlags?: string[];
+  isImpersonating?: boolean;
+} = {}) => ({
+  data: {
+    currentUser: {
+      currentWorkspace: {
+        id: WORKSPACE_CONFIG_APPROVED_WORKSPACE_ID,
+        displayName: 'Corgi ETF',
       },
-    }),
-  );
+      currentUserWorkspace: {
+        id: userWorkspaceId,
+        permissionFlags,
+        isImpersonating,
+      },
+    },
+  },
+});
+
+test('tenant preflight trusts the exact approved effective membership', async () => {
+  const request = new FakeRequest();
+  request.responses.push(response(tenantPreflightBody()));
 
   await assertWorkspaceConfigTenant({
     request,
@@ -102,10 +92,31 @@ test('tenant preflight accepts multiple assigned roles when one is administrativ
   });
   assert.equal(request.calls.length, 1);
   assert.equal(request.calls[0]?.url, 'https://crm.corgiinvest.com/metadata');
-  assert.match(
-    String((request.calls[0]?.data as { query?: unknown }).query),
-    /^query /,
-  );
+  const query = String((request.calls[0]?.data as { query?: unknown }).query);
+  assert.match(query, /^query /);
+  assert.doesNotMatch(query, /getRoles/);
+});
+
+test('tenant preflight rejects the wrong member, missing permission, and impersonation', async () => {
+  const invalidSessions = [
+    tenantPreflightBody({ userWorkspaceId: 'wrong-user-workspace-id' }),
+    tenantPreflightBody({ permissionFlags: [] }),
+    tenantPreflightBody({ isImpersonating: true }),
+  ];
+
+  for (const body of invalidSessions) {
+    const request = new FakeRequest();
+    request.responses.push(response(body));
+
+    await assert.rejects(
+      assertWorkspaceConfigTenant({
+        request,
+        origin: 'https://crm.corgiinvest.com',
+        requestGate: immediateGate,
+      }),
+      /session lacks metadata permission/,
+    );
+  }
 });
 
 test('loads metadata, views, navigation, and companies without exposing a write', async () => {
