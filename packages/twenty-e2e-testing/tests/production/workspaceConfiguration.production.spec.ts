@@ -70,4 +70,46 @@ test('keeps the production CRM territory-first and free of helper navigation', a
       0,
     );
   }
+
+  await page.goto('/wholesalers/map');
+  await expect(
+    page.getByRole('heading', { name: 'Territory map' }),
+  ).toBeVisible();
+  const territoryFilters = page.locator('[aria-label="Territory filters"]');
+  await expect(territoryFilters).toBeVisible();
+  for (const filterLabel of ['State', 'ZIP code', 'Country', 'Wholesaler']) {
+    await expect(
+      territoryFilters.getByText(filterLabel, { exact: true }),
+    ).toBeVisible();
+  }
+  await expect(page.getByTestId('wholesaler-map-located-count')).toBeVisible();
+  await expect(page.getByRole('list', { name: 'Mapped leads' })).toBeVisible();
+
+  const companyId = companies[0]?.id;
+  expect(companyId).toBeTruthy();
+  await page.goto(`/object/company/${companyId}`);
+
+  const quickLogAction = page.getByRole('button', {
+    name: 'Log a follow-up for this company',
+  });
+  await expect(quickLogAction).toBeVisible();
+  await expect(quickLogAction).toBeEnabled();
+  await quickLogAction.click();
+
+  const quickLogDialog = page.getByRole('dialog', { name: 'Log follow-up' });
+  await expect(quickLogDialog).toBeVisible();
+  for (const fieldLabel of [
+    'Activity',
+    'Outcome',
+    'Contact person',
+    'Notes',
+    'Next follow-up (optional)',
+  ]) {
+    await expect(
+      quickLogDialog.getByText(fieldLabel, { exact: true }),
+    ).toBeVisible();
+  }
+  await expect(
+    quickLogDialog.getByText(/wholesaler profile is linked/i),
+  ).toHaveCount(0);
 });
