@@ -123,6 +123,19 @@ link the Wholesaler to a Workspace Member after acceptance.
 
 The bootstrap task definitions use the upstream Linux x86_64 release pinned as `twentycrm/twenty:v2.38.1@sha256:1f4526b05f6591461335700f8c6d45e88cbc4dc037e1ef0bef9daca62da343ea`. CI builds with Nx, pushes immutable commit-addressed images to ECR, registers new task definition revisions, and updates only these two services.
 
+### Trusted logic-function runtime
+
+`LOGIC_FUNCTION_TYPE=LOCAL` is intentionally pinned on both the server and
+worker so reviewed, private Corgi app logic functions can run. The local driver
+executes that code inside the Twenty process without a sandbox, so it must not
+be used for untrusted or user-supplied code. App installation and execution
+authorization remain unchanged and must not be bypassed.
+
+`CODE_INTERPRETER_TYPE=DISABLED` is pinned separately; enabling trusted app
+logic functions does not enable the AI code interpreter. A Lambda-backed logic
+function driver is the planned hardening path when sandboxed isolation is
+required.
+
 ## Cost and operational notes
 
 The main fixed costs are two NAT gateways, a Multi-AZ `db.t4g.medium`, two `cache.t4g.small` nodes, the ALB, and two continuously running 1-vCPU/2-GiB Fargate tasks. Expect roughly USD 300–450 per month before data transfer, storage growth, logs, and unusually high traffic. The Terraform budget is informational and deliberately has no email subscriber.
