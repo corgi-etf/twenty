@@ -27631,6 +27631,12 @@ __metadata:
   languageName: node
   linkType: hard
 
+"corgi-crm-activity-import@workspace:packages/corgi-crm-activity-import":
+  version: 0.0.0-use.local
+  resolution: "corgi-crm-activity-import@workspace:packages/corgi-crm-activity-import"
+  languageName: unknown
+  linkType: soft
+
 "corgi-crm-canonicalization@workspace:packages/corgi-crm-canonicalization":
   version: 0.0.0-use.local
   resolution: "corgi-crm-canonicalization@workspace:packages/corgi-crm-canonicalization"

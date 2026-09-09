@@ -79,6 +79,7 @@
       "packages/twenty-codex-plugin",
       "packages/twenty-oxlint-rules",
       "packages/twenty-claude-skills",
+      "packages/corgi-crm-activity-import",
       "packages/corgi-crm-canonicalization",
       "packages/corgi-crm-workspace-config"
     ]
