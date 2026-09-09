@@ -14,12 +14,6 @@ type TenantResponse = {
         isImpersonating?: unknown;
       } | null;
     } | null;
-    getRoles?: Array<{
-      canUpdateAllSettings?: unknown;
-      canReadAllObjectRecords?: unknown;
-      canUpdateAllObjectRecords?: unknown;
-      workspaceMembers?: Array<{ userWorkspaceId?: unknown }> | null;
-    }>;
   };
   errors?: unknown;
 };
@@ -62,12 +56,6 @@ export const assertCanonicalizationTenant = async ({
             currentWorkspace { id displayName }
             currentUserWorkspace { id permissionFlags isImpersonating }
           }
-          getRoles {
-            canUpdateAllSettings
-            canReadAllObjectRecords
-            canUpdateAllObjectRecords
-            workspaceMembers { userWorkspaceId }
-          }
         }`,
       },
     }),
@@ -109,19 +97,5 @@ export const assertCanonicalizationTenant = async ({
     throw new Error(
       'Authenticated canonicalization session lacks metadata permission',
     );
-  }
-  const assignedRoles = (body.data?.getRoles ?? []).filter((role) =>
-    role.workspaceMembers?.some(
-      ({ userWorkspaceId }) => userWorkspaceId === membership.id,
-    ),
-  );
-  const hasAdministrativeRole = assignedRoles.some(
-    (role) =>
-      role.canUpdateAllSettings === true &&
-      role.canReadAllObjectRecords === true &&
-      role.canUpdateAllObjectRecords === true,
-  );
-  if (!hasAdministrativeRole) {
-    throw new Error('Authenticated canonicalization session is not an admin');
   }
 };
