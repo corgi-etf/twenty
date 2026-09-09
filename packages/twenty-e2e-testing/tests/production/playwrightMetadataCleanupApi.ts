@@ -305,6 +305,7 @@ export const createPlaywrightMetadataCleanupApi = ({
       assertCompanyValuesCanonicalized(
         snapshot.companies,
         snapshot.sourceRecords,
+        snapshot.importReviewItems,
       );
       assertAuditedCanonicalizationSnapshot(
         snapshot,
