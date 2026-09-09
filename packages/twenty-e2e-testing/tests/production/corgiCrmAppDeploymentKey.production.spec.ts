@@ -30,6 +30,11 @@ const requiredEnvironment = (name: string): string => {
 
 test.describe.configure({ retries: 0 });
 
+test.skip(
+  !process.env.CORGI_CRM_DEPLOYMENT_KEY_OPERATION?.trim(),
+  'Corgi CRM deployment key management is workflow-only.',
+);
+
 test('manage the short-lived Corgi CRM deployment key', async ({ page }) => {
   const origin = new URL(requiredEnvironment('FRONTEND_BASE_URL')).origin;
   expect(origin).toBe(APPROVED_ORIGIN);
@@ -41,10 +46,13 @@ test('manage the short-lived Corgi CRM deployment key', async ({ page }) => {
     query,
     variables = {},
   }: GraphqlRequest): Promise<Record<string, unknown>> => {
-    const response = await page.request.post(new URL('/metadata', origin).href, {
-      headers: { Origin: origin },
-      data: { operationName, query, variables },
-    });
+    const response = await page.request.post(
+      new URL('/metadata', origin).href,
+      {
+        headers: { Origin: origin },
+        data: { operationName, query, variables },
+      },
+    );
     if (!response.ok()) {
       throw new Error(`${operationName} failed with HTTP ${response.status()}`);
     }
@@ -52,10 +60,7 @@ test('manage the short-lived Corgi CRM deployment key', async ({ page }) => {
       data?: Record<string, unknown>;
       errors?: unknown;
     };
-    if (
-      (Array.isArray(body.errors) && body.errors.length > 0) ||
-      !body.data
-    ) {
+    if ((Array.isArray(body.errors) && body.errors.length > 0) || !body.data) {
       throw new Error(`${operationName} returned GraphQL errors or no data`);
     }
     return body.data;
@@ -79,7 +84,9 @@ test('manage the short-lived Corgi CRM deployment key', async ({ page }) => {
   }
 
   if (operation !== 'revoke') {
-    throw new Error('CORGI_CRM_DEPLOYMENT_KEY_OPERATION must be acquire or revoke');
+    throw new Error(
+      'CORGI_CRM_DEPLOYMENT_KEY_OPERATION must be acquire or revoke',
+    );
   }
   let keyFile: DeploymentKeyFile;
   try {
