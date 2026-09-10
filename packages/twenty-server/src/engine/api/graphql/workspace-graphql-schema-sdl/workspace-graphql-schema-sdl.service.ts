@@ -80,6 +80,7 @@ export class WorkspaceGraphqlSchemaSDLService {
     let flatObjectMetadataMaps = allFlatObjectMetadataMaps;
     let flatFieldMetadataMaps = allFlatFieldMetadataMaps;
     let flatIndexMaps = allFlatIndexMaps;
+    let excludedObjectMetadataIds: ReadonlySet<string> | undefined;
 
     if (isDefined(applicationId)) {
       const twentyStandardApplicationId =
@@ -94,6 +95,12 @@ export class WorkspaceGraphqlSchemaSDLService {
       flatObjectMetadataMaps = this.filterFlatEntityMapsByApplicationIds(
         allFlatObjectMetadataMaps,
         applicationIds,
+      );
+      excludedObjectMetadataIds = new Set(
+        Object.values(allFlatObjectMetadataMaps.byUniversalIdentifier)
+          .filter(isDefined)
+          .filter((object) => !applicationIds.includes(object.applicationId))
+          .map((object) => object.id),
       );
       flatFieldMetadataMaps = this.filterFlatEntityMapsByApplicationIds(
         allFlatFieldMetadataMaps,
@@ -137,6 +144,7 @@ export class WorkspaceGraphqlSchemaSDLService {
           flatObjectMetadataMaps,
           flatFieldMetadataMaps,
           flatIndexMaps,
+          excludedObjectMetadataIds,
         });
 
       usedScalarNames =

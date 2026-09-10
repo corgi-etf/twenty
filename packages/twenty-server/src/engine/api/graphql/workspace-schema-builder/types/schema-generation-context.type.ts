@@ -7,4 +7,6 @@ export type SchemaGenerationContext = {
   flatObjectMetadataMaps: FlatEntityMaps<FlatObjectMetadata>;
   flatFieldMetadataMaps: FlatEntityMaps<FlatFieldMetadata>;
   flatIndexMaps: FlatEntityMaps<FlatIndexMetadata>;
+  // Only known objects removed by application filtering may omit nested relations.
+  excludedObjectMetadataIds?: ReadonlySet<string>;
 };

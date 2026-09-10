@@ -234,11 +234,13 @@ export class RelationFieldMetadataGqlInputTypeGenerator {
   public generateConnectRelationFieldInputType({
     fieldMetadata,
     typeOptions,
+    context,
   }: {
     fieldMetadata: FlatFieldMetadata<
       FieldMetadataType.RELATION | FieldMetadataType.MORPH_RELATION
     >;
     typeOptions: CreateInputTypeOptions;
+    context: SchemaGenerationContext;
   }) {
     if (fieldMetadata.settings?.relationType === RelationType.ONE_TO_MANY) {
       return {};
@@ -251,6 +253,20 @@ export class RelationFieldMetadataGqlInputTypeGenerator {
       throw new Error(
         `Target object metadata not found for field metadata ${fieldMetadata.id}`,
       );
+    }
+
+    if (
+      context.excludedObjectMetadataIds?.has(
+        fieldMetadata.relationTargetObjectMetadataId,
+      ) &&
+      !isDefined(
+        findFlatEntityByIdInFlatEntityMaps({
+          flatEntityId: fieldMetadata.relationTargetObjectMetadataId,
+          flatEntityMaps: context.flatObjectMetadataMaps,
+        }),
+      )
+    ) {
+      return {};
     }
 
     const key = computeRelationConnectInputTypeKey(
