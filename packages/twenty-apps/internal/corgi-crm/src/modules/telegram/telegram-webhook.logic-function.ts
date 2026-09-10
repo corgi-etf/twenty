@@ -58,7 +58,15 @@ export const handleTelegramWebhook = async (
   try {
     update = parseTelegramUpdate(payload.body);
   } catch {
-    return new Response({ ok: false }, { status: 400 });
+    // An update Telegram itself sent (a sticker, a group message, a bot
+    // sender) but that this bot does not handle is not a delivery failure.
+    // A non-2xx here tells Telegram to retry the same update indefinitely,
+    // wedging its queue until the update expires — acknowledge and drop it
+    // instead, the same way the disabled-app branch above does.
+    return new Response(
+      { ok: true, accepted: false, status: 'ignored' },
+      { status: 200 },
+    );
   }
   const result = await enqueueTelegramUpdateOnce({
     update,
