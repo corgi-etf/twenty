@@ -271,7 +271,10 @@ describe('application relation schema boundaries', () => {
 
   it('still rejects missing relation target IDs', () => {
     const context = createContext(false, new Set([targetObject.id]));
-    const field = { ...relationField, relationTargetObjectMetadataId: null };
+    const field = {
+      ...relationField,
+      relationTargetObjectMetadataId: null,
+    } as unknown as FlatFieldMetadata<FieldMetadataType.RELATION>;
 
     expect(() => buildOutput(context, field).getFields()).toThrow(
       'has no relation target object metadata id',
