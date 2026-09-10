@@ -418,7 +418,10 @@ test('books and reschedules a native CRM meeting while Telegram is disabled', as
               first: 2
               filter: {
                 name: { startsWith: $prefix }
-                createdAt: { gte: $after, lt: $before }
+                and: [
+                  { createdAt: { gte: $after } }
+                  { createdAt: { lt: $before } }
+                ]
                 or: [
                   { deletedAt: { is: NULL } }
                   { deletedAt: { is: NOT_NULL } }

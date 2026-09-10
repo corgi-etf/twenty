@@ -561,6 +561,40 @@ test('uses a bounded exact-ID list read because the real singular resolver throw
   );
 });
 
+test('recovery obeys the actual runtime one-operator-per-field filter contract', () => {
+  const processor = readFileSync(
+    join(
+      repositoryRoot,
+      'packages/twenty-server/src/engine/api/common/common-args-processors/filter-arg-processor/utils/validate-and-transform-operator-and-value.util.ts',
+    ),
+    'utf8',
+  );
+  expect(processor).toContain('if (entries.length !== 1)');
+  expect(processor).toContain(
+    'CommonQueryRunnerExceptionCode.INVALID_ARGS_FILTER',
+  );
+  const source = readFileSync(
+    join(__dirname, 'meetingBooking.maintenance.spec.ts'),
+    'utf8',
+  );
+  const query = source.match(
+    /`(\s*query FindPriorRunMeetingCanary[\s\S]*?)`/,
+  )?.[1];
+  expect(query).toBeDefined();
+  const operators: string[] = [];
+  visit(parse(query!), {
+    ObjectField(node) {
+      if (node.name.value !== 'createdAt') return;
+      expect(node.value.kind).toBe('ObjectValue');
+      if (node.value.kind !== 'ObjectValue')
+        throw new Error('Expected field filter');
+      expect(node.value.fields.length).toBe(1);
+      operators.push(node.value.fields[0]!.name.value);
+    },
+  });
+  expect(operators.sort()).toEqual(['gte', 'lt']);
+});
+
 const recoveryEnvironment = () => ({
   CRM_MEETING_CANARY_RECOVERY_RUN_ID: '34464729678',
   CRM_MEETING_CANARY_RECOVERY_RUN_ATTEMPT: '1',
@@ -747,7 +781,8 @@ const runRecovery = (options: {
       if (operation === 'FindPriorRunMeetingCanary') {
         expect(query).toContain('first: 2');
         expect(query).toContain('startsWith: $prefix');
-        expect(query).toContain('createdAt: { gte: $after, lt: $before }');
+        expect(query).toContain('createdAt: { gte: $after }');
+        expect(query).toContain('createdAt: { lt: $before }');
         expect(query).toContain('is: NULL');
         expect(query).toContain('is: NOT_NULL');
         expect(variables).toEqual({
