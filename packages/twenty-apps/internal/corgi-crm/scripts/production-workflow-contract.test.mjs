@@ -255,7 +255,10 @@ describe('Corgi CRM production app workflow contract', () => {
     assert.match(canaryBlock, /CRM_MEETING_CANARY_ENABLED: 'true'/);
     assert.match(canaryBlock, /VERIFY_NATIVE_CRM_MEETING_WITH_TELEGRAM_DISABLED/);
     assert.match(canaryBlock, /meetingBooking\.maintenance\.spec\.ts/);
-    assert.match(canaryBlock, /--project=production-chromium --no-deps --retries=0/);
+    assert.match(
+      canaryBlock,
+      /--project=production-chromium --no-deps --retries=0 --reporter=line/,
+    );
     assert.doesNotMatch(canaryBlock, /continue-on-error/);
   });
 
