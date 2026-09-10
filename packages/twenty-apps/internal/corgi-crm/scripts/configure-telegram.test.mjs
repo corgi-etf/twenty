@@ -19,7 +19,59 @@ describe('trusted Telegram application configuration', () => {
     });
     assert.equal(variables.CORGI_CRM_TELEGRAM_LINK_CODES, '{"bindings":[]}');
     assert.equal(variables.CORGI_CRM_TELEGRAM_NOTIFICATION_ROUTES, '{}');
+    assert.equal(variables.CORGI_CRM_TELEGRAM_GROUP_TOPICS, '{}');
     assert.equal(variables.CORGI_CRM_TELEGRAM_PUBLIC_REPORTS_ENABLED, 'false');
+  });
+
+  it('normalizes an approved supergroup topic allowlist', () => {
+    const variables = configurationModule.validateTrustedTelegramConfiguration({
+      workspaceId: '11111111-1111-4111-8111-111111111111',
+      token: 'token',
+      webhookSecret: 'secret',
+      operatorSecret: 'operator-secret',
+      linkCodesJson: '{"bindings":[]}',
+      groupTopicsJson:
+        '{"version":1,"topics":[{"chatId":" -1002394851554 ","messageThreadId":304311}]}',
+      timeZone: 'America/Chicago',
+      dailySummaryTime: '18:00',
+    });
+    assert.equal(
+      variables.CORGI_CRM_TELEGRAM_GROUP_TOPICS,
+      '{"version":1,"topics":[{"chatId":"-1002394851554","messageThreadId":304311}]}',
+    );
+  });
+
+  it('rejects a group topic that is not an explicit supergroup and thread', () => {
+    const configuration = {
+      workspaceId: '11111111-1111-4111-8111-111111111111',
+      token: 'token',
+      webhookSecret: 'secret',
+      operatorSecret: 'operator-secret',
+      linkCodesJson: '{"bindings":[]}',
+      timeZone: 'America/Chicago',
+      dailySummaryTime: '18:00',
+    };
+    for (const groupTopicsJson of [
+      '{"version":1,"topics":[{"chatId":"101","messageThreadId":304311}]}',
+      '{"version":1,"topics":[{"chatId":"-101","messageThreadId":304311}]}',
+      '{"version":1,"topics":[{"chatId":"-1002394851554"}]}',
+      '{"version":1,"topics":[{"chatId":"-1002394851554","messageThreadId":0}]}',
+      '{"version":1,"topics":[{"chatId":"-1002394851554","messageThreadId":1.5}]}',
+      '{"version":1,"topics":[{"chatId":"-1002394851554","messageThreadId":1,"event":"x"}]}',
+      '{"version":2,"topics":[]}',
+      '{"topics":[]}',
+      'not json',
+      '{"version":1,"topics":[{"chatId":"-1002394851554","messageThreadId":1},{"chatId":"-1002394851554","messageThreadId":1}]}',
+    ]) {
+      assert.throws(
+        () =>
+          configurationModule.validateTrustedTelegramConfiguration({
+            ...configuration,
+            groupTopicsJson,
+          }),
+        /group topic|duplicate/i,
+      );
+    }
   });
 
   it('enables public reports only through an explicit canonical boolean', () => {
@@ -330,6 +382,7 @@ describe('trusted Telegram application configuration', () => {
         'CORGI_CRM_TELEGRAM_PUBLIC_REPORTS_ENABLED',
         'CORGI_CRM_TELEGRAM_LINK_CODES',
         'CORGI_CRM_TELEGRAM_NOTIFICATION_ROUTES',
+        'CORGI_CRM_TELEGRAM_GROUP_TOPICS',
         'CORGI_CRM_TELEGRAM_OPERATOR_SECRET',
         'CORGI_CRM_TELEGRAM_TIME_ZONE',
         'CORGI_CRM_TELEGRAM_WEBHOOK_SECRET',

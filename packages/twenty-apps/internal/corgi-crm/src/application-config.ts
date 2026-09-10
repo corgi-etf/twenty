@@ -54,6 +54,12 @@ export default defineApplication({
         'Secret JSON routing allowlist for CRM event notifications. Empty configuration sends no event alerts.',
       isSecret: true,
     },
+    CORGI_CRM_TELEGRAM_GROUP_TOPICS: {
+      universalIdentifier: '6ac956d8-423e-412b-827b-0b32ff95257a',
+      description:
+        'Secret JSON allowlist of supergroup chat and forum topic pairs allowed to run read-only report commands. Empty configuration keeps every group refused.',
+      isSecret: true,
+    },
     CORGI_CRM_TELEGRAM_OPERATOR_SECRET: {
       universalIdentifier: 'bfc9cb27-1021-416b-a0d7-d34bb60df113',
       description:

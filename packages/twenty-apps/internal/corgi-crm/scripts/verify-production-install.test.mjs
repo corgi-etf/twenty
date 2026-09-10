@@ -117,6 +117,7 @@ describe('production Telegram application verification', () => {
       { key: 'CORGI_CRM_TELEGRAM_TIME_ZONE', value: 'America/Chicago' },
       { key: 'CORGI_CRM_TELEGRAM_DAILY_SUMMARY_TIME', value: '17:00' },
       { key: 'CORGI_CRM_TELEGRAM_NOTIFICATION_ROUTES', value: '********' },
+      { key: 'CORGI_CRM_TELEGRAM_GROUP_TOPICS', value: '********' },
     ],
     logicFunctions: [
       {

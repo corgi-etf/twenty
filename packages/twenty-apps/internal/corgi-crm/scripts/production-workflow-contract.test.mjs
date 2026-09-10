@@ -65,6 +65,15 @@ describe('Corgi CRM production app workflow contract', () => {
       workflow,
       /CORGI_CRM_TELEGRAM_PUBLIC_REPORTS_ENABLED: \$\{\{ vars\.CORGI_CRM_TELEGRAM_PUBLIC_REPORTS_ENABLED \|\| 'false' \}\}/,
     );
+    // The group-topic allowlist must reach both configuration writes, or the
+    // staged runtime silently keeps refusing the approved group.
+    assert.equal(
+      workflow.match(
+        /CORGI_CRM_TELEGRAM_GROUP_TOPICS: \$\{\{ secrets\.CORGI_CRM_TELEGRAM_GROUP_TOPICS \}\}/g,
+      )?.length,
+      2,
+    );
+    assert.doesNotMatch(workflow, /CORGI_CRM_TELEGRAM_GROUP_TOPICS:\s+['"]?-100/);
   });
 
   it('derives the workspace ID from integrity-validated bootstrap evidence without a UUID literal', () => {

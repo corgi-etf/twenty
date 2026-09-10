@@ -39,6 +39,7 @@ describe('Telegram application contract', () => {
       'CORGI_CRM_TELEGRAM_WEBHOOK_SECRET',
       'CORGI_CRM_TELEGRAM_LINK_CODES',
       'CORGI_CRM_TELEGRAM_NOTIFICATION_ROUTES',
+      'CORGI_CRM_TELEGRAM_GROUP_TOPICS',
     ]) {
       expect(variables[key]).toMatchObject({ isSecret: true });
       expect(variables[key]).not.toHaveProperty('value');
@@ -89,6 +90,7 @@ describe('Telegram application contract', () => {
         {
           expectedWorkspaceId: WORKSPACE_ID,
           webhookSecret: 'secret',
+          groupTopicsJson: undefined,
           store,
           enqueue,
         } as never,
@@ -118,6 +120,7 @@ describe('Telegram application contract', () => {
         expectedWorkspaceId: WORKSPACE_ID,
         enabled: 'false',
         webhookSecret: 'secret',
+        groupTopicsJson: undefined,
         store,
         enqueue,
       },
@@ -152,6 +155,7 @@ describe('Telegram application contract', () => {
         expectedWorkspaceId: WORKSPACE_ID,
         enabled: 'true',
         webhookSecret: 'secret',
+        groupTopicsJson: undefined,
         store,
         enqueue,
       },
