@@ -904,3 +904,90 @@ test('GraphQL diagnostics classify only known codes without exposing messages', 
       ),
     ).toBe(expected);
 });
+
+test('relation search uses the rendered placeholder because DropdownMenuSearchInput drops its requested combobox role', () => {
+  const pickerSource = readFileSync(
+    join(
+      repositoryRoot,
+      'packages/twenty-front/src/modules/object-record/record-picker/single-record-picker/components/SingleRecordPickerMenuItemsWithSearch.tsx',
+    ),
+    'utf8',
+  );
+  const inputSource = readFileSync(
+    join(
+      repositoryRoot,
+      'packages/twenty-front/src/modules/ui/layout/dropdown/components/DropdownMenuSearchInput.tsx',
+    ),
+    'utf8',
+  );
+  expect(pickerSource).toMatch(
+    /<DropdownMenuSearchInput[\s\S]*?role="combobox"/,
+  );
+  expect(inputSource).toContain(
+    '({ value, onChange, placeholder, type }, forwardedRef)',
+  );
+  expect(inputSource).toContain(
+    '...{ onChange, placeholder: translatedPlaceholder, type, value }',
+  );
+  expect(inputSource).not.toContain('role=');
+  const source = readFileSync(
+    join(__dirname, 'meetingBooking.maintenance.spec.ts'),
+    'utf8',
+  );
+  expect(source.includes("getByRole('combobox')")).toBe(false);
+  expect(source).toContain("getByPlaceholder('Search', { exact: true })");
+  expect(source).toContain('[data-select-disable="false"]:visible');
+  expect(source).toContain('await expect(relationDropdown).toHaveCount(1)');
+});
+
+test('canary bounds actions while preserving longer backend validation polls and exact cleanup', () => {
+  const source = readFileSync(
+    join(__dirname, 'meetingBooking.maintenance.spec.ts'),
+    'utf8',
+  );
+  expect(source).toMatch(/test\.use\(\{[\s\S]*?actionTimeout: 15_000/);
+  expect(source.match(/timeout: 45_000/g)?.length).toBe(2);
+  for (const step of [
+    'relation search',
+    'relation choice',
+    'relation persistence',
+  ]) {
+    expect(source).toContain(step);
+  }
+  expect(source).toContain(
+    'meeting.createdBy?.workspaceMemberId !== workspaceMemberId',
+  );
+  expect(source).toContain('expect(await readMeeting()).toBeNull()');
+});
+
+test('canary stdout is restricted to synthetic receipts and static aggregate evidence', () => {
+  const source = readFileSync(
+    join(__dirname, 'meetingBooking.maintenance.spec.ts'),
+    'utf8',
+  );
+  expect(
+    Array.from(source.matchAll(/console\.\w+\(/g), ([call]) => call),
+  ).toEqual(['console.log(', 'console.log(', 'console.log(']);
+  const outputs = Array.from(
+    source.matchAll(
+      /console\.log\(\s*JSON\.stringify\(\{([\s\S]*?)\n\s*\}\),\s*\);/g,
+    ),
+    ([, body]) => body!.replace(/\s/g, ''),
+  );
+  expect(outputs).toEqual([
+    [
+      'meetingCanaryReceipt:createMeetingCanaryReceipt({',
+      "runId:requiredEnvironment('GITHUB_RUN_ID'),",
+      "attempt:requiredEnvironment('GITHUB_RUN_ATTEMPT'),",
+      'meetingId,nameNonce,creationRequestedAt,}),',
+    ].join(''),
+    "meetingCanaryRecovery:destroyed?'deleted-exact-run-record':'already-absent',candidateCount:candidates.length,",
+    [
+      "meetingCanary:'passed',nativeCreate:true,invalidBookingRejected:true,",
+      'companyAndOwnerSelected:true,nativeSchedule:true,bookingStamped:true,',
+      'reschedulePreservedAttribution:true,nativeCalendar:true,telegramDisabled:true,',
+      'exactRecordCleanupVerified:cleanupVerified,',
+      "installedReportRuntime:'LIVE_FROM_SOURCE',reportRuntime,",
+    ].join(''),
+  ]);
+});
