@@ -212,7 +212,7 @@ export const assertWorkspaceConfigTenant = async ({
   request: WorkspaceConfigRequestContext;
   origin: string;
   requestGate?: ReturnType<typeof createWorkspaceConfigRequestGate>;
-}): Promise<void> => {
+}): Promise<{ workspaceId: string }> => {
   if (origin !== WORKSPACE_CONFIG_APPROVED_ORIGIN) {
     throw new Error('Workspace configuration tenant origin is not approved');
   }
