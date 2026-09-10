@@ -1,14 +1,7 @@
-import { type SummaryCount } from 'src/modules/outreach/services/daily-summary.service';
 import {
   type MeetingBookingReportRepository,
   type ReportMeetingBooking,
 } from 'src/modules/outreach/report-meeting-booking.types';
-import {
-  isQuickLogActivityType,
-  isQuickLogOutcome,
-  QUICK_LOG_ACTIVITY_LABELS,
-  QUICK_LOG_OUTCOME_LABELS,
-} from 'src/modules/outreach/quick-log-taxonomy';
 import {
   type OutreachActivity,
   type OutreachRepository,
@@ -23,13 +16,15 @@ export type ReportSummary = {
   end: Date;
   total: number;
   totalMeetingsSet: number;
-  activityCounts: SummaryCount[];
-  outcomeCounts: SummaryCount[];
-  leaderboard: Array<OwnerCount & { meetingsSet: number }>;
-  meetingLeaderboard: OwnerCount[];
+  leaderboard: OwnerCount[];
 };
 
-type OwnerCount = { ownerId: string; name: string; count: number };
+type OwnerCount = {
+  ownerId: string;
+  name: string;
+  count: number;
+  meetingsSet: number;
+};
 
 const REPORT_DAYS: Record<ReportPeriod, number> = {
   daily: 1,
@@ -59,29 +54,30 @@ export const getReportWindow = ({
   end: new Date(now.getTime()),
 });
 
-const sortedCounts = (counts: Map<string, number>): SummaryCount[] =>
-  [...counts]
-    .map(([label, count]) => ({ label, count }))
-    .sort((left, right) => left.label.localeCompare(right.label, 'en'));
-
+// Activities and bookings share one owner row, so someone who booked a meeting
+// without logging an activity is still counted rather than dropped.
 const addOwnerCount = (
   owners: Map<string, OwnerCount>,
   record: { wholesalerId: string; wholesalerName: string },
+  field: 'count' | 'meetingsSet',
 ) => {
   const ownerId = record.wholesalerId.trim() || 'unassigned';
   const name = cleanLabel(record.wholesalerName, 'Unassigned');
   const owner = owners.get(ownerId);
   if (owner) {
-    owner.count += 1;
+    owner[field] += 1;
     // Owner labels can differ between query pages; retain a stable choice.
     if (name.localeCompare(owner.name, 'en') < 0) owner.name = name;
   } else {
-    owners.set(ownerId, { ownerId, name, count: 1 });
+    const created: OwnerCount = { ownerId, name, count: 0, meetingsSet: 0 };
+    created[field] = 1;
+    owners.set(ownerId, created);
   }
 };
 
 const compareOwners = (left: OwnerCount, right: OwnerCount) =>
   right.count - left.count ||
+  right.meetingsSet - left.meetingsSet ||
   left.name.localeCompare(right.name, 'en') ||
   left.ownerId.localeCompare(right.ownerId, 'en');
 
@@ -106,10 +102,7 @@ export const buildReportSummary = ({
     timeZone,
     weekday: 'short',
   });
-  const activityCounts = new Map<string, number>();
-  const outcomeCounts = new Map<string, number>();
   const owners = new Map<string, OwnerCount>();
-  const meetingOwners = new Map<string, OwnerCount>();
   const seenIds = new Set<string>();
   const seenBookingIds = new Set<string>();
   const isIncluded = (value: string) => {
@@ -125,22 +118,13 @@ export const buildReportSummary = ({
     if (!isIncluded(activity.occurredAt) || seenIds.has(activity.id))
       continue;
     seenIds.add(activity.id);
-
-    const activityType = cleanLabel(activity.activityType, 'Unspecified');
-    const outcome = cleanLabel(activity.outcome, 'Unspecified');
-    activityCounts.set(
-      activityType,
-      (activityCounts.get(activityType) ?? 0) + 1,
-    );
-    outcomeCounts.set(outcome, (outcomeCounts.get(outcome) ?? 0) + 1);
-
-    addOwnerCount(owners, activity);
+    addOwnerCount(owners, activity, 'count');
   }
 
   for (const booking of meetingBookings) {
     if (!isIncluded(booking.bookedAt) || seenBookingIds.has(booking.id)) continue;
     seenBookingIds.add(booking.id);
-    addOwnerCount(meetingOwners, booking);
+    addOwnerCount(owners, booking, 'meetingsSet');
   }
 
   return {
@@ -150,13 +134,7 @@ export const buildReportSummary = ({
     end,
     total: seenIds.size,
     totalMeetingsSet: seenBookingIds.size,
-    activityCounts: sortedCounts(activityCounts),
-    outcomeCounts: sortedCounts(outcomeCounts),
-    leaderboard: [...owners.values()].sort(compareOwners).map((owner) => ({
-      ...owner,
-      meetingsSet: meetingOwners.get(owner.ownerId)?.count ?? 0,
-    })),
-    meetingLeaderboard: [...meetingOwners.values()].sort(compareOwners),
+    leaderboard: [...owners.values()].sort(compareOwners),
   };
 };
 
@@ -170,11 +148,6 @@ export const formatReportSummary = (summary: ReportSummary): string => {
     minute: '2-digit',
     timeZoneName: 'short',
   });
-  const formatCounts = (
-    counts: SummaryCount[],
-    labelFor: (label: string) => string,
-  ) =>
-    counts.map(({ label, count }) => `${labelFor(label)}: ${count}`).join(', ') || 'None';
   const formatRank = (index: number) =>
     ['🥇', '🥈', '🥉'][index] ?? `${index + 1}.`;
   const formatMeetings = (count: number) =>
@@ -189,26 +162,15 @@ export const formatReportSummary = (summary: ReportSummary): string => {
     `📅 Meetings set: ${summary.totalMeetingsSet}`,
     'Meetings counted when booked, not when scheduled.',
     '',
-    `📋 By activity: ${formatCounts(summary.activityCounts, (label) =>
-      isQuickLogActivityType(label) ? QUICK_LOG_ACTIVITY_LABELS[label] : label,
-    )}`,
-    `🎯 By outcome: ${formatCounts(summary.outcomeCounts, (label) =>
-      isQuickLogOutcome(label) ? QUICK_LOG_OUTCOME_LABELS[label] : label,
-    )}`,
-    '',
     '🏆 Activity leaderboard',
     ...summary.leaderboard.map(
       ({ name, count, meetingsSet }, index) =>
         `${formatRank(index)} ${name}: ${count} ${count === 1 ? 'activity' : 'activities'} · ${formatMeetings(meetingsSet)}`,
     ),
     ...(summary.total === 0 ? ['No outreach logged in this period.'] : []),
-    '',
-    '🤝 Meeting-booking leaderboard',
-    ...summary.meetingLeaderboard.map(
-      ({ name, count }, index) =>
-        `${formatRank(index)} ${name}: ${formatMeetings(count)}`,
-    ),
-    ...(summary.totalMeetingsSet === 0 ? ['No meetings booked in this period.'] : []),
+    ...(summary.totalMeetingsSet === 0
+      ? ['No meetings booked in this period.']
+      : []),
   ].join('\n');
 };
 

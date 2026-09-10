@@ -91,14 +91,14 @@ describe('outreach report summaries', () => {
     expect(summary.totalMeetingsSet).toBe(2);
     expect(summary.leaderboard).toEqual([
       { ownerId: 'owner-jordan', name: 'Jordan', count: 1, meetingsSet: 1 },
+      { ownerId: 'owner-booker', name: 'Casey', count: 0, meetingsSet: 1 },
     ]);
-    expect(summary.meetingLeaderboard).toEqual([
-      { ownerId: 'owner-booker', name: 'Casey', count: 1 },
-      { ownerId: 'owner-jordan', name: 'Jordan', count: 1 },
-    ]);
+    expect(formatReportSummary(summary)).toContain(
+      '🥈 Casey: 0 activities · 1 meeting set',
+    );
   });
 
-  it('totals all owners once, breaks down types/outcomes, and ranks by count then name then ID', () => {
+  it('totals all owners once and ranks by activities then meetings then name then ID', () => {
     const activities = [
       activity('1'),
       activity('2'),
@@ -127,18 +127,6 @@ describe('outreach report summaries', () => {
 
     expect(summary.total).toBe(6);
     expect(summary.totalMeetingsSet).toBe(0);
-    expect(summary.activityCounts).toEqual([
-      { label: 'email', count: 1 },
-      { label: 'meeting', count: 1 },
-      { label: 'phone_call', count: 3 },
-      { label: 'Unspecified', count: 1 },
-    ]);
-    expect(summary.outcomeCounts).toEqual([
-      { label: 'connected', count: 3 },
-      { label: 'follow_up_scheduled', count: 1 },
-      { label: 'not_interested', count: 1 },
-      { label: 'Unspecified', count: 1 },
-    ]);
     expect(summary.leaderboard).toEqual([
       { ownerId: 'owner-jordan', name: 'Jordan', count: 2, meetingsSet: 0 },
       { ownerId: 'owner-alex-1', name: 'Alex', count: 1, meetingsSet: 0 },
@@ -161,7 +149,7 @@ describe('outreach report summaries', () => {
     expect(text).not.toContain('Private');
   });
 
-  it('renders celebratory medals, truthful totals, readable taxonomy and separate booking rankings', () => {
+  it('renders celebratory medals, truthful totals and one per-person ranking', () => {
     const text = formatReportSummary(buildReportSummary({
       ...defaults,
       activities: [activity('1')],
@@ -175,11 +163,9 @@ describe('outreach report summaries', () => {
     expect(text).toContain('🎉 Daily outreach report — last 24 hours');
     expect(text).toContain('📊 Total activities: 1');
     expect(text).toContain('📅 Meetings set: 1');
-    expect(text).toContain('By activity: Phone call: 1');
-    expect(text).toContain('By outcome: Connected: 1');
     expect(text).toContain('🏆 Activity leaderboard');
     expect(text).toContain('🥇 Jordan: 1 activity · 1 meeting set');
-    expect(text).toContain('🤝 Meeting-booking leaderboard\n🥇 Jordan: 1 meeting set');
+    expect(text).not.toMatch(/By activity|By outcome|Meeting-booking/);
     expect(text).not.toMatch(/[🥇🥈🥉] [123]\./u);
     expect(text).toContain('Meetings counted when booked, not when scheduled.');
     expect(text).not.toMatch(/ARR|revenue|Private/);
@@ -244,11 +230,11 @@ describe('outreach report summaries', () => {
     ].map((booking) => ({ ...booking, bookedAt: '2026-09-09T15:00:00.000Z' }));
     const input = { ...defaults, activities: [], meetingBookings };
     const summary = buildReportSummary(input);
-    expect(summary.meetingLeaderboard).toEqual([
-      { ownerId: 'owner-taylor', name: 'Taylor', count: 2 },
-      { ownerId: 'owner-alex-1', name: 'Alex', count: 1 },
-      { ownerId: 'owner-alex-2', name: 'Alex', count: 1 },
-      { ownerId: 'unassigned', name: 'Unassigned', count: 1 },
+    expect(summary.leaderboard).toEqual([
+      { ownerId: 'owner-taylor', name: 'Taylor', count: 0, meetingsSet: 2 },
+      { ownerId: 'owner-alex-1', name: 'Alex', count: 0, meetingsSet: 1 },
+      { ownerId: 'owner-alex-2', name: 'Alex', count: 0, meetingsSet: 1 },
+      { ownerId: 'unassigned', name: 'Unassigned', count: 0, meetingsSet: 1 },
     ]);
     expect(buildReportSummary({
       ...input,
@@ -338,7 +324,7 @@ describe('outreach report summaries', () => {
     expect(summary.total).toBe(1);
   });
 
-  it('renders a useful empty report with zero and both breakdowns', () => {
+  it('renders a useful empty report with zeroed totals and both empty states', () => {
     const text = formatReportSummary(
       buildReportSummary({ ...defaults, activities: [] }),
     );
@@ -346,13 +332,11 @@ describe('outreach report summaries', () => {
     expect(text).toContain('America/Chicago');
     expect(text).toContain('Total activities: 0');
     expect(text).toContain('Meetings set: 0');
-    expect(text).toContain('By activity: None');
-    expect(text).toContain('By outcome: None');
     expect(text).toContain('No outreach logged in this period.');
     expect(text).toContain('No meetings booked in this period.');
   });
 
-  it('keeps owner and category labels on single lines in plain Telegram text', () => {
+  it('keeps owner labels on single lines in plain Telegram text', () => {
     const summary = buildReportSummary({
       ...defaults,
       activities: [
@@ -364,6 +348,5 @@ describe('outreach report summaries', () => {
       ],
     });
     expect(formatReportSummary(summary)).toContain('🥇 Jordan Example: 1');
-    expect(summary.activityCounts).toEqual([{ label: 'phone_call', count: 1 }]);
   });
 });
