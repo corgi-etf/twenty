@@ -21,21 +21,34 @@ export type BackfillResponse = {
   dispose(): Promise<void>;
 };
 
-export type BackfillRequest = {
-  get(url: string, options: { headers: Record<string, string> }): Promise<BackfillResponse>;
+// The transport is split like the api above it: a dry run is handed one with no
+// patch method, so there is no mutation path at the HTTP layer either.
+export type BackfillReadRequest = {
+  get(
+    url: string,
+    options: { headers: Record<string, string> },
+  ): Promise<BackfillResponse>;
+};
+
+export type BackfillRequest = BackfillReadRequest & {
   patch(
     url: string,
     options: { headers: Record<string, string>; data: unknown },
   ): Promise<BackfillResponse>;
 };
 
-export type ActivityTypeBackfillApiOptions = {
+export type ActivityTypeBackfillReadApiOptions = {
   origin: string;
   apiKey: string;
-  request: BackfillRequest;
+  request: BackfillReadRequest;
   checkpointFilePath: string;
   pace?: <TResult>(operation: () => Promise<TResult>) => Promise<TResult>;
 };
+
+export type ActivityTypeBackfillApiOptions =
+  ActivityTypeBackfillReadApiOptions & {
+    request: BackfillRequest;
+  };
 
 type RecordListResponse = {
   data?: Record<string, unknown>;
@@ -103,7 +116,7 @@ const buildReadApi = ({
   request,
   checkpointFilePath,
   pace = (operation) => operation(),
-}: ActivityTypeBackfillApiOptions): ActivityTypeBackfillReadApi => {
+}: ActivityTypeBackfillReadApiOptions): ActivityTypeBackfillReadApi => {
   if (new URL(origin).origin !== APPROVED_ORIGIN) {
     throw new Error('Activity type backfill origin is not approved');
   }
@@ -212,7 +225,7 @@ const buildReadApi = ({
 // The dry run gets this one. It has no write method to call, so no future edit
 // to the run logic can make a dry run mutate production.
 export const createActivityTypeBackfillReadApi = (
-  options: ActivityTypeBackfillApiOptions,
+  options: ActivityTypeBackfillReadApiOptions,
 ): ActivityTypeBackfillReadApi => buildReadApi(options);
 
 declare const writeGrantBrand: unique symbol;
