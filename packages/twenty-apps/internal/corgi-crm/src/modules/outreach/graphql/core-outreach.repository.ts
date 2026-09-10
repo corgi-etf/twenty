@@ -62,6 +62,7 @@ const LIST_OUTREACH_ACTIVITIES_DOCUMENT = `
           outcome
           notes
           occurredAt
+          createdAt
           wholesalerId
           company {
             name
@@ -92,6 +93,7 @@ type ActivityNode = {
   outcome?: string | null;
   notes?: string | null;
   occurredAt?: string | null;
+  createdAt?: string | null;
   wholesalerId?: string | null;
   company?: { name?: string | null } | null;
   contact?: {
@@ -115,10 +117,16 @@ type CreateOutreachActivityResponse = {
   createOutreachActivity?: unknown;
 };
 
+// Rows whose occurredAt is NULL fail every gte/lt comparison, so a bare
+// occurredAt window silently drops them. Widen the server-side filter to an OR
+// across occurredAt and createdAt -- a deliberate superset. The authoritative
+// window check stays client-side on the effective timestamp below, so the
+// superset only costs a few extra rows, never a wrong answer.
+type ActivityDateBound = { gte: string } | { lt: string };
+
 type ActivityFilter = {
   and: Array<
-    | { occurredAt: { gte: string } }
-    | { occurredAt: { lt: string } }
+    | { or: Array<{ occurredAt: ActivityDateBound } | { createdAt: ActivityDateBound }> }
     | { wholesalerId: { eq: string } }
   >;
 };
@@ -335,8 +343,8 @@ export class CoreOutreachRepository implements OutreachRepository {
     let cursor: string | undefined;
     for (let page = 0; page < MAX_PAGES; page += 1) {
       const filters: ActivityFilter['and'] = [
-        { occurredAt: { gte: start } },
-        { occurredAt: { lt: end } },
+        { or: [{ occurredAt: { gte: start } }, { createdAt: { gte: start } }] },
+        { or: [{ occurredAt: { lt: end } }, { createdAt: { lt: end } }] },
       ];
       if (wholesalerId) filters.push({ wholesalerId: { eq: wholesalerId } });
       const result = await this.rawTransport.request<
@@ -361,13 +369,21 @@ export class CoreOutreachRepository implements OutreachRepository {
         if (typeof node?.id !== 'string' || !node.id.trim()) {
           throw new Error('Outreach activity returned an invalid identity');
         }
-        if (
-          typeof node.occurredAt !== 'string' ||
-          !Number.isFinite(Date.parse(node.occurredAt))
-        ) {
+        // An activity logged without an explicit date has occurredAt NULL but
+        // always has createdAt, so fall back to it rather than dropping a real
+        // piece of outreach from the count.
+        const effectiveAt =
+          typeof node.occurredAt === 'string' &&
+          Number.isFinite(Date.parse(node.occurredAt))
+            ? node.occurredAt
+            : typeof node.createdAt === 'string' &&
+                Number.isFinite(Date.parse(node.createdAt))
+              ? node.createdAt
+              : null;
+        if (effectiveAt === null) {
           throw new Error('Outreach activity returned an invalid timestamp');
         }
-        const occurredAt = Date.parse(node.occurredAt);
+        const occurredAt = Date.parse(effectiveAt);
         if (
           !(occurredAt >= startTime && occurredAt < endTime) ||
           seenIds.has(node.id)
@@ -400,7 +416,7 @@ export class CoreOutreachRepository implements OutreachRepository {
           activityType: node.activityType?.trim() || 'Unspecified',
           outcome: node.outcome?.trim() || 'Unspecified',
           ...(node.notes?.trim() ? { notes: node.notes.trim() } : {}),
-          occurredAt: node.occurredAt,
+          occurredAt: effectiveAt,
         });
       }
       if (!connection.pageInfo.hasNextPage) return output;

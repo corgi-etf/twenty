@@ -195,8 +195,18 @@ describe('internal read-only production report verification', () => {
             ? {
                 filter: {
                   and: [
-                    { [timestamp]: { gte: start } },
-                    { [timestamp]: { lt: NOW.toISOString() } },
+                    {
+                      or: [
+                        { [timestamp]: { gte: start } },
+                        { createdAt: { gte: start } },
+                      ],
+                    },
+                    {
+                      or: [
+                        { [timestamp]: { lt: NOW.toISOString() } },
+                        { createdAt: { lt: NOW.toISOString() } },
+                      ],
+                    },
                   ],
                 },
                 first: 100,
