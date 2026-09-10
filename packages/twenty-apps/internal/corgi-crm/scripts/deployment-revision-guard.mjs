@@ -46,6 +46,7 @@ const EXACT_ALLOWED_PATHS = new Set([
   'packages/twenty-apps/internal/corgi-crm/README.md',
   'packages/twenty-e2e-testing/tests/production/activityImport.maintenance.spec.ts',
   'packages/twenty-e2e-testing/tests/production/workspaceConfiguration.maintenance.spec.ts',
+  'packages/twenty-e2e-testing/tests/production/workspaceTerritoryIdentityDiscovery.maintenance.spec.ts',
 ]);
 
 class DeploymentRevisionGuardError extends Error {
