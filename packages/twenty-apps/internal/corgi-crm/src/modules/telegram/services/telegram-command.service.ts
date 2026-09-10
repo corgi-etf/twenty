@@ -5,7 +5,10 @@ import {
 } from 'src/modules/outreach/services/daily-summary.service';
 import { getZonedDayWindow } from 'src/modules/outreach/services/day-window.service';
 import { logOutreach } from 'src/modules/outreach/services/log-outreach.service';
-import { readReportSummary } from 'src/modules/outreach/services/report-summary.service';
+import {
+  readReportSummary,
+  type ReportPeriod,
+} from 'src/modules/outreach/services/report-summary.service';
 import { type OutreachRepository } from 'src/modules/outreach/types';
 import { type MeetingBookingReportRepository } from 'src/modules/outreach/report-meeting-booking.types';
 import {
@@ -40,6 +43,7 @@ type CommandDependencies = {
   meetingRepository: MeetingBookingReportRepository;
   store: KeyValueStore;
   timeZone: string;
+  publicReportsEnabled: string | undefined;
   linkCodesJson: string | undefined;
   identity: TelegramIdentitySource;
   send(chatId: string, text: string): Promise<void>;
@@ -58,6 +62,42 @@ const sendParts = async (
 
 const commandName = (text: string) =>
   text.trim().split(/\s+/, 1)[0]!.replace(/@\w+$/i, '').toLowerCase();
+
+const reportPeriodForCommand = (command: string): ReportPeriod | null =>
+  command === '/daily'
+    ? 'daily'
+    : command === '/weekly'
+      ? 'weekly'
+      : command === '/monthly'
+        ? 'monthly'
+        : null;
+
+const sendWorkspaceReport = async ({
+  command,
+  period,
+  update,
+  dependencies,
+}: {
+  command: string;
+  period: ReportPeriod;
+  update: ParsedTelegramUpdate;
+  dependencies: CommandDependencies;
+}) => {
+  const text = await readTelegramReportSnapshot({
+    key: `interactive:${update.updateId}:${command}`,
+    store: dependencies.store,
+    read: () =>
+      readReportSummary({
+        repository: dependencies.repository,
+        meetingRepository: dependencies.meetingRepository,
+        period,
+        now: dependencies.now(),
+        timeZone: dependencies.timeZone,
+      }),
+  });
+  await sendParts(dependencies.send, update.chatId, text);
+  return { status: 'report', period } as const;
+};
 
 export const processTelegramCommand = async (
   update: ParsedTelegramUpdate,
@@ -103,6 +143,16 @@ export const processTelegramCommand = async (
     }
   }
 
+  const reportPeriod = reportPeriodForCommand(command);
+  if (reportPeriod && dependencies.publicReportsEnabled === 'true') {
+    return sendWorkspaceReport({
+      command,
+      period: reportPeriod,
+      update,
+      dependencies,
+    });
+  }
+
   const link = await getValidatedTelegramLink({
     store: dependencies.store,
     userId: update.userId,
@@ -116,27 +166,13 @@ export const processTelegramCommand = async (
     return { status: 'not_linked' } as const;
   }
 
-  if (command === '/daily' || command === '/weekly' || command === '/monthly') {
-    const period =
-      command === '/daily'
-        ? 'daily'
-        : command === '/weekly'
-          ? 'weekly'
-          : 'monthly';
-    const text = await readTelegramReportSnapshot({
-      key: `interactive:${update.updateId}:${command}`,
-      store: dependencies.store,
-      read: () =>
-        readReportSummary({
-          repository: dependencies.repository,
-          meetingRepository: dependencies.meetingRepository,
-          period,
-          now: dependencies.now(),
-          timeZone: dependencies.timeZone,
-        }),
+  if (reportPeriod) {
+    return sendWorkspaceReport({
+      command,
+      period: reportPeriod,
+      update,
+      dependencies,
     });
-    await sendParts(dependencies.send, update.chatId, text);
-    return { status: 'report', period } as const;
   }
 
   if (command === '/log') {

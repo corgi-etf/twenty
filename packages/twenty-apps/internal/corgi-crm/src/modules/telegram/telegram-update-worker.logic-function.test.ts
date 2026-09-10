@@ -46,6 +46,7 @@ describe('Telegram update worker durable replies', () => {
     const sendMessage = vi.fn().mockResolvedValue(undefined);
     const answerCallbackQuery = vi.fn().mockResolvedValue(undefined);
     const processCommand = vi.fn(async (_update, dependencies) => {
+      expect(dependencies.publicReportsEnabled).toBe('true');
       await dependencies.answerCallback?.('callback-1');
       await dependencies.send('101', 'first');
       await dependencies.send('101', 'second');
@@ -118,6 +119,7 @@ describe('Telegram update worker durable replies', () => {
             () => ({ sendMessage, answerCallbackQuery }) as never,
           ),
           timeZone: 'America/Chicago',
+          publicReportsEnabled: 'true',
           linkCodesJson: '{}',
         },
       ),

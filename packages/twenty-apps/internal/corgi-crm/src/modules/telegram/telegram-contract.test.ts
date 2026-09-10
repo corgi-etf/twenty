@@ -47,6 +47,12 @@ describe('Telegram application contract', () => {
       isSecret: false,
       value: 'false',
     });
+    expect(
+      variables.CORGI_CRM_TELEGRAM_PUBLIC_REPORTS_ENABLED,
+    ).toMatchObject({
+      isSecret: false,
+      value: 'false',
+    });
     expect(variables.CORGI_CRM_WORKSPACE_ID).not.toHaveProperty('value');
     for (const key of [
       'CORGI_CRM_TELEGRAM_TIME_ZONE',
@@ -122,6 +128,35 @@ describe('Telegram application contract', () => {
       accepted: false,
       status: 'disabled',
     });
+    expect(store.get).not.toHaveBeenCalled();
+    expect(store.set).not.toHaveBeenCalled();
+    expect(enqueue).not.toHaveBeenCalled();
+  });
+
+  it('rejects an invalid webhook secret before KV or queue access', async () => {
+    const store = { get: vi.fn(), set: vi.fn(), delete: vi.fn() };
+    const enqueue = vi.fn();
+    const response = await webhookModule.handleTelegramWebhook(
+      {
+        headers: { 'x-telegram-bot-api-secret-token': 'wrong-secret' },
+        body: {},
+      } as never,
+      {
+        workspaceId: WORKSPACE_ID,
+        retryCount: 0,
+        maxRetries: 0,
+        userWorkspaceId: null,
+        workspaceMemberId: null,
+      },
+      {
+        expectedWorkspaceId: WORKSPACE_ID,
+        enabled: 'true',
+        webhookSecret: 'secret',
+        store,
+        enqueue,
+      },
+    );
+    expect(response.status).toBe(401);
     expect(store.get).not.toHaveBeenCalled();
     expect(store.set).not.toHaveBeenCalled();
     expect(enqueue).not.toHaveBeenCalled();
