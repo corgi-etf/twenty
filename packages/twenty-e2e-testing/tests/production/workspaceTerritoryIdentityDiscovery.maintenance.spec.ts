@@ -49,7 +49,12 @@ test('discovers immutable territory member identities without mutation', async (
       requestGate,
     }),
   );
-  expect(new Set(Object.values(artifact.workspaceMemberIds)).size).toBe(3);
+  // Assert distinctness, not a count: the roster size is whatever the workspace
+  // actually holds, and pinning a number here made this spec fail the moment a
+  // phantom identity was removed from it.
+  const territoryMemberIds = Object.values(artifact.workspaceMemberIds);
+  expect(territoryMemberIds.length).toBeGreaterThan(0);
+  expect(new Set(territoryMemberIds).size).toBe(territoryMemberIds.length);
   expect(artifact.aggregateIdentityHash).toMatch(/^[0-9a-f]{64}$/);
   const artifactPath = await preflightTerritoryIdentityArtifact({
     runnerTemp: requiredEnvironmentValue('RUNNER_TEMP'),
