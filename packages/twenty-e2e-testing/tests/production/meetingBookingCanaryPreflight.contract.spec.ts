@@ -332,7 +332,7 @@ const revisionPreflight = (
   const environment: Record<string, string> = {
     CRM_MEETING_CANARY_ENABLED: 'true',
     CRM_MEETING_CANARY_CONFIRMATION:
-      'VERIFY_NATIVE_CRM_MEETING_WITH_TELEGRAM_DISABLED',
+      'VERIFY_NATIVE_CRM_MEETING_WITH_ALERTS_SUPPRESSED',
     GITHUB_ACTIONS: 'true',
     GITHUB_EVENT_NAME: 'workflow_dispatch',
     GITHUB_REF: 'refs/heads/main',

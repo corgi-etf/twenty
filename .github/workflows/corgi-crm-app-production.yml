@@ -168,9 +168,14 @@ jobs:
           node "${APP_PATH}/scripts/deployment-revision-guard.mjs" \
             "${prior_head_sha}" "${GITHUB_SHA}"
 
+          # Accept the pre-suppression step name too, so a meeting leaked by a
+          # run from before the canary stopped needing the bot off stays
+          # recoverable by exactly the same evidence path.
           failed_step="$(jq -cer \
-            --arg step_name "Verify native CRM meeting booking while Telegram is disabled" '
-              [.jobs[].steps[] | select(.name == $step_name)]
+            --arg step_name "Verify native CRM meeting booking with alerts suppressed" \
+            --arg legacy_step_name "Verify native CRM meeting booking while Telegram is disabled" '
+              [.jobs[].steps[]
+                | select(.name == $step_name or .name == $legacy_step_name)]
               | select(length == 1)
               | .[0]
               | select(
@@ -449,6 +454,45 @@ jobs:
           api-key: ${{ steps.credential.outputs.token }}
           app-path: ${{ env.APP_PATH }}
 
+      - name: Arm the meeting canary alert suppression
+        id: canary_suppression
+        env:
+          CORGI_CRM_API_KEY: ${{ steps.credential.outputs.token }}
+        run: >-
+          node "${APP_PATH}/scripts/verify-production-install.mjs"
+          arm-canary-suppression
+
+      - name: Verify native CRM meeting booking with alerts suppressed
+        env:
+          FRONTEND_BASE_URL: ${{ env.CORGI_CRM_API_URL }}
+          BACKEND_BASE_URL: ${{ env.CORGI_CRM_API_URL }}
+          CRM_E2E_LOGIN: ${{ secrets.CRM_E2E_LOGIN }}
+          CRM_E2E_PASSWORD: ${{ secrets.CRM_E2E_PASSWORD }}
+          CRM_E2E_WORKSPACE_NAME: ${{ secrets.CRM_E2E_WORKSPACE_NAME }}
+          CRM_MEETING_CANARY_ENABLED: 'true'
+          CRM_MEETING_CANARY_CONFIRMATION: VERIFY_NATIVE_CRM_MEETING_WITH_ALERTS_SUPPRESSED
+          CRM_MEETING_CANARY_OPERATION: ${{ inputs.operation }}
+          CRM_DEPLOYED_SHA: ${{ inputs.deployed_sha }}
+          CRM_MEETING_CANARY_RECOVERY_RUN_ID: ${{ env.CRM_MEETING_CANARY_RECOVERY_RUN_ID }}
+          CRM_MEETING_CANARY_RECOVERY_RUN_ATTEMPT: ${{ env.CRM_MEETING_CANARY_RECOVERY_RUN_ATTEMPT }}
+          CRM_MEETING_CANARY_RECOVERY_CREATED_AFTER: ${{ env.CRM_MEETING_CANARY_RECOVERY_CREATED_AFTER }}
+          CRM_MEETING_CANARY_RECOVERY_CREATED_BEFORE: ${{ env.CRM_MEETING_CANARY_RECOVERY_CREATED_BEFORE }}
+          CRM_MEETING_CANARY_RECOVERY_CONFIRMATION: ${{ env.CRM_MEETING_CANARY_RECOVERY_CONFIRMATION }}
+          CORGI_CRM_EXPECTED_VERSION: ${{ steps.app.outputs.version }}
+          PLAYWRIGHT_NO_COPY_PROMPT: '1'
+        run: >-
+          npx nx test:production twenty-e2e-testing --
+          tests/production/meetingBooking.maintenance.spec.ts
+          --project=production-chromium --no-deps --retries=0 --reporter=line
+
+      - name: Disarm the meeting canary alert suppression
+        if: ${{ always() && steps.canary_suppression.outcome == 'success' }}
+        env:
+          CORGI_CRM_API_KEY: ${{ steps.credential.outputs.token }}
+        run: >-
+          node "${APP_PATH}/scripts/verify-production-install.mjs"
+          disarm-canary-suppression
+
       - name: Configure Telegram disabled
         if: ${{ always() && steps.credential.outputs.token != '' }}
         env:
@@ -476,29 +520,6 @@ jobs:
           CORGI_CRM_TELEGRAM_TIME_ZONE: ${{ vars.CORGI_CRM_TELEGRAM_TIME_ZONE }}
           CORGI_CRM_TELEGRAM_DAILY_SUMMARY_TIME: ${{ vars.CORGI_CRM_TELEGRAM_DAILY_SUMMARY_TIME }}
         run: node "${APP_PATH}/scripts/configure-telegram.mjs" stage
-
-      - name: Verify native CRM meeting booking while Telegram is disabled
-        env:
-          FRONTEND_BASE_URL: ${{ env.CORGI_CRM_API_URL }}
-          BACKEND_BASE_URL: ${{ env.CORGI_CRM_API_URL }}
-          CRM_E2E_LOGIN: ${{ secrets.CRM_E2E_LOGIN }}
-          CRM_E2E_PASSWORD: ${{ secrets.CRM_E2E_PASSWORD }}
-          CRM_E2E_WORKSPACE_NAME: ${{ secrets.CRM_E2E_WORKSPACE_NAME }}
-          CRM_MEETING_CANARY_ENABLED: 'true'
-          CRM_MEETING_CANARY_CONFIRMATION: VERIFY_NATIVE_CRM_MEETING_WITH_TELEGRAM_DISABLED
-          CRM_MEETING_CANARY_OPERATION: ${{ inputs.operation }}
-          CRM_DEPLOYED_SHA: ${{ inputs.deployed_sha }}
-          CRM_MEETING_CANARY_RECOVERY_RUN_ID: ${{ env.CRM_MEETING_CANARY_RECOVERY_RUN_ID }}
-          CRM_MEETING_CANARY_RECOVERY_RUN_ATTEMPT: ${{ env.CRM_MEETING_CANARY_RECOVERY_RUN_ATTEMPT }}
-          CRM_MEETING_CANARY_RECOVERY_CREATED_AFTER: ${{ env.CRM_MEETING_CANARY_RECOVERY_CREATED_AFTER }}
-          CRM_MEETING_CANARY_RECOVERY_CREATED_BEFORE: ${{ env.CRM_MEETING_CANARY_RECOVERY_CREATED_BEFORE }}
-          CRM_MEETING_CANARY_RECOVERY_CONFIRMATION: ${{ env.CRM_MEETING_CANARY_RECOVERY_CONFIRMATION }}
-          CORGI_CRM_EXPECTED_VERSION: ${{ steps.app.outputs.version }}
-          PLAYWRIGHT_NO_COPY_PROMPT: '1'
-        run: >-
-          npx nx test:production twenty-e2e-testing --
-          tests/production/meetingBooking.maintenance.spec.ts
-          --project=production-chromium --no-deps --retries=0 --reporter=line
 
       - name: Register and verify the live Telegram provider
         if: inputs.telegram_enable
