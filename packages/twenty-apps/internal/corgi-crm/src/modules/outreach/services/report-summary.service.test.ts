@@ -690,7 +690,13 @@ describe('outreach report summaries', () => {
     ).split('\n');
     const heading = lines.indexOf('💰 ARR attributed per EW');
     expect(heading).toBeGreaterThan(-1);
-    expect(lines.slice(heading)).toEqual([...expected]);
+    // The section leads the report now, so it is bounded by the blank line
+    // that follows it rather than by the end of the message. Asserting the
+    // boundary keeps the original "and nothing more" guarantee.
+    expect(lines.slice(heading, heading + expected.length)).toEqual([
+      ...expected,
+    ]);
+    expect(lines[heading + expected.length]).toBe('');
   });
 
   it('renders exactly the unavailable section and nothing more', () => {
@@ -698,9 +704,11 @@ describe('outreach report summaries', () => {
       buildReportSummary({ ...defaults, activities: [activity('1')] }),
     ).split('\n');
     const heading = lines.indexOf('💰 ARR attributed per EW');
-    expect(lines.slice(heading)).toEqual([
+    const expected = [
       '💰 ARR attributed per EW',
       'Wholesaler roles could not be read for this report, so the EW breakdown is unavailable.',
-    ]);
+    ];
+    expect(lines.slice(heading, heading + expected.length)).toEqual(expected);
+    expect(lines[heading + expected.length]).toBe('');
   });
 });

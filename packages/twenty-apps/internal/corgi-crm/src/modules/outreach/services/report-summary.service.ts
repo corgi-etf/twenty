@@ -359,6 +359,11 @@ export const formatReportSummary = (summary: ReportSummary): string => {
     `${timestamp.format(summary.start)} → ${timestamp.format(summary.end)} (${summary.timeZone})`,
     'All CRM owners',
     '',
+    // ARR leads the report: it is the figure the desk is measured on, so it
+    // should not sit below a leaderboard the reader has to scroll past.
+    EXTERNAL_WHOLESALER_REVENUE_HEADING,
+    ...formatExternalWholesalerRevenue(summary.externalWholesalerRevenue),
+    '',
     `📊 Total activities: ${summary.total}`,
     `📅 Meetings set: ${summary.totalMeetingsSet}`,
     'Meetings counted when booked, not when scheduled.',
@@ -372,11 +377,6 @@ export const formatReportSummary = (summary: ReportSummary): string => {
     ...(summary.totalMeetingsSet === 0
       ? ['No meetings booked in this period.']
       : []),
-    '',
-    // Always rendered, in all three states: a section that disappears when role
-    // data is missing reads as a bug, and the report has to say which it is.
-    EXTERNAL_WHOLESALER_REVENUE_HEADING,
-    ...formatExternalWholesalerRevenue(summary.externalWholesalerRevenue),
   ].join('\n');
 };
 
