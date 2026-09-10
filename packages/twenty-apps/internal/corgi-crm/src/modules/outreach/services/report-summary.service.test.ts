@@ -30,6 +30,46 @@ const defaults = {
 };
 
 describe('outreach report summaries', () => {
+  it('counts meetings by booking time independently of activity totals and scheduled dates', () => {
+    const meetingBookings = [
+      {
+        id: 'booking-1',
+        bookedAt: '2026-09-09T15:00:00.000Z',
+        scheduledAt: '2026-10-01T15:00:00.000Z',
+        wholesalerId: 'owner-jordan',
+        wholesalerName: 'Jordan',
+      },
+      {
+        id: 'booking-2',
+        bookedAt: '2026-09-09T15:00:00.000Z',
+        wholesalerId: 'owner-booker',
+        wholesalerName: 'Casey',
+      },
+      {
+        id: 'old-booking',
+        bookedAt: '2026-08-01T15:00:00.000Z',
+        scheduledAt: '2026-09-09T15:00:00.000Z',
+        wholesalerId: 'owner-jordan',
+        wholesalerName: 'Jordan',
+      },
+    ];
+    const summary = buildReportSummary({
+      ...defaults,
+      activities: [activity('booking-1')],
+      meetingBookings: [...meetingBookings, meetingBookings[0]!],
+    });
+
+    expect(summary.total).toBe(1);
+    expect(summary.totalMeetingsSet).toBe(2);
+    expect(summary.leaderboard).toEqual([
+      { ownerId: 'owner-jordan', name: 'Jordan', count: 1, meetingsSet: 1 },
+    ]);
+    expect(summary.meetingLeaderboard).toEqual([
+      { ownerId: 'owner-booker', name: 'Casey', count: 1 },
+      { ownerId: 'owner-jordan', name: 'Jordan', count: 1 },
+    ]);
+  });
+
   it('totals all owners once, breaks down types/outcomes, and ranks by count then name then ID', () => {
     const activities = [
       activity('1'),
@@ -58,6 +98,7 @@ describe('outreach report summaries', () => {
     const summary = buildReportSummary({ ...defaults, activities });
 
     expect(summary.total).toBe(6);
+    expect(summary.totalMeetingsSet).toBe(0);
     expect(summary.activityCounts).toEqual([
       { label: 'email', count: 1 },
       { label: 'meeting', count: 1 },
@@ -71,11 +112,11 @@ describe('outreach report summaries', () => {
       { label: 'Unspecified', count: 1 },
     ]);
     expect(summary.leaderboard).toEqual([
-      { ownerId: 'owner-jordan', name: 'Jordan', count: 2 },
-      { ownerId: 'owner-alex-1', name: 'Alex', count: 1 },
-      { ownerId: 'owner-alex-2', name: 'Alex', count: 1 },
-      { ownerId: 'owner-taylor', name: 'Taylor', count: 1 },
-      { ownerId: 'unassigned', name: 'Unassigned', count: 1 },
+      { ownerId: 'owner-jordan', name: 'Jordan', count: 2, meetingsSet: 0 },
+      { ownerId: 'owner-alex-1', name: 'Alex', count: 1, meetingsSet: 0 },
+      { ownerId: 'owner-alex-2', name: 'Alex', count: 1, meetingsSet: 0 },
+      { ownerId: 'owner-taylor', name: 'Taylor', count: 1, meetingsSet: 0 },
+      { ownerId: 'unassigned', name: 'Unassigned', count: 1, meetingsSet: 0 },
     ]);
     expect(
       buildReportSummary({
@@ -113,6 +154,54 @@ describe('outreach report summaries', () => {
     },
   );
 
+  it.each(['daily', 'weekly', 'monthly'] as const)(
+    'includes the %s booking start and excludes older, invalid, end-boundary and future bookings',
+    (period) => {
+      const window = getReportWindow({ ...defaults, period });
+      const summary = buildReportSummary({
+        ...defaults,
+        period,
+        activities: [],
+        meetingBookings: [
+          window.start.toISOString(),
+          new Date(window.start.getTime() - 1).toISOString(),
+          window.end.toISOString(),
+          new Date(window.end.getTime() + 1).toISOString(),
+          'not-a-timestamp',
+        ].map((bookedAt, index) => ({
+          id: `booking-${index}`,
+          bookedAt,
+          wholesalerId: 'owner-jordan',
+          wholesalerName: 'Jordan',
+        })),
+      });
+      expect(summary.totalMeetingsSet).toBe(1);
+      expect(summary.total).toBe(0);
+    },
+  );
+
+  it('ranks every booking owner including missing identities, with stable ties independent of source order', () => {
+    const meetingBookings = [
+      { id: '1', wholesalerId: 'owner-taylor', wholesalerName: 'Taylor' },
+      { id: '2', wholesalerId: 'owner-taylor', wholesalerName: 'Taylor' },
+      { id: '3', wholesalerId: 'owner-alex-2', wholesalerName: 'Alex' },
+      { id: '4', wholesalerId: 'owner-alex-1', wholesalerName: 'Alex' },
+      { id: '5', wholesalerId: ' ', wholesalerName: '\n ' },
+    ].map((booking) => ({ ...booking, bookedAt: '2026-09-09T15:00:00.000Z' }));
+    const input = { ...defaults, activities: [], meetingBookings };
+    const summary = buildReportSummary(input);
+    expect(summary.meetingLeaderboard).toEqual([
+      { ownerId: 'owner-taylor', name: 'Taylor', count: 2 },
+      { ownerId: 'owner-alex-1', name: 'Alex', count: 1 },
+      { ownerId: 'owner-alex-2', name: 'Alex', count: 1 },
+      { ownerId: 'unassigned', name: 'Unassigned', count: 1 },
+    ]);
+    expect(buildReportSummary({
+      ...input,
+      meetingBookings: [...meetingBookings].reverse(),
+    })).toEqual(summary);
+  });
+
   it.each([
     [
       '2026-03-09T17:00:00.000Z',
@@ -136,9 +225,17 @@ describe('outreach report summaries', () => {
         activities: [...weekdays, ...weekends].map((occurredAt, index) =>
           activity(String(index), { occurredAt }),
         ),
+        meetingBookings: [...weekdays, ...weekends].map((bookedAt, index) => ({
+          id: String(index),
+          bookedAt,
+          scheduledAt: '2026-12-01T12:00:00.000Z',
+          wholesalerId: 'owner-jordan',
+          wholesalerName: 'Jordan',
+        })),
       });
       expect(summary.start.toISOString()).toBe(start);
       expect(summary.total).toBe(2);
+      expect(summary.totalMeetingsSet).toBe(2);
     },
   );
 
