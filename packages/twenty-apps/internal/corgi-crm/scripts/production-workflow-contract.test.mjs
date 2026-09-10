@@ -22,6 +22,13 @@ const verifier = await readFile(
   new URL('./verify-production-install.mjs', import.meta.url),
   'utf8',
 );
+const canarySpec = await readFile(
+  new URL(
+    '../../../../twenty-e2e-testing/tests/production/meetingBooking.maintenance.spec.ts',
+    import.meta.url,
+  ),
+  'utf8',
+);
 
 const position = (needle) => {
   const index = workflow.indexOf(needle);
@@ -291,21 +298,35 @@ describe('Corgi CRM production app workflow contract', () => {
     const installed = position(
       'Verify the installed release before configuration-only changes',
     );
+    const arm = position('\n      - name: Arm the meeting canary alert suppression');
+    const canary = position(
+      '\n      - name: Verify native CRM meeting booking with alerts suppressed',
+    );
+    const disarm = position(
+      '\n      - name: Disarm the meeting canary alert suppression',
+    );
     const configureDisabled = position('Configure Telegram disabled');
     const stage = position('configure-telegram.mjs" stage');
-    const canary = position(
-      '\n      - name: Verify native CRM meeting booking while Telegram is disabled',
-    );
     const register = position(
       '\n      - name: Register and verify the live Telegram provider',
     );
+    // The canary used to be pinned between the global Telegram disable and
+    // provider registration, because a global kill switch was the only thing
+    // stopping its real booking from alerting. The property was never the kill
+    // switch itself, it was that the canary cannot emit a booking alert and
+    // must run before the provider is brought up. It is now armed suppression
+    // that guarantees the first half, so the canary sits before the disable
+    // and the bot stays live across it -- but it must still precede
+    // registration, and the arm/disarm pair must bracket it exactly.
     assert.ok(
-      installed < configureDisabled &&
+      installed < arm &&
+        arm < canary &&
+        canary < disarm &&
+        disarm < configureDisabled &&
         configureDisabled < stage &&
-        stage < canary &&
-        canary < register,
+        stage < register,
     );
-    const installedBlock = workflow.slice(installed, configureDisabled);
+    const installedBlock = workflow.slice(installed, arm);
     assert.match(
       installedBlock,
       /if: inputs\.operation == 'configure-telegram'/,
@@ -315,7 +336,19 @@ describe('Corgi CRM production app workflow contract', () => {
       /CORGI_CRM_EXPECTED_VERSION:\s*\$\{\{ steps\.app\.outputs\.version \}\}/,
     );
     assert.match(installedBlock, /verify-production-install\.mjs" installed/);
-    const canaryBlock = workflow.slice(canary, register);
+    // Arming is mandatory and ungated for exactly the reason the canary is:
+    // a skipped arm with a live bot is a real alert to a real channel.
+    const armBlock = workflow.slice(arm, canary);
+    assert.doesNotMatch(armBlock, /^\s*if:/m);
+    assert.match(armBlock, /id: canary_suppression/);
+    assert.match(
+      armBlock,
+      /verify-production-install\.mjs"\s*\n?\s*arm-canary-suppression/,
+    );
+    // Unchanged property, narrowed to the canary's own block now that other
+    // steps sit between it and registration: the canary is mandatory, never
+    // operation-gated, never retried and never allowed to swallow a failure.
+    const canaryBlock = workflow.slice(canary, disarm);
     assert.doesNotMatch(canaryBlock, /^\s*if:/m);
     assert.doesNotMatch(
       canaryBlock,
@@ -325,7 +358,7 @@ describe('Corgi CRM production app workflow contract', () => {
     assert.match(canaryBlock, /CRM_MEETING_CANARY_ENABLED: 'true'/);
     assert.match(
       canaryBlock,
-      /VERIFY_NATIVE_CRM_MEETING_WITH_TELEGRAM_DISABLED/,
+      /VERIFY_NATIVE_CRM_MEETING_WITH_ALERTS_SUPPRESSED/,
     );
     assert.match(canaryBlock, /meetingBooking\.maintenance\.spec\.ts/);
     assert.match(
@@ -333,6 +366,82 @@ describe('Corgi CRM production app workflow contract', () => {
       /--project=production-chromium --no-deps --retries=0 --reporter=line/,
     );
     assert.doesNotMatch(canaryBlock, /continue-on-error/);
+    // A token left armed would silence a genuine booking, so disarming must
+    // survive a failed canary. It is gated only on the arm having succeeded,
+    // so it can never fail a run that never armed anything.
+    const disarmBlock = workflow.slice(disarm, configureDisabled);
+    assert.match(
+      disarmBlock,
+      /if:[^\n]*always\(\) && steps\.canary_suppression\.outcome == 'success'/,
+    );
+    assert.match(
+      disarmBlock,
+      /verify-production-install\.mjs"\s*\n?\s*disarm-canary-suppression/,
+    );
+    assert.doesNotMatch(disarmBlock, /continue-on-error/);
+  });
+
+  it('keeps the canary alert suppression run-scoped and self-expiring', () => {
+    // The armed token is the only thing standing between a canary booking and
+    // a real "NEW MEETING BOOKED" alert now that the bot stays live. It must
+    // be bound to this exact run and expire on its own, so a lost disarm
+    // cannot silence a genuine booking indefinitely.
+    assert.match(verifier, /CORGI_CRM_MEETING_CANARY_SUPPRESSION/);
+    assert.match(
+      verifier,
+      /namePrefix: `CRM meeting canary \$\{runId\}-\$\{runAttempt\}-`/,
+    );
+    assert.match(verifier, /notAfter: new Date\(now \+ MEETING_CANARY_SUPPRESSION_WINDOW_MS\)/);
+    assert.match(
+      verifier,
+      /MEETING_CANARY_SUPPRESSION_WINDOW_MS = 20 \* 60_000/,
+    );
+    assert.match(verifier, /\/\^\[1-9\]\[0-9\]\*\$\/\.test\(runId \?\? ''\)/);
+    assert.match(
+      verifier,
+      /\/\^\[1-9\]\[0-9\]\*\$\/\.test\(runAttempt \?\? ''\)/,
+    );
+    // Disarming has to stay reachable when something unrelated is broken.
+    assert.match(
+      verifier,
+      /if \(mode === 'disarm-canary-suppression'\)[\s\S]*?\n  await verifyRequiredSchema/,
+    );
+
+    // Three independent places must agree or suppression silently stops
+    // working with the bot live: the prefix the arming step writes, the prefix
+    // the canary names its meeting with, and the prefix the canary re-proves
+    // is armed before each mutation.
+    assert.match(
+      canarySpec,
+      /const MEETING_CANARY_NAME_PREFIX = `CRM meeting canary \$\{requiredEnvironment\('GITHUB_RUN_ID'\)\}-\$\{requiredEnvironment\('GITHUB_RUN_ATTEMPT'\)\}-`/,
+    );
+    assert.match(
+      canarySpec,
+      /const meetingName = `\$\{MEETING_CANARY_NAME_PREFIX\}\$\{nameNonce\}`/,
+    );
+    assert.match(
+      canarySpec,
+      /variable\.key === 'CORGI_CRM_MEETING_CANARY_SUPPRESSION'/,
+    );
+    assert.match(
+      canarySpec,
+      /expect\(token\.namePrefix\)\.toBe\(MEETING_CANARY_NAME_PREFIX\)/,
+    );
+    assert.match(
+      canarySpec,
+      /expect\(Date\.parse\(token\.notAfter as string\) > Date\.now\(\)\)\.toBe\(true\)/,
+    );
+    // The canary must no longer require the bot to be off, and must not be
+    // able to run against a release that never armed its suppression.
+    assert.doesNotMatch(canarySpec, /'CORGI_CRM_TELEGRAM_ENABLED', 'false'/);
+    assert.match(
+      canarySpec,
+      /'VERIFY_NATIVE_CRM_MEETING_WITH_ALERTS_SUPPRESSED'/,
+    );
+    assert.match(
+      workflow,
+      /CRM_MEETING_CANARY_CONFIRMATION: VERIFY_NATIVE_CRM_MEETING_WITH_ALERTS_SUPPRESSED/,
+    );
   });
 
   it('derives an exact prior failed-canary cleanup window from trusted workflow evidence', () => {
@@ -376,9 +485,20 @@ describe('Corgi CRM production app workflow contract', () => {
     assert.match(recovery, /\.head_branch == "main"/);
     assert.match(recovery, /\.event == "workflow_dispatch"/);
     assert.match(recovery, /\.conclusion == "failure"/);
+    // Recovery locates the prior run's leaked meeting by the step that created
+    // it. It must accept the pre-suppression step name too, or a meeting leaked
+    // before the canary stopped needing the bot off becomes unrecoverable.
+    assert.match(
+      recovery,
+      /Verify native CRM meeting booking with alerts suppressed/,
+    );
     assert.match(
       recovery,
       /Verify native CRM meeting booking while Telegram is disabled/,
+    );
+    assert.match(
+      recovery,
+      /select\(\.name == \$step_name or \.name == \$legacy_step_name\)/,
     );
     assert.match(recovery, /deployment-revision-guard\.mjs/);
     assert.match(recovery, /"\$\{prior_head_sha\}" "\$\{GITHUB_SHA\}"/);
@@ -394,10 +514,10 @@ describe('Corgi CRM production app workflow contract', () => {
 
     const canary = workflow.slice(
       position(
-        '\n      - name: Verify native CRM meeting booking while Telegram is disabled',
+        '\n      - name: Verify native CRM meeting booking with alerts suppressed',
       ),
       position(
-        '\n      - name: Register and verify the live Telegram provider',
+        '\n      - name: Disarm the meeting canary alert suppression',
       ),
     );
     assert.match(

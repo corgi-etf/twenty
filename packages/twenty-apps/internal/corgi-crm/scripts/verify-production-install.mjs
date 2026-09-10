@@ -779,6 +779,69 @@ const verifyTelegramApplicationContract = (
   );
 };
 
+// The canary books a real meeting, which is exactly the transition the alert
+// fires on. Arming a run-scoped token lets that one booking through silently,
+// so the bot no longer has to be shut off for the canary to be safe.
+const MEETING_CANARY_SUPPRESSION_KEY = 'CORGI_CRM_MEETING_CANARY_SUPPRESSION';
+const MEETING_CANARY_SUPPRESSION_WINDOW_MS = 20 * 60_000;
+
+const buildMeetingCanarySuppression = ({ runId, runAttempt, now }) => {
+  if (!/^[1-9][0-9]*$/.test(runId ?? '')) {
+    throw new Error('Meeting canary suppression needs a numeric run ID');
+  }
+  if (!/^[1-9][0-9]*$/.test(runAttempt ?? '')) {
+    throw new Error('Meeting canary suppression needs a numeric run attempt');
+  }
+  return JSON.stringify({
+    version: 1,
+    namePrefix: `CRM meeting canary ${runId}-${runAttempt}-`,
+    notAfter: new Date(now + MEETING_CANARY_SUPPRESSION_WINDOW_MS).toISOString(),
+  });
+};
+
+const writeMeetingCanarySuppression = async ({ graphql, value }) => {
+  const data = await graphql({
+    endpoint: '/metadata',
+    operationName: 'FindCorgiCrmApplicationForCanarySuppression',
+    query: `query FindCorgiCrmApplicationForCanarySuppression {
+      findManyApplications { id universalIdentifier }
+    }`,
+  });
+  const applications = data?.findManyApplications;
+  if (!Array.isArray(applications)) {
+    throw new Error('Installed Corgi CRM application lookup was invalid');
+  }
+  const matches = applications.filter(
+    (application) => application?.universalIdentifier === APPLICATION_ID,
+  );
+  if (matches.length !== 1 || !UUID_PATTERN.test(matches[0]?.id ?? '')) {
+    throw new Error(
+      `Expected one installed Corgi CRM application, found ${matches.length}`,
+    );
+  }
+  const result = await graphql({
+    endpoint: '/metadata',
+    operationName: 'ConfigureCorgiCrmApplicationVariable',
+    query: `mutation ConfigureCorgiCrmApplicationVariable(
+      $applicationId: UUID!, $key: String!, $value: String!
+    ) {
+      updateOneApplicationVariable(
+        applicationId: $applicationId, key: $key, value: $value
+      )
+    }`,
+    variables: {
+      applicationId: matches[0].id,
+      key: MEETING_CANARY_SUPPRESSION_KEY,
+      value,
+    },
+  });
+  if (result?.updateOneApplicationVariable !== true) {
+    throw new Error(
+      `Application variable ${MEETING_CANARY_SUPPRESSION_KEY} was not updated`,
+    );
+  }
+};
+
 const verifyTelegramDisabled = (application, workspaceId) => {
   const variables = application.applicationVariables ?? [];
   const workspaceVariable = exactlyOne(
@@ -1226,10 +1289,12 @@ const main = async () => {
     mode !== 'role-env' &&
     mode !== 'installed' &&
     mode !== 'telegram' &&
-    mode !== 'telegram-disabled'
+    mode !== 'telegram-disabled' &&
+    mode !== 'arm-canary-suppression' &&
+    mode !== 'disarm-canary-suppression'
   ) {
     throw new Error(
-      'Usage: verify-production-install.mjs <target|role-env|installed|telegram|telegram-disabled>',
+      'Usage: verify-production-install.mjs <target|role-env|installed|telegram|telegram-disabled|arm-canary-suppression|disarm-canary-suppression>',
     );
   }
   const origin = new URL(requiredEnvironment('CORGI_CRM_API_URL')).origin;
@@ -1242,7 +1307,26 @@ const main = async () => {
     apiKey: requiredEnvironment('CORGI_CRM_API_KEY'),
   });
   await verifyTargetWorkspace({ graphql, expectedWorkspaceId: workspaceId });
+  // Disarming must stay reachable from a failure path, so it deliberately runs
+  // before the schema verification an unrelated fault could fail.
+  if (mode === 'disarm-canary-suppression') {
+    await writeMeetingCanarySuppression({ graphql, value: '' });
+    console.log('Disarmed the meeting canary alert suppression.');
+    return;
+  }
   await verifyRequiredSchema({ graphql });
+  if (mode === 'arm-canary-suppression') {
+    await writeMeetingCanarySuppression({
+      graphql,
+      value: buildMeetingCanarySuppression({
+        runId: process.env.GITHUB_RUN_ID?.trim(),
+        runAttempt: process.env.GITHUB_RUN_ATTEMPT?.trim(),
+        now: Date.now(),
+      }),
+    });
+    console.log('Armed the meeting canary alert suppression for this run.');
+    return;
+  }
   if (mode === 'target') {
     const preflight = await inspectReconciliationPreflight({ graphql });
     console.log(JSON.stringify({ ownerReconciliationPreflight: preflight }));
@@ -1335,6 +1419,7 @@ if (
 }
 
 export {
+  buildMeetingCanarySuppression,
   inspectReconciliationPreflight,
   parseResponse,
   resolveCorgiRoleObjectIdentifiers,

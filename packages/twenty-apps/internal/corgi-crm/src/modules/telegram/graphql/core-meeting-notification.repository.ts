@@ -10,6 +10,7 @@ const READ_MEETING_FOR_NOTIFICATION = `
   query ReadMeetingForNotification($meetingId: UUID!) {
     meetingBooking(filter: { id: { eq: $meetingId } }) {
       id
+      name
       status
       bookedAt
       scheduledAt

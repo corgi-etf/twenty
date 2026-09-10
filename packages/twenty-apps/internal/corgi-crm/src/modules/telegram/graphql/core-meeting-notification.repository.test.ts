@@ -35,7 +35,7 @@ describe('CoreMeetingNotificationRepository', () => {
         parse(`
       query ReadMeetingForNotification($meetingId: UUID!) {
         meetingBooking(filter: { id: { eq: $meetingId } }) {
-          id status bookedAt scheduledAt
+          id name status bookedAt scheduledAt
           company { id name }
           wholesaler { id name }
           bookedBy { id name { firstName lastName } }
