@@ -255,4 +255,17 @@ describe('reconcileWorkspaceMember', () => {
     expect(repo.findByEmail).not.toHaveBeenCalled();
     expect(repo.findByWorkspaceMemberId).not.toHaveBeenCalled();
   });
+
+  it('does not misclassify an arbitrary runtime TypeError as a network failure', async () => {
+    const repo = repository();
+    vi.mocked(repo.findByWorkspaceMemberId).mockRejectedValue(
+      new TypeError('Cannot read properties of undefined'),
+    );
+    await expect(reconcileWorkspaceMember({
+      eventWorkspaceId: TARGET_WORKSPACE_ID,
+      targetWorkspaceId: TARGET_WORKSPACE_ID,
+      member,
+      repository: repo,
+    })).rejects.toMatchObject({ stage: 'lookup_member_relation', code: 'unexpected' });
+  });
 });

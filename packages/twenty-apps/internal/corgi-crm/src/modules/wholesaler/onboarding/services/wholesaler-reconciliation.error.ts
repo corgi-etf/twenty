@@ -75,7 +75,6 @@ export const classifyWholesalerReconciliationError = (
     return 'constraint_conflict';
   }
   if (
-    error instanceof TypeError ||
     /fetch|network|timeout|timed out|socket|econn/.test(message)
   ) {
     return 'transport';
