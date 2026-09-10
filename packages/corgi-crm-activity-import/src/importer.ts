@@ -59,7 +59,11 @@ export type SourceActivity = {
   occurredAt: string;
 };
 
-export type ActivityImportCompany = { id: string; name: unknown };
+export type ActivityImportCompany = {
+  id: string;
+  name: unknown;
+  createdAt?: unknown;
+};
 export type ActivityImportPerson = {
   id: string;
   companyId?: unknown;
@@ -893,6 +897,334 @@ export const buildCompanyCreationPlan = (input: {
     creations: [...creations.values()],
     ambiguousRows,
     alreadyPresentCount: alreadyPresent.size,
+  };
+};
+
+// Twenty returns a company's own columns at depth 0 and expands its relations
+// at depth 1. Removal is only ever justified by emptiness, so the probe reads
+// the whole record and reasons about every field it finds rather than a
+// hand-picked few -- a relation nobody listed here still has to count.
+export type CompanyLinkProbeRecord = Record<string, unknown>;
+
+export type CompanyLinkSummary = {
+  companyId: string;
+  linkedFieldNames: string[];
+  missingProbeFields: string[];
+};
+
+// A field the probe MUST come back with. Absence means the read could not see
+// that relation at all, which has to block the group: an unseen relation is
+// indistinguishable from an empty one, and guessing "empty" deletes history.
+export const REQUIRED_COMPANY_LINK_FIELDS: readonly string[] = [
+  'outreachActivities',
+  'meetings',
+  'people',
+  'allocations',
+  'opportunities',
+  'noteTargets',
+  'taskTargets',
+  'attachments',
+  'favorites',
+  'accountOwnerId',
+];
+
+// A to-many relation arrives as a plain array, and some Twenty responses wrap
+// it as a connection instead. Anything that is neither is a scalar or one of
+// the composite columns (address, domainName, annualRecurringRevenue,
+// createdBy), which are values on the company itself and never a link.
+const populatedLinkCount = (value: unknown): number | undefined => {
+  if (Array.isArray(value)) return value.length;
+  if (value === null || typeof value !== 'object') return undefined;
+  const connection = value as Record<string, unknown>;
+  if (Array.isArray(connection.edges)) return connection.edges.length;
+  if (typeof connection.totalCount === 'number') return connection.totalCount;
+
+  return undefined;
+};
+
+export const summarizeCompanyLinks = (input: {
+  companyId: string;
+  record: CompanyLinkProbeRecord;
+  requiredLinkFields?: readonly string[];
+}): CompanyLinkSummary => {
+  if (!UUID_PATTERN.test(input.companyId)) {
+    throw new Error('Duplicate company link probe has an invalid company ID');
+  }
+  if (
+    input.record === null ||
+    typeof input.record !== 'object' ||
+    Array.isArray(input.record)
+  ) {
+    throw new Error('Duplicate company link probe has an invalid shape');
+  }
+  const probedId = input.record.id;
+  if (typeof probedId !== 'string' || probedId !== input.companyId) {
+    throw new Error('Duplicate company link probe returned a different record');
+  }
+
+  const linkedFieldNames = new Set<string>();
+  for (const [key, value] of Object.entries(input.record)) {
+    if (key === 'id') continue;
+    const count = populatedLinkCount(value);
+    if (count !== undefined) {
+      if (count > 0) linkedFieldNames.add(key);
+      continue;
+    }
+    // A many-to-one link is authoritative through its own foreign-key column,
+    // so it counts even when the parent record was not expanded.
+    if (
+      key.endsWith('Id') &&
+      typeof value === 'string' &&
+      value.trim().length > 0
+    ) {
+      linkedFieldNames.add(key);
+    }
+  }
+
+  const missingProbeFields = (
+    input.requiredLinkFields ?? REQUIRED_COMPANY_LINK_FIELDS
+  ).filter((field) => !Object.hasOwn(input.record, field));
+
+  return {
+    companyId: input.companyId,
+    linkedFieldNames: [...linkedFieldNames].sort(),
+    missingProbeFields: [...missingProbeFields].sort(),
+  };
+};
+
+export type DuplicateCompanyGroup = {
+  name: string;
+  companies: ActivityImportCompany[];
+};
+
+export const findDuplicateCompanyGroups = (input: {
+  companies: readonly ActivityImportCompany[];
+  names?: readonly string[];
+}): DuplicateCompanyGroup[] => {
+  const byExactName = new Map<string, ActivityImportCompany[]>();
+  const seenIds = new Set<string>();
+  for (const company of input.companies) {
+    if (typeof company.name !== 'string' || !UUID_PATTERN.test(company.id)) {
+      throw new Error('Activity import company snapshot is invalid');
+    }
+    // The same ID twice means the listing paginated over an unstable order.
+    // That snapshot cannot be trusted to prove a record is a duplicate, let
+    // alone that another one is empty, so nothing may be removed from it.
+    if (seenIds.has(company.id)) {
+      throw new Error(
+        'Duplicate company resolution read an unstable company snapshot',
+      );
+    }
+    seenIds.add(company.id);
+    const exactName = activityImportCompanyMatchKey(company.name);
+    byExactName.set(exactName, [
+      ...(byExactName.get(exactName) ?? []),
+      company,
+    ]);
+  }
+
+  // Scoped to the names this import actually needs: a duplicate elsewhere in
+  // the workspace is not this operation's to touch.
+  const scope = input.names
+    ? new Set(input.names.map(activityImportCompanyMatchKey))
+    : undefined;
+
+  return [...byExactName.entries()]
+    .filter(
+      ([name, companies]) =>
+        companies.length > 1 && (!scope || scope.has(name)),
+    )
+    .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
+    .map(([name, companies]) => ({ name, companies }));
+};
+
+export type DuplicateCompanyRecordDecision =
+  | 'remove'
+  | 'retain-linked'
+  | 'retain-oldest'
+  | 'blocked';
+
+export type DuplicateCompanyRecordReport = {
+  companyId: string;
+  name: string;
+  decision: DuplicateCompanyRecordDecision;
+  reason: string;
+  linkedFieldNames: string[];
+  createdAt: string | null;
+};
+
+export type DuplicateCompanyGroupReport = {
+  name: string;
+  recordCount: number;
+  blocked: boolean;
+  blockedReason: string | null;
+  records: DuplicateCompanyRecordReport[];
+};
+
+export type DuplicateCompanyRemoval = {
+  companyId: string;
+  name: string;
+  reason: string;
+};
+
+export type DuplicateCompanyResolutionPlan = {
+  groups: DuplicateCompanyGroupReport[];
+  removals: DuplicateCompanyRemoval[];
+  resolvedNames: string[];
+  blockedGroupCount: number;
+};
+
+const companyCreatedAt = (company: ActivityImportCompany): string | null => {
+  const value = (company as { createdAt?: unknown }).createdAt;
+  if (typeof value !== 'string') return null;
+  const parsed = Date.parse(value);
+
+  return Number.isFinite(parsed) ? value : null;
+};
+
+export const buildDuplicateCompanyResolutionPlan = (input: {
+  groups: readonly DuplicateCompanyGroup[];
+  linkSummaries: readonly CompanyLinkSummary[];
+}): DuplicateCompanyResolutionPlan => {
+  const summariesById = new Map(
+    input.linkSummaries.map((summary) => [summary.companyId, summary]),
+  );
+  const groups: DuplicateCompanyGroupReport[] = [];
+  const removals: DuplicateCompanyRemoval[] = [];
+  const resolvedNames: string[] = [];
+
+  for (const group of input.groups) {
+    const members = group.companies.map((company) => ({
+      company,
+      summary: summariesById.get(company.id),
+      createdAt: companyCreatedAt(company),
+    }));
+
+    const blockedReason = (() => {
+      const unprobed = members.filter(({ summary }) => !summary);
+      if (unprobed.length > 0) return 'no link probe for every duplicate';
+      const incomplete = members.filter(
+        ({ summary }) => (summary?.missingProbeFields.length ?? 0) > 0,
+      );
+      if (incomplete.length > 0) {
+        return `link probe could not see ${[
+          ...new Set(
+            incomplete.flatMap(({ summary }) => summary!.missingProbeFields),
+          ),
+        ]
+          .sort()
+          .join(', ')}`;
+      }
+      const linked = members.filter(
+        ({ summary }) => summary!.linkedFieldNames.length > 0,
+      );
+      // Two records that both carry history is a merge, and a merge is a human
+      // decision. Guessing a survivor here is exactly the failure mode that
+      // loses real data, so the whole group stays untouched.
+      if (linked.length > 1) {
+        return `${linked.length} of ${members.length} duplicates carry linked records`;
+      }
+      // With nothing linked the survivor is chosen purely on age, so an
+      // unreadable creation date leaves no defensible choice.
+      if (linked.length === 0 && members.some(({ createdAt }) => !createdAt)) {
+        return 'a duplicate has no readable creation date to break the tie';
+      }
+
+      return null;
+    })();
+
+    if (blockedReason) {
+      groups.push({
+        name: group.name,
+        recordCount: members.length,
+        blocked: true,
+        blockedReason,
+        records: members.map(({ company, summary, createdAt }) => ({
+          companyId: company.id,
+          name: group.name,
+          decision: 'blocked' as const,
+          reason: blockedReason,
+          linkedFieldNames: summary?.linkedFieldNames ?? [],
+          createdAt,
+        })),
+      });
+      continue;
+    }
+
+    const linked = members.filter(
+      ({ summary }) => summary!.linkedFieldNames.length > 0,
+    );
+    const empty = members.filter(
+      ({ summary }) => summary!.linkedFieldNames.length === 0,
+    );
+    // Recency only ever picks which EMPTY record survives; it never promotes a
+    // record over one that carries links.
+    const survivor =
+      linked[0] ??
+      [...empty].sort((left, right) =>
+        left.createdAt === right.createdAt
+          ? left.company.id < right.company.id
+            ? -1
+            : 1
+          : left.createdAt! < right.createdAt!
+            ? -1
+            : 1,
+      )[0]!;
+
+    const records = members.map(
+      ({ company, summary, createdAt }): DuplicateCompanyRecordReport => {
+        if (company.id === survivor.company.id) {
+          return {
+            companyId: company.id,
+            name: group.name,
+            decision: linked.length === 1 ? 'retain-linked' : 'retain-oldest',
+            reason:
+              linked.length === 1
+                ? `retained: carries linked records (${summary!.linkedFieldNames.join(', ')})`
+                : 'retained: oldest of an otherwise-identical empty pair',
+            linkedFieldNames: summary!.linkedFieldNames,
+            createdAt,
+          };
+        }
+
+        return {
+          companyId: company.id,
+          name: group.name,
+          decision: 'remove' as const,
+          reason:
+            linked.length === 1
+              ? 'removed: exact-name duplicate with no linked records; the retained record carries the history'
+              : 'removed: exact-name duplicate with no linked records and newer than the retained record',
+          linkedFieldNames: [],
+          createdAt,
+        };
+      },
+    );
+
+    for (const record of records) {
+      if (record.decision === 'remove') {
+        removals.push({
+          companyId: record.companyId,
+          name: record.name,
+          reason: record.reason,
+        });
+      }
+    }
+    resolvedNames.push(group.name);
+    groups.push({
+      name: group.name,
+      recordCount: members.length,
+      blocked: false,
+      blockedReason: null,
+      records,
+    });
+  }
+
+  return {
+    groups,
+    removals,
+    resolvedNames,
+    blockedGroupCount: groups.filter(({ blocked }) => blocked).length,
   };
 };
 

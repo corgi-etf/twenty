@@ -1,12 +1,17 @@
 import {
   buildActivityImportPlan,
   buildCompanyCreationPlan,
+  buildDuplicateCompanyResolutionPlan,
+  findDuplicateCompanyGroups,
   parseActivityCsv,
+  summarizeCompanyLinks,
   type ActivityImportCompany,
   type ActivityImportCsvOptions,
   type ActivityImportManifest,
   type ActivityImportPerson,
   type ActivityImportWholesaler,
+  type CompanyLinkProbeRecord,
+  type DuplicateCompanyGroupReport,
   type OutreachActivityRecord,
   type TerritoryIdentityArtifact,
 } from './importer.ts';
@@ -174,6 +179,10 @@ export type ActivityImportApi = {
   // Optional so an API that only imports activities still satisfies this
   // contract; company creation fails closed when it is absent.
   createCompany?(company: { name: string }): Promise<void>;
+  // Same contract for duplicate resolution: without both of these the
+  // operation cannot prove a record is empty, so it refuses to remove one.
+  readCompanyLinks?(companyId: string): Promise<CompanyLinkProbeRecord>;
+  deleteCompany?(companyId: string): Promise<void>;
   readCheckpoint(): Promise<ActivityImportCheckpoint | undefined>;
   writeCheckpoint(checkpoint: ActivityImportCheckpoint): Promise<void>;
 };
@@ -196,6 +205,17 @@ export type CompanyCreationRunResult = {
   createdCount: number;
   alreadyPresentCount: number;
   plannedNames: string[];
+};
+
+export type DuplicateCompanyResolutionRunResult = {
+  schemaVersion: 1;
+  operation: 'resolve-duplicate-companies';
+  mode: 'dry-run' | 'apply';
+  duplicateGroupCount: number;
+  plannedRemovalCount: number;
+  removedCount: number;
+  blockedGroupCount: number;
+  groups: DuplicateCompanyGroupReport[];
 };
 
 // Deliberately separate from runActivityImport rather than a flag inside it:
@@ -292,6 +312,107 @@ export const runActivityImportCompanyCreation = async (
     alreadyPresentCount: plan.alreadyPresentCount,
     plannedNames,
   };
+};
+
+// Removal is a soft delete. Every record it touches is provably empty, so
+// nothing cascades either way, and a soft delete stays reversible from the
+// workspace's deleted-records view if this operation's emptiness proof ever
+// turns out to be wrong. A hard delete would not be. Twenty's default listing
+// excludes soft-deleted records, so the exact-match count drops immediately
+// and the blocked import proceeds.
+export const runActivityImportDuplicateCompanyResolution = async (
+  api: ActivityImportApi,
+  input: {
+    source: Uint8Array;
+    csvOptions: ActivityImportCsvOptions;
+    mode: 'dry-run' | 'apply';
+    confirmation?: string;
+  },
+): Promise<DuplicateCompanyResolutionRunResult> => {
+  if (input.mode !== 'dry-run' && input.mode !== 'apply') {
+    throw new Error('Activity import duplicate resolution mode is invalid');
+  }
+  // Bound rather than detached: an API implemented as a class would lose
+  // its receiver through a bare method reference.
+  const readCompanyLinks = api.readCompanyLinks?.bind(api);
+  const deleteCompany = api.deleteCompany?.bind(api);
+  if (input.mode === 'apply') {
+    if (input.confirmation !== 'RESOLVE_CRM_DUPLICATE_COMPANIES') {
+      throw new Error(
+        'Activity import duplicate resolution confirmation is invalid',
+      );
+    }
+    if (!deleteCompany) {
+      throw new Error('Activity import API cannot remove companies');
+    }
+  } else if (input.confirmation) {
+    throw new Error('Dry-run duplicate resolution cannot include apply approval');
+  }
+  if (!readCompanyLinks) {
+    throw new Error('Activity import API cannot inspect company links');
+  }
+
+  const rows = parseActivityCsv(input.source, input.csvOptions);
+  const names = rows.map(({ companyName }) => companyName);
+  const groups = findDuplicateCompanyGroups({
+    companies: await api.listCompanies(),
+    names,
+  });
+
+  const linkSummaries = [];
+  for (const group of groups) {
+    for (const company of group.companies) {
+      linkSummaries.push(
+        summarizeCompanyLinks({
+          companyId: company.id,
+          record: await readCompanyLinks(company.id),
+        }),
+      );
+    }
+  }
+  const plan = buildDuplicateCompanyResolutionPlan({ groups, linkSummaries });
+
+  const report = {
+    schemaVersion: 1 as const,
+    operation: 'resolve-duplicate-companies' as const,
+    duplicateGroupCount: groups.length,
+    plannedRemovalCount: plan.removals.length,
+    blockedGroupCount: plan.blockedGroupCount,
+    groups: plan.groups,
+  };
+
+  if (input.mode === 'dry-run') {
+    return { ...report, mode: 'dry-run', removedCount: 0 };
+  }
+  if (!deleteCompany) {
+    throw new Error('Activity import API cannot remove companies');
+  }
+
+  for (const removal of plan.removals) {
+    await deleteCompany(removal.companyId);
+  }
+
+  // Re-read rather than trusting the writes: the next import matches on what
+  // the CRM actually lists, not on what these requests claimed to remove.
+  const verifiedCompanies = await api.listCompanies();
+  const removedIds = new Set(plan.removals.map(({ companyId }) => companyId));
+  const verifiedGroups = findDuplicateCompanyGroups({
+    companies: verifiedCompanies,
+    names,
+  });
+  // Blocked groups are still duplicated on purpose, so only the names this run
+  // claimed to resolve have to come back unique.
+  const stillDuplicated = new Set(verifiedGroups.map(({ name }) => name));
+  if (
+    verifiedCompanies.some(({ id }) => removedIds.has(id)) ||
+    plan.resolvedNames.some((name) => stillDuplicated.has(name))
+  ) {
+    throw new Error(
+      'Activity import duplicate resolution post-write verification failed',
+    );
+  }
+
+  return { ...report, mode: 'apply', removedCount: plan.removals.length };
 };
 
 export const runActivityImport = async (
