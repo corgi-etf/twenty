@@ -4,13 +4,14 @@ on:
   workflow_dispatch:
     inputs:
       operation:
-        description: Import the activities, or only create the companies the CSV needs first
+        description: Import the activities, create the companies the CSV needs, or resolve duplicate companies
         required: true
         default: import-activities
         type: choice
         options:
           - import-activities
           - create-companies
+          - resolve-duplicate-companies
       mode:
         description: Dry-run produces an approved manifest; apply creates the guarded activities
         required: true
@@ -113,6 +114,11 @@ on:
         required: false
         default: ''
         type: string
+      resolve_duplicates_confirmation:
+        description: For resolve-duplicate-companies apply only, type RESOLVE_CRM_DUPLICATE_COMPANIES
+        required: false
+        default: ''
+        type: string
       resume_run_id:
         description: Prior failed apply run ID whose PII-free checkpoint should be restored
         required: false
@@ -181,12 +187,13 @@ jobs:
           EXPECTED_MANIFEST: ${{ inputs.expected_manifest }}
           CONFIRMATION: ${{ inputs.confirmation }}
           CREATE_COMPANIES_CONFIRMATION: ${{ inputs.create_companies_confirmation }}
+          RESOLVE_DUPLICATES_CONFIRMATION: ${{ inputs.resolve_duplicates_confirmation }}
           RESUME_RUN_ID: ${{ inputs.resume_run_id }}
           RESUME_ATTEMPT: ${{ inputs.resume_attempt }}
         run: |
           set -euo pipefail
           [[ "${MODE}" == "dry-run" || "${MODE}" == "apply" ]]
-          [[ "${OPERATION}" == "import-activities" || "${OPERATION}" == "create-companies" ]]
+          [[ "${OPERATION}" == "import-activities" || "${OPERATION}" == "create-companies" || "${OPERATION}" == "resolve-duplicate-companies" ]]
           [[ "${DEPLOYED_SHA}" =~ ^[0-9a-f]{40}$ ]]
           git cat-file -e "${DEPLOYED_SHA}^{commit}"
           # Server equivalence only; exact-SHA identity/app-install provenance
@@ -228,13 +235,29 @@ jobs:
             [[ -z "${EXPECTED_MANIFEST}" ]]
             [[ -z "${RESUME_RUN_ID}" ]]
             [[ -z "${RESUME_ATTEMPT}" ]]
+            [[ -z "${RESOLVE_DUPLICATES_CONFIRMATION}" ]]
             if [[ "${MODE}" == "apply" ]]; then
               [[ "${CREATE_COMPANIES_CONFIRMATION}" == "CREATE_CRM_IMPORT_COMPANIES" ]]
             else
               [[ -z "${CREATE_COMPANIES_CONFIRMATION}" ]]
             fi
+          elif [[ "${OPERATION}" == "resolve-duplicate-companies" ]]; then
+            # Removing a record is its own decision, so it carries its own
+            # confirmation string and can never ride along with an activity
+            # apply or a company creation. It has no manifest and never resumes.
+            [[ -z "${CONFIRMATION}" ]]
+            [[ -z "${EXPECTED_MANIFEST}" ]]
+            [[ -z "${RESUME_RUN_ID}" ]]
+            [[ -z "${RESUME_ATTEMPT}" ]]
+            [[ -z "${CREATE_COMPANIES_CONFIRMATION}" ]]
+            if [[ "${MODE}" == "apply" ]]; then
+              [[ "${RESOLVE_DUPLICATES_CONFIRMATION}" == "RESOLVE_CRM_DUPLICATE_COMPANIES" ]]
+            else
+              [[ -z "${RESOLVE_DUPLICATES_CONFIRMATION}" ]]
+            fi
           elif [[ "${MODE}" == "apply" ]]; then
             [[ -z "${CREATE_COMPANIES_CONFIRMATION}" ]]
+            [[ -z "${RESOLVE_DUPLICATES_CONFIRMATION}" ]]
             [[ "${CONFIRMATION}" == "IMPORT_CRM_OUTREACH_ACTIVITIES" ]]
             jq -e '
               .schemaVersion == 2 and
@@ -271,6 +294,7 @@ jobs:
             ' <<< "${EXPECTED_MANIFEST}" >/dev/null
           else
             [[ -z "${CREATE_COMPANIES_CONFIRMATION}" ]]
+            [[ -z "${RESOLVE_DUPLICATES_CONFIRMATION}" ]]
             [[ -z "${CONFIRMATION}" ]]
             [[ -z "${EXPECTED_MANIFEST}" ]]
             [[ -z "${RESUME_RUN_ID}" ]]
@@ -461,6 +485,7 @@ jobs:
           CRM_ACTIVITY_IMPORT_ID: ${{ inputs.import_id }}
           CRM_ACTIVITY_IMPORT_CONFIRMATION: ${{ inputs.confirmation }}
           CRM_ACTIVITY_IMPORT_CREATE_COMPANIES_CONFIRMATION: ${{ inputs.create_companies_confirmation }}
+          CRM_ACTIVITY_IMPORT_RESOLVE_DUPLICATES_CONFIRMATION: ${{ inputs.resolve_duplicates_confirmation }}
           CRM_ACTIVITY_IMPORT_EXPECTED_MANIFEST: ${{ inputs.expected_manifest }}
         run: >-
           npx nx test:production twenty-e2e-testing --
@@ -493,7 +518,15 @@ jobs:
       - name: Record PII-free import completion
         if: success()
         shell: bash
+        env:
+          OPERATION: ${{ inputs.operation }}
         run: |
           set -euo pipefail
           result="${RUNNER_TEMP}/crm-activity-import/output/activity-import-result.json"
-          jq -e '{mode, status, plannedCount, createdCount, alreadyPresentCount, manifest}' "${result}" >> "${GITHUB_STEP_SUMMARY}"
+          if [[ "${OPERATION}" == "resolve-duplicate-companies" ]]; then
+            # Every record and the reason it was kept or removed, so a removal
+            # is never something the run did silently.
+            jq -e '{mode, duplicateGroupCount, plannedRemovalCount, removedCount, blockedGroupCount, groups}' "${result}" >> "${GITHUB_STEP_SUMMARY}"
+          else
+            jq -e '{mode, status, plannedCount, createdCount, alreadyPresentCount, manifest}' "${result}" >> "${GITHUB_STEP_SUMMARY}"
+          fi

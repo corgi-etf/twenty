@@ -4,9 +4,15 @@ import { test } from 'node:test';
 
 import {
   activityImportCompanyMatchKey,
+  assertStableCompanyListing,
   assertTerritoryIdentityArtifact,
+  findSoftDeletedNamesakes,
   buildActivityImportPlan,
   buildCompanyCreationPlan,
+  buildDuplicateCompanyResolutionPlan,
+  findDuplicateCompanyGroups,
+  REQUIRED_COMPANY_LINK_FIELDS,
+  summarizeCompanyLinks,
   deterministicActivityId,
   deterministicCompletedActivityId,
   parseActivityCsv,
@@ -748,5 +754,415 @@ test('company creation rejects an invalid company snapshot', () => {
         companies: [{ id: 'not-a-uuid', name: 'Acme, Inc.' }],
       }),
     /company snapshot is invalid/,
+  );
+});
+
+const OLDER = '2026-01-04T10:00:00.000Z';
+const NEWER = '2026-09-10T18:30:00.000Z';
+
+// Built from the exported requirement so a newly required relation makes these
+// fixtures represent a genuinely empty company instead of silently omitting it.
+const probeRecord = (
+  id: string,
+  overrides: Record<string, unknown> = {},
+): Record<string, unknown> => ({
+  id,
+  name: 'BMG Advisors',
+  createdAt: OLDER,
+  ...Object.fromEntries(
+    REQUIRED_COMPANY_LINK_FIELDS.map((field) => [
+      field,
+      field.endsWith('Id') ? null : [],
+    ]),
+  ),
+  ...overrides,
+});
+
+const company = (digit: string, createdAt = OLDER, name = 'BMG Advisors') => ({
+  id: uuid(digit),
+  name,
+  createdAt,
+});
+
+const planFor = (
+  companies: readonly { id: string; name: string; createdAt?: string }[],
+  probes: Record<string, Record<string, unknown>>,
+  names: readonly string[] = ['BMG Advisors'],
+) => {
+  const groups = findDuplicateCompanyGroups({ companies, names });
+
+  return buildDuplicateCompanyResolutionPlan({
+    groups,
+    linkSummaries: groups.flatMap(({ companies: members }) =>
+      members.map((member) =>
+        summarizeCompanyLinks({
+          companyId: member.id,
+          record: probes[member.id] ?? probeRecord(member.id),
+        }),
+      ),
+    ),
+  });
+};
+
+test('a company with no populated relation reads as empty', () => {
+  const summary = summarizeCompanyLinks({
+    companyId: uuid('4'),
+    record: probeRecord(uuid('4')),
+  });
+
+  assert.deepEqual(summary.linkedFieldNames, []);
+  assert.deepEqual(summary.missingProbeFields, []);
+});
+
+test('composite columns are values on the company, never links', () => {
+  const summary = summarizeCompanyLinks({
+    companyId: uuid('4'),
+    record: probeRecord(uuid('4'), {
+      // Every one of these is an object or a scalar that belongs to the
+      // company itself; counting any of them would block every removal.
+      address: { addressCity: 'Kansas City', addressStreet1: '1 Main' },
+      domainName: { primaryLinkUrl: 'https://bmg.example', secondaryLinks: [] },
+      annualRecurringRevenue: { amountMicros: 0, currencyCode: 'USD' },
+      createdBy: { source: 'API', workspaceMemberId: uuid('9'), name: 'Nash' },
+      employees: 12,
+      idealCustomerProfile: false,
+      deletedAt: null,
+      updatedAt: NEWER,
+    }),
+  });
+
+  assert.deepEqual(summary.linkedFieldNames, []);
+});
+
+test('the company audit trail is not a link to another record', () => {
+  const summary = summarizeCompanyLinks({
+    companyId: uuid('4'),
+    record: probeRecord(uuid('4'), {
+      // Every company has one the moment it exists, the freshly minted
+      // duplicate included, so counting it would block every group.
+      timelineActivities: [{ id: uuid('7') }, { id: uuid('8') }],
+    }),
+  });
+
+  assert.deepEqual(summary.linkedFieldNames, []);
+});
+
+test('a populated relation, a connection, and a foreign key all count as links', () => {
+  const summary = summarizeCompanyLinks({
+    companyId: uuid('4'),
+    record: probeRecord(uuid('4'), {
+      outreachActivities: [{ id: uuid('7') }],
+      meetings: { edges: [{ node: { id: uuid('8') } }] },
+      accountOwnerId: uuid('9'),
+      // Not enumerated anywhere: a custom object added later still counts.
+      corgiAllocationsUnknownToThisCode: [{ id: uuid('a') }],
+    }),
+  });
+
+  assert.deepEqual(summary.linkedFieldNames, [
+    'accountOwnerId',
+    'corgiAllocationsUnknownToThisCode',
+    'meetings',
+    'outreachActivities',
+  ]);
+});
+
+test('a probe that cannot see a required relation reports it as unseen', () => {
+  const record = probeRecord(uuid('4'));
+  delete record.outreachActivities;
+  delete record.meetingBookings;
+
+  const summary = summarizeCompanyLinks({ companyId: uuid('4'), record });
+
+  assert.deepEqual(summary.missingProbeFields, [
+    'meetingBookings',
+    'outreachActivities',
+  ]);
+});
+
+test('a probe answering for a different record is rejected', () => {
+  assert.throws(
+    () =>
+      summarizeCompanyLinks({
+        companyId: uuid('4'),
+        record: probeRecord(uuid('5')),
+      }),
+    /returned a different record/,
+  );
+});
+
+test('a single record is not a duplicate group', () => {
+  const plan = planFor([company('4')], {});
+
+  assert.deepEqual(plan.groups, []);
+  assert.deepEqual(plan.removals, []);
+  assert.equal(plan.blockedGroupCount, 0);
+});
+
+test('an empty exact-name duplicate is removed and the linked record survives', () => {
+  const older = company('4', OLDER);
+  const newer = company('5', NEWER);
+  const plan = planFor([older, newer], {
+    [older.id]: probeRecord(older.id, {
+      outreachActivities: [{ id: uuid('7') }, { id: uuid('8') }],
+    }),
+  });
+
+  assert.deepEqual(
+    plan.removals.map(({ companyId }) => companyId),
+    [newer.id],
+  );
+  assert.deepEqual(plan.resolvedNames, ['BMG Advisors']);
+  assert.equal(plan.blockedGroupCount, 0);
+  const retained = plan.groups[0]?.records.find(
+    ({ decision }) => decision === 'retain-linked',
+  );
+  assert.equal(retained?.companyId, older.id);
+  assert.deepEqual(retained?.linkedFieldNames, ['outreachActivities']);
+  assert.match(retained?.reason ?? '', /carries linked records/);
+});
+
+test('the linked record survives even when it is the newer of the pair', () => {
+  const olderEmpty = company('4', OLDER);
+  const newerLinked = company('5', NEWER);
+  const plan = planFor([olderEmpty, newerLinked], {
+    [newerLinked.id]: probeRecord(newerLinked.id, {
+      people: [{ id: uuid('7') }],
+    }),
+  });
+
+  // Emptiness dominates recency: the empty older record goes, history stays.
+  assert.deepEqual(
+    plan.removals.map(({ companyId }) => companyId),
+    [olderEmpty.id],
+  );
+  assert.equal(
+    plan.groups[0]?.records.find(({ decision }) => decision === 'retain-linked')
+      ?.companyId,
+    newerLinked.id,
+  );
+});
+
+test('two empty duplicates keep the older and remove the most recently created', () => {
+  const older = company('4', OLDER);
+  const newer = company('5', NEWER);
+  const plan = planFor([newer, older], {});
+
+  assert.deepEqual(
+    plan.removals.map(({ companyId }) => companyId),
+    [newer.id],
+  );
+  const retained = plan.groups[0]?.records.find(
+    ({ decision }) => decision === 'retain-oldest',
+  );
+  assert.equal(retained?.companyId, older.id);
+  assert.match(
+    plan.removals[0]?.reason ?? '',
+    /no linked records and newer than the retained record/,
+  );
+});
+
+test('two duplicates that both carry links are blocked for a human', () => {
+  const first = company('4', OLDER);
+  const second = company('5', NEWER);
+  const plan = planFor([first, second], {
+    [first.id]: probeRecord(first.id, { outreachActivities: [{ id: uuid('7') }] }),
+    [second.id]: probeRecord(second.id, { meetings: [{ id: uuid('8') }] }),
+  });
+
+  assert.deepEqual(plan.removals, []);
+  assert.deepEqual(plan.resolvedNames, []);
+  assert.equal(plan.blockedGroupCount, 1);
+  assert.equal(plan.groups[0]?.blocked, true);
+  assert.match(plan.groups[0]?.blockedReason ?? '', /2 of 2 duplicates carry linked records/);
+  assert.deepEqual(
+    plan.groups[0]?.records.map(({ decision }) => decision),
+    ['blocked', 'blocked'],
+  );
+});
+
+test('a probe that cannot see every relation blocks the group instead of removing', () => {
+  const older = company('4', OLDER);
+  const newer = company('5', NEWER);
+  const blind = probeRecord(newer.id);
+  delete blind.outreachActivities;
+
+  const plan = planFor([older, newer], { [newer.id]: blind });
+
+  // An unseen relation must never read as "no links".
+  assert.deepEqual(plan.removals, []);
+  assert.equal(plan.blockedGroupCount, 1);
+  assert.match(
+    plan.groups[0]?.blockedReason ?? '',
+    /link probe could not see outreachActivities/,
+  );
+});
+
+test('an unreadable creation date blocks a group that only recency could settle', () => {
+  const plan = planFor(
+    [company('4', OLDER), { id: uuid('5'), name: 'BMG Advisors' }],
+    {},
+  );
+
+  assert.deepEqual(plan.removals, []);
+  assert.match(
+    plan.groups[0]?.blockedReason ?? '',
+    /no readable creation date/,
+  );
+});
+
+test('an unreadable creation date is irrelevant when links pick the survivor', () => {
+  const linked = company('4', OLDER);
+  const undated = { id: uuid('5'), name: 'BMG Advisors' };
+  const plan = planFor([linked, undated], {
+    [linked.id]: probeRecord(linked.id, { people: [{ id: uuid('7') }] }),
+  });
+
+  assert.deepEqual(
+    plan.removals.map(({ companyId }) => companyId),
+    [undated.id],
+  );
+});
+
+test('duplicate resolution never leaves a group without a survivor', () => {
+  const plan = planFor(
+    [company('4', OLDER), company('5', NEWER), company('6', NEWER)],
+    {},
+  );
+
+  assert.equal(plan.groups[0]?.recordCount, 3);
+  assert.equal(plan.removals.length, 2);
+  assert.equal(
+    plan.groups[0]?.records.filter(({ decision }) =>
+      decision.startsWith('retain'),
+    ).length,
+    1,
+  );
+});
+
+test('a repeated company ID means the listing is unstable and nothing may be removed', () => {
+  assert.throws(
+    () =>
+      findDuplicateCompanyGroups({
+        companies: [company('4'), company('4')],
+        names: ['BMG Advisors'],
+      }),
+    /unstable company snapshot/,
+  );
+});
+
+test('duplicate resolution only looks at the names this import needs', () => {
+  const groups = findDuplicateCompanyGroups({
+    companies: [
+      company('4', OLDER, 'Elsewhere Capital'),
+      company('5', NEWER, 'Elsewhere Capital'),
+      company('6', OLDER),
+      company('7', NEWER),
+    ],
+    names: ['BMG Advisors'],
+  });
+
+  assert.deepEqual(
+    groups.map(({ name }) => name),
+    ['BMG Advisors'],
+  );
+});
+
+test('resolving a duplicate makes the very next run a no-op', () => {
+  const older = company('4', OLDER);
+  const newer = company('5', NEWER);
+  const first = planFor([older, newer], {});
+  const removed = new Set(first.removals.map(({ companyId }) => companyId));
+
+  const second = planFor(
+    [older, newer].filter(({ id }) => !removed.has(id)),
+    {},
+  );
+
+  assert.equal(first.removals.length, 1);
+  assert.deepEqual(second.removals, []);
+  assert.deepEqual(second.groups, []);
+});
+
+test('two identical listing walks are accepted', () => {
+  const listing = [company('4'), company('5', NEWER, 'Elsewhere Capital')];
+
+  assert.doesNotThrow(() => assertStableCompanyListing(listing, [...listing]));
+});
+
+test('two walks that return the same set in a different order are accepted', () => {
+  const first = [company('4'), company('5', NEWER, 'Elsewhere Capital')];
+
+  // Page order is not the contract; completeness is.
+  assert.doesNotThrow(() =>
+    assertStableCompanyListing(first, [...first].reverse()),
+  );
+});
+
+test('a walk that dropped a company is rejected', () => {
+  const first = [company('4'), company('5', NEWER, 'Elsewhere Capital')];
+
+  // Exactly the pagination skip that would read as a zero match and mint a
+  // duplicate, caught before anything is created.
+  assert.throws(
+    () => assertStableCompanyListing(first, [first[0]!]),
+    /listing was not stable across two reads/,
+  );
+});
+
+test('a walk that renamed a company between reads is rejected', () => {
+  assert.throws(
+    () =>
+      assertStableCompanyListing(
+        [company('4', OLDER, 'BMG Advisors')],
+        [company('4', OLDER, 'BMG Advisers')],
+      ),
+    /listing was not stable across two reads/,
+  );
+});
+
+test('a walk that returned one record twice is rejected', () => {
+  assert.throws(
+    () => assertStableCompanyListing([company('4'), company('4')], []),
+    /returned a record twice/,
+  );
+});
+
+test('a soft-deleted namesake of a planned name is found', () => {
+  const namesakes = findSoftDeletedNamesakes({
+    names: ['BMG Advisors', 'Missing Firm'],
+    softDeletedCompanies: [
+      company('7', OLDER, 'BMG Advisors'),
+      company('8', OLDER, 'Unrelated Capital'),
+    ],
+  });
+
+  assert.deepEqual(namesakes, [
+    { name: 'BMG Advisors', companyIds: [uuid('7')] },
+  ]);
+});
+
+test('a soft-deleted namesake is matched on the same exact key as the import', () => {
+  // A trailing space and a non-breaking space both fold into the match key,
+  // so neither can hide a namesake from the check.
+  const namesakes = findSoftDeletedNamesakes({
+    names: ['BMG Advisors'],
+    softDeletedCompanies: [
+      company('7', OLDER, 'BMG Advisors '),
+      company('8', OLDER, 'BMG Advisors'),
+    ],
+  });
+
+  assert.equal(namesakes.length, 1);
+  assert.deepEqual(namesakes[0]?.companyIds, [uuid('7'), uuid('8')]);
+});
+
+test('no soft-deleted namesake is reported when nothing collides', () => {
+  assert.deepEqual(
+    findSoftDeletedNamesakes({
+      names: ['BMG Advisors'],
+      softDeletedCompanies: [company('7', OLDER, 'Unrelated Capital')],
+    }),
+    [],
   );
 });

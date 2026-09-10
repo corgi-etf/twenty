@@ -10,9 +10,11 @@ import {
   assertActivityImportManifest,
   runActivityImport,
   runActivityImportCompanyCreation,
+  runActivityImportDuplicateCompanyResolution,
 } from '../../../corgi-crm-activity-import/src/execution.ts';
 import {
   assertTerritoryIdentityArtifact,
+  COMPANY_LINK_COLLECTIONS,
   type ActivityImportCsvOptions,
   type ActivityImportNormalizationReceipt,
 } from '../../../corgi-crm-activity-import/src/importer.ts';
@@ -84,7 +86,11 @@ test('runs a guarded, idempotent outreach activity import', async ({
   // to the behaviour before company creation existed.
   const operation =
     process.env.CRM_ACTIVITY_IMPORT_OPERATION || 'import-activities';
-  if (operation !== 'import-activities' && operation !== 'create-companies') {
+  if (
+    operation !== 'import-activities' &&
+    operation !== 'create-companies' &&
+    operation !== 'resolve-duplicate-companies'
+  ) {
     throw new Error('CRM_ACTIVITY_IMPORT_OPERATION is invalid');
   }
   const sourceFormat = requiredEnvironment('CRM_ACTIVITY_IMPORT_SOURCE_FORMAT');
@@ -167,6 +173,169 @@ test('runs a guarded, idempotent outreach activity import', async ({
     requestGate,
   });
 
+  // Shared by both maintenance operations: the REST client owning the
+  // authenticated read/write path is outside the deployment revision guard
+  // allowlist, so anything beyond the plain import reuses this run's already
+  // authenticated request context and its paced gate rather than standing up
+  // a second client.
+  const readRest = async (
+    url: string,
+    label: string,
+  ): Promise<{
+    data?: Record<string, unknown>;
+    pageInfo?: { hasNextPage?: boolean; endCursor?: string | null };
+  }> => {
+    const response = await requestGate(() =>
+      page.request.get(url, { headers: { Origin: FRONTEND_BASE_URL } }),
+    );
+    const failedStatus = response.ok() ? undefined : response.status();
+    let body: unknown;
+    try {
+      if (failedStatus === undefined) body = await response.json();
+    } finally {
+      await response.dispose();
+    }
+    if (failedStatus !== undefined) {
+      throw new Error(`${label} failed with HTTP ${failedStatus}`);
+    }
+
+    return (body ?? {}) as { data?: Record<string, unknown> };
+  };
+
+  // Twenty excludes soft-deleted records from every default listing, and only
+  // naming deletedAt in the filter widens the query. Without this the
+  // zero-match check cannot see a namesake waiting to be restored.
+  const listSoftDeletedCompanies = async () => {
+    const records: { id: string; name: unknown; createdAt?: unknown }[] = [];
+    let cursor: string | undefined;
+    do {
+      const query = new URLSearchParams({
+        filter: 'deletedAt[is]:NOT_NULL',
+        limit: '100',
+        depth: '0',
+      });
+      if (cursor) query.set('starting_after', cursor);
+      const body = await readRest(
+        new URL(
+          `/rest/companies?${query.toString()}`,
+          BACKEND_BASE_URL,
+        ).toString(),
+        'List soft-deleted companies',
+      );
+      const pageRecords = body.data?.companies;
+      if (!Array.isArray(pageRecords)) {
+        throw new Error('List soft-deleted companies has an invalid shape');
+      }
+      records.push(...(pageRecords as typeof records));
+      cursor = body.pageInfo?.hasNextPage
+        ? (body.pageInfo.endCursor ?? undefined)
+        : undefined;
+      if (body.pageInfo?.hasNextPage && !cursor) {
+        throw new Error(
+          'List soft-deleted companies pagination omitted its cursor',
+        );
+      }
+    } while (cursor);
+
+    return records;
+  };
+
+  if (operation === 'resolve-duplicate-companies') {
+    const readCompanyLinks = async (companyId: string) => {
+      const payload = (
+        await readRest(
+          new URL(
+            `/rest/companies/${companyId}?depth=1`,
+            BACKEND_BASE_URL,
+          ).toString(),
+          'Read company',
+        )
+      ).data;
+      const company = (payload?.company ?? payload) as
+        | Record<string, unknown>
+        | undefined;
+      if (!company || typeof company !== 'object' || company.id !== companyId) {
+        throw new Error('Read company returned an invalid shape');
+      }
+
+      // Count every child collection with its own filtered read. A depth=1
+      // expansion alone cannot prove emptiness, because a to-many relation the
+      // server did not expand is indistinguishable from an empty one -- and
+      // reading that as empty is exactly what would delete real history.
+      const counted: Record<string, unknown> = {};
+      for (const { collection, foreignKey } of COMPANY_LINK_COLLECTIONS) {
+        const query = new URLSearchParams({
+          filter: `${foreignKey}[eq]:${companyId}`,
+          limit: '1',
+          depth: '0',
+        });
+        const body = (
+          await readRest(
+            new URL(
+              `/rest/${collection}?${query.toString()}`,
+              BACKEND_BASE_URL,
+            ).toString(),
+            `List ${collection}`,
+          )
+        ).data;
+        const records = body?.[collection];
+        if (!Array.isArray(records)) {
+          throw new Error(`List ${collection} response has an invalid shape`);
+        }
+        counted[collection] = records;
+      }
+
+      return { ...company, ...counted };
+    };
+
+    const deleteCompany = async (companyId: string) => {
+      // soft_delete=true is mandatory. The REST default is a destroy, which
+      // cascades into companyAllocations and nulls the company on its
+      // meetingBookings; a soft delete drops the record out of the default
+      // listing and stays reversible.
+      const response = await requestGate(() =>
+        page.request.delete(
+          new URL(
+            `/rest/companies/${companyId}?soft_delete=true`,
+            BACKEND_BASE_URL,
+          ).toString(),
+          { headers: { Origin: FRONTEND_BASE_URL } },
+        ),
+      );
+      const failedStatus = response.ok() ? undefined : response.status();
+      await response.dispose();
+      if (failedStatus !== undefined) {
+        throw new Error(`Delete company failed with HTTP ${failedStatus}`);
+      }
+    };
+
+    const resolution = await runActivityImportDuplicateCompanyResolution(
+      { ...api, readCompanyLinks, deleteCompany },
+      {
+        source,
+        csvOptions,
+        mode,
+        confirmation:
+          process.env.CRM_ACTIVITY_IMPORT_RESOLVE_DUPLICATES_CONFIRMATION,
+      },
+    );
+    // writeActivityImportResult demands a full activity manifest, which this
+    // operation cannot produce, so the report is written directly to the same
+    // uploaded artifact path.
+    await writeFile(
+      paths.resultPath,
+      `${JSON.stringify(resolution, null, 2)}\n`,
+      'utf8',
+    );
+
+    expect(resolution.operation).toBe('resolve-duplicate-companies');
+    expect(resolution.mode).toBe(mode);
+    if (mode === 'dry-run') expect(resolution.removedCount).toBe(0);
+    else expect(resolution.removedCount).toBe(resolution.plannedRemovalCount);
+
+    return;
+  }
+
   if (operation === 'create-companies') {
     // The REST client owning the authenticated write path cannot be extended
     // under the deployment revision guard allowlist, so creation reuses that
@@ -186,7 +355,7 @@ test('runs a guarded, idempotent outreach activity import', async ({
       }
     };
     const creation = await runActivityImportCompanyCreation(
-      { ...api, createCompany },
+      { ...api, createCompany, listSoftDeletedCompanies },
       {
         source,
         csvOptions,
