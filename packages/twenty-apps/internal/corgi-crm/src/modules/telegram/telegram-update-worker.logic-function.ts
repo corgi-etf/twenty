@@ -13,6 +13,7 @@ import {
 import { parseQueuedTelegramUpdate } from 'src/modules/telegram/services/telegram-security.service';
 import { type KeyValueStore } from 'src/modules/telegram/types';
 import { CoreWholesalerRepository } from 'src/modules/wholesaler/onboarding/graphql/core-wholesaler.repository';
+import { CoreTelegramDeliveryRepository } from 'src/modules/telegram/graphql/core-telegram-delivery.repository';
 
 const requiredEnvironment = (name: string): string => {
   const value = process.env[name]?.trim();
@@ -56,6 +57,7 @@ export const handleTelegramUpdateJob = async (
   const telegram = dependencies.createTelegramClient();
   const coreClient = dependencies.createCrmClient();
   const wholesalerRepository = new CoreWholesalerRepository(coreClient);
+  const deliveryRepository = new CoreTelegramDeliveryRepository(coreClient);
   let messageIndex = 0;
   let callbackIndex = 0;
   try {
@@ -88,6 +90,7 @@ export const handleTelegramUpdateJob = async (
           deliveryKey,
           retryEnvelope: { kind: 'message', chatId, text },
           store: dependencies.store,
+          repository: deliveryRepository,
           perform: (envelope) =>
             envelope.kind === 'message'
               ? telegram.sendMessage(envelope.chatId, envelope.text)
@@ -104,6 +107,7 @@ export const handleTelegramUpdateJob = async (
           deliveryKey,
           retryEnvelope: { kind: 'callback', callbackQueryId },
           store: dependencies.store,
+          repository: deliveryRepository,
           perform: (envelope) =>
             envelope.kind === 'callback'
               ? telegram.answerCallbackQuery(envelope.callbackQueryId)

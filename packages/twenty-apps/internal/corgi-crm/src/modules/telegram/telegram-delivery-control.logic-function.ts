@@ -1,4 +1,5 @@
 import { timingSafeEqual } from 'node:crypto';
+import { CoreApiClient } from 'twenty-client-sdk/core';
 
 import { defineLogicFunction, type RoutePayload } from 'twenty-sdk/define';
 import {
@@ -18,12 +19,14 @@ import {
   type TelegramDeliveryResetJob,
 } from 'src/modules/telegram/services/telegram-delivery-control.service';
 import { type KeyValueStore } from 'src/modules/telegram/types';
+import { CoreTelegramDeliveryRepository } from 'src/modules/telegram/graphql/core-telegram-delivery.repository';
 
 type ControlDependencies = {
   expectedWorkspaceId: string;
   enabled: string | undefined;
   operatorSecret: string | undefined;
   store: KeyValueStore;
+  repository?: CoreTelegramDeliveryRepository;
   enqueue(payload: TelegramDeliveryResetJob, jobId: string): Promise<unknown>;
 };
 
@@ -78,7 +81,14 @@ export const handleTelegramDeliveryControl = async (
   const deliveryKey = stringValue(body, 'deliveryKey');
   if (action === 'inspect') {
     return new Response(
-      await inspectTelegramDelivery({ deliveryKey, store: dependencies.store }),
+      await inspectTelegramDelivery({
+        deliveryKey,
+        repository:
+          dependencies.repository ??
+          (() => {
+            throw new Error('Telegram delivery repository is required');
+          })(),
+      }),
       { status: 200 },
     );
   }
@@ -92,7 +102,11 @@ export const handleTelegramDeliveryControl = async (
     actorWorkspaceMemberId: context.workspaceMemberId,
     confirmation: stringValue(body, 'confirmation'),
     reason: stringValue(body, 'reason'),
-    store: dependencies.store,
+    repository:
+      dependencies.repository ??
+      (() => {
+        throw new Error('Telegram delivery repository is required');
+      })(),
     enqueue: dependencies.enqueue,
     now: () => new Date(),
   });
@@ -108,6 +122,7 @@ export const handler = async (
     enabled: process.env.CORGI_CRM_TELEGRAM_ENABLED,
     operatorSecret: process.env.CORGI_CRM_TELEGRAM_OPERATOR_SECRET,
     store: kv,
+    repository: new CoreTelegramDeliveryRepository(new CoreApiClient()),
     enqueue: (jobPayload, jobId) =>
       enqueueJob({
         logicFunctionUniversalIdentifier:

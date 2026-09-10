@@ -1,4 +1,7 @@
+import { randomUUID } from 'node:crypto';
+
 import { defineLogicFunction } from 'twenty-sdk/define';
+import { CoreApiClient } from 'twenty-client-sdk/core';
 import { kv, type LogicFunctionExecutionContext } from 'twenty-sdk/logic-function';
 
 import { TELEGRAM_DELIVERY_RETRY_WORKER_UNIVERSAL_IDENTIFIER } from 'src/constants';
@@ -10,15 +13,17 @@ import { TelegramClient } from 'src/modules/telegram/services/telegram-client.se
 import {
   assertTelegramDeliveryKey,
   deliverTelegramOperation,
-  type TelegramDeliveryState,
   type TelegramRetryEnvelope,
 } from 'src/modules/telegram/services/telegram-delivery.service';
 import { type KeyValueStore } from 'src/modules/telegram/types';
+import { CoreTelegramDeliveryRepository } from 'src/modules/telegram/graphql/core-telegram-delivery.repository';
+import { readTelegramRetryEnvelope } from 'src/modules/telegram/services/telegram-delivery.service';
 
 type RetryWorkerDependencies = {
   expectedWorkspaceId: string;
   enabled: string | undefined;
   store: KeyValueStore;
+  repository: CoreTelegramDeliveryRepository;
   createTelegramClient(): Pick<
     TelegramClient,
     'sendMessage' | 'answerCallbackQuery'
@@ -67,20 +72,17 @@ export const handleTelegramDeliveryRetryJob = async (
   const payload = parsePayload(rawPayload);
   const audit = await readTelegramDeliveryResetAudit({
     requestId: payload.requestId,
-    store: dependencies.store,
+    repository: dependencies.repository,
   });
   if (
     !audit ||
-    audit.action !== 'reset_requested' ||
     audit.deliveryKey !== payload.deliveryKey ||
     audit.expectedUnknownAt !== payload.expectedUnknownAt ||
     audit.requestId !== payload.requestId
   ) {
     throw new Error('Telegram delivery retry lacks exact audit authorization');
   }
-  let state = (await dependencies.store.get(
-    payload.deliveryKey,
-  )) as TelegramDeliveryState | null;
+  let state = await dependencies.repository.get(payload.deliveryKey);
   if (!state) {
     throw new Error('Telegram delivery retry is stale or replayed');
   }
@@ -100,15 +102,30 @@ export const handleTelegramDeliveryRetryJob = async (
     if (state.unknownAt !== payload.expectedUnknownAt) {
       throw new Error('Telegram delivery retry is stale or replayed');
     }
-    state = {
+    const nextState = {
       ...state,
       status: 'retry_approved',
       updatedAt: new Date().toISOString(),
+      stateToken: randomUUID(),
       resetCount: state.resetCount + 1,
       retryRequestId: payload.requestId,
       approvedUnknownAt: payload.expectedUnknownAt,
-    };
-    await dependencies.store.set(payload.deliveryKey, state);
+    } as const;
+    const approved = await dependencies.repository.transition({
+      id: state.id,
+      expectedStatus: 'unknown',
+      expectedStateToken: state.stateToken,
+      patch: nextState,
+    });
+    state = approved
+      ? nextState
+      : ((await dependencies.repository.get(payload.deliveryKey)) ?? state);
+    if (
+      state.retryRequestId !== payload.requestId ||
+      state.approvedUnknownAt !== payload.expectedUnknownAt
+    ) {
+      throw new Error('Telegram delivery retry is stale or replayed');
+    }
   } else if (!matchesApprovedGeneration) {
     throw new Error('Telegram delivery retry is stale or replayed');
   }
@@ -116,10 +133,18 @@ export const handleTelegramDeliveryRetryJob = async (
   let client:
     | Pick<TelegramClient, 'sendMessage' | 'answerCallbackQuery'>
     | undefined;
+  const retryEnvelope = await readTelegramRetryEnvelope(
+    dependencies.store,
+    payload.deliveryKey,
+  );
+  if (!retryEnvelope) {
+    throw new Error('Telegram delivery retry envelope is unavailable');
+  }
   return deliverTelegramOperation({
     deliveryKey: payload.deliveryKey,
-    retryEnvelope: state.retryEnvelope,
+    retryEnvelope,
     store: dependencies.store,
+    repository: dependencies.repository,
     perform: (envelope) => {
       client ??= dependencies.createTelegramClient();
       return performWithClient(client, envelope);
@@ -143,6 +168,7 @@ export const handler = async (
     expectedWorkspaceId: requiredEnvironment('CORGI_CRM_WORKSPACE_ID'),
     enabled: process.env.CORGI_CRM_TELEGRAM_ENABLED,
     store: kv,
+    repository: new CoreTelegramDeliveryRepository(new CoreApiClient()),
     createTelegramClient: () =>
       new TelegramClient({
         token: requiredEnvironment('CORGI_CRM_TELEGRAM_BOT_TOKEN'),

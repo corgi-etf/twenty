@@ -390,10 +390,12 @@ export const deliverDailySummary = async ({
   delivery,
   store,
   send,
+  repository,
 }: {
   localDate: string;
   delivery: Delivery;
   store: KeyValueStore;
+  repository?: CoreTelegramDeliveryRepository;
   send(chatId: string, text: string): Promise<void>;
 }) => {
   let part = 0;
@@ -404,6 +406,7 @@ export const deliverDailySummary = async ({
       ),
       retryEnvelope: { kind: 'message', chatId: delivery.chatId, text: message },
       store,
+      repository,
       perform: (envelope) =>
         envelope.kind === 'message'
           ? send(envelope.chatId, envelope.text)

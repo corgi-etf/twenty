@@ -9,6 +9,10 @@ describe('Telegram unknown-delivery control', () => {
   const deliveryKey = `telegram:delivery:${'d'.repeat(64)}`;
   const unknownAt = '2026-09-09T22:00:00.000Z';
   const state = {
+    id: '99999999-9999-4999-8999-999999999999',
+    deliveryKey,
+    operationDigest: 'a'.repeat(64),
+    stateToken: 'state-1',
     status: 'unknown',
     createdAt: '2026-09-09T21:59:59.000Z',
     updatedAt: unknownAt,
@@ -21,6 +25,7 @@ describe('Telegram unknown-delivery control', () => {
 
   const setup = () => {
     const values = new Map<string, unknown>([[deliveryKey, state]]);
+    const audits = new Map<string, unknown>();
     const order: string[] = [];
     const store = {
       get: vi.fn(async (key: string) => values.get(key) ?? null),
@@ -33,14 +38,23 @@ describe('Telegram unknown-delivery control', () => {
     const enqueue = vi.fn(async (_payload: unknown, jobId: string) => {
       order.push(`enqueue:${jobId}`);
     });
-    return { values, order, store, enqueue };
+    const repository = {
+      get: vi.fn(async (key: string) => values.get(key) ?? null),
+      recordResetAudit: vi.fn(async (audit: { requestId: string }) => {
+        order.push(`audit:${audit.requestId}`);
+        const existing = audits.get(audit.requestId);
+        if (!existing) audits.set(audit.requestId, audit);
+        return { acquired: !existing, record: existing ?? audit };
+      }),
+    };
+    return { values, audits, order, store, repository, enqueue };
   };
 
   it('inspects only opaque state metadata and never returns the retry envelope', async () => {
-    const { store } = setup();
+    const { repository } = setup();
     const result = await inspectTelegramDelivery({
       deliveryKey,
-      store,
+      repository: repository as never,
     });
     expect(result).toEqual({
       deliveryKey,
@@ -57,7 +71,7 @@ describe('Telegram unknown-delivery control', () => {
   });
 
   it('writes an append-only audit before one deterministic retry enqueue', async () => {
-    const { values, order, store, enqueue } = setup();
+    const { audits, order, repository, enqueue } = setup();
     await expect(
       requestTelegramDeliveryReset({
         deliveryKey,
@@ -66,26 +80,23 @@ describe('Telegram unknown-delivery control', () => {
         actorWorkspaceMemberId: '22222222-2222-4222-8222-222222222222',
         confirmation: 'RESET_UNKNOWN_TELEGRAM_DELIVERY',
         reason: 'Operator confirmed the recipient did not receive it',
-        store,
+        repository: repository as never,
         enqueue,
         now: () => new Date('2026-09-09T22:10:00.000Z'),
       }),
     ).resolves.toMatchObject({ status: 'retry_enqueued' });
-    expect(order[0]).toMatch(/^set:telegram:delivery-audit:/);
+    expect(order[0]).toMatch(/^audit:/);
     expect(order[1]).toMatch(/^enqueue:telegram-delivery-retry-/);
-    const audit = [...values.entries()].find(([key]) =>
-      key.startsWith('telegram:delivery-audit:'),
-    )?.[1];
+    const audit = [...audits.values()][0];
     expect(audit).toMatchObject({
       deliveryKey,
       expectedUnknownAt: unknownAt,
-      action: 'reset_requested',
       actorWorkspaceMemberId: '22222222-2222-4222-8222-222222222222',
     });
   });
 
   it('rejects stale, replayed, or weak reset requests without enqueue', async () => {
-    const { values, store, enqueue } = setup();
+    const { values, repository, enqueue } = setup();
     const base = {
       deliveryKey,
       expectedUnknownAt: unknownAt,
@@ -93,7 +104,7 @@ describe('Telegram unknown-delivery control', () => {
       actorWorkspaceMemberId: '22222222-2222-4222-8222-222222222222',
       confirmation: 'RESET_UNKNOWN_TELEGRAM_DELIVERY',
       reason: 'Operator confirmed the recipient did not receive it',
-      store,
+      repository: repository as never,
       enqueue,
       now: () => new Date(),
     };
@@ -127,11 +138,13 @@ describe('Telegram unknown-delivery control', () => {
       now: () => new Date('2026-09-09T22:10:00.000Z'),
     };
     const auditFailure = setup();
-    auditFailure.store.set.mockRejectedValueOnce(new Error('audit write failed'));
+    auditFailure.repository.recordResetAudit.mockRejectedValueOnce(
+      new Error('audit write failed'),
+    );
     await expect(
       requestTelegramDeliveryReset({
         ...request,
-        store: auditFailure.store,
+        repository: auditFailure.repository as never,
         enqueue: auditFailure.enqueue,
       }),
     ).rejects.toThrow(/audit write failed/i);
@@ -143,7 +156,7 @@ describe('Telegram unknown-delivery control', () => {
     );
     const input = {
       ...request,
-      store: enqueueFailure.store,
+      repository: enqueueFailure.repository as never,
       enqueue: enqueueFailure.enqueue,
     };
     await expect(requestTelegramDeliveryReset(input)).rejects.toThrow(
@@ -156,9 +169,7 @@ describe('Telegram unknown-delivery control', () => {
       enqueueFailure.enqueue.mock.calls[1]?.[1],
     );
     expect(
-      [...enqueueFailure.values.keys()].filter((key) =>
-        key.startsWith('telegram:delivery-audit:'),
-      ),
+      [...enqueueFailure.audits.keys()],
     ).toHaveLength(1);
   });
 });

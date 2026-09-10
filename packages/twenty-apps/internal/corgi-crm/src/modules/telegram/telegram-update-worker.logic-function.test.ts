@@ -48,6 +48,43 @@ describe('Telegram update worker durable replies', () => {
       await dependencies.send('101', 'second');
       return { status: 'help' } as const;
     });
+    const deliveryRecords = new Map<string, Record<string, unknown>>();
+    const coreClient = {
+      mutation: vi.fn(async (selection: Record<string, any>) => {
+        if (selection.createTelegramDelivery) {
+          const data = selection.createTelegramDelivery.__args.data;
+          if (deliveryRecords.has(data.deliveryKey)) throw new Error('duplicate');
+          const record = {
+            ...data,
+            createdAt: '2026-09-09T22:00:00.000Z',
+            updatedAt: '2026-09-09T22:00:00.000Z',
+          };
+          deliveryRecords.set(data.deliveryKey, record);
+          return { createTelegramDelivery: record };
+        }
+        const { data, filter } =
+          selection.updateTelegramDeliveries.__args;
+        const [id, status, stateToken] = filter.and.map(
+          (part: Record<string, any>) => Object.values(part)[0].eq,
+        );
+        const record = [...deliveryRecords.values()].find(
+          (candidate) =>
+            candidate.id === id &&
+            candidate.status === status &&
+            candidate.stateToken === stateToken,
+        );
+        if (!record) return { updateTelegramDeliveries: [] };
+        Object.assign(record, data);
+        return { updateTelegramDeliveries: [record] };
+      }),
+      query: vi.fn(async (selection: Record<string, any>) => {
+        const key = selection.telegramDeliveries.__args.filter.deliveryKey.eq;
+        const record = deliveryRecords.get(key);
+        return {
+          telegramDeliveries: { edges: record ? [{ node: record }] : [] },
+        };
+      }),
+    };
 
     await expect(
       handleTelegramUpdateJob(
@@ -72,7 +109,7 @@ describe('Telegram update worker durable replies', () => {
           enabled: 'true',
           store,
           processCommand: processCommand as never,
-          createCrmClient: vi.fn(() => ({}) as never),
+          createCrmClient: vi.fn(() => coreClient as never),
           createTelegramClient: vi.fn(
             () => ({ sendMessage, answerCallbackQuery }) as never,
           ),
@@ -83,11 +120,8 @@ describe('Telegram update worker durable replies', () => {
     ).resolves.toEqual({ status: 'help' });
     expect(sendMessage).toHaveBeenCalledTimes(2);
     expect(answerCallbackQuery).toHaveBeenCalledOnce();
-    const deliveryStates = [...values.entries()].filter(([key]) =>
-      key.startsWith('telegram:delivery:'),
-    );
-    expect(deliveryStates).toHaveLength(3);
-    expect(deliveryStates.every(([, value]) =>
-      (value as { status?: string }).status === 'complete')).toBe(true);
+    expect(deliveryRecords).toHaveLength(3);
+    expect([...deliveryRecords.values()].every((value) =>
+      value.status === 'complete')).toBe(true);
   });
 });

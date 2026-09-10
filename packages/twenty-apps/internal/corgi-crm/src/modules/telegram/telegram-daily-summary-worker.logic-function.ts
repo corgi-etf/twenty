@@ -18,6 +18,7 @@ import {
 } from 'src/modules/telegram/services/telegram-link.service';
 import { splitTelegramMessage } from 'src/modules/telegram/services/split-telegram-message.service';
 import { CoreWholesalerRepository } from 'src/modules/wholesaler/onboarding/graphql/core-wholesaler.repository';
+import { CoreTelegramDeliveryRepository } from 'src/modules/telegram/graphql/core-telegram-delivery.repository';
 
 const requiredEnvironment = (name: string): string => {
   const value = process.env[name]?.trim();
@@ -93,6 +94,7 @@ const processDailySummaryJob = async (rawPayload: unknown) => {
   const wholesalerRepository = new CoreWholesalerRepository(coreClient);
   const roster = await getValidatedTelegramDeliveryRoster({
     store: kv,
+    repository: new CoreTelegramDeliveryRepository(coreClient),
     configuredBindings: [binding],
     identity: {
       findWorkspaceMember: (workspaceMemberId) =>

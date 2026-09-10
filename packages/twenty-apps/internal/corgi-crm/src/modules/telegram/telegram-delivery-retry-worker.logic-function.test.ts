@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+
 import { describe, expect, it, vi } from 'vitest';
 
 import { TelegramDeliveryError } from 'src/modules/telegram/services/telegram-client.service';
@@ -7,22 +9,69 @@ const WORKSPACE_ID = '11111111-1111-4111-8111-111111111111';
 const deliveryKey = `telegram:delivery:${'e'.repeat(64)}`;
 const unknownAt = '2026-09-09T22:00:00.000Z';
 const requestId = '11111111-1111-4111-8111-111111111111';
+const retryEnvelope = { kind: 'message', chatId: '101', text: 'retry me' } as const;
+const envelopeKey = `telegram:delivery-envelope:${'e'.repeat(64)}`;
 
 const audit = {
-  action: 'reset_requested',
+  id: '77777777-7777-4777-8777-777777777777',
   deliveryKey,
   expectedUnknownAt: unknownAt,
   requestId,
+  actorWorkspaceMemberId: '22222222-2222-4222-8222-222222222222',
+  reasonDigest: 'a'.repeat(64),
+  requestedAt: '2026-09-09T22:01:00.000Z',
 };
 
 const initialState = {
+  id: '99999999-9999-4999-8999-999999999999',
+  deliveryKey,
+  operationDigest: createHash('sha256')
+    .update(JSON.stringify(retryEnvelope))
+    .digest('hex'),
+  stateToken: 'state-1',
   status: 'unknown',
   createdAt: unknownAt,
   updatedAt: unknownAt,
   unknownAt,
   attempts: 1,
   resetCount: 0,
-  retryEnvelope: { kind: 'message', chatId: '101', text: 'retry me' },
+};
+
+const makeRepository = (
+  values: Map<string, any>,
+  fail?: 'audit' | 'approval' | 'intent' | 'complete',
+) => {
+  let failed = false;
+  return {
+    get: vi.fn(async (key: string) => values.get(key) ?? null),
+    getAudit: vi.fn(async (id: string) => {
+      if (fail === 'audit') throw new Error('audit read failed');
+      return values.get(`telegram:delivery-audit:${id}`) ?? null;
+    }),
+    claim: vi.fn(async (record: any) => {
+      const existing = values.get(record.deliveryKey);
+      return existing
+        ? { acquired: false, record: existing }
+        : (values.set(record.deliveryKey, record), { acquired: true, record });
+    }),
+    transition: vi.fn(async ({ id, expectedStatus, expectedStateToken, patch }: any) => {
+      const record = [...values.values()].find((value) =>
+        value?.id === id && value.status === expectedStatus &&
+        value.stateToken === expectedStateToken,
+      );
+      const target = patch.status;
+      if (
+        !failed &&
+        (fail === target || (fail === 'approval' && target === 'retry_approved'))
+      ) {
+        failed = true;
+        throw new Error(`${target} write failed`);
+      }
+      if (!record) return false;
+      values.set(record.deliveryKey, { ...record, ...patch });
+      return true;
+    }),
+  };
 };
 
 const context = {
@@ -45,6 +94,7 @@ describe('Telegram delivery retry worker', () => {
           expectedWorkspaceId: WORKSPACE_ID,
           enabled: 'false',
           store,
+          repository: { getAudit: vi.fn(), get: vi.fn(), claim: vi.fn(), transition: vi.fn() } as never,
           createTelegramClient,
         },
       ),
@@ -72,6 +122,7 @@ describe('Telegram delivery retry worker', () => {
           expectedWorkspaceId: WORKSPACE_ID,
           enabled: 'true',
           store,
+          repository: { getAudit: vi.fn(), get: vi.fn(), claim: vi.fn(), transition: vi.fn() } as never,
           createTelegramClient,
         },
       ),
@@ -91,6 +142,7 @@ describe('Telegram delivery retry worker', () => {
         `telegram:delivery-audit:${requestId}`,
         audit,
       ],
+      [envelopeKey, retryEnvelope],
     ]);
     const store = {
       get: vi.fn(async (key: string) => values.get(key) ?? null),
@@ -108,6 +160,7 @@ describe('Telegram delivery retry worker', () => {
           expectedWorkspaceId: WORKSPACE_ID,
           enabled: 'true',
           store,
+          repository: makeRepository(values) as never,
           createTelegramClient: () => ({
             sendMessage,
             answerCallbackQuery: vi.fn(),
@@ -129,6 +182,7 @@ describe('Telegram delivery retry worker', () => {
           expectedWorkspaceId: WORKSPACE_ID,
           enabled: 'true',
           store,
+          repository: makeRepository(values) as never,
           createTelegramClient: () => ({
             sendMessage,
             answerCallbackQuery: vi.fn(),
@@ -154,6 +208,7 @@ describe('Telegram delivery retry worker', () => {
           },
         ],
         [`telegram:delivery-audit:${requestId}`, audit],
+        [envelopeKey, retryEnvelope],
       ]);
       const store = {
         get: vi.fn(async (key: string) => values.get(key) ?? null),
@@ -171,6 +226,7 @@ describe('Telegram delivery retry worker', () => {
             expectedWorkspaceId: WORKSPACE_ID,
             enabled: 'true',
             store,
+            repository: makeRepository(values) as never,
             createTelegramClient: () => ({
               sendMessage,
               answerCallbackQuery: vi.fn(),
@@ -191,6 +247,7 @@ describe('Telegram delivery retry worker', () => {
     const values = new Map<string, unknown>([
       [deliveryKey, initialState],
       [`telegram:delivery-audit:${requestId}`, audit],
+      [envelopeKey, retryEnvelope],
     ]);
     const store = {
       get: vi.fn(async (key: string) => values.get(key) ?? null),
@@ -209,6 +266,7 @@ describe('Telegram delivery retry worker', () => {
       expectedWorkspaceId: WORKSPACE_ID,
       enabled: 'true',
       store,
+      repository: makeRepository(values) as never,
       createTelegramClient: () => ({
         sendMessage,
         answerCallbackQuery: vi.fn(),
@@ -240,6 +298,7 @@ describe('Telegram delivery retry worker', () => {
     );
     const ambiguousDependencies = {
       ...dependencies,
+      repository: makeRepository(values) as never,
       createTelegramClient: () => ({
         sendMessage: ambiguous,
         answerCallbackQuery: vi.fn(),
@@ -266,17 +325,11 @@ describe('Telegram delivery retry worker', () => {
     const values = new Map<string, unknown>([
       [deliveryKey, initialState],
       [`telegram:delivery-audit:${requestId}`, audit],
+      [envelopeKey, retryEnvelope],
     ]);
-    let deliveryWrites = 0;
     const store = {
       get: vi.fn(async (key: string) => values.get(key) ?? null),
-      set: vi.fn(async (key: string, value: unknown) => {
-        if (key === deliveryKey) {
-          deliveryWrites += 1;
-          if (deliveryWrites === 3) throw new Error('complete checkpoint failed');
-        }
-        values.set(key, value);
-      }),
+      set: vi.fn(async (key: string, value: unknown) => values.set(key, value)),
       delete: vi.fn(),
     };
     const sendMessage = vi.fn().mockResolvedValue(undefined);
@@ -285,6 +338,7 @@ describe('Telegram delivery retry worker', () => {
       expectedWorkspaceId: WORKSPACE_ID,
       enabled: 'true',
       store,
+      repository: makeRepository(values, 'complete') as never,
       createTelegramClient: () => ({
         sendMessage,
         answerCallbackQuery: vi.fn(),
@@ -297,7 +351,7 @@ describe('Telegram delivery retry worker', () => {
         context,
         dependencies,
       ),
-    ).rejects.toThrow(/checkpoint/i);
+    ).resolves.toEqual({ status: 'unknown' });
     await expect(
       workerModule.handleTelegramDeliveryRetryJob(
         { deliveryKey, expectedUnknownAt: unknownAt, requestId },
@@ -319,8 +373,8 @@ describe('Telegram delivery retry worker', () => {
       const values = new Map<string, unknown>([
         [deliveryKey, initialState],
         [`telegram:delivery-audit:${requestId}`, audit],
+        [envelopeKey, retryEnvelope],
       ]);
-      let deliveryWrites = 0;
       const store = {
         get: vi.fn(async (key: string) => {
           if (failure === 'audit' && key.includes('delivery-audit')) {
@@ -328,18 +382,7 @@ describe('Telegram delivery retry worker', () => {
           }
           return values.get(key) ?? null;
         }),
-        set: vi.fn(async (key: string, value: unknown) => {
-          if (key === deliveryKey) {
-            deliveryWrites += 1;
-            if (
-              (failure === 'approval' && deliveryWrites === 1) ||
-              (failure === 'intent' && deliveryWrites === 2)
-            ) {
-              throw new Error(`${failure} write failed`);
-            }
-          }
-          values.set(key, value);
-        }),
+        set: vi.fn(async (key: string, value: unknown) => values.set(key, value)),
         delete: vi.fn(),
       };
       const createTelegramClient = vi.fn();
@@ -351,6 +394,7 @@ describe('Telegram delivery retry worker', () => {
             expectedWorkspaceId: WORKSPACE_ID,
             enabled: 'true',
             store,
+            repository: makeRepository(values, failure) as never,
             createTelegramClient,
           },
         ),
