@@ -15,6 +15,7 @@ export type MeetingBookingRecord = {
   companyId: string | null;
   wholesalerId: string | null;
   bookingValidationMessage: string | null;
+  updatedAt: string;
 };
 
 type DynamicCoreApiClient = {
@@ -34,6 +35,7 @@ const selection = {
   companyId: true,
   wholesalerId: true,
   bookingValidationMessage: true,
+  updatedAt: true,
 };
 
 const isNullableString = (value: unknown): value is string | null =>
@@ -59,7 +61,8 @@ const parseMeetingBooking = (value: unknown): MeetingBookingRecord | null => {
     !isNullableString(candidate.bookedById) ||
     !isNullableString(candidate.companyId) ||
     !isNullableString(candidate.wholesalerId) ||
-    !isNullableString(candidate.bookingValidationMessage)
+    !isNullableString(candidate.bookingValidationMessage) ||
+    typeof candidate.updatedAt !== 'string'
   ) {
     return null;
   }
@@ -103,10 +106,12 @@ export class CoreMeetingBookingRepository {
     id,
     bookedAt,
     bookedById,
+    expectedUpdatedAt,
   }: {
     id: string;
     bookedAt: string;
     bookedById: string | null;
+    expectedUpdatedAt: string;
   }): Promise<boolean> {
     try {
       const result = await this.client.mutation({
@@ -117,6 +122,7 @@ export class CoreMeetingBookingRepository {
                 { id: { eq: id } },
                 { status: { eq: MEETING_BOOKING_STATUS.BOOKED } },
                 { bookedAt: { is: 'NULL' } },
+                { updatedAt: { eq: expectedUpdatedAt } },
               ],
             },
             data: {
@@ -157,9 +163,11 @@ export class CoreMeetingBookingRepository {
   public async rejectInvalidBooking({
     id,
     message,
+    expectedUpdatedAt,
   }: {
     id: string;
     message: string;
+    expectedUpdatedAt: string;
   }): Promise<boolean> {
     try {
       const result = await this.client.mutation({
@@ -170,6 +178,7 @@ export class CoreMeetingBookingRepository {
                 { id: { eq: id } },
                 { status: { eq: MEETING_BOOKING_STATUS.BOOKED } },
                 { bookedAt: { is: 'NULL' } },
+                { updatedAt: { eq: expectedUpdatedAt } },
               ],
             },
             data: {

@@ -15,6 +15,7 @@ const meeting: MeetingBookingRecord = {
   companyId: '22222222-2222-4222-8222-222222222222',
   wholesalerId: '33333333-3333-4333-8333-333333333333',
   bookingValidationMessage: null,
+  updatedAt: '2026-09-10T13:14:59.000Z',
 };
 
 describe('CoreMeetingBookingRepository', () => {
@@ -48,6 +49,7 @@ describe('CoreMeetingBookingRepository', () => {
         id: meeting.id,
         bookedAt,
         bookedById: '44444444-4444-4444-8444-444444444444',
+        expectedUpdatedAt: meeting.updatedAt,
       }),
     ).resolves.toBe(true);
     expect(mutation.mock.calls[0]?.[0].updateMeetingBookings.__args).toEqual({
@@ -56,6 +58,7 @@ describe('CoreMeetingBookingRepository', () => {
           { id: { eq: meeting.id } },
           { status: { eq: 'BOOKED' } },
           { bookedAt: { is: 'NULL' } },
+          { updatedAt: { eq: meeting.updatedAt } },
         ],
       },
       data: {
@@ -79,7 +82,12 @@ describe('CoreMeetingBookingRepository', () => {
     } as never);
 
     await expect(
-      repository.stampBooked({ id: meeting.id, bookedAt, bookedById: null }),
+      repository.stampBooked({
+        id: meeting.id,
+        bookedAt,
+        bookedById: null,
+        expectedUpdatedAt: meeting.updatedAt,
+      }),
     ).resolves.toBe(true);
   });
 
@@ -106,6 +114,35 @@ describe('CoreMeetingBookingRepository', () => {
         id: meeting.id,
         bookedAt: '2026-09-10T13:15:00.000Z',
         bookedById: null,
+        expectedUpdatedAt: meeting.updatedAt,
+      }),
+    ).resolves.toBe(false);
+  });
+
+  it('does not stamp after a validated field changes concurrently', async () => {
+    const repository = new CoreMeetingBookingRepository({
+      mutation: vi.fn().mockResolvedValue({ updateMeetingBookings: [] }),
+      query: vi.fn().mockResolvedValue({
+        meetingBookings: {
+          edges: [
+            {
+              node: {
+                ...meeting,
+                companyId: null,
+                updatedAt: '2026-09-10T13:15:01.000Z',
+              },
+            },
+          ],
+        },
+      }),
+    } as never);
+
+    await expect(
+      repository.stampBooked({
+        id: meeting.id,
+        bookedAt: '2026-09-10T13:15:00.000Z',
+        bookedById: null,
+        expectedUpdatedAt: meeting.updatedAt,
       }),
     ).resolves.toBe(false);
   });
@@ -129,6 +166,7 @@ describe('CoreMeetingBookingRepository', () => {
       repository.rejectInvalidBooking({
         id: meeting.id,
         message: 'Set an RIA / company before booking.',
+        expectedUpdatedAt: meeting.updatedAt,
       }),
     ).resolves.toBe(true);
     expect(mutation.mock.calls[0]?.[0].updateMeetingBookings.__args.filter)
@@ -137,6 +175,7 @@ describe('CoreMeetingBookingRepository', () => {
           { id: { eq: meeting.id } },
           { status: { eq: 'BOOKED' } },
           { bookedAt: { is: 'NULL' } },
+          { updatedAt: { eq: meeting.updatedAt } },
         ],
       });
   });

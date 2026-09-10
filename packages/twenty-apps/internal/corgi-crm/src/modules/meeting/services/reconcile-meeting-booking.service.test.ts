@@ -15,6 +15,7 @@ const meeting = {
   companyId: '22222222-2222-4222-8222-222222222222',
   wholesalerId: '33333333-3333-4333-8333-333333333333',
   bookingValidationMessage: null,
+  updatedAt: '2026-09-10T13:14:59.000Z',
 };
 
 const repository = (record = meeting): MeetingBookingRepository => ({
@@ -39,6 +40,7 @@ describe('reconcileMeetingBooking', () => {
       id: meeting.id,
       bookedAt: '2026-09-10T13:15:00.000Z',
       bookedById: '44444444-4444-4444-8444-444444444444',
+      expectedUpdatedAt: meeting.updatedAt,
     });
     expect(repo.rejectInvalidBooking).not.toHaveBeenCalled();
   });
@@ -62,6 +64,7 @@ describe('reconcileMeetingBooking', () => {
     expect(repo.rejectInvalidBooking).toHaveBeenCalledWith({
       id: meeting.id,
       message: expect.stringContaining(expected),
+      expectedUpdatedAt: meeting.updatedAt,
     });
     expect(repo.stampBooked).not.toHaveBeenCalled();
   });

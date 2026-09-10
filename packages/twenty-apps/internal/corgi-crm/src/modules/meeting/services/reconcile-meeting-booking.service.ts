@@ -10,10 +10,12 @@ export type MeetingBookingRepository = {
     id: string;
     bookedAt: string;
     bookedById: string | null;
+    expectedUpdatedAt: string;
   }): Promise<boolean>;
   rejectInvalidBooking(input: {
     id: string;
     message: string;
+    expectedUpdatedAt: string;
   }): Promise<boolean>;
 };
 
@@ -67,6 +69,7 @@ export const reconcileMeetingBooking = async ({
     const rejected = await repository.rejectInvalidBooking({
       id: meetingId,
       message,
+      expectedUpdatedAt: record.updatedAt,
     });
     if (!rejected) {
       throw new Error('Meeting changed while rejecting an invalid booking');
@@ -85,6 +88,7 @@ export const reconcileMeetingBooking = async ({
       actorWorkspaceMemberId && UUID_PATTERN.test(actorWorkspaceMemberId)
         ? actorWorkspaceMemberId
         : null,
+    expectedUpdatedAt: record.updatedAt,
   });
   if (!booked) {
     throw new Error('Meeting changed while booking; retry reconciliation');

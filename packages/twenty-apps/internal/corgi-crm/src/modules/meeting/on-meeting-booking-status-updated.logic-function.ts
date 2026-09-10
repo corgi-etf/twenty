@@ -7,12 +7,14 @@ import {
 
 import { CoreMeetingBookingRepository } from 'src/modules/meeting/graphql/core-meeting-booking.repository';
 import { MEETING_BOOKING_STATUS_UPDATED_FUNCTION_UNIVERSAL_IDENTIFIER } from 'src/modules/meeting/meeting-identifiers';
+import { MEETING_BOOKING_STATUS } from 'src/modules/meeting/meeting-identifiers';
 import { reconcileMeetingBooking } from 'src/modules/meeting/services/reconcile-meeting-booking.service';
 
 type MeetingBookingEventRecord = {
   id?: string | null;
   updatedAt?: string | null;
   updatedBy?: { workspaceMemberId?: string | null } | null;
+  status?: string | null;
 };
 
 export const handler = async (
@@ -28,7 +30,11 @@ export const handler = async (
   }
   const after = payload.properties.after;
   const meetingId = payload.recordId ?? after?.id;
-  if (!meetingId || !after?.updatedAt) {
+  if (
+    !meetingId ||
+    !after?.updatedAt ||
+    after.status !== MEETING_BOOKING_STATUS.BOOKED
+  ) {
     return { status: 'skipped', reason: 'missing_event_identity' } as const;
   }
   return reconcileMeetingBooking({

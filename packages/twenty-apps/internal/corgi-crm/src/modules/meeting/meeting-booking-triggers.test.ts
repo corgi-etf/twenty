@@ -46,7 +46,12 @@ describe('meeting booking database triggers', () => {
         handler({
           workspaceId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
           recordId: '11111111-1111-4111-8111-111111111111',
-          properties: { after: { updatedAt: '2026-09-10T13:15:00.000Z' } },
+          properties: {
+            after: {
+              status: 'BOOKED',
+              updatedAt: '2026-09-10T13:15:00.000Z',
+            },
+          },
         } as never),
       ).resolves.toEqual({ status: 'skipped', reason: 'workspace_mismatch' });
       expect(reconcileMeetingBooking).not.toHaveBeenCalled();
@@ -66,6 +71,7 @@ describe('meeting booking database triggers', () => {
         properties: {
           after: {
             id: '11111111-1111-4111-8111-111111111111',
+            status: 'BOOKED',
             updatedAt: '2026-09-10T13:15:00.000Z',
             updatedBy: {
               workspaceMemberId: '44444444-4444-4444-8444-444444444444',
@@ -79,6 +85,28 @@ describe('meeting booking database triggers', () => {
         actorWorkspaceMemberId: '44444444-4444-4444-8444-444444444444',
         repository: expect.anything(),
       });
+    },
+  );
+
+  it.each([createdHandler, statusUpdatedHandler])(
+    'ignores an old DRAFT event even if the record is BOOKED when it runs',
+    async (handler) => {
+      await expect(
+        handler({
+          workspaceId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+          recordId: '11111111-1111-4111-8111-111111111111',
+          properties: {
+            after: {
+              status: 'DRAFT',
+              updatedAt: '2026-09-10T13:00:00.000Z',
+            },
+          },
+        } as never),
+      ).resolves.toEqual({
+        status: 'skipped',
+        reason: 'missing_event_identity',
+      });
+      expect(reconcileMeetingBooking).not.toHaveBeenCalled();
     },
   );
 });
