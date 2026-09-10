@@ -15,6 +15,8 @@ const EXACT_ALLOWED_PATHS = new Set([
   'packages/twenty-apps/internal/corgi-crm/scripts/deployment-revision-guard.test.mjs',
   'packages/twenty-apps/internal/corgi-crm/scripts/production-workflow-contract.test.mjs',
   'packages/twenty-apps/internal/corgi-crm/scripts/report-runtime-canary-contract.test.mjs',
+  'packages/twenty-apps/internal/corgi-crm/scripts/verify-production-install.mjs',
+  'packages/twenty-apps/internal/corgi-crm/scripts/verify-production-install.test.mjs',
   'packages/twenty-e2e-testing/tests/production/meetingBooking.maintenance.spec.ts',
   'packages/twenty-e2e-testing/tests/production/meetingBookingCanaryPreflight.contract.spec.ts',
   'packages/twenty-e2e-testing/tests/production/meetingBookingCanaryPreflight.ts',
