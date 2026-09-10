@@ -5,6 +5,7 @@ import {
 } from 'twenty-sdk/define';
 
 import {
+  MEETING_BOOKING_ALLOCATION_REQUESTED_FIELD_UNIVERSAL_IDENTIFIER,
   MEETING_BOOKING_BOOKED_AT_FIELD_UNIVERSAL_IDENTIFIER,
   MEETING_BOOKING_NAME_FIELD_UNIVERSAL_IDENTIFIER,
   MEETING_BOOKING_NOTES_FIELD_UNIVERSAL_IDENTIFIER,
@@ -108,6 +109,16 @@ export default defineObject({
       defaultValue: null,
       isUIEditable: false,
       writability: MetadataWritability.APPLICATION,
+    },
+    {
+      universalIdentifier:
+        MEETING_BOOKING_ALLOCATION_REQUESTED_FIELD_UNIVERSAL_IDENTIFIER,
+      type: FieldType.CURRENCY,
+      name: 'allocationRequested',
+      label: 'Allocation requested',
+      description: 'Amount the RIA asked to allocate, as the EW reported it',
+      icon: 'IconCurrencyDollar',
+      isNullable: true,
     },
     {
       universalIdentifier:

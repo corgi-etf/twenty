@@ -15,6 +15,7 @@ const meeting: MeetingBookingRecord = {
   companyId: '22222222-2222-4222-8222-222222222222',
   wholesalerId: '33333333-3333-4333-8333-333333333333',
   externalWholesalerId: null,
+  allocationRequested: null,
   bookingValidationMessage: null,
   updatedAt: '2026-09-10T13:14:59.000Z',
 };
@@ -31,6 +32,39 @@ describe('CoreMeetingBookingRepository', () => {
       filter: { id: { eq: meeting.id } },
       first: 2,
     });
+  });
+
+  it.each([
+    ['a BigFloat number', { amountMicros: 2500000, currencyCode: 'USD' }, { amountMicros: 2500000, currencyCode: 'USD' }],
+    ['a numeric string', { amountMicros: '2500000', currencyCode: 'USD' }, { amountMicros: 2500000, currencyCode: 'USD' }],
+    ['an explicit zero', { amountMicros: 0, currencyCode: 'USD' }, { amountMicros: 0, currencyCode: 'USD' }],
+    ['an empty composite', { amountMicros: null, currencyCode: null }, { amountMicros: null, currencyCode: null }],
+    ['an absent composite', null, null],
+    ['an unreadable amount', { amountMicros: {}, currencyCode: 7 }, { amountMicros: null, currencyCode: null }],
+  ])('reads the allocation amount from %s without rejecting the booking', async (_label, allocationRequested, expected) => {
+    const query = vi.fn().mockResolvedValue({
+      meetingBookings: {
+        edges: [{ node: { ...meeting, allocationRequested } }],
+      },
+    });
+    const repository = new CoreMeetingBookingRepository({ query } as never);
+
+    await expect(repository.get(meeting.id)).resolves.toEqual({
+      ...meeting,
+      allocationRequested: expected,
+    });
+  });
+
+  it('asks Core for both allocation sub-fields', async () => {
+    const query = vi.fn().mockResolvedValue({
+      meetingBookings: { edges: [{ node: meeting }] },
+    });
+    const repository = new CoreMeetingBookingRepository({ query } as never);
+
+    await repository.get(meeting.id);
+    expect(
+      query.mock.calls[0]?.[0].meetingBookings.edges.node.allocationRequested,
+    ).toEqual({ amountMicros: true, currencyCode: true });
   });
 
   it('atomically stamps the first BOOKED transition', async () => {

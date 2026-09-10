@@ -1,4 +1,5 @@
 import {
+  FieldType,
   MetadataWritability,
   STANDARD_OBJECT_UNIVERSAL_IDENTIFIERS,
   ViewCalendarLayout,
@@ -133,6 +134,21 @@ describe('Meeting booking metadata', () => {
     );
   });
 
+  it('lets an EW enter the allocation the RIA requested', () => {
+    expect(field('allocationRequested')).toMatchObject({
+      type: FieldType.CURRENCY,
+      label: 'Allocation requested',
+      isNullable: true,
+    });
+    // Nothing may default this amount: an absent amount and an entered zero
+    // are different answers, and only the person on the meeting knows which.
+    expect(field('allocationRequested')).not.toHaveProperty('defaultValue');
+    expect(field('allocationRequested')?.isUIEditable).not.toBe(false);
+    expect(field('allocationRequested')?.writability).not.toBe(
+      MetadataWritability.APPLICATION,
+    );
+  });
+
   it('lets a booker choose the EW a meeting is attributed to', () => {
     expect(externalWholesalerOnMeetingBooking.success).toBe(true);
     expect(externalWholesalerOnMeetingBooking.config).toMatchObject({
@@ -197,6 +213,13 @@ describe('Meeting booking metadata', () => {
           (viewField) =>
             viewField.fieldMetadataUniversalIdentifier ===
             identifiers.EXTERNAL_WHOLESALER_ON_MEETING_BOOKING_FIELD_UNIVERSAL_IDENTIFIER,
+        ),
+      ).toBe(true);
+      expect(
+        (view.config.fields ?? []).some(
+          (viewField) =>
+            viewField.fieldMetadataUniversalIdentifier ===
+            identifiers.MEETING_BOOKING_ALLOCATION_REQUESTED_FIELD_UNIVERSAL_IDENTIFIER,
         ),
       ).toBe(true);
     }
