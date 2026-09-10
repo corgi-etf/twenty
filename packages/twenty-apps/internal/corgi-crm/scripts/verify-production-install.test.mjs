@@ -76,20 +76,10 @@ describe('production Telegram application verification', () => {
   const application = {
     applicationVariables: [
       { key: 'CORGI_CRM_WORKSPACE_ID', value: 'workspace-1' },
-      { key: 'CORGI_CRM_TELEGRAM_BOT_TOKEN', value: 'masked' },
-      { key: 'CORGI_CRM_TELEGRAM_WEBHOOK_SECRET', value: 'masked' },
-      {
-        key: 'CORGI_CRM_TELEGRAM_LINK_CODES',
-        value: JSON.stringify({
-          bindings: [
-            {
-              code: 'secret-link-code',
-              workspaceMemberId,
-              telegramUserId: '101',
-            },
-          ],
-        }),
-      },
+      { key: 'CORGI_CRM_TELEGRAM_ENABLED', value: 'true' },
+      { key: 'CORGI_CRM_TELEGRAM_BOT_TOKEN', value: '********' },
+      { key: 'CORGI_CRM_TELEGRAM_WEBHOOK_SECRET', value: '********' },
+      { key: 'CORGI_CRM_TELEGRAM_LINK_CODES', value: '********' },
       { key: 'CORGI_CRM_TELEGRAM_TIME_ZONE', value: 'America/Chicago' },
       { key: 'CORGI_CRM_TELEGRAM_DAILY_SUMMARY_TIME', value: '17:00' },
     ],
@@ -155,68 +145,31 @@ describe('production Telegram application verification', () => {
     );
   });
 
-  it('rejects malformed or duplicate link bindings', () => {
-    const withLinkValue = (value) => ({
+  it('treats secret metadata as an opaque configured mask', () => {
+    const blankSecret = {
       ...application,
       applicationVariables: application.applicationVariables.map((variable) =>
         variable.key === 'CORGI_CRM_TELEGRAM_LINK_CODES'
-          ? { ...variable, value }
+          ? { ...variable, value: '' }
           : variable,
       ),
-    });
-    assert.throws(
-      () =>
-        verifyTelegramApplicationContract(
-          withLinkValue('{not-json'),
-          'workspace-1',
-        ),
-      /link|json/i,
+    };
+    assert.doesNotThrow(() =>
+      verifyTelegramApplicationContract(application, 'workspace-1'),
     );
     assert.throws(
-      () =>
-        verifyTelegramApplicationContract(
-          withLinkValue(
-            JSON.stringify({
-              bindings: [
-                {
-                  code: 'one',
-                  workspaceMemberId,
-                  telegramUserId: '101',
-                },
-                {
-                  code: 'two',
-                  workspaceMemberId:
-                    '22222222-2222-4222-8222-222222222222',
-                  telegramUserId: '101',
-                },
-              ],
-            }),
-          ),
-          'workspace-1',
-        ),
-      /duplicate/i,
+      () => verifyTelegramApplicationContract(blankSecret, 'workspace-1'),
+      /configured/i,
     );
   });
 
-  it('rejects invalid UUIDs, IANA zones, schedule boundaries, or header forwarding', () => {
+  it('rejects invalid IANA zones, schedule boundaries, or header forwarding', () => {
     const replaceVariable = (key, value) => ({
       ...application,
       applicationVariables: application.applicationVariables.map((variable) =>
         variable.key === key ? { ...variable, value } : variable,
       ),
     });
-    const badUuid = replaceVariable(
-      'CORGI_CRM_TELEGRAM_LINK_CODES',
-      JSON.stringify({
-        bindings: [
-          { code: 'one', workspaceMemberId: 'member-1', telegramUserId: '101' },
-        ],
-      }),
-    );
-    assert.throws(
-      () => verifyTelegramApplicationContract(badUuid, 'workspace-1'),
-      /uuid/i,
-    );
     assert.throws(
       () =>
         verifyTelegramApplicationContract(

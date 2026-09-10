@@ -71,6 +71,28 @@ const verifyTelegramProvider = async ({
   return { botId: String(bot.id), username: bot.username ?? null };
 };
 
+const registerTelegramWebhook = async ({
+  fetchImpl,
+  token,
+  webhookUrl,
+  webhookSecret,
+}) => {
+  const url = new URL(required(webhookUrl, 'Webhook URL'));
+  if (url.protocol !== 'https:') throw new Error('Webhook URL must use HTTPS');
+  await telegramCall({
+    fetchImpl,
+    token,
+    method: 'setWebhook',
+    body: {
+      url: url.href,
+      secret_token: required(webhookSecret, 'Webhook secret'),
+      allowed_updates: ['message', 'callback_query'],
+      drop_pending_updates: false,
+    },
+  });
+  return { status: 'registered' };
+};
+
 const verifySignedWebhookCanary = async ({
   fetchImpl,
   webhookUrl,
@@ -139,21 +161,28 @@ const main = async () => {
     process.env.CORGI_CRM_TELEGRAM_WEBHOOK_URL,
     'Webhook URL',
   );
+  await registerTelegramWebhook({
+    fetchImpl: fetch,
+    token,
+    webhookUrl,
+    webhookSecret: process.env.CORGI_CRM_TELEGRAM_WEBHOOK_SECRET,
+  });
   await verifyTelegramProvider({
     fetchImpl: fetch,
     token,
     expectedWebhookUrl: webhookUrl,
   });
   if (
-    process.env.CORGI_CRM_TELEGRAM_SIGNED_CANARY_CONFIRM ===
+    process.env.CORGI_CRM_TELEGRAM_SIGNED_CANARY_CONFIRM !==
     'RUN_SIGNED_CANARY'
   ) {
-    await verifySignedWebhookCanary({
-      fetchImpl: fetch,
-      webhookUrl,
-      webhookSecret: process.env.CORGI_CRM_TELEGRAM_WEBHOOK_SECRET,
-    });
+    throw new Error('Signed Telegram canary requires explicit confirmation');
   }
+  await verifySignedWebhookCanary({
+    fetchImpl: fetch,
+    webhookUrl,
+    webhookSecret: process.env.CORGI_CRM_TELEGRAM_WEBHOOK_SECRET,
+  });
   await deliverGatedTestMessage({
     fetchImpl: fetch,
     token,
@@ -175,6 +204,7 @@ if (
 
 export {
   deliverGatedTestMessage,
+  registerTelegramWebhook,
   verifySignedWebhookCanary,
   verifyTelegramProvider,
 };

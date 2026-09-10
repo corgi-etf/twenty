@@ -7,6 +7,8 @@ import {
   verifyTelegramProvider,
 } from './verify-telegram-live.mjs';
 
+const liveVerificationModule = await import('./verify-telegram-live.mjs');
+
 const okJson = (result) =>
   new Response(JSON.stringify({ ok: true, result }), {
     status: 200,
@@ -14,6 +16,31 @@ const okJson = (result) =>
   });
 
 describe('live Telegram provider verification hooks', () => {
+  it('registers the exact webhook, secret, and allowed update set', async () => {
+    assert.equal(
+      typeof liveVerificationModule.registerTelegramWebhook,
+      'function',
+      'registerTelegramWebhook must be implemented',
+    );
+    const calls = [];
+    const fetchImpl = async (url, init) => {
+      calls.push({ url: String(url), body: JSON.parse(init.body) });
+      return okJson(true);
+    };
+    await liveVerificationModule.registerTelegramWebhook({
+      fetchImpl,
+      token: 'bot-secret',
+      webhookUrl: 'https://crm.corgiinvest.com/s/telegram/webhook',
+      webhookSecret: 'webhook-secret',
+    });
+    assert.match(calls[0].url, /\/setWebhook$/);
+    assert.deepEqual(calls[0].body, {
+      url: 'https://crm.corgiinvest.com/s/telegram/webhook',
+      secret_token: 'webhook-secret',
+      allowed_updates: ['message', 'callback_query'],
+      drop_pending_updates: false,
+    });
+  });
   it('verifies getMe plus the exact configured webhook without exposing credentials', async () => {
     const calls = [];
     const fetchImpl = async (url, init) => {

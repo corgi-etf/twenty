@@ -1,9 +1,6 @@
 import { defineApplication } from 'twenty-sdk/define';
 
-import {
-  APPLICATION_UNIVERSAL_IDENTIFIER,
-  CORGI_CRM_PRODUCTION_WORKSPACE_ID,
-} from 'src/constants';
+import { APPLICATION_UNIVERSAL_IDENTIFIER } from 'src/constants';
 
 export default defineApplication({
   universalIdentifier: APPLICATION_UNIVERSAL_IDENTIFIER,
@@ -15,7 +12,13 @@ export default defineApplication({
       description:
         'Workspace ID allowed to run Corgi CRM automation. The member-created trigger fails closed for every other workspace.',
       isSecret: false,
-      value: CORGI_CRM_PRODUCTION_WORKSPACE_ID,
+    },
+    CORGI_CRM_TELEGRAM_ENABLED: {
+      universalIdentifier: '64c93fe6-4db5-4ea3-a5d4-bc5370cc0fe7',
+      description:
+        'Fail-closed Telegram runtime gate. Remains false until trusted configuration and live provider verification both succeed.',
+      isSecret: false,
+      value: 'false',
     },
     CORGI_CRM_TELEGRAM_BOT_TOKEN: {
       universalIdentifier: 'e3cd12fd-524c-4414-a1ac-9885cb35f36b',

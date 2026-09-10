@@ -262,6 +262,8 @@ export const assertWorkspaceConfigTenant = async ({
       'Workspace configuration session lacks metadata permission',
     );
   }
+
+  return { workspaceId: workspace.id as string };
 };
 
 const checkpointHash = (checkpoint: WorkspaceConfigCheckpoint): string =>

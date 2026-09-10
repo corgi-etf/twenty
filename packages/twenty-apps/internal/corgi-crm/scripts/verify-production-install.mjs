@@ -8,7 +8,6 @@ const TELEGRAM_WORKER_ID = '32cf139c-a4bf-4d87-84f4-f70ac39a3942';
 const TELEGRAM_CRON_ID = 'e61bb12c-a0f5-421b-97d2-e2596e56cf59';
 const TELEGRAM_DAILY_WORKER_ID = 'a518c1f8-d80c-4260-8ef6-bd51a86b4eda';
 const APPROVED_ORIGIN = 'https://crm.corgiinvest.com';
-const APPROVED_WORKSPACE_ID = 'eabf5d9d-fc99-4acb-b160-710ecb1db996';
 const PAGE_SIZE = 100;
 const MAX_PAGES = 100;
 const UUID_PATTERN =
@@ -105,52 +104,6 @@ const exactlyOne = (values, predicate, label) => {
     throw new Error(`Expected exactly one ${label}, found ${matches.length}`);
   }
   return matches[0];
-};
-
-const parseTelegramLinkBindings = (raw) => {
-  let parsed;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    throw new Error('Telegram link configuration must be valid JSON');
-  }
-  if (
-    !parsed ||
-    typeof parsed !== 'object' ||
-    Array.isArray(parsed) ||
-    !Array.isArray(parsed.bindings)
-  ) {
-    throw new Error('Telegram link configuration needs a bindings array');
-  }
-  const bindings = parsed.bindings.map((binding) => {
-    if (!binding || typeof binding !== 'object' || Array.isArray(binding)) {
-      throw new Error('Telegram link binding must be an object');
-    }
-    const code = typeof binding.code === 'string' ? binding.code.trim() : '';
-    const workspaceMemberId =
-      typeof binding.workspaceMemberId === 'string'
-        ? binding.workspaceMemberId.trim()
-        : '';
-    const telegramUserId =
-      typeof binding.telegramUserId === 'string'
-        ? binding.telegramUserId.trim()
-        : '';
-    if (!code) throw new Error('Telegram link binding code is required');
-    if (!UUID_PATTERN.test(workspaceMemberId)) {
-      throw new Error('Telegram link workspace member must be a UUID');
-    }
-    if (!/^[1-9][0-9]*$/.test(telegramUserId)) {
-      throw new Error('Telegram link user must be a numeric ID');
-    }
-    return { code, workspaceMemberId, telegramUserId };
-  });
-  for (const property of ['code', 'workspaceMemberId', 'telegramUserId']) {
-    const values = bindings.map((binding) => binding[property]);
-    if (new Set(values).size !== values.length) {
-      throw new Error(`Duplicate Telegram link ${property} binding`);
-    }
-  }
-  return bindings;
 };
 
 const assertIanaTimeZone = (value) => {
@@ -256,6 +209,14 @@ const verifyTelegramApplicationContract = (application, workspaceId) => {
   if (workspaceVariable.value !== workspaceId) {
     throw new Error('Telegram application workspace variable is incorrect');
   }
+  const enabledVariable = exactlyOne(
+    variables,
+    (variable) => variable.key === 'CORGI_CRM_TELEGRAM_ENABLED',
+    'Telegram enabled variable',
+  );
+  if (enabledVariable.value !== 'true') {
+    throw new Error('Telegram application is not enabled');
+  }
   for (const key of TELEGRAM_VARIABLE_KEYS) {
     const variable = exactlyOne(
       variables,
@@ -272,12 +233,6 @@ const verifyTelegramApplicationContract = (application, workspaceId) => {
       (candidate) => candidate.key === key,
       `Telegram variable ${key}`,
     ).value.trim();
-  const linkBindings = parseTelegramLinkBindings(
-    variableValue('CORGI_CRM_TELEGRAM_LINK_CODES'),
-  );
-  if (linkBindings.length === 0) {
-    throw new Error('Telegram link configuration must include at least one binding');
-  }
   assertIanaTimeZone(variableValue('CORGI_CRM_TELEGRAM_TIME_ZONE'));
   assertQuarterHour(
     variableValue('CORGI_CRM_TELEGRAM_DAILY_SUMMARY_TIME'),
@@ -534,8 +489,8 @@ const main = async () => {
   }
   const origin = new URL(requiredEnvironment('CORGI_CRM_API_URL')).origin;
   const workspaceId = requiredEnvironment('CORGI_CRM_EXPECTED_WORKSPACE_ID');
-  if (origin !== APPROVED_ORIGIN || workspaceId !== APPROVED_WORKSPACE_ID) {
-    throw new Error('Production origin or workspace ID is not approved');
+  if (origin !== APPROVED_ORIGIN || !UUID_PATTERN.test(workspaceId)) {
+    throw new Error('Production origin or derived workspace ID is invalid');
   }
   const graphql = createGraphqlClient({
     origin,
