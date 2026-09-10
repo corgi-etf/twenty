@@ -25,7 +25,12 @@ const READ_MEETING_BOOKINGS_FOR_REPORT = `
     $after: String
   ) {
     meetingBookings(
-      filter: { and: [{ bookedAt: { gte: $start } }, { bookedAt: { lt: $end } }] }
+      filter: {
+        and: [
+          { or: [{ bookedAt: { gte: $start } }, { createdAt: { gte: $start } }] }
+          { or: [{ bookedAt: { lt: $end } }, { createdAt: { lt: $end } }] }
+        ]
+      }
       first: $first
       after: $after
     ) {
@@ -33,6 +38,7 @@ const READ_MEETING_BOOKINGS_FOR_REPORT = `
         node {
           id
           bookedAt
+          createdAt
           scheduledAt
           wholesalerId
           wholesaler { id name }
@@ -61,7 +67,15 @@ const optionalString = (value: unknown): string | undefined => {
 const parseBooking = (value: unknown): ReportMeetingBooking => {
   const node = record(value);
   const id = optionalString(node.id);
-  const bookedAt = optionalString(node.bookedAt);
+  // bookedAt is app-maintained and nullable, so a booking whose trigger never
+  // ran has no value and fails both window predicates -- present, real, and
+  // uncountable. createdAt always exists, so use it as the effective instant.
+  const rawBookedAt = optionalString(node.bookedAt);
+  const createdAt = optionalString(node.createdAt);
+  const bookedAt =
+    rawBookedAt && Number.isFinite(Date.parse(rawBookedAt))
+      ? rawBookedAt
+      : createdAt;
   const scheduledAt = optionalString(node.scheduledAt);
   if (
     !id ||

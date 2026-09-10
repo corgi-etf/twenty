@@ -45,6 +45,19 @@ export type OutreachRepository = {
     wholesalerId?: string;
   }): Promise<OutreachActivity[]>;
 };
+
+export type OutreachActivityOwner = {
+  id: string;
+  wholesalerId: string | null;
+};
+
+export type OutreachActivityOwnerRepository = {
+  getActivityOwner(id: string): Promise<OutreachActivityOwner | null>;
+  assignUnassignedActivityOwner(input: {
+    id: string;
+    wholesalerId: string;
+  }): Promise<boolean>;
+};
 import {
   type QuickLogActivityType,
   type QuickLogOutcome,

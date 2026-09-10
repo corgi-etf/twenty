@@ -90,6 +90,22 @@ cancelling, or reopening the same record does not count a second booking or
 send another booked alert. Historical bookings remain counted after a later
 cancellation. A meeting booking does not create an extra outreach activity.
 
+## Outreach activity ownership
+
+Every new Outreach Activity gets an owner. When a record is created without a
+**Wholesaler**, the `outreachActivity.created` trigger assigns the Wholesaler
+linked to the WorkspaceMember in the record's **Created by**, falling back to
+the acting member on the event. A Wholesaler chosen while logging the activity
+is never replaced: the trigger stops before reading the CRM when the create
+event already carries one, and its write filters on a still-empty owner, so a
+retry or a competing selection cannot overwrite a real choice.
+
+The trigger leaves the owner empty and reports why when the creator cannot be
+resolved to exactly one Wholesaler — an API or system actor with no member, a
+member the onboarding reconciliation has not linked yet, or a member linked to
+more than one Wholesaler. It never guesses an owner. Activities created before
+this trigger shipped keep their empty owner until they are backfilled.
+
 ## Telegram outreach channel
 
 Telegram is a thin channel over the app's `outreach` domain. The domain owns

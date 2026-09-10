@@ -498,3 +498,106 @@ describe('CoreOutreachRepository.createActivity', () => {
     expect(request).toHaveBeenCalledOnce();
   });
 });
+
+describe('CoreOutreachRepository outreach activity ownership', () => {
+  const activityId = '11111111-1111-4111-8111-111111111111';
+  const wholesalerId = '33333333-3333-4333-8333-333333333333';
+  const connection = (node: Record<string, unknown> | null) => ({
+    outreachActivities: {
+      edges: node ? [{ node }] : [],
+      pageInfo: { hasNextPage: false, endCursor: null },
+    },
+  });
+
+  it('reads an unowned activity as a null wholesaler', async () => {
+    const request = vi
+      .fn()
+      .mockResolvedValue(connection({ id: activityId, wholesalerId: null }));
+
+    await expect(
+      createRepository({ request }).repository.getActivityOwner(activityId),
+    ).resolves.toEqual({ id: activityId, wholesalerId: null });
+    expect(request).toHaveBeenCalledWith(
+      expect.objectContaining({
+        operationName: 'FindOutreachActivityOwner',
+        variables: { filter: { id: { eq: activityId } }, first: 2 },
+      }),
+    );
+  });
+
+  it('returns null for an activity that no longer exists', async () => {
+    const request = vi.fn().mockResolvedValue(connection(null));
+
+    await expect(
+      createRepository({ request }).repository.getActivityOwner(activityId),
+    ).resolves.toBeNull();
+  });
+
+  it('rejects an owner read that resolved to another record', async () => {
+    const request = vi
+      .fn()
+      .mockResolvedValue(connection({ id: 'other', wholesalerId: null }));
+
+    await expect(
+      createRepository({ request }).repository.getActivityOwner(activityId),
+    ).rejects.toThrow(/another record/i);
+  });
+
+  it('writes the owner only while the activity is still unassigned', async () => {
+    const request = vi.fn().mockResolvedValue({
+      updateOutreachActivities: [{ id: activityId, wholesalerId }],
+    });
+
+    await expect(
+      createRepository({ request }).repository.assignUnassignedActivityOwner({
+        id: activityId,
+        wholesalerId,
+      }),
+    ).resolves.toBe(true);
+    expect(request).toHaveBeenCalledOnce();
+    expect(request).toHaveBeenCalledWith(
+      expect.objectContaining({
+        operationName: 'AssignOutreachActivityOwner',
+        variables: {
+          filter: {
+            and: [
+              { id: { eq: activityId } },
+              { wholesalerId: { is: 'NULL' } },
+            ],
+          },
+          data: { wholesalerId },
+        },
+      }),
+    );
+  });
+
+  it('confirms a lost mutation response by exact readback', async () => {
+    const request = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('socket hang up'))
+      .mockResolvedValueOnce(connection({ id: activityId, wholesalerId }));
+
+    await expect(
+      createRepository({ request }).repository.assignUnassignedActivityOwner({
+        id: activityId,
+        wholesalerId,
+      }),
+    ).resolves.toBe(true);
+  });
+
+  it('reports a competing owner selection as a failed assignment', async () => {
+    const request = vi
+      .fn()
+      .mockResolvedValueOnce({ updateOutreachActivities: [] })
+      .mockResolvedValueOnce(
+        connection({ id: activityId, wholesalerId: 'someone-else' }),
+      );
+
+    await expect(
+      createRepository({ request }).repository.assignUnassignedActivityOwner({
+        id: activityId,
+        wholesalerId,
+      }),
+    ).resolves.toBe(false);
+  });
+});
