@@ -422,7 +422,7 @@ describe('Corgi CRM production app workflow contract', () => {
     );
   });
 
-  it('restores a previously verified Telegram state instead of tearing it down after an unrelated failure', () => {
+  it('never destroys a Telegram registration this run already proved live', () => {
     // Every Telegram-owned step needs a stable identifier, because the failure
     // policy tells a genuinely unverified configuration apart from an
     // unrelated failure by reading these outcomes and nothing else.
@@ -464,23 +464,61 @@ describe('Corgi CRM production app workflow contract', () => {
     );
     assert.match(
       policy,
-      /RESTORE_REQUESTED: \$\{\{ inputs\.telegram_restore_verified_state \}\}/,
+      /PRESERVE_REQUESTED: \$\{\{ inputs\.telegram_preserve_verified_state \}\}/,
     );
-    // Restoring is permitted only when Telegram was already verified before
-    // this run touched anything and no Telegram step failed. A failed Telegram
-    // step means the configuration is genuinely unverified, which is the one
-    // case unconditional fail-closed exists to prevent.
-    assert.match(policy, /"\$\{BASELINE_VERIFIED\}" == "true"/);
-    assert.match(policy, /"\$\{RESTORE_REQUESTED\}" == "true"/);
     for (const id of Object.values(telegramStepIds)) {
       const variable = `${id.replace(/^telegram_/, '').replace(/_configuration$/, '').toUpperCase()}_OUTCOME`;
       assert.match(
         policy,
         new RegExp(`${variable}: \\$\\{\\{ steps\\.${id}\\.outcome \\}\\}`),
       );
-      assert.match(policy, new RegExp(`"\\$\\{${variable}\\}" != "failure"`));
+      // Any Telegram-owned step failing means the configuration is genuinely
+      // unverified, which is the one case fail-closed exists to prevent.
+      assert.match(policy, new RegExp(`"\\$\\{${variable}\\}" == "failure"`));
     }
-    assert.match(policy, /restore=\$\{restore\}" >> "\$\{GITHUB_OUTPUT\}"/);
+    assert.match(policy, /action=\$\{action\}" >> "\$\{GITHUB_OUTPUT\}"/);
+
+    // Precedence is load-bearing and is expressed by branch order: default to
+    // teardown, honour the opt-out, then refuse to preserve anything once a
+    // Telegram step has failed, then hold on this run's own proof, and only
+    // then fall back to the pre-run baseline.
+    const order = [
+      /action=teardown/,
+      /"\$\{PRESERVE_REQUESTED\}" != "true"/,
+      /"\$\{DISABLE_OUTCOME\}" == "failure"/,
+      /action=hold/,
+      /"\$\{BASELINE_VERIFIED\}" == "true"/,
+      /action=restore/,
+    ].map((pattern) => policy.search(pattern));
+    assert.ok(order.every((index) => index !== -1));
+    assert.deepEqual(order, [...order].sort((a, b) => a - b));
+
+    // Holding is licensed by evidence from THIS run, not by the baseline: the
+    // live provider was registered and verified, and the trusted configuration
+    // was written. A later non-Telegram failure cannot unprove that.
+    assert.match(
+      policy,
+      /"\$\{REGISTER_OUTCOME\}" == "success" &&\n\s*"\$\{ENABLE_OUTCOME\}" == "success" \]\]; then\n\s*(?:#[^\n]*\n\s*)*action=hold/,
+    );
+
+    const hold = stepBlock(
+      'Hold the live Telegram registration this run already verified',
+    );
+    assert.match(hold, /\n        id: telegram_hold\n/);
+    assert.match(
+      hold,
+      /if:[^\n]*steps\.telegram_policy\.outputs\.action == 'hold'/,
+    );
+    // Holding must touch nothing. Re-verifying with the telegram mode would
+    // collapse this branch into a teardown of a provably live bot, because
+    // that mode is a superset of the installed mode that just failed.
+    for (const script of [
+      /configure-telegram\.mjs/,
+      /verify-telegram-live\.mjs/,
+      /verify-production-install\.mjs/,
+    ]) {
+      assert.doesNotMatch(hold, script);
+    }
 
     // The restore chain is the happy path's own verification, re-run. It ends
     // enabled only if the live provider registered, the trusted configuration
@@ -492,7 +530,7 @@ describe('Corgi CRM production app workflow contract', () => {
       ['Prove the restored Telegram topology before leaving it enabled', 'telegram_restore_verify', /verify-production-install\.mjs" telegram/],
     ];
     const gates = [
-      /if:[^\n]*steps\.telegram_policy\.outputs\.restore == 'true'/,
+      /if:[^\n]*steps\.telegram_policy\.outputs\.action == 'restore'/,
       /if:[^\n]*steps\.telegram_restore_disable\.outcome == 'success'/,
       /if:[^\n]*steps\.telegram_restore_register\.outcome == 'success'/,
       /if:[^\n]*steps\.telegram_restore_enable\.outcome == 'success'/,
@@ -513,7 +551,11 @@ describe('Corgi CRM production app workflow contract', () => {
       assert.ok(position(name) < position(chain[index + 1][0]));
     });
     assert.ok(
-      position('Verify Telegram is disabled') < position(chain[0][0]) &&
+      position('Verify Telegram is disabled') <
+        position('Hold the live Telegram registration this run already verified') &&
+        position(
+          'Hold the live Telegram registration this run already verified',
+        ) < position(chain[0][0]) &&
         position(chain.at(-1)[0]) <
           position('Fail closed after Telegram setup failure'),
     );
@@ -529,9 +571,14 @@ describe('Corgi CRM production app workflow contract', () => {
     );
     assert.doesNotMatch(restoreRegister, /CORGI_CRM_TELEGRAM_GROUP_TOPICS:/);
 
-    // Telegram is never left enabled-but-unverified: on any failure either the
-    // full restore chain verified it, or fail-closed tore it down.
+    // Telegram is never left enabled-but-unverified and never torn down once
+    // proven live: on any failure the policy either held a registration this
+    // run verified, or the full restore chain verified one, or teardown ran.
     const failClosed = stepBlock('Fail closed after Telegram setup failure');
+    assert.match(
+      failClosed,
+      /if:[^\n]*steps\.telegram_policy\.outputs\.action != 'hold'/,
+    );
     assert.match(
       failClosed,
       /if:[^\n]*steps\.telegram_restore_verify\.outcome != 'success'/,

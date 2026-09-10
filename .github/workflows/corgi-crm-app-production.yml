@@ -44,8 +44,8 @@ on:
         required: false
         default: false
         type: boolean
-      telegram_restore_verified_state:
-        description: On an unrelated failure, restore Telegram to the verified state it started in instead of tearing it down
+      telegram_preserve_verified_state:
+        description: On an unrelated failure, keep a registration this run proved live or restore one verified before the run, instead of tearing it down
         required: false
         default: true
         type: boolean
@@ -601,7 +601,7 @@ jobs:
         shell: bash
         env:
           BASELINE_VERIFIED: ${{ steps.telegram_baseline.outputs.verified }}
-          RESTORE_REQUESTED: ${{ inputs.telegram_restore_verified_state }}
+          PRESERVE_REQUESTED: ${{ inputs.telegram_preserve_verified_state }}
           DISABLE_OUTCOME: ${{ steps.telegram_disable.outcome }}
           STAGE_OUTCOME: ${{ steps.telegram_stage.outcome }}
           REGISTER_OUTCOME: ${{ steps.telegram_register.outcome }}
@@ -609,25 +609,49 @@ jobs:
           CONTRACT_OUTCOME: ${{ steps.telegram_contract.outcome }}
         run: |
           set -euo pipefail
-          # Restore only what was already proven: Telegram must have been
-          # enabled before this run touched anything, and no Telegram step may
-          # have failed. A failed Telegram step means the configuration is
-          # genuinely unverified, which is the case fail-closed exists for.
-          restore=false
-          if [[ "${BASELINE_VERIFIED}" == "true" && "${RESTORE_REQUESTED}" == "true" &&
-                "${DISABLE_OUTCOME}" != "failure" &&
-                "${STAGE_OUTCOME}" != "failure" &&
-                "${REGISTER_OUTCOME}" != "failure" &&
-                "${ENABLE_OUTCOME}" != "failure" &&
-                "${CONTRACT_OUTCOME}" != "failure" ]]; then
-            restore=true
+          action=teardown
+          reason='no preserved state to fall back on'
+          if [[ "${PRESERVE_REQUESTED}" != "true" ]]; then
+            reason='operator requested unconditional fail-closed'
+          elif [[ "${DISABLE_OUTCOME}" == "failure" ||
+                  "${STAGE_OUTCOME}" == "failure" ||
+                  "${REGISTER_OUTCOME}" == "failure" ||
+                  "${ENABLE_OUTCOME}" == "failure" ||
+                  "${CONTRACT_OUTCOME}" == "failure" ]]; then
+            # A Telegram step itself failed, so the configuration is genuinely
+            # unverified. This is the one case fail-closed exists to prevent.
+            reason='a Telegram step failed, so the configuration is unverified'
+          elif [[ "${REGISTER_OUTCOME}" == "success" &&
+                  "${ENABLE_OUTCOME}" == "success" ]]; then
+            # This run already registered, verified and enabled the live
+            # provider. A later non-Telegram failure cannot unprove that, and
+            # rebuilding a registration that is already live would take the bot
+            # down for no reason. Leave it exactly as it is.
+            action=hold
+            reason='this run registered, verified and enabled the live provider'
+          elif [[ "${BASELINE_VERIFIED}" == "true" ]]; then
+            action=restore
+            reason='Telegram was verified before this run touched anything'
           fi
-          echo "restore=${restore}" >> "${GITHUB_OUTPUT}"
-          echo "Telegram restore policy: ${restore}"
+          echo "action=${action}" >> "${GITHUB_OUTPUT}"
+          echo "Telegram failure policy: ${action} (${reason})"
+
+      - name: Hold the live Telegram registration this run already verified
+        id: telegram_hold
+        if: ${{ failure() && steps.telegram_policy.outputs.action == 'hold' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Deliberately does nothing to Telegram. Re-verifying here with
+          # verify-production-install telegram would be worse than useless: that
+          # mode is a superset of the installed mode, so a non-Telegram install
+          # failure would fail it again and collapse this branch back into a
+          # teardown of a provably live bot.
+          echo 'Telegram stays live: this run registered, verified and enabled it.'
 
       - name: Restore the verified Telegram gate to a known disabled state
         id: telegram_restore_disable
-        if: ${{ failure() && steps.telegram_policy.outputs.restore == 'true' }}
+        if: ${{ failure() && steps.telegram_policy.outputs.action == 'restore' }}
         env:
           CORGI_CRM_API_KEY: ${{ steps.credential.outputs.token }}
           CORGI_CRM_TELEGRAM_TIME_ZONE: ${{ vars.CORGI_CRM_TELEGRAM_TIME_ZONE }}
@@ -668,7 +692,7 @@ jobs:
         run: node "${APP_PATH}/scripts/verify-production-install.mjs" telegram
 
       - name: Fail closed after Telegram setup failure
-        if: ${{ failure() && inputs.telegram_enable && steps.credential.outputs.token != '' && steps.telegram_restore_verify.outcome != 'success' }}
+        if: ${{ failure() && inputs.telegram_enable && steps.credential.outputs.token != '' && steps.telegram_policy.outputs.action != 'hold' && steps.telegram_restore_verify.outcome != 'success' }}
         env:
           CORGI_CRM_API_KEY: ${{ steps.credential.outputs.token }}
           CORGI_CRM_TELEGRAM_BOT_TOKEN: ${{ secrets.CORGI_CRM_TELEGRAM_BOT_TOKEN }}
