@@ -49,6 +49,10 @@ test('workflow is exact-SHA, serialized, two-phase, and secret-backed', async ()
   assert.match(workflow, /expected_row_sequence_sha256:/);
   assert.match(workflow, /source_sha256:/);
   assert.match(workflow, /expected_rows:/);
+  assert.match(workflow, /expected_source_rows:/);
+  assert.match(workflow, /expected_phone_calls:/);
+  assert.match(workflow, /expected_voicemails:/);
+  assert.match(workflow, /expected_emails:/);
   assert.match(workflow, /activity_date:/);
   assert.match(workflow, /time_zone:/);
   assert.match(workflow, /import_id:/);
@@ -59,10 +63,39 @@ test('workflow is exact-SHA, serialized, two-phase, and secret-backed', async ()
     /d0c00183b467ef4a8e03c7307edf9af28fadbe6eddaadb1b1e30ee3c3438051f/,
   );
   assert.doesNotMatch(workflow, /Nash - Calls|Sheet1\.csv|expected_rows:\s*63/);
-  assert.doesNotMatch(
-    workflow,
-    /8df6f973c386ce05ffc4059fb78072f392f3c56e6330620fe6b2fc5c59c1cf74|expected_rows:\s*(25|36)/,
-  );
+  assert.doesNotMatch(workflow, /expected_rows:\s*(25|36)/);
+});
+
+test('v2 approval binds the complete PII-free normalization receipt', async () => {
+  const [workflow, maintenanceSpec] = await Promise.all([
+    readFile(workflowPath, 'utf8'),
+    readFile(maintenanceSpecPath, 'utf8'),
+  ]);
+
+  for (const environmentName of [
+    'CRM_ACTIVITY_IMPORT_EXPECTED_SOURCE_ROWS',
+    'CRM_ACTIVITY_IMPORT_EXPECTED_PHONE_CALLS',
+    'CRM_ACTIVITY_IMPORT_EXPECTED_VOICEMAILS',
+    'CRM_ACTIVITY_IMPORT_EXPECTED_EMAILS',
+  ]) {
+    assert.match(workflow, new RegExp(environmentName));
+    assert.match(maintenanceSpec, new RegExp(environmentName));
+  }
+  for (const receiptField of [
+    'sourceDocumentSha256',
+    'normalizedCsvSha256',
+    'rowSequenceSha256',
+    'sourceRowCount',
+    'activityCount',
+    'phoneCallCount',
+    'voicemailCount',
+    'emailCount',
+  ]) {
+    assert.match(
+      workflow,
+      new RegExp(`normalizationReceipt[\\s\\S]*?${receiptField}`),
+    );
+  }
 });
 
 test('ownership is explicit, authenticated, and legacy Nash remains fail-closed', async () => {

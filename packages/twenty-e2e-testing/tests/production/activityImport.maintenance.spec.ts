@@ -99,6 +99,40 @@ test('runs a guarded, idempotent outreach activity import', async ({
   });
   const source = await readFile(paths.sourcePath);
   const identityArtifact = await parseIdentityArtifact(paths.identityPath);
+  const sourceSha256 = requiredEnvironment('CRM_ACTIVITY_IMPORT_SOURCE_SHA256');
+  const provenanceSha256 = requiredEnvironment(
+    'CRM_ACTIVITY_IMPORT_PROVENANCE_SHA256',
+  );
+  const expectedRowSequenceSha256 =
+    process.env.CRM_ACTIVITY_IMPORT_EXPECTED_ROW_SEQUENCE_SHA256 || undefined;
+  const expectedRows = Number(
+    requiredEnvironment('CRM_ACTIVITY_IMPORT_EXPECTED_ROWS'),
+  );
+  const normalizationReceipt =
+    sourceFormat === 'completed-actions-v2'
+      ? {
+          schemaVersion: 1 as const,
+          sourceFormat,
+          sourceDocumentSha256: provenanceSha256,
+          normalizedCsvSha256: sourceSha256,
+          rowSequenceSha256: requiredEnvironment(
+            'CRM_ACTIVITY_IMPORT_EXPECTED_ROW_SEQUENCE_SHA256',
+          ),
+          sourceRowCount: Number(
+            requiredEnvironment('CRM_ACTIVITY_IMPORT_EXPECTED_SOURCE_ROWS'),
+          ),
+          activityCount: expectedRows,
+          phoneCallCount: Number(
+            requiredEnvironment('CRM_ACTIVITY_IMPORT_EXPECTED_PHONE_CALLS'),
+          ),
+          voicemailCount: Number(
+            requiredEnvironment('CRM_ACTIVITY_IMPORT_EXPECTED_VOICEMAILS'),
+          ),
+          emailCount: Number(
+            requiredEnvironment('CRM_ACTIVITY_IMPORT_EXPECTED_EMAILS'),
+          ),
+        }
+      : undefined;
   const requestGate = createActivityImportRequestGate();
   await assertWorkspaceConfigTenant({
     request: page.request,
@@ -118,19 +152,14 @@ test('runs a guarded, idempotent outreach activity import', async ({
       csvOptions: {
         sourceFormat,
         ownerLabel,
-        sourceSha256: requiredEnvironment('CRM_ACTIVITY_IMPORT_SOURCE_SHA256'),
-        provenanceSha256: requiredEnvironment(
-          'CRM_ACTIVITY_IMPORT_PROVENANCE_SHA256',
-        ),
-        expectedRowSequenceSha256:
-          process.env.CRM_ACTIVITY_IMPORT_EXPECTED_ROW_SEQUENCE_SHA256 ||
-          undefined,
-        expectedRows: Number(
-          requiredEnvironment('CRM_ACTIVITY_IMPORT_EXPECTED_ROWS'),
-        ),
+        sourceSha256,
+        provenanceSha256,
+        expectedRowSequenceSha256,
+        expectedRows,
         activityDate: requiredEnvironment('CRM_ACTIVITY_IMPORT_DATE'),
         timeZone: requiredEnvironment('CRM_ACTIVITY_IMPORT_TIME_ZONE'),
         importId: requiredEnvironment('CRM_ACTIVITY_IMPORT_ID'),
+        normalizationReceipt,
       },
       identityArtifact,
       mode,
