@@ -18,6 +18,7 @@ import {
   createMeetingCanaryReceipt,
   meetingCanaryRecords,
   meetingCanaryGraphqlFailure,
+  inspectMeetingCanaryCalendarResponse,
 } from './meetingBookingCanaryPreflight';
 
 const repositoryRoot = join(__dirname, '../../../..');
@@ -1084,3 +1085,384 @@ for (const timeZone of ['UTC', 'America/Chicago']) {
     });
   }
 }
+
+const calendarTargetId = 'fdf28ddc-bccf-41ab-8fda-031670c774f7';
+const calendarOrigin = 'https://crm.corgiinvest.com';
+const calendarResponse = (
+  overrides: {
+    url?: string;
+    method?: string;
+    operationName?: string;
+    requestBody?: unknown;
+    status?: number;
+    body?: unknown;
+    rejectBody?: boolean;
+  } = {},
+) => {
+  let bodyReads = 0;
+  return {
+    get bodyReads() {
+      return bodyReads;
+    },
+    url: () => overrides.url ?? `${calendarOrigin}/graphql`,
+    request: () => ({
+      method: () => overrides.method ?? 'POST',
+      postDataJSON: () =>
+        overrides.requestBody ?? {
+          operationName: overrides.operationName ?? 'GroupByMeetingBookings',
+          variables: { private: 'must-not-escape' },
+        },
+    }),
+    status: () => overrides.status ?? 200,
+    json: async () => {
+      bodyReads++;
+      if (overrides.rejectBody) throw new Error('private-network-error');
+      return (
+        overrides.body ?? {
+          data: {
+            meetingBookingsGroupBy: [
+              {
+                edges: [
+                  { node: { id: calendarTargetId, name: 'private-name' } },
+                ],
+                groupByDimensionValues: ['private-date'],
+              },
+            ],
+          },
+        }
+      );
+    },
+  };
+};
+
+for (const excluded of [
+  { url: 'https://untrusted.example/graphql' },
+  { url: `${calendarOrigin}/metadata` },
+  { url: `${calendarOrigin}/graphql?private=value` },
+  { url: `${calendarOrigin}/graphql#fragment` },
+  { url: 'not-a-url' },
+  { method: 'GET' },
+  { operationName: 'FindManyMeetingBookings' },
+  { operationName: 'GroupByCompanies' },
+  { requestBody: [{ operationName: 'GroupByMeetingBookings' }] },
+]) {
+  test(`calendar observer ignores excluded request ${JSON.stringify(excluded)}`, async () => {
+    const response = calendarResponse(excluded);
+    expect(
+      await inspectMeetingCanaryCalendarResponse(
+        response,
+        calendarOrigin,
+        calendarTargetId,
+      ),
+    ).toBeNull();
+    expect(response.bodyReads).toBe(0);
+  });
+}
+
+test('calendar observer reduces only the exact native query to safe evidence', async () => {
+  const evidence = await inspectMeetingCanaryCalendarResponse(
+    calendarResponse(),
+    calendarOrigin,
+    calendarTargetId,
+  );
+  expect(evidence).toEqual({
+    httpStatus: 200,
+    category: 'OK',
+    groupCount: 1,
+    edgeCount: 1,
+    targetPresent: true,
+    targetWithinFirstFive: true,
+  });
+  expect(JSON.stringify(evidence)).not.toContain(calendarTargetId);
+  expect(JSON.stringify(evidence)).not.toContain('private');
+});
+
+test('calendar observer distinguishes empty data from errors without exposing payloads', async () => {
+  for (const [response, category] of [
+    [calendarResponse({ status: 403 }), 'HTTP'],
+    [
+      calendarResponse({
+        body: {
+          errors: [
+            {
+              message: 'private',
+              extensions: { code: 'FORBIDDEN', private: 'secret' },
+            },
+          ],
+        },
+      }),
+      'GRAPHQL_PERMISSION',
+    ],
+    [
+      calendarResponse({
+        body: {
+          errors: [
+            { message: 'private', extensions: { code: 'private-code' } },
+          ],
+        },
+      }),
+      'GRAPHQL_OTHER',
+    ],
+    [
+      calendarResponse({ body: { data: { meetingBookingsGroupBy: {} } } }),
+      'MALFORMED_RESPONSE',
+    ],
+    [
+      calendarResponse({
+        body: { data: { meetingBookingsGroupBy: [{ edges: [null] }] } },
+      }),
+      'MALFORMED_RESPONSE',
+    ],
+    [calendarResponse({ rejectBody: true }), 'MALFORMED_RESPONSE'],
+  ] as const) {
+    const evidence = await inspectMeetingCanaryCalendarResponse(
+      response,
+      calendarOrigin,
+      calendarTargetId,
+    );
+    expect(evidence?.category).toBe(category);
+    expect(JSON.stringify(evidence)).not.toMatch(/private|secret/);
+    expect(Object.keys(evidence!)).toEqual([
+      'httpStatus',
+      'category',
+      'groupCount',
+      'edgeCount',
+      'targetPresent',
+      'targetWithinFirstFive',
+    ]);
+  }
+  expect(
+    await inspectMeetingCanaryCalendarResponse(
+      calendarResponse({ body: { data: { meetingBookingsGroupBy: [] } } }),
+      calendarOrigin,
+      calendarTargetId,
+    ),
+  ).toEqual({
+    httpStatus: 200,
+    category: 'OK',
+    groupCount: 0,
+    edgeCount: 0,
+    targetPresent: false,
+    targetWithinFirstFive: false,
+  });
+});
+
+test('calendar observer bounds counts and rejects oversized responses', async () => {
+  const evidence = await inspectMeetingCanaryCalendarResponse(
+    calendarResponse({
+      body: {
+        data: {
+          meetingBookingsGroupBy: Array.from({ length: 1001 }, () => ({
+            edges: [],
+          })),
+        },
+      },
+    }),
+    calendarOrigin,
+    calendarTargetId,
+  );
+  expect(evidence).toEqual({
+    httpStatus: 200,
+    category: 'MALFORMED_RESPONSE',
+    groupCount: 1000,
+    edgeCount: 0,
+    targetPresent: false,
+    targetWithinFirstFive: false,
+  });
+});
+
+test('calendar observer distinguishes a returned target beyond the rendered first five', async () => {
+  const otherId = '38f2d0dd-18b3-4bda-914e-a80d95209a12';
+  const evidence = await inspectMeetingCanaryCalendarResponse(
+    calendarResponse({
+      body: {
+        data: {
+          meetingBookingsGroupBy: [
+            {
+              edges: [
+                otherId,
+                otherId,
+                otherId,
+                otherId,
+                otherId,
+                calendarTargetId,
+              ].map((id) => ({ node: { id } })),
+            },
+          ],
+        },
+      },
+    }),
+    calendarOrigin,
+    calendarTargetId,
+  );
+  expect(evidence).toEqual({
+    httpStatus: 200,
+    category: 'OK',
+    groupCount: 1,
+    edgeCount: 6,
+    targetPresent: true,
+    targetWithinFirstFive: false,
+  });
+  const limitSource = readFileSync(
+    join(
+      repositoryRoot,
+      'packages/twenty-front/src/modules/object-record/record-calendar/constants/RecordCalendarVisibleRecordLimit.ts',
+    ),
+    'utf8',
+  );
+  expect(limitSource).toContain('RECORD_CALENDAR_VISIBLE_RECORD_LIMIT = 5');
+});
+
+test('calendar observer catches async rejections, drains pending work, and retains only five safe entries', async () => {
+  const source = readFileSync(
+    join(__dirname, 'meetingBooking.maintenance.spec.ts'),
+    'utf8',
+  );
+  const observerSource = source.match(
+    /const observeCalendarResponse = \(response: Response\): void => \{[\s\S]*?\n  \};/,
+  )?.[0];
+  expect(observerSource).toBeDefined();
+  const evidence: unknown[] = [];
+  const pending = new Set<Promise<void>>();
+  const observe = runInNewContext(
+    `${observerSource!.replace('(response: Response): void', '(response)')} observeCalendarResponse;`,
+    {
+      meetingId: calendarTargetId,
+      APPROVED_ORIGIN: calendarOrigin,
+      calendarObservations: pending,
+      calendarQueryEvidence: evidence,
+      inspectMeetingCanaryCalendarResponse: async () => {
+        throw new Error('private-observer-failure');
+      },
+    },
+  ) as (response: unknown) => void;
+  for (let index = 0; index < 8; index++) {
+    observe({ private: 'response' });
+    await Promise.all(pending);
+    expect(pending.size).toBe(0);
+  }
+  expect(evidence).toHaveLength(5);
+  expect(evidence).toEqual(
+    Array.from({ length: 5 }, () => ({
+      httpStatus: 0,
+      category: 'MALFORMED_RESPONSE',
+      groupCount: 0,
+      edgeCount: 0,
+      targetPresent: false,
+      targetWithinFirstFive: false,
+    })),
+  );
+  expect(JSON.stringify(evidence)).not.toContain('private');
+});
+
+test('calendar diagnostics preserve exact assertions and detach before cleanup', () => {
+  const source = readFileSync(
+    join(__dirname, 'meetingBooking.maintenance.spec.ts'),
+    'utf8',
+  );
+  for (const step of [
+    'index navigation',
+    'view picker',
+    'view choice',
+    'Today visibility',
+    'Today click',
+    'scroll container visibility',
+    'run-owned name visibility',
+    'disabled gate',
+    'final attribution reread',
+    'final attribution equality',
+  ]) {
+    expect(source).toContain(`step = 'calendar ${step}'`);
+  }
+  expect(source).toContain('await expect(todayButton).toBeVisible()');
+  expect(source).toContain('await expect(calendar).toBeVisible()');
+  expect(source).toContain('await expect(calendarName).toBeVisible()');
+  expect(source).toContain('calendar.getByText(meetingName, { exact: true })');
+  expect(source).toContain("page.on('response', observeCalendarResponse)");
+  expect(source).toMatch(
+    /finally \{\s*page\.off\('response', observeCalendarResponse\);\s*await Promise\.all\(calendarObservations\);\s*let cleanupStep = 'remove native request guard'/,
+  );
+  const cardSource = readFileSync(
+    join(
+      repositoryRoot,
+      'packages/twenty-front/src/modules/object-record/record-calendar/record-calendar-card/components/RecordCalendarCardDraggableContainer.tsx',
+    ),
+    'utf8',
+  );
+  expect(cardSource).toContain(
+    'id={`record-calendar-card-${recordId}-${calendarDay}`}',
+  );
+  expect(source).toContain('[id^="record-calendar-card-${meetingId}-"]');
+});
+
+test('calendar observer caps oversized edge counts before inspecting any record', async () => {
+  const evidence = await inspectMeetingCanaryCalendarResponse(
+    calendarResponse({
+      body: {
+        data: {
+          meetingBookingsGroupBy: [
+            {
+              edges: Array.from({ length: 10_001 }, () => ({
+                private: 'must-not-escape',
+              })),
+            },
+          ],
+        },
+      },
+    }),
+    calendarOrigin,
+    calendarTargetId,
+  );
+  expect(evidence).toEqual({
+    httpStatus: 200,
+    category: 'MALFORMED_RESPONSE',
+    groupCount: 1,
+    edgeCount: 10_000,
+    targetPresent: false,
+    targetWithinFirstFive: false,
+  });
+});
+
+test('calendar observer bounds a never-completing body read without leaking or rejecting', async () => {
+  const response = {
+    ...calendarResponse(),
+    json: () => new Promise<unknown>(() => {}),
+  };
+  const evidence = await inspectMeetingCanaryCalendarResponse(
+    response,
+    calendarOrigin,
+    calendarTargetId,
+  );
+  expect(evidence).toEqual({
+    httpStatus: 200,
+    category: 'TIMEOUT',
+    groupCount: 0,
+    edgeCount: 0,
+    targetPresent: false,
+    targetWithinFirstFive: false,
+  });
+});
+
+test('calendar first-five evidence uses the target edge position within its own group', async () => {
+  const otherEdge = { node: { id: '38f2d0dd-18b3-4bda-914e-a80d95209a12' } };
+  for (const targetIndex of [4, 5]) {
+    const groups = [
+      { edges: Array.from({ length: 5 }, () => otherEdge) },
+      {
+        edges: [
+          ...Array.from({ length: targetIndex }, () => otherEdge),
+          { node: { id: calendarTargetId } },
+        ],
+      },
+    ];
+    const evidence = await inspectMeetingCanaryCalendarResponse(
+      calendarResponse({ body: { data: { meetingBookingsGroupBy: groups } } }),
+      calendarOrigin,
+      calendarTargetId,
+    );
+    expect(evidence?.category).toBe('OK');
+    expect(evidence?.groupCount).toBe(2);
+    expect(evidence?.targetPresent).toBe(true);
+    expect(evidence?.targetWithinFirstFive).toBe(targetIndex < 5);
+  }
+});

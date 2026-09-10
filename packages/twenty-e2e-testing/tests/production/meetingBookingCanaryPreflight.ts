@@ -153,6 +153,131 @@ export const meetingCanaryGraphqlFailure = (
   return new MeetingCanaryCheckError('GRAPHQL_OTHER');
 };
 
+export type MeetingCanaryCalendarEvidence = {
+  httpStatus: number;
+  category: MeetingCanaryFailureCategory | 'OK';
+  groupCount: number;
+  edgeCount: number;
+  targetPresent: boolean;
+  targetWithinFirstFive: boolean;
+};
+
+type CalendarResponse = {
+  url(): string;
+  request(): { method(): string; postDataJSON(): unknown };
+  status(): number;
+  json(): Promise<unknown>;
+};
+
+const calendarObject = (value: unknown): value is Record<string, unknown> =>
+  value !== null && typeof value === 'object' && !Array.isArray(value);
+
+// Observability only: never retain a request, response, name, record ID or error
+// message. Unrelated requests are rejected before their response body is read.
+export const inspectMeetingCanaryCalendarResponse = async (
+  response: CalendarResponse,
+  approvedOrigin: string,
+  targetId: string,
+): Promise<MeetingCanaryCalendarEvidence | null> => {
+  try {
+    const url = new URL(response.url());
+    const request = response.request();
+    if (
+      url.origin !== approvedOrigin ||
+      url.pathname !== '/graphql' ||
+      url.search ||
+      url.hash ||
+      url.username ||
+      url.password ||
+      request.method() !== 'POST' ||
+      !UUID_PATTERN.test(targetId)
+    )
+      return null;
+    const postData = request.postDataJSON();
+    if (
+      !calendarObject(postData) ||
+      postData.operationName !== 'GroupByMeetingBookings'
+    )
+      return null;
+  } catch {
+    return null;
+  }
+
+  const evidence: MeetingCanaryCalendarEvidence = {
+    httpStatus: 0,
+    category: 'MALFORMED_RESPONSE',
+    groupCount: 0,
+    edgeCount: 0,
+    targetPresent: false,
+    targetWithinFirstFive: false,
+  };
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const status = response.status();
+    if (!Number.isInteger(status) || status < 100 || status > 599)
+      return evidence;
+    evidence.httpStatus = status;
+    if (status < 200 || status >= 300) {
+      evidence.category = 'HTTP';
+      return evidence;
+    }
+    const body = await Promise.race([
+      response.json(),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () => reject(new MeetingCanaryCheckError('TIMEOUT')),
+          5_000,
+        );
+      }),
+    ]);
+    if (!calendarObject(body)) return evidence;
+    if (
+      Array.isArray(body.errors) ? body.errors.length > 0 : Boolean(body.errors)
+    ) {
+      evidence.category = meetingCanaryGraphqlFailure(body.errors).category;
+      return evidence;
+    }
+    if (!calendarObject(body.data)) return evidence;
+    const groups = body.data.meetingBookingsGroupBy;
+    if (!Array.isArray(groups)) return evidence;
+    evidence.groupCount = Math.min(groups.length, 1000);
+    if (groups.length > 1000) return evidence;
+    let targetPresent = false;
+    let targetWithinFirstFive = false;
+    for (const group of groups) {
+      if (!calendarObject(group) || !Array.isArray(group.edges))
+        return evidence;
+      const edgeCount = evidence.edgeCount + group.edges.length;
+      evidence.edgeCount = Math.min(edgeCount, 10_000);
+      if (edgeCount > 10_000) return evidence;
+      for (const [index, edge] of group.edges.entries()) {
+        if (
+          !calendarObject(edge) ||
+          !calendarObject(edge.node) ||
+          typeof edge.node.id !== 'string' ||
+          !UUID_PATTERN.test(edge.node.id)
+        )
+          return evidence;
+        if (edge.node.id === targetId) {
+          targetPresent = true;
+          if (index < 5) targetWithinFirstFive = true;
+        }
+      }
+    }
+    evidence.category = 'OK';
+    evidence.targetPresent = targetPresent;
+    evidence.targetWithinFirstFive = targetWithinFirstFive;
+  } catch (error) {
+    evidence.category =
+      error instanceof MeetingCanaryCheckError
+        ? error.category
+        : 'MALFORMED_RESPONSE';
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+  return evidence;
+};
+
 export type MeetingCanaryRecord = {
   id: string;
   name: string | null;

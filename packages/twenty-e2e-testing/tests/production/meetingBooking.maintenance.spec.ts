@@ -1,4 +1,10 @@
-import { expect, test, type Route } from '@playwright/test';
+import {
+  expect,
+  test,
+  type Locator,
+  type Response,
+  type Route,
+} from '@playwright/test';
 import { execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { resolve } from 'node:path';
@@ -9,11 +15,13 @@ import {
   MEETING_CANARY_ACTOR_IDENTITY_QUERY,
   MEETING_CANARY_MEMBERS_QUERY,
   createMeetingCanaryReceipt,
+  inspectMeetingCanaryCalendarResponse,
   meetingCanaryFailureCategory,
   meetingCanaryGraphqlFailure,
   meetingCanaryRecords,
   MeetingCanaryCheckError,
   type MeetingCanaryRecord as Meeting,
+  type MeetingCanaryCalendarEvidence,
   parseMeetingCanaryRecovery,
   resolveMeetingCanaryActor,
   resolveMeetingCanaryRecord,
@@ -108,6 +116,9 @@ test('books and reschedules a native CRM meeting while Telegram is disabled', as
   let phase = 'authenticated tenant permission preflight';
   let step = 'start';
   const locatorCounts: Record<string, number> = {};
+  let calendarDiagnosticLocators: Record<string, Locator> = {};
+  const calendarQueryEvidence: MeetingCanaryCalendarEvidence[] = [];
+  const calendarObservations = new Set<Promise<void>>();
   let meetingId: string | undefined;
   let initialName: string | null | undefined;
   let named = false;
@@ -119,6 +130,36 @@ test('books and reschedules a native CRM meeting while Telegram is disabled', as
   const nameNonce = randomUUID();
   const meetingName = `CRM meeting canary ${requiredEnvironment('GITHUB_RUN_ID')}-${requiredEnvironment('GITHUB_RUN_ATTEMPT')}-${nameNonce}`;
   const recovery = parseMeetingCanaryRecovery(process.env);
+
+  const observeCalendarResponse = (response: Response): void => {
+    if (!meetingId || calendarObservations.size >= 10) return;
+    const observation = inspectMeetingCanaryCalendarResponse(
+      response,
+      APPROVED_ORIGIN,
+      meetingId,
+    )
+      .then((evidence) => {
+        if (!evidence) return;
+        if (calendarQueryEvidence.length === 5) calendarQueryEvidence.shift();
+        calendarQueryEvidence.push(evidence);
+      })
+      .catch(() => {
+        // Never forward observer exceptions or allow unhandled async rejections.
+        if (calendarQueryEvidence.length === 5) calendarQueryEvidence.shift();
+        calendarQueryEvidence.push({
+          httpStatus: 0,
+          category: 'MALFORMED_RESPONSE',
+          groupCount: 0,
+          edgeCount: 0,
+          targetPresent: false,
+          targetWithinFirstFive: false,
+        });
+      })
+      .finally(() => {
+        calendarObservations.delete(observation);
+      });
+    calendarObservations.add(observation);
+  };
 
   const graphql = async <TData>(
     endpoint: '/metadata' | '/graphql',
@@ -727,31 +768,60 @@ test('books and reschedules a native CRM meeting while Telegram is disabled', as
       .toBe(true);
 
     phase = 'native calendar displays the scheduled meeting';
-    await page.goto('/objects/meetingBookings');
-    await page.getByText('All Meetings', { exact: true }).click();
-    await page.getByText('Meeting Calendar', { exact: true }).click();
-    await expect(
-      page.getByRole('button', { name: 'Today', exact: true }),
-    ).toBeVisible();
-    await page.getByRole('button', { name: 'Today', exact: true }).click();
+    const todayButton = page.getByRole('button', {
+      name: 'Today',
+      exact: true,
+    });
     const calendar = page.locator('[id*="scroll-wrapper-record-calendar-"]');
+    const calendarName = calendar.getByText(meetingName, { exact: true });
+    calendarDiagnosticLocators = {
+      calendarTodayButtons: todayButton,
+      calendarContainers: calendar,
+      calendarRunOwnedCards: page.locator(
+        `[id^="record-calendar-card-${meetingId}-"]`,
+      ),
+      calendarRunOwnedLabels: calendarName,
+      calendarMonthLabels: page.getByText('Month', { exact: true }),
+      calendarWeekLabels: page.getByText('Week', { exact: true }),
+      calendarDayLabels: page.getByText('Day', { exact: true }),
+    };
+    page.on('response', observeCalendarResponse);
+    step = 'calendar index navigation';
+    await page.goto('/objects/meetingBookings');
+    step = 'calendar view picker';
+    await page.getByText('All Meetings', { exact: true }).click();
+    step = 'calendar view choice';
+    await page.getByText('Meeting Calendar', { exact: true }).click();
+    step = 'calendar Today visibility';
+    await expect(todayButton).toBeVisible();
+    step = 'calendar Today click';
+    await todayButton.click();
+    step = 'calendar scroll container visibility';
     await expect(calendar).toBeVisible();
-    await expect(
-      calendar.getByText(meetingName, { exact: true }),
-    ).toBeVisible();
+    step = 'calendar run-owned name visibility';
+    await expect(calendarName).toBeVisible();
+    step = 'calendar disabled gate';
     await assertDisabled();
+    step = 'calendar final attribution reread';
     const finalMeeting = await readMeeting();
+    step = 'calendar final attribution equality';
     expect(
       finalMeeting?.bookedAt === bookedMeeting.bookedAt &&
         finalMeeting?.bookedById === bookedMeeting.bookedById,
     ).toBe(true);
   } catch (error) {
+    for (const [key, locator] of Object.entries(calendarDiagnosticLocators)) {
+      locatorCounts[key] = await locator.count().catch(() => -1);
+    }
+    await Promise.all(calendarObservations);
     // Locator errors can contain real company/owner names; keep diagnostics
     // limited to the failed phase and never attach production DOM snapshots.
     failure = new Error(
-      `Meeting canary failed during ${phase} / ${step} [${meetingCanaryFailureCategory(error)}]; locatorCounts=${JSON.stringify(locatorCounts)}`,
+      `Meeting canary failed during ${phase} / ${step} [${meetingCanaryFailureCategory(error)}]; locatorCounts=${JSON.stringify(locatorCounts)}; calendarQueryEvidence=${JSON.stringify(calendarQueryEvidence)}`,
     );
   } finally {
+    page.off('response', observeCalendarResponse);
+    await Promise.all(calendarObservations);
     let cleanupStep = 'remove native request guard';
     try {
       await page.unroute(`${APPROVED_ORIGIN}/graphql`, guardNativeMutation);
