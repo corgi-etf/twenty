@@ -1,5 +1,6 @@
 import { type CoreApiClient } from 'twenty-client-sdk/core';
 
+import { type RawCoreGraphqlTransport } from 'src/modules/core/graphql/raw-core-graphql.transport';
 import {
   type NamedRecord,
   type OutreachActivity,
@@ -11,6 +12,80 @@ import { escapeSqlLikePattern } from 'src/modules/wholesaler/onboarding/utils/es
 const PAGE_SIZE = 100;
 const MAX_PAGES = 100;
 
+const FIND_OUTREACH_ACTIVITY_DOCUMENT = `
+  query FindOutreachActivityById(
+    $filter: OutreachActivityFilterInput
+    $first: Int!
+  ) {
+    outreachActivities(filter: $filter, first: $first) {
+      edges {
+        node {
+          id
+          name
+          companyId
+          contactId
+          wholesalerId
+          activityType
+          outcome
+          notes
+          occurredAt
+          followUpDate
+        }
+      }
+      pageInfo {
+        hasNextPage
+        endCursor
+      }
+    }
+  }
+`;
+
+const CREATE_OUTREACH_ACTIVITY_DOCUMENT = `
+  mutation CreateOutreachActivity($data: OutreachActivityCreateInput!) {
+    createOutreachActivity(data: $data) {
+      id
+    }
+  }
+`;
+
+const LIST_OUTREACH_ACTIVITIES_DOCUMENT = `
+  query ListOutreachActivities(
+    $filter: OutreachActivityFilterInput
+    $first: Int!
+    $after: String
+  ) {
+    outreachActivities(filter: $filter, first: $first, after: $after) {
+      edges {
+        node {
+          id
+          activityType
+          outcome
+          notes
+          occurredAt
+          wholesalerId
+          company {
+            name
+          }
+          contact {
+            name {
+              firstName
+              lastName
+            }
+          }
+          wholesaler {
+            id
+            name
+          }
+        }
+      }
+      pageInfo {
+        hasNextPage
+        endCursor
+      }
+    }
+  }
+`;
+
 type ActivityNode = {
   id?: string | null;
   activityType?: string | null;
@@ -19,7 +94,9 @@ type ActivityNode = {
   occurredAt?: string | null;
   wholesalerId?: string | null;
   company?: { name?: string | null } | null;
-  contact?: { name?: { firstName?: string | null; lastName?: string | null } | null } | null;
+  contact?: {
+    name?: { firstName?: string | null; lastName?: string | null } | null;
+  } | null;
   wholesaler?: { id?: string | null; name?: string | null } | null;
 };
 
@@ -28,6 +105,22 @@ type ActivityConnection = {
   pageInfo:
     | { hasNextPage: false; endCursor?: unknown }
     | { hasNextPage: true; endCursor: string };
+};
+
+type OutreachActivitiesResponse = {
+  outreachActivities?: unknown;
+};
+
+type CreateOutreachActivityResponse = {
+  createOutreachActivity?: unknown;
+};
+
+type ActivityFilter = {
+  and: Array<
+    | { occurredAt: { gte: string } }
+    | { occurredAt: { lt: string } }
+    | { wholesalerId: { eq: string } }
+  >;
 };
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -42,30 +135,42 @@ const parseActivityConnection = (value: unknown): ActivityConnection => {
   ) {
     throw new Error('Outreach activity connection response was malformed');
   }
+  const edges = value.edges.map((edge) => {
+    if (!isRecord(edge) || !isRecord(edge.node)) {
+      throw new Error('Outreach activity connection response was malformed');
+    }
+    return { node: edge.node as ActivityNode };
+  });
   if (value.pageInfo.hasNextPage) {
     const endCursor = value.pageInfo.endCursor;
     if (typeof endCursor !== 'string' || !endCursor.trim()) {
       throw new Error('Outreach activity pagination omitted its next cursor');
     }
     return {
-      edges: value.edges as ActivityConnection['edges'],
+      edges,
       pageInfo: { hasNextPage: true, endCursor },
     };
   }
   return {
-    edges: value.edges as ActivityConnection['edges'],
+    edges,
     pageInfo: { hasNextPage: false, endCursor: value.pageInfo.endCursor },
   };
 };
 
-const fullName = (name: { firstName?: string | null; lastName?: string | null } | null | undefined) =>
+const fullName = (
+  name:
+    { firstName?: string | null; lastName?: string | null } | null | undefined,
+) =>
   [name?.firstName, name?.lastName]
     .map((part) => part?.trim())
     .filter(Boolean)
     .join(' ');
 
 export class CoreOutreachRepository implements OutreachRepository {
-  public constructor(private readonly client: CoreApiClient) {}
+  public constructor(
+    private readonly client: CoreApiClient,
+    private readonly rawTransport: RawCoreGraphqlTransport,
+  ) {}
 
   public async findCompanies(query: string): Promise<NamedRecord[]> {
     const result = await this.client.query({
@@ -84,9 +189,8 @@ export class CoreOutreachRepository implements OutreachRepository {
     }>;
     return edges
       .map((edge) => edge?.node)
-      .filter(
-        (node): node is { id: string; name: string } =>
-          Boolean(node?.id && node.name?.trim()),
+      .filter((node): node is { id: string; name: string } =>
+        Boolean(node?.id && node.name?.trim()),
       )
       .map(({ id, name }) => ({ id, name: name.trim() }));
   }
@@ -106,24 +210,29 @@ export class CoreOutreachRepository implements OutreachRepository {
             first: PAGE_SIZE,
             after: cursor,
           },
-          edges: { node: { id: true, name: { firstName: true, lastName: true } } },
+          edges: {
+            node: { id: true, name: { firstName: true, lastName: true } },
+          },
           pageInfo: { hasNextPage: true, endCursor: true },
         },
       });
       const edges = (result.people?.edges ?? []) as Array<{
-      node?: {
-        id?: string | null;
-        name?: {
-          firstName?: string | null;
-          lastName?: string | null;
+        node?: {
+          id?: string | null;
+          name?: {
+            firstName?: string | null;
+            lastName?: string | null;
+          } | null;
         } | null;
-      } | null;
       }>;
       matches.push(
         ...edges
           .map((edge) => edge?.node)
           .map((node) => ({ id: node?.id ?? '', name: fullName(node?.name) }))
-          .filter(({ id, name }) => id && name.toLowerCase().includes(normalizedQuery)),
+          .filter(
+            ({ id, name }) =>
+              id && name.toLowerCase().includes(normalizedQuery),
+          ),
       );
       const pageInfo = result.people?.pageInfo;
       if (!pageInfo?.hasNextPage) return matches;
@@ -135,19 +244,29 @@ export class CoreOutreachRepository implements OutreachRepository {
     throw new Error(`Contact pagination exceeded ${MAX_PAGES} pages`);
   }
 
-  public async createActivity(data: OutreachActivityWrite): Promise<{ id: string }> {
+  public async createActivity(
+    data: OutreachActivityWrite,
+  ): Promise<{ id: string }> {
     const existing = await this.findActivityWrite(data.id);
     if (existing) return this.assertSameActivity(existing, data);
     try {
-      const result = await this.client.mutation({
-        createOutreachActivity: {
-          __args: { data },
-          id: true,
-        },
+      const result = await this.rawTransport.request<
+        CreateOutreachActivityResponse,
+        { data: OutreachActivityWrite }
+      >({
+        operationName: 'CreateOutreachActivity',
+        document: CREATE_OUTREACH_ACTIVITY_DOCUMENT,
+        variables: { data },
       });
-      const id = result.createOutreachActivity?.id;
-      if (!id) throw new Error('createOutreachActivity did not return an id');
-      return { id };
+      if (
+        !isRecord(result.createOutreachActivity) ||
+        result.createOutreachActivity.id !== data.id
+      ) {
+        throw new Error(
+          'createOutreachActivity did not return the deterministic id',
+        );
+      }
+      return { id: data.id };
     } catch (error) {
       // A concurrent retry may have won the deterministic primary key. Accept
       // only an exact record; never turn an unrelated collision into success.
@@ -157,33 +276,27 @@ export class CoreOutreachRepository implements OutreachRepository {
     }
   }
 
-  private async findActivityWrite(id: string): Promise<Record<string, unknown> | null> {
-    const result = await this.client.query({
-      outreachActivities: {
-        __args: { filter: { id: { eq: id } }, first: 2 },
-        edges: {
-          node: {
-            id: true,
-            name: true,
-            companyId: true,
-            contactId: true,
-            wholesalerId: true,
-            activityType: true,
-            outcome: true,
-            notes: true,
-            occurredAt: true,
-            followUpDate: true,
-          },
-        },
+  private async findActivityWrite(
+    id: string,
+  ): Promise<Record<string, unknown> | null> {
+    const result = await this.rawTransport.request<
+      OutreachActivitiesResponse,
+      { filter: { id: { eq: string } }; first: number }
+    >({
+      operationName: 'FindOutreachActivityById',
+      document: FIND_OUTREACH_ACTIVITY_DOCUMENT,
+      variables: {
+        filter: { id: { eq: id } },
+        first: 2,
       },
     });
-    const edges = (result.outreachActivities?.edges ?? []) as Array<{
-      node?: Record<string, unknown> | null;
-    }>;
-    const nodes = edges
-      .map((edge) => edge.node)
-      .filter((node): node is Record<string, unknown> => Boolean(node));
-    if (nodes.length > 1) throw new Error(`Duplicate outreach activity ID ${id}`);
+    const connection = parseActivityConnection(result.outreachActivities);
+    const nodes = connection.edges
+      .map((edge) => edge?.node)
+      .filter((node): node is ActivityNode => isRecord(node));
+    if (nodes.length > 1) {
+      throw new Error(`Duplicate outreach activity ID ${id}`);
+    }
     return nodes[0] ?? null;
   }
 
@@ -194,7 +307,9 @@ export class CoreOutreachRepository implements OutreachRepository {
     const comparable = (value: unknown) => value ?? null;
     for (const [key, value] of Object.entries(expected)) {
       if (comparable(existing[key]) !== comparable(value)) {
-        throw new Error(`Deterministic outreach activity ${expected.id} conflicts at ${key}`);
+        throw new Error(
+          `Deterministic outreach activity ${expected.id} conflicts at ${key}`,
+        );
       }
     }
     return { id: expected.id };
@@ -214,50 +329,64 @@ export class CoreOutreachRepository implements OutreachRepository {
     const seenCursors = new Set<string>();
     const startTime = Date.parse(start);
     const endTime = Date.parse(end);
+    if (!(startTime < endTime)) {
+      throw new Error('Invalid outreach activity report window');
+    }
     let cursor: string | undefined;
-    while (true) {
-      const filters: Array<Record<string, unknown>> = [
+    for (let page = 0; page < MAX_PAGES; page += 1) {
+      const filters: ActivityFilter['and'] = [
         { occurredAt: { gte: start } },
         { occurredAt: { lt: end } },
       ];
       if (wholesalerId) filters.push({ wholesalerId: { eq: wholesalerId } });
-      const result = await this.client.query({
-        outreachActivities: {
-          __args: {
-            filter: { and: filters },
-            first: PAGE_SIZE,
-            after: cursor,
-          },
-          edges: {
-            node: {
-              id: true,
-              activityType: true,
-              outcome: true,
-              notes: true,
-              occurredAt: true,
-              wholesalerId: true,
-              company: { name: true },
-              contact: { name: { firstName: true, lastName: true } },
-              wholesaler: { id: true, name: true },
-            },
-          },
-          pageInfo: { hasNextPage: true, endCursor: true },
+      const result = await this.rawTransport.request<
+        OutreachActivitiesResponse,
+        {
+          filter: ActivityFilter;
+          first: number;
+          after: string | null;
+        }
+      >({
+        operationName: 'ListOutreachActivities',
+        document: LIST_OUTREACH_ACTIVITIES_DOCUMENT,
+        variables: {
+          filter: { and: filters },
+          first: PAGE_SIZE,
+          after: cursor ?? null,
         },
       });
       const connection = parseActivityConnection(result.outreachActivities);
       for (const edge of connection.edges) {
         const node = edge?.node;
-        const occurredAt = Date.parse(node?.occurredAt ?? '');
+        if (typeof node?.id !== 'string' || !node.id.trim()) {
+          throw new Error('Outreach activity returned an invalid identity');
+        }
         if (
-          !node?.id ||
-          !node.occurredAt ||
+          typeof node.occurredAt !== 'string' ||
+          !Number.isFinite(Date.parse(node.occurredAt))
+        ) {
+          throw new Error('Outreach activity returned an invalid timestamp');
+        }
+        const occurredAt = Date.parse(node.occurredAt);
+        if (
           !(occurredAt >= startTime && occurredAt < endTime) ||
           seenIds.has(node.id)
         ) {
           continue;
         }
         seenIds.add(node.id);
-        const ownerId = node.wholesalerId?.trim() || node.wholesaler?.id?.trim();
+        const foreignOwnerId = node.wholesalerId?.trim();
+        const relatedOwnerId = node.wholesaler?.id?.trim();
+        if (
+          foreignOwnerId &&
+          relatedOwnerId &&
+          foreignOwnerId !== relatedOwnerId
+        ) {
+          throw new Error(
+            'Outreach activity returned conflicting owner identities',
+          );
+        }
+        const ownerId = foreignOwnerId || relatedOwnerId;
         output.push({
           id: node.id,
           wholesalerId: ownerId || 'unassigned',
@@ -282,5 +411,6 @@ export class CoreOutreachRepository implements OutreachRepository {
       seenCursors.add(nextCursor);
       cursor = nextCursor;
     }
+    throw new Error(`Outreach activity pagination exceeded ${MAX_PAGES} pages`);
   }
 }

@@ -9,6 +9,7 @@ describe('Telegram update worker durable replies', () => {
     const store = { get: vi.fn(), set: vi.fn(), delete: vi.fn() };
     const processCommand = vi.fn();
     const createCrmClient = vi.fn();
+    const createRawCrmTransport = vi.fn();
     const createTelegramClient = vi.fn();
     await expect(
       handleTelegramUpdateJob(
@@ -20,6 +21,7 @@ describe('Telegram update worker durable replies', () => {
           store,
           processCommand,
           createCrmClient,
+          createRawCrmTransport,
           createTelegramClient,
         } as never,
       ),
@@ -28,6 +30,7 @@ describe('Telegram update worker durable replies', () => {
     expect(store.set).not.toHaveBeenCalled();
     expect(processCommand).not.toHaveBeenCalled();
     expect(createCrmClient).not.toHaveBeenCalled();
+    expect(createRawCrmTransport).not.toHaveBeenCalled();
     expect(createTelegramClient).not.toHaveBeenCalled();
   });
 
@@ -110,6 +113,7 @@ describe('Telegram update worker durable replies', () => {
           store,
           processCommand: processCommand as never,
           createCrmClient: vi.fn(() => coreClient as never),
+          createRawCrmTransport: vi.fn(() => ({ request: vi.fn() }) as never),
           createTelegramClient: vi.fn(
             () => ({ sendMessage, answerCallbackQuery }) as never,
           ),

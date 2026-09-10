@@ -24,7 +24,8 @@ existing `Wholesaler` object, which was created before this app.
 Version `1.2.0` adds native meeting bookings, separate meeting report totals,
 and configurable Telegram event destinations. It retains the server-compatible
 delivery enum storage from `1.1.1`. Published versions are immutable: `1.1.0`
-was published but rejected at installation and must not be overwritten or reused.
+and `1.1.1` were published but failed installation and must not be overwritten
+or reused.
 
 The two custom CRM objects predate this app, so their universal identifiers are
 not guessed or committed. Immediately before packaging, use the short-lived
@@ -46,6 +47,16 @@ TelegramDeliveryAudit objects; read/update access to MeetingBooking; and no
 other object, delete, global, or settings permission. It also verifies the
 app-owned object schemas and the three unique indexes that fence delivery
 claims, reset generations, and request replays.
+
+The generated Core SDK describes standard objects and this application's own
+objects; granting access to an existing workspace object does not add it to
+that client schema. Queries and writes involving existing Wholesalers and
+Outreach Activities therefore use the typed raw Core GraphQL transport. It
+retains the runtime's delegated/application identity and the same server-side
+permissions, sends values only as variables, and fails closed on malformed or
+partial responses. Standard-object queries and app-owned scalar operations
+continue to use the generated SDK. No deployment credential is retained by
+the application.
 
 The post-install function reconciles all existing WorkspaceMembers. The
 `workspaceMember.created` trigger keeps future members synchronized. Both paths

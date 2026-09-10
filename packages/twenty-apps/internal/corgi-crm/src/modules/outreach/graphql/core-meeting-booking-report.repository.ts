@@ -1,5 +1,4 @@
-import { type CoreApiClient } from 'twenty-client-sdk/core';
-
+import { type RawCoreGraphqlTransport } from 'src/modules/core/graphql/raw-core-graphql.transport';
 import {
   type MeetingBookingReportRepository,
   type ReportMeetingBooking,
@@ -7,6 +6,42 @@ import {
 
 const PAGE_SIZE = 100;
 const MAX_PAGES = 100;
+
+type MeetingBookingsReportData = { meetingBookings: unknown };
+type MeetingBookingsReportVariables = {
+  start: string;
+  end: string;
+  first: number;
+  after: string | null;
+};
+
+// Raw GraphQL retains the permitted external Wholesaler relation that the
+// application-owned generated client schema cannot describe.
+const READ_MEETING_BOOKINGS_FOR_REPORT = `
+  query ReadMeetingBookingsForReport(
+    $start: DateTime!
+    $end: DateTime!
+    $first: Int!
+    $after: String
+  ) {
+    meetingBookings(
+      filter: { and: [{ bookedAt: { gte: $start } }, { bookedAt: { lt: $end } }] }
+      first: $first
+      after: $after
+    ) {
+      edges {
+        node {
+          id
+          bookedAt
+          scheduledAt
+          wholesalerId
+          wholesaler { id name }
+        }
+      }
+      pageInfo { hasNextPage endCursor }
+    }
+  }
+`;
 
 const record = (value: unknown): Record<string, unknown> => {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) {
@@ -34,7 +69,9 @@ const parseBooking = (value: unknown): ReportMeetingBooking => {
     !Number.isFinite(Date.parse(bookedAt)) ||
     (scheduledAt && !Number.isFinite(Date.parse(scheduledAt)))
   ) {
-    throw new Error('Meeting booking report returned an invalid identity or timestamp');
+    throw new Error(
+      'Meeting booking report returned an invalid identity or timestamp',
+    );
   }
   const wholesaler =
     node.wholesaler === null || node.wholesaler === undefined
@@ -43,7 +80,9 @@ const parseBooking = (value: unknown): ReportMeetingBooking => {
   const foreignOwnerId = optionalString(node.wholesalerId);
   const relatedOwnerId = optionalString(wholesaler?.id);
   if (foreignOwnerId && relatedOwnerId && foreignOwnerId !== relatedOwnerId) {
-    throw new Error('Meeting booking report returned conflicting owner identities');
+    throw new Error(
+      'Meeting booking report returned conflicting owner identities',
+    );
   }
   const ownerId = foreignOwnerId || relatedOwnerId;
   return {
@@ -57,9 +96,8 @@ const parseBooking = (value: unknown): ReportMeetingBooking => {
   };
 };
 
-export class CoreMeetingBookingReportRepository
-  implements MeetingBookingReportRepository {
-  public constructor(private readonly client: CoreApiClient) {}
+export class CoreMeetingBookingReportRepository implements MeetingBookingReportRepository {
+  public constructor(private readonly rawTransport: RawCoreGraphqlTransport) {}
 
   public async listMeetingBookings({
     start,
@@ -78,27 +116,14 @@ export class CoreMeetingBookingReportRepository
     const seenCursors = new Set<string>();
     let cursor: string | undefined;
     for (let page = 0; page < MAX_PAGES; page += 1) {
-      const result = await this.client.query({
-        meetingBookings: {
-          __args: {
-            // Later rescheduling or status changes do not change when it was booked.
-            filter: {
-              and: [{ bookedAt: { gte: start } }, { bookedAt: { lt: end } }],
-            },
-            first: PAGE_SIZE,
-            after: cursor,
-          },
-          edges: {
-            node: {
-              id: true,
-              bookedAt: true,
-              scheduledAt: true,
-              wholesalerId: true,
-              wholesaler: { id: true, name: true },
-            },
-          },
-          pageInfo: { hasNextPage: true, endCursor: true },
-        },
+      const result = await this.rawTransport.request<
+        MeetingBookingsReportData,
+        MeetingBookingsReportVariables
+      >({
+        operationName: 'ReadMeetingBookingsForReport',
+        document: READ_MEETING_BOOKINGS_FOR_REPORT,
+        // Later rescheduling or status changes do not change when it was booked.
+        variables: { start, end, first: PAGE_SIZE, after: cursor ?? null },
       });
       const connection = record(result.meetingBookings);
       const pageInfo = record(connection.pageInfo);
@@ -106,7 +131,9 @@ export class CoreMeetingBookingReportRepository
         !Array.isArray(connection.edges) ||
         typeof pageInfo.hasNextPage !== 'boolean'
       ) {
-        throw new Error('Meeting booking report returned an invalid connection');
+        throw new Error(
+          'Meeting booking report returned an invalid connection',
+        );
       }
       for (const edge of connection.edges) {
         const booking = parseBooking(record(edge).node);
@@ -115,14 +142,17 @@ export class CoreMeetingBookingReportRepository
           bookedTime < startTime ||
           bookedTime >= endTime ||
           seenIds.has(booking.id)
-        ) continue;
+        )
+          continue;
         seenIds.add(booking.id);
         output.push(booking);
       }
       if (!pageInfo.hasNextPage) return output;
       const nextCursor = optionalString(pageInfo.endCursor);
       if (!nextCursor || seenCursors.has(nextCursor)) {
-        throw new Error('Meeting booking pagination has a missing or repeated cursor');
+        throw new Error(
+          'Meeting booking pagination has a missing or repeated cursor',
+        );
       }
       seenCursors.add(nextCursor);
       cursor = nextCursor;

@@ -115,6 +115,14 @@ export class ObjectMetadataWithRelationsGqlObjectTypeGenerator {
       });
 
       if (!isDefined(objectMetadataTarget)) {
+        if (
+          context.excludedObjectMetadataIds?.has(
+            flatFieldMetadata.relationTargetObjectMetadataId,
+          )
+        ) {
+          continue;
+        }
+
         throw new Error(
           `Field Metadata of type RELATION or MORPH_RELATION with id ${flatFieldMetadata.id} has no relation target object metadata`,
         );

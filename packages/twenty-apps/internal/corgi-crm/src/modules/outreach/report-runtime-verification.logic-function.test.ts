@@ -2,6 +2,7 @@ import { type CoreApiClient } from 'twenty-client-sdk/core';
 import { type LogicFunctionExecutionContext } from 'twenty-sdk/logic-function';
 import { describe, expect, it, vi } from 'vitest';
 
+import { type RawCoreGraphqlTransport } from 'src/modules/core/graphql/raw-core-graphql.transport';
 import runtimeFunction, {
   handleReportRuntimeVerification,
   REPORT_RUNTIME_VERIFICATION_CONFIRMATION,
@@ -32,11 +33,15 @@ const fixtures = () => {
     '2026-09-06T15:00:00.000Z',
     '2026-08-31T15:00:00.000Z',
   ];
-  const query = vi.fn(
+  const request = vi.fn(
     async (
-      selection: Record<string, unknown>,
+      selection: {
+        operationName: string;
+        document: string;
+        variables: Record<string, unknown>;
+      },
     ): Promise<Record<string, unknown>> => {
-      if ('outreachActivities' in selection) {
+      if (selection.document.includes('outreachActivities(')) {
         return {
           outreachActivities: {
             edges: timestamps.map((occurredAt, index) => ({
@@ -58,7 +63,7 @@ const fixtures = () => {
           },
         };
       }
-      if ('meetingBookings' in selection) {
+      if (selection.document.includes('meetingBookings(')) {
         return {
           meetingBookings: {
             edges: timestamps.map((bookedAt, index) => ({
@@ -77,9 +82,17 @@ const fixtures = () => {
       throw new Error('Unexpected runtime verification query');
     },
   );
+  // Reproduce the real app-owned generated schema: external workspace objects
+  // must never be read through its locally filtered type map.
+  const query = vi.fn(async () => {
+    throw new Error('type Query does not have a field outreachActivities');
+  });
   const mutation = vi.fn();
   const createCrmClient = vi.fn(
     () => ({ query, mutation }) as unknown as CoreApiClient,
+  );
+  const createRawCrmTransport = vi.fn(
+    () => ({ request }) as unknown as RawCoreGraphqlTransport,
   );
   const dependencies = {
     expectedWorkspaceId: WORKSPACE_ID as string | undefined,
@@ -87,8 +100,16 @@ const fixtures = () => {
     timeZone: 'America/Chicago' as string | undefined,
     now: () => NOW,
     createCrmClient,
+    createRawCrmTransport,
   };
-  return { dependencies, query, mutation, createCrmClient };
+  return {
+    dependencies,
+    request,
+    query,
+    mutation,
+    createCrmClient,
+    createRawCrmTransport,
+  };
 };
 
 describe('internal read-only production report verification', () => {
@@ -109,7 +130,14 @@ describe('internal read-only production report verification', () => {
   });
 
   it('runs all three real repository and summary paths, returning safe evidence only', async () => {
-    const { dependencies, query, mutation, createCrmClient } = fixtures();
+    const {
+      dependencies,
+      request,
+      query,
+      mutation,
+      createCrmClient,
+      createRawCrmTransport,
+    } = fixtures();
     const result = await handleReportRuntimeVerification(
       payload,
       context,
@@ -151,7 +179,9 @@ describe('internal read-only production report verification', () => {
       ],
     });
     expect(createCrmClient).toHaveBeenCalledTimes(1);
-    expect(query).toHaveBeenCalledTimes(6);
+    expect(createRawCrmTransport).toHaveBeenCalledTimes(1);
+    expect(query).not.toHaveBeenCalled();
+    expect(request).toHaveBeenCalledTimes(6);
     for (const [index, start] of [
       '2026-09-08T16:30:00.000Z',
       '2026-09-02T16:30:00.000Z',
@@ -161,19 +191,22 @@ describe('internal read-only production report verification', () => {
         [0, 'outreachActivities', 'occurredAt'],
         [1, 'meetingBookings', 'bookedAt'],
       ] as const) {
-        const selection = query.mock.calls[index * 2 + offset]![0];
-        expect(selection).toMatchObject({
-          [field]: {
-            __args: {
-              filter: {
-                and: [
-                  { [timestamp]: { gte: start } },
-                  { [timestamp]: { lt: NOW.toISOString() } },
-                ],
-              },
-            },
-          },
-        });
+        const selection = request.mock.calls[index * 2 + offset]![0];
+        expect(selection.document).toContain(`${field}(`);
+        expect(selection.variables).toEqual(
+          offset === 0
+            ? {
+                filter: {
+                  and: [
+                    { [timestamp]: { gte: start } },
+                    { [timestamp]: { lt: NOW.toISOString() } },
+                  ],
+                },
+                first: 100,
+                after: null,
+              }
+            : { start, end: NOW.toISOString(), first: 100, after: null },
+        );
       }
     }
     expect(mutation).not.toHaveBeenCalled();
@@ -201,6 +234,7 @@ describe('internal read-only production report verification', () => {
         ),
       ).rejects.toThrow('Report runtime verification denied');
       expect(createCrmClient).not.toHaveBeenCalled();
+      expect(dependencies.createRawCrmTransport).not.toHaveBeenCalled();
     },
   );
 
@@ -225,6 +259,7 @@ describe('internal read-only production report verification', () => {
         }),
       ).rejects.toThrow('Report runtime verification denied');
       expect(createCrmClient).not.toHaveBeenCalled();
+      expect(dependencies.createRawCrmTransport).not.toHaveBeenCalled();
     },
   );
 
@@ -249,12 +284,13 @@ describe('internal read-only production report verification', () => {
         handleReportRuntimeVerification(input, context, dependencies),
       ).rejects.toThrow('Report runtime verification denied');
       expect(createCrmClient).not.toHaveBeenCalled();
+      expect(dependencies.createRawCrmTransport).not.toHaveBeenCalled();
     },
   );
 
   it('accepts genuine empty connections only as zero-count reports for every period', async () => {
-    const { dependencies, query, mutation } = fixtures();
-    query.mockImplementation(async () => ({
+    const { dependencies, request, query, mutation } = fixtures();
+    request.mockImplementation(async () => ({
       outreachActivities: {
         edges: [],
         pageInfo: { hasNextPage: false, endCursor: null },
@@ -280,12 +316,13 @@ describe('internal read-only production report verification', () => {
       [0, 0],
       [0, 0],
     ]);
-    expect(query).toHaveBeenCalledTimes(6);
+    expect(request).toHaveBeenCalledTimes(6);
+    expect(query).not.toHaveBeenCalled();
     expect(mutation).not.toHaveBeenCalled();
   });
 
   it('sanitizes client-construction failures without attempting any read', async () => {
-    const { dependencies, query, mutation } = fixtures();
+    const { dependencies, request, query, mutation } = fixtures();
     dependencies.createCrmClient.mockImplementation(() => {
       throw new Error('Private credential must not escape');
     });
@@ -293,16 +330,18 @@ describe('internal read-only production report verification', () => {
       handleReportRuntimeVerification(payload, context, dependencies),
     ).rejects.toThrow('Report runtime client initialization failed');
     expect(query).not.toHaveBeenCalled();
+    expect(request).not.toHaveBeenCalled();
+    expect(dependencies.createRawCrmTransport).not.toHaveBeenCalled();
     expect(mutation).not.toHaveBeenCalled();
   });
 
   it.each([0, 1, 2])(
     'fails the entire verification if period %i cannot read real schema',
     async (period) => {
-      const { dependencies, query, mutation } = fixtures();
-      const implementation = query.getMockImplementation()!;
+      const { dependencies, request, query, mutation } = fixtures();
+      const implementation = request.getMockImplementation()!;
       let call = 0;
-      query.mockImplementation(async (selection) => {
+      request.mockImplementation(async (selection) => {
         const currentCall = call++;
         if (currentCall === period * 2 + 1)
           throw new Error('Private schema payload must not escape');
@@ -313,8 +352,22 @@ describe('internal read-only production report verification', () => {
       ).rejects.toThrow(
         `Report runtime verification failed for ${['daily', 'weekly', 'monthly'][period]}`,
       );
-      expect(query).toHaveBeenCalledTimes((period + 1) * 2);
+      expect(request).toHaveBeenCalledTimes((period + 1) * 2);
+      expect(query).not.toHaveBeenCalled();
       expect(mutation).not.toHaveBeenCalled();
     },
   );
+
+  it('sanitizes raw transport construction failures without attempting reads', async () => {
+    const { dependencies, request, query, mutation } = fixtures();
+    dependencies.createRawCrmTransport.mockImplementation(() => {
+      throw new Error('Private runtime credential must not escape');
+    });
+    await expect(
+      handleReportRuntimeVerification(payload, context, dependencies),
+    ).rejects.toThrow('Report runtime client initialization failed');
+    expect(request).not.toHaveBeenCalled();
+    expect(query).not.toHaveBeenCalled();
+    expect(mutation).not.toHaveBeenCalled();
+  });
 });

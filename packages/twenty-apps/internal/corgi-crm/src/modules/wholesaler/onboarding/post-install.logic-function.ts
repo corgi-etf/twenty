@@ -6,6 +6,7 @@ import {
 import { type LogicFunctionExecutionContext } from 'twenty-sdk/logic-function';
 
 import { POST_INSTALL_UNIVERSAL_IDENTIFIER } from 'src/constants';
+import { RawCoreGraphqlTransport } from 'src/modules/core/graphql/raw-core-graphql.transport';
 import { CoreWholesalerRepository } from 'src/modules/wholesaler/onboarding/graphql/core-wholesaler.repository';
 import { reconcileAllWorkspaceMembers } from 'src/modules/wholesaler/onboarding/services/reconcile-all-workspace-members.service';
 
@@ -46,7 +47,10 @@ export const handler = async (
 
   const result = await reconcileAllWorkspaceMembers({
     workspaceId: context.workspaceId,
-    repository: new CoreWholesalerRepository(new CoreApiClient()),
+    repository: new CoreWholesalerRepository(
+      new CoreApiClient(),
+      new RawCoreGraphqlTransport(),
+    ),
   });
   if (result.failures.length > 0) {
     throw new Error(
