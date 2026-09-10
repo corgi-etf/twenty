@@ -231,10 +231,16 @@ test('company creation is opt-in, separately confirmed, and default off', async 
     'RESUME_RUN_ID',
     'RESUME_ATTEMPT',
   ]) {
-    assert.match(createBranch, new RegExp(`\\[\\[ -z "\\$\\{${guard}\\}" \\]\\]`));
+    assert.match(
+      createBranch,
+      new RegExp(`\\[\\[ -z "\\$\\{${guard}\\}" \\]\\]`),
+    );
   }
 
-  assert.match(workflow, /CRM_ACTIVITY_IMPORT_OPERATION: \$\{\{ inputs\.operation \}\}/);
+  assert.match(
+    workflow,
+    /CRM_ACTIVITY_IMPORT_OPERATION: \$\{\{ inputs\.operation \}\}/,
+  );
   assert.match(
     workflow,
     /CRM_ACTIVITY_IMPORT_CREATE_COMPANIES_CONFIRMATION: \$\{\{ inputs\.create_companies_confirmation \}\}/,
@@ -252,5 +258,8 @@ test('company creation is opt-in, separately confirmed, and default off', async 
   assert.match(execution, /resolve the duplicate before creating companies/);
   assert.match(execution, /post-write verification failed/);
   assert.match(execution, /createCompany\({ name: creation\.name }\)/);
-  assert.doesNotMatch(execution, /toLocaleLowerCase|toUpperCase|replace\(\/\\s/);
+  assert.doesNotMatch(
+    execution,
+    /toLocaleLowerCase|toUpperCase|replace\(\/\\s/,
+  );
 });

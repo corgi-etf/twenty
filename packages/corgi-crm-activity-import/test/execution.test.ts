@@ -211,7 +211,6 @@ test('a failure after one create leaves a PII-free resumable checkpoint', async 
   );
 });
 
-
 const EN_DASH_FIRM = 'Holistic Planning \u2013 Kansas City';
 const PIPE_FIRM = 'WEALTH | KC';
 const AMPERSAND_FIRM = 'Atwood & Palmer, Inc.';
@@ -298,7 +297,9 @@ test('company creation requires its own confirmation string', async () => {
   api.companies = [];
 
   await assert.rejects(
-    createCompanies(api, 'apply', { confirmation: 'IMPORT_CRM_OUTREACH_ACTIVITIES' }),
+    createCompanies(api, 'apply', {
+      confirmation: 'IMPORT_CRM_OUTREACH_ACTIVITIES',
+    }),
     /company creation confirmation is invalid/,
   );
   await assert.rejects(

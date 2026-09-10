@@ -648,7 +648,6 @@ test('emits a stable PII-free manifest', () => {
   }
 });
 
-
 const EN_DASH_FIRM = 'Holistic Planning \u2013 Kansas City';
 const PIPE_FIRM = 'WEALTH | KC';
 const AMPERSAND_FIRM = 'Atwood & Palmer, Inc.';
