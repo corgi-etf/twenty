@@ -41,6 +41,12 @@ export default defineApplication({
         'Secret JSON bindings of one-time /link codes to unique WorkspaceMember UUIDs and Telegram user IDs. Codes are read at runtime and never persisted or logged.',
       isSecret: true,
     },
+    CORGI_CRM_TELEGRAM_OPERATOR_SECRET: {
+      universalIdentifier: 'bfc9cb27-1021-416b-a0d7-d34bb60df113',
+      description:
+        'Independent operator proof required in addition to authenticated Twenty access for unknown-delivery inspection and audited reset.',
+      isSecret: true,
+    },
     CORGI_CRM_TELEGRAM_TIME_ZONE: {
       universalIdentifier: '29d27825-8fa4-4cb5-9ed4-358c8f2bb72b',
       description:

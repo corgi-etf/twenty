@@ -4,6 +4,7 @@ import {
   deliverDailySummary,
   enqueueTelegramUpdateOnce,
 } from 'src/modules/telegram/services/telegram-delivery.service';
+import * as deliveryModule from 'src/modules/telegram/services/telegram-delivery.service';
 import { TelegramDeliveryError } from 'src/modules/telegram/services/telegram-client.service';
 
 const queuedUpdate = {
@@ -117,8 +118,8 @@ describe('deliverDailySummary', () => {
       ['101', 'part two'],
     ]);
     expect(store.set).toHaveBeenLastCalledWith(
-      `telegram:daily-summary:2026-09-09:${delivery.workspaceMemberId}`,
-      { status: 'complete', nextPart: 2 },
+      expect.stringMatching(/^telegram:delivery:[0-9a-f]{64}$/),
+      expect.objectContaining({ status: 'complete' }),
     );
   });
 
@@ -210,5 +211,147 @@ describe('deliverDailySummary', () => {
     ).resolves.toEqual({ status: 'complete', sentParts: 2 });
 
     expect(send).toHaveBeenCalledTimes(3);
+  });
+});
+
+describe('durable interactive Telegram delivery', () => {
+  const api = deliveryModule as unknown as {
+    buildTelegramDeliveryKey?: (scope: string) => string;
+    deliverTelegramOperation?: (input: Record<string, unknown>) => Promise<unknown>;
+  };
+
+  const setup = () => {
+    const values = new Map<string, unknown>();
+    const store = {
+      get: vi.fn(async (key: string) => values.get(key) ?? null),
+      set: vi.fn(async (key: string, value: unknown) => values.set(key, value)),
+      delete: vi.fn(async (key: string) => values.delete(key)),
+    };
+    return { values, store };
+  };
+
+  it('uses an opaque stable key and persists intent before a confirmed send', async () => {
+    expect(typeof api.buildTelegramDeliveryKey).toBe('function');
+    expect(typeof api.deliverTelegramOperation).toBe('function');
+    if (!api.buildTelegramDeliveryKey || !api.deliverTelegramOperation) return;
+    const key = api.buildTelegramDeliveryKey('interactive:42:message:0');
+    expect(key).toMatch(/^telegram:delivery:[0-9a-f]{64}$/);
+    expect(key).not.toContain('42');
+    const { store } = setup();
+    const perform = vi.fn().mockResolvedValue(undefined);
+    await expect(
+      api.deliverTelegramOperation({
+        deliveryKey: key,
+        retryEnvelope: { kind: 'message', chatId: '101', text: 'secret text' },
+        store,
+        perform,
+        now: () => new Date('2026-09-09T22:00:00.000Z'),
+      }),
+    ).resolves.toEqual({ status: 'complete' });
+    expect(store.set.mock.calls[0]?.[1]).toMatchObject({ status: 'intent' });
+    expect(store.set).toHaveBeenLastCalledWith(
+      key,
+      expect.objectContaining({ status: 'complete' }),
+    );
+    expect(perform).toHaveBeenCalledOnce();
+  });
+
+  it('never contacts Telegram when the intent write fails', async () => {
+    expect(typeof api.deliverTelegramOperation).toBe('function');
+    if (!api.deliverTelegramOperation) return;
+    const store = {
+      get: vi.fn().mockResolvedValue(null),
+      set: vi.fn().mockRejectedValue(new Error('KV unavailable')),
+      delete: vi.fn(),
+    };
+    const perform = vi.fn();
+    await expect(
+      api.deliverTelegramOperation({
+        deliveryKey: 'telegram:delivery:' + 'a'.repeat(64),
+        retryEnvelope: { kind: 'message', chatId: '101', text: 'hello' },
+        store,
+        perform,
+        now: () => new Date(),
+      }),
+    ).rejects.toThrow(/KV unavailable/);
+    expect(perform).not.toHaveBeenCalled();
+  });
+
+  it('marks ambiguous outcomes unknown and does not resend after a checkpoint crash', async () => {
+    expect(typeof api.deliverTelegramOperation).toBe('function');
+    if (!api.deliverTelegramOperation) return;
+    const key = 'telegram:delivery:' + 'b'.repeat(64);
+    const { values, store } = setup();
+    const alerts: unknown[] = [];
+    const acceptedTimeout = vi
+      .fn()
+      .mockRejectedValue(
+        new TelegramDeliveryError('Telegram request outcome is unknown', true),
+      );
+    const input = {
+      deliveryKey: key,
+      retryEnvelope: { kind: 'message', chatId: '101', text: 'do not expose' },
+      store,
+      perform: acceptedTimeout,
+      onUnknown: (event: unknown) => alerts.push(event),
+      now: () => new Date('2026-09-09T22:00:00.000Z'),
+    };
+    await expect(api.deliverTelegramOperation(input)).resolves.toEqual({
+      status: 'unknown',
+    });
+    await expect(api.deliverTelegramOperation(input)).resolves.toEqual({
+      status: 'unknown',
+    });
+    expect(acceptedTimeout).toHaveBeenCalledOnce();
+    expect(values.get(key)).toMatchObject({
+      status: 'unknown',
+      unknownAt: '2026-09-09T22:00:00.000Z',
+    });
+    expect(JSON.stringify(alerts)).not.toContain('do not expose');
+
+    const checkpointValues = new Map<string, unknown>();
+    let writes = 0;
+    const checkpointStore = {
+      get: vi.fn(async (stateKey: string) => checkpointValues.get(stateKey) ?? null),
+      set: vi.fn(async (stateKey: string, value: unknown) => {
+        writes += 1;
+        if (writes === 2) throw new Error('crash after accepted send');
+        checkpointValues.set(stateKey, value);
+      }),
+      delete: vi.fn(),
+    };
+    const send = vi.fn().mockResolvedValue(undefined);
+    const checkpointInput = { ...input, store: checkpointStore, perform: send };
+    await expect(api.deliverTelegramOperation(checkpointInput)).rejects.toThrow(
+      /crash after accepted send/,
+    );
+    await expect(api.deliverTelegramOperation(checkpointInput)).resolves.toEqual({
+      status: 'unknown',
+    });
+    expect(send).toHaveBeenCalledOnce();
+  });
+
+  it('retries only an explicit provider rejection', async () => {
+    expect(typeof api.deliverTelegramOperation).toBe('function');
+    if (!api.deliverTelegramOperation) return;
+    const { store } = setup();
+    const perform = vi
+      .fn()
+      .mockRejectedValueOnce(
+        new TelegramDeliveryError('Telegram rejected the message', false),
+      )
+      .mockResolvedValueOnce(undefined);
+    const input = {
+      deliveryKey: 'telegram:delivery:' + 'c'.repeat(64),
+      retryEnvelope: { kind: 'callback', callbackQueryId: 'callback-1' },
+      store,
+      perform,
+      now: () => new Date(),
+    };
+    await expect(api.deliverTelegramOperation(input)).rejects.toThrow(/rejected/);
+    await expect(api.deliverTelegramOperation(input)).resolves.toEqual({
+      status: 'complete',
+    });
+    expect(perform).toHaveBeenCalledTimes(2);
   });
 });

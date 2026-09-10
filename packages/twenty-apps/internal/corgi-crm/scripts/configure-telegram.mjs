@@ -68,6 +68,7 @@ const validateTrustedTelegramConfiguration = ({
   workspaceId,
   token,
   webhookSecret,
+  operatorSecret,
   linkCodesJson,
   timeZone,
   dailySummaryTime,
@@ -93,6 +94,10 @@ const validateTrustedTelegramConfiguration = ({
     CORGI_CRM_TELEGRAM_WEBHOOK_SECRET: required(
       webhookSecret,
       'Telegram webhook secret',
+    ),
+    CORGI_CRM_TELEGRAM_OPERATOR_SECRET: required(
+      operatorSecret,
+      'Telegram operator secret',
     ),
     CORGI_CRM_TELEGRAM_LINK_CODES: validateLinkBindings(
       required(linkCodesJson, 'Telegram link configuration'),
@@ -191,6 +196,7 @@ const main = async () => {
     workspaceId: process.env.CORGI_CRM_EXPECTED_WORKSPACE_ID,
     token: process.env.CORGI_CRM_TELEGRAM_BOT_TOKEN,
     webhookSecret: process.env.CORGI_CRM_TELEGRAM_WEBHOOK_SECRET,
+    operatorSecret: process.env.CORGI_CRM_TELEGRAM_OPERATOR_SECRET,
     linkCodesJson: process.env.CORGI_CRM_TELEGRAM_LINK_CODES,
     timeZone: process.env.CORGI_CRM_TELEGRAM_TIME_ZONE,
     dailySummaryTime: process.env.CORGI_CRM_TELEGRAM_DAILY_SUMMARY_TIME,

@@ -7,6 +7,9 @@ const TELEGRAM_WEBHOOK_ID = 'a7693988-ab2a-4f07-b865-b4d4808c814a';
 const TELEGRAM_WORKER_ID = '32cf139c-a4bf-4d87-84f4-f70ac39a3942';
 const TELEGRAM_CRON_ID = 'e61bb12c-a0f5-421b-97d2-e2596e56cf59';
 const TELEGRAM_DAILY_WORKER_ID = 'a518c1f8-d80c-4260-8ef6-bd51a86b4eda';
+const TELEGRAM_DELIVERY_CONTROL_ID = 'c77df778-3268-4d34-a3d8-84e7478cb567';
+const TELEGRAM_DELIVERY_RETRY_WORKER_ID =
+  '70e86a19-fbdd-4d17-aa36-f0b2ab62305b';
 const APPROVED_ORIGIN = 'https://crm.corgiinvest.com';
 const PAGE_SIZE = 100;
 const MAX_PAGES = 100;
@@ -93,6 +96,7 @@ const parseTriggerSettings = (settings) => {
 const TELEGRAM_VARIABLE_KEYS = [
   'CORGI_CRM_TELEGRAM_BOT_TOKEN',
   'CORGI_CRM_TELEGRAM_WEBHOOK_SECRET',
+  'CORGI_CRM_TELEGRAM_OPERATOR_SECRET',
   'CORGI_CRM_TELEGRAM_LINK_CODES',
   'CORGI_CRM_TELEGRAM_TIME_ZONE',
   'CORGI_CRM_TELEGRAM_DAILY_SUMMARY_TIME',
@@ -282,6 +286,32 @@ const verifyTelegramApplicationContract = (application, workspaceId) => {
     (logicFunction) =>
       logicFunction.universalIdentifier === TELEGRAM_DAILY_WORKER_ID,
     'Telegram daily queued worker function',
+  );
+  const deliveryControl = exactlyOne(
+    functions,
+    (logicFunction) =>
+      logicFunction.universalIdentifier === TELEGRAM_DELIVERY_CONTROL_ID,
+    'Telegram delivery control function',
+  );
+  const deliveryControlSettings = parseTriggerSettings(
+    deliveryControl.httpRouteTriggerSettings,
+  );
+  if (
+    deliveryControlSettings?.path !== '/telegram/delivery-control' ||
+    deliveryControlSettings?.httpMethod !== 'POST' ||
+    deliveryControlSettings?.isAuthRequired !== true ||
+    deliveryControlSettings?.forwardedRequestHeaders?.length !== 1 ||
+    deliveryControlSettings.forwardedRequestHeaders[0]?.toLowerCase() !==
+      'x-corgi-telegram-operator-secret'
+  ) {
+    throw new Error('Telegram delivery control route contract is not active');
+  }
+  exactlyOne(
+    functions,
+    (logicFunction) =>
+      logicFunction.universalIdentifier ===
+      TELEGRAM_DELIVERY_RETRY_WORKER_ID,
+    'Telegram delivery retry worker function',
   );
 };
 

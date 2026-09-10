@@ -8,6 +8,12 @@ import webhook from 'src/modules/telegram/telegram-webhook.logic-function';
 import * as webhookModule from 'src/modules/telegram/telegram-webhook.logic-function';
 import * as workerModule from 'src/modules/telegram/telegram-update-worker.logic-function';
 import * as dailyModule from 'src/modules/telegram/telegram-daily-summary.logic-function';
+const deliveryControlModule = await import(
+  'src/modules/telegram/telegram-delivery-control.logic-function'
+).catch(() => ({}));
+const deliveryRetryWorkerModule = await import(
+  'src/modules/telegram/telegram-delivery-retry-worker.logic-function'
+).catch(() => ({}));
 
 const WORKSPACE_ID = '11111111-1111-4111-8111-111111111111';
 const OTHER_WORKSPACE_ID = '22222222-2222-4222-8222-222222222222';
@@ -169,5 +175,13 @@ describe('Telegram application contract', () => {
       'httpRouteTriggerSettings',
     );
     expect(dailySummaryWorker.config).not.toHaveProperty('cronTriggerSettings');
+    expect(deliveryControlModule.default?.success).toBe(true);
+    expect(deliveryRetryWorkerModule.default?.success).toBe(true);
+    expect(deliveryRetryWorkerModule.default?.config).not.toHaveProperty(
+      'httpRouteTriggerSettings',
+    );
+    expect(deliveryRetryWorkerModule.default?.config).not.toHaveProperty(
+      'cronTriggerSettings',
+    );
   });
 });

@@ -35,6 +35,7 @@ describe('trusted Telegram application configuration', () => {
           workspaceId: '11111111-1111-4111-8111-111111111111',
           token: 'token',
           webhookSecret: 'secret',
+          operatorSecret: 'operator-secret',
           linkCodesJson: '{not-json',
           timeZone: 'America/Chicago',
           dailySummaryTime: '17:00',
@@ -71,6 +72,7 @@ describe('trusted Telegram application configuration', () => {
           workspaceId: '11111111-1111-4111-8111-111111111111',
           token: 'token',
           webhookSecret: 'secret',
+          operatorSecret: 'operator-secret',
           linkCodesJson: duplicateUser,
           timeZone: 'America/Chicago',
           dailySummaryTime: '17:00',
@@ -97,6 +99,7 @@ describe('trusted Telegram application configuration', () => {
       workspaceId: '11111111-1111-4111-8111-111111111111',
       token: 'token',
       webhookSecret: 'secret',
+      operatorSecret: 'operator-secret',
       linkCodesJson: JSON.stringify({
         bindings: [
           {

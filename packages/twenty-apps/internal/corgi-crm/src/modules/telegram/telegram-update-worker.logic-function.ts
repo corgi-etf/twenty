@@ -6,6 +6,10 @@ import { TELEGRAM_UPDATE_WORKER_UNIVERSAL_IDENTIFIER } from 'src/constants';
 import { CoreOutreachRepository } from 'src/modules/outreach/graphql/core-outreach.repository';
 import { TelegramClient } from 'src/modules/telegram/services/telegram-client.service';
 import { processTelegramCommand } from 'src/modules/telegram/services/telegram-command.service';
+import {
+  buildTelegramDeliveryKey,
+  deliverTelegramOperation,
+} from 'src/modules/telegram/services/telegram-delivery.service';
 import { parseQueuedTelegramUpdate } from 'src/modules/telegram/services/telegram-security.service';
 import { type KeyValueStore } from 'src/modules/telegram/types';
 import { CoreWholesalerRepository } from 'src/modules/wholesaler/onboarding/graphql/core-wholesaler.repository';
@@ -50,6 +54,8 @@ export const handleTelegramUpdateJob = async (
   const telegram = dependencies.createTelegramClient();
   const coreClient = dependencies.createCrmClient();
   const wholesalerRepository = new CoreWholesalerRepository(coreClient);
+  let messageIndex = 0;
+  let callbackIndex = 0;
   try {
     const result = await dependencies.processCommand(update, {
       repository: new CoreOutreachRepository(coreClient),
@@ -71,9 +77,38 @@ export const handleTelegramUpdateJob = async (
               workspaceMemberId,
             })),
       },
-      send: (chatId, text) => telegram.sendMessage(chatId, text),
-      answerCallback: (callbackQueryId) =>
-        telegram.answerCallbackQuery(callbackQueryId),
+      send: async (chatId, text) => {
+        const deliveryKey = buildTelegramDeliveryKey(
+          `interactive:${update.updateId}:message:${messageIndex}`,
+        );
+        messageIndex += 1;
+        await deliverTelegramOperation({
+          deliveryKey,
+          retryEnvelope: { kind: 'message', chatId, text },
+          store: dependencies.store,
+          perform: (envelope) =>
+            envelope.kind === 'message'
+              ? telegram.sendMessage(envelope.chatId, envelope.text)
+              : Promise.reject(new Error('Invalid Telegram message envelope')),
+          now: () => new Date(),
+        });
+      },
+      answerCallback: async (callbackQueryId) => {
+        const deliveryKey = buildTelegramDeliveryKey(
+          `interactive:${update.updateId}:callback:${callbackIndex}`,
+        );
+        callbackIndex += 1;
+        await deliverTelegramOperation({
+          deliveryKey,
+          retryEnvelope: { kind: 'callback', callbackQueryId },
+          store: dependencies.store,
+          perform: (envelope) =>
+            envelope.kind === 'callback'
+              ? telegram.answerCallbackQuery(envelope.callbackQueryId)
+              : Promise.reject(new Error('Invalid Telegram callback envelope')),
+          now: () => new Date(),
+        });
+      },
       now: () => new Date(),
       onCrmCommitted: async (activityId) => {
         phase = 'crm_committed';

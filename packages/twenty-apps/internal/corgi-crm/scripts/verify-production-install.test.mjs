@@ -79,6 +79,7 @@ describe('production Telegram application verification', () => {
       { key: 'CORGI_CRM_TELEGRAM_ENABLED', value: 'true' },
       { key: 'CORGI_CRM_TELEGRAM_BOT_TOKEN', value: '********' },
       { key: 'CORGI_CRM_TELEGRAM_WEBHOOK_SECRET', value: '********' },
+      { key: 'CORGI_CRM_TELEGRAM_OPERATOR_SECRET', value: '********' },
       { key: 'CORGI_CRM_TELEGRAM_LINK_CODES', value: '********' },
       { key: 'CORGI_CRM_TELEGRAM_TIME_ZONE', value: 'America/Chicago' },
       { key: 'CORGI_CRM_TELEGRAM_DAILY_SUMMARY_TIME', value: '17:00' },
@@ -102,6 +103,18 @@ describe('production Telegram application verification', () => {
       },
       {
         universalIdentifier: 'a518c1f8-d80c-4260-8ef6-bd51a86b4eda',
+      },
+      {
+        universalIdentifier: 'c77df778-3268-4d34-a3d8-84e7478cb567',
+        httpRouteTriggerSettings: JSON.stringify({
+          path: '/telegram/delivery-control',
+          httpMethod: 'POST',
+          isAuthRequired: true,
+          forwardedRequestHeaders: ['x-corgi-telegram-operator-secret'],
+        }),
+      },
+      {
+        universalIdentifier: '70e86a19-fbdd-4d17-aa36-f0b2ab62305b',
       },
     ],
   };
