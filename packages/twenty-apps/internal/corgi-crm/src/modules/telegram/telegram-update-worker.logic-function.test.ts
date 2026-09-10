@@ -9,7 +9,9 @@ describe('Telegram update worker durable replies', () => {
     const values = new Map<string, unknown>();
     const store = {
       get: vi.fn(async (key: string) => values.get(key) ?? null),
-      set: vi.fn(async (key: string, value: unknown) => values.set(key, value)),
+      set: vi.fn(async (key: string, value: unknown) => {
+        values.set(key, value);
+      }),
       delete: vi.fn(),
     };
     const sendMessage = vi.fn().mockResolvedValue(undefined);

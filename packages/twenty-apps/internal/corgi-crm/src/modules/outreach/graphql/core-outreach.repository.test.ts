@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { CoreOutreachRepository } from 'src/modules/outreach/graphql/core-outreach.repository';
+import type { OutreachActivityWrite } from 'src/modules/outreach/types';
 
 describe('CoreOutreachRepository.findContacts', () => {
   it('paginates beyond 100 contacts before matching the 101st record', async () => {
@@ -41,16 +42,19 @@ describe('CoreOutreachRepository.findContacts', () => {
 });
 
 describe('CoreOutreachRepository.createActivity', () => {
-  const write = {
+  const write: OutreachActivityWrite = {
     id: '55555555-5555-4555-8555-555555555555',
     name: 'Phone call — Acme',
     companyId: 'company-1',
-    contactId: null,
     wholesalerId: 'wholesaler-1',
     activityType: 'phone_call' as const,
     outcome: 'connected' as const,
-    notes: null,
     occurredAt: '2026-09-10T04:59:00.000Z',
+  };
+  const persistedWrite = {
+    ...write,
+    contactId: null,
+    notes: null,
     followUpDate: null,
   };
 
@@ -63,7 +67,7 @@ describe('CoreOutreachRepository.createActivity', () => {
         })
         .mockResolvedValueOnce({
           outreachActivities: {
-            edges: [{ node: write }],
+            edges: [{ node: persistedWrite }],
             pageInfo: { hasNextPage: false },
           },
         }),
@@ -88,7 +92,14 @@ describe('CoreOutreachRepository.createActivity', () => {
         .mockResolvedValueOnce({ outreachActivities: { edges: [] } })
         .mockResolvedValueOnce({
           outreachActivities: {
-            edges: [{ node: { ...write, occurredAt: '2026-09-10T05:01:00.000Z' } }],
+            edges: [
+              {
+                node: {
+                  ...persistedWrite,
+                  occurredAt: '2026-09-10T05:01:00.000Z',
+                },
+              },
+            ],
           },
         }),
       mutation: vi.fn().mockRejectedValue(new Error('duplicate key')),

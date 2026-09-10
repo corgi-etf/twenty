@@ -72,7 +72,6 @@ describe('production reconciliation verification', () => {
 });
 
 describe('production Telegram application verification', () => {
-  const workspaceMemberId = '11111111-1111-4111-8111-111111111111';
   const application = {
     applicationVariables: [
       { key: 'CORGI_CRM_WORKSPACE_ID', value: 'workspace-1' },

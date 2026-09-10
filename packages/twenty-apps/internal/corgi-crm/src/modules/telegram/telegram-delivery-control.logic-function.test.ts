@@ -1,8 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-const logicModule = await import(
-  'src/modules/telegram/telegram-delivery-control.logic-function'
-).catch(() => ({}));
+import * as logicModule from 'src/modules/telegram/telegram-delivery-control.logic-function';
 
 const WORKSPACE_ID = '11111111-1111-4111-8111-111111111111';
 const MEMBER_ID = '22222222-2222-4222-8222-222222222222';
@@ -20,7 +18,7 @@ describe('Telegram delivery control route', () => {
         {
           headers: { 'x-corgi-telegram-operator-secret': proof },
           body: { action: 'inspect', deliveryKey: `telegram:delivery:${'a'.repeat(64)}` },
-        },
+        } as never,
         {
           workspaceId,
           workspaceMemberId: MEMBER_ID,

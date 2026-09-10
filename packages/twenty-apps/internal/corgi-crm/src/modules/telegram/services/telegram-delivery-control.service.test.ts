@@ -1,8 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 
-const controlModule = await import(
-  'src/modules/telegram/services/telegram-delivery-control.service'
-).catch(() => ({}));
+import {
+  inspectTelegramDelivery,
+  requestTelegramDeliveryReset,
+} from 'src/modules/telegram/services/telegram-delivery-control.service';
 
 describe('Telegram unknown-delivery control', () => {
   const deliveryKey = `telegram:delivery:${'d'.repeat(64)}`;
@@ -36,9 +37,8 @@ describe('Telegram unknown-delivery control', () => {
   };
 
   it('inspects only opaque state metadata and never returns the retry envelope', async () => {
-    expect(typeof controlModule.inspectTelegramDelivery).toBe('function');
     const { store } = setup();
-    const result = await controlModule.inspectTelegramDelivery?.({
+    const result = await inspectTelegramDelivery({
       deliveryKey,
       store,
     });
@@ -57,10 +57,9 @@ describe('Telegram unknown-delivery control', () => {
   });
 
   it('writes an append-only audit before one deterministic retry enqueue', async () => {
-    expect(typeof controlModule.requestTelegramDeliveryReset).toBe('function');
     const { values, order, store, enqueue } = setup();
     await expect(
-      controlModule.requestTelegramDeliveryReset?.({
+      requestTelegramDeliveryReset({
         deliveryKey,
         expectedUnknownAt: unknownAt,
         requestId: '11111111-1111-4111-8111-111111111111',
@@ -86,7 +85,6 @@ describe('Telegram unknown-delivery control', () => {
   });
 
   it('rejects stale, replayed, or weak reset requests without enqueue', async () => {
-    expect(typeof controlModule.requestTelegramDeliveryReset).toBe('function');
     const { values, store, enqueue } = setup();
     const base = {
       deliveryKey,
@@ -100,20 +98,20 @@ describe('Telegram unknown-delivery control', () => {
       now: () => new Date(),
     };
     await expect(
-      controlModule.requestTelegramDeliveryReset?.({
+      requestTelegramDeliveryReset({
         ...base,
         expectedUnknownAt: '2026-09-09T21:00:00.000Z',
       }),
     ).rejects.toThrow(/stale/i);
     await expect(
-      controlModule.requestTelegramDeliveryReset?.({
+      requestTelegramDeliveryReset({
         ...base,
         confirmation: 'yes',
       }),
     ).rejects.toThrow(/confirmation/i);
     values.set(deliveryKey, { ...state, status: 'complete' });
     await expect(
-      controlModule.requestTelegramDeliveryReset?.(base),
+      requestTelegramDeliveryReset(base),
     ).rejects.toThrow(/unknown|replay/i);
     expect(enqueue).not.toHaveBeenCalled();
   });

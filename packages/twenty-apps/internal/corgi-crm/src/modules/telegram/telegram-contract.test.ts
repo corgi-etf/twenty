@@ -1,19 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import application from 'src/application-config';
-import dailySummary from 'src/modules/telegram/telegram-daily-summary.logic-function';
+import dailySummary, * as dailyModule from 'src/modules/telegram/telegram-daily-summary.logic-function';
 import dailySummaryWorker from 'src/modules/telegram/telegram-daily-summary-worker.logic-function';
-import updateWorker from 'src/modules/telegram/telegram-update-worker.logic-function';
-import webhook from 'src/modules/telegram/telegram-webhook.logic-function';
-import * as webhookModule from 'src/modules/telegram/telegram-webhook.logic-function';
-import * as workerModule from 'src/modules/telegram/telegram-update-worker.logic-function';
-import * as dailyModule from 'src/modules/telegram/telegram-daily-summary.logic-function';
-const deliveryControlModule = await import(
-  'src/modules/telegram/telegram-delivery-control.logic-function'
-).catch(() => ({}));
-const deliveryRetryWorkerModule = await import(
-  'src/modules/telegram/telegram-delivery-retry-worker.logic-function'
-).catch(() => ({}));
+import deliveryControl from 'src/modules/telegram/telegram-delivery-control.logic-function';
+import deliveryRetryWorker from 'src/modules/telegram/telegram-delivery-retry-worker.logic-function';
+import updateWorker, * as workerModule from 'src/modules/telegram/telegram-update-worker.logic-function';
+import webhook, * as webhookModule from 'src/modules/telegram/telegram-webhook.logic-function';
 
 const WORKSPACE_ID = '11111111-1111-4111-8111-111111111111';
 const OTHER_WORKSPACE_ID = '22222222-2222-4222-8222-222222222222';
@@ -175,12 +168,12 @@ describe('Telegram application contract', () => {
       'httpRouteTriggerSettings',
     );
     expect(dailySummaryWorker.config).not.toHaveProperty('cronTriggerSettings');
-    expect(deliveryControlModule.default?.success).toBe(true);
-    expect(deliveryRetryWorkerModule.default?.success).toBe(true);
-    expect(deliveryRetryWorkerModule.default?.config).not.toHaveProperty(
+    expect(deliveryControl.success).toBe(true);
+    expect(deliveryRetryWorker.success).toBe(true);
+    expect(deliveryRetryWorker.config).not.toHaveProperty(
       'httpRouteTriggerSettings',
     );
-    expect(deliveryRetryWorkerModule.default?.config).not.toHaveProperty(
+    expect(deliveryRetryWorker.config).not.toHaveProperty(
       'cronTriggerSettings',
     );
   });

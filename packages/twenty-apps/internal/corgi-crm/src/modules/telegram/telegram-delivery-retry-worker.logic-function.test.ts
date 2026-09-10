@@ -1,8 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-const workerModule = await import(
-  'src/modules/telegram/telegram-delivery-retry-worker.logic-function'
-).catch(() => ({}));
+import * as workerModule from 'src/modules/telegram/telegram-delivery-retry-worker.logic-function';
 
 const WORKSPACE_ID = '11111111-1111-4111-8111-111111111111';
 const deliveryKey = `telegram:delivery:${'e'.repeat(64)}`;
@@ -58,7 +56,9 @@ describe('Telegram delivery retry worker', () => {
     ]);
     const store = {
       get: vi.fn(async (key: string) => values.get(key) ?? null),
-      set: vi.fn(async (key: string, value: unknown) => values.set(key, value)),
+      set: vi.fn(async (key: string, value: unknown) => {
+        values.set(key, value);
+      }),
       delete: vi.fn(),
     };
     const sendMessage = vi.fn().mockResolvedValue(undefined);
