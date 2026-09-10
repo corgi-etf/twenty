@@ -6,6 +6,7 @@ import { requireProductionEnvironment } from './requireProductionEnvironment';
 
 const APPROVED_ORIGIN = 'https://crm.corgiinvest.com';
 const APPLICATION_IDENTIFIER = 'ca87ad48-b62a-41be-a790-7c17707ff1b4';
+const REPORT_RUNTIME_IDENTIFIER = '8d6ea72a-aa6f-4a1c-83a7-ad539819bd47';
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -77,6 +78,7 @@ test('books and reschedules a native CRM meeting while Telegram is disabled', as
   let workspaceMemberId: string | undefined;
   let cleanupVerified = false;
   let failure: Error | undefined;
+  const request = page.request;
   const meetingName = `CRM meeting canary ${requiredEnvironment('GITHUB_RUN_ID')}-${requiredEnvironment('GITHUB_RUN_ATTEMPT')}-${randomUUID()}`;
 
   const graphql = async <TData>(
@@ -84,13 +86,14 @@ test('books and reschedules a native CRM meeting while Telegram is disabled', as
     operationName: string,
     query: string,
     variables: Record<string, unknown> = {},
+    timeout = 15_000,
   ): Promise<TData> => {
-    const response = await page.request.post(
+    const response = await request.post(
       new URL(endpoint, APPROVED_ORIGIN).href,
       {
         headers: { Origin: APPROVED_ORIGIN },
         data: { operationName, query, variables },
-        timeout: 15_000,
+        timeout,
       },
     );
     try {
@@ -121,6 +124,7 @@ test('books and reschedules a native CRM meeting while Telegram is disabled', as
     const result = await graphql<{
       currentWorkspace: { id: string };
       findManyApplications: Array<{
+        id: string;
         universalIdentifier: string;
         version: string;
         applicationVariables: Array<{ key: string; value: string }>;
@@ -134,6 +138,7 @@ test('books and reschedules a native CRM meeting while Telegram is disabled', as
             id
           }
           findManyApplications {
+            id
             universalIdentifier
             version
             applicationVariables {
@@ -154,6 +159,7 @@ test('books and reschedules a native CRM meeting while Telegram is disabled', as
     );
     expect(applications.length).toBe(1);
     const application = applications[0]!;
+    expect(UUID_PATTERN.test(application.id)).toBe(true);
     expect(
       application.version === requiredEnvironment('CORGI_CRM_EXPECTED_VERSION'),
     ).toBe(true);
@@ -166,6 +172,7 @@ test('books and reschedules a native CRM meeting while Telegram is disabled', as
       );
       expect(matches.length === 1 && matches[0]?.value === value).toBe(true);
     }
+    return application.id;
   };
 
   const readMeeting = async (): Promise<Meeting | null> => {
@@ -574,6 +581,158 @@ test('books and reschedules a native CRM meeting while Telegram is disabled', as
   }
   if (failure) throw failure;
   expect(cleanupVerified).toBe(true);
+
+  let reportRuntime: Array<{
+    period: string;
+    activityCount: number;
+    meetingCount: number;
+    windowHours: number;
+  }>;
+  try {
+    const applicationId = await assertDisabled();
+    const functions = await graphql<{
+      findManyLogicFunctions: Array<{
+        id: string;
+        universalIdentifier: string;
+        name: string;
+        applicationId: string;
+        databaseEventTriggerSettings: unknown;
+        httpRouteTriggerSettings: unknown;
+        cronTriggerSettings: unknown;
+        toolTriggerSettings: unknown;
+        workflowActionTriggerSettings: unknown;
+      }>;
+    }>(
+      '/metadata',
+      'FindInstalledReportRuntimeVerification',
+      `
+        query FindInstalledReportRuntimeVerification {
+          findManyLogicFunctions {
+            id
+            universalIdentifier
+            name
+            applicationId
+            databaseEventTriggerSettings
+            httpRouteTriggerSettings
+            cronTriggerSettings
+            toolTriggerSettings
+            workflowActionTriggerSettings
+          }
+        }
+      `,
+    );
+    const matches = functions.findManyLogicFunctions.filter(
+      (candidate) =>
+        candidate.universalIdentifier === REPORT_RUNTIME_IDENTIFIER,
+    );
+    expect(matches.length === 1).toBe(true);
+    const runtimeFunction = matches[0]!;
+    expect(
+      UUID_PATTERN.test(runtimeFunction.id) &&
+        runtimeFunction.applicationId === applicationId &&
+        runtimeFunction.name === 'verify-report-runtime' &&
+        [
+          runtimeFunction.databaseEventTriggerSettings,
+          runtimeFunction.httpRouteTriggerSettings,
+          runtimeFunction.cronTriggerSettings,
+          runtimeFunction.toolTriggerSettings,
+          runtimeFunction.workflowActionTriggerSettings,
+        ].every((settings) => settings === null),
+    ).toBe(true);
+    // This authenticated metadata route uses executeOneFromSource in LIVE mode.
+    // It exercises the production SDK/schema, not a byte-identical worker build.
+    const execution = await graphql<{
+      executeOneLogicFunction: { status: string; data: unknown };
+    }>(
+      '/metadata',
+      'ExecuteInstalledReportRuntimeVerification',
+      `
+        mutation ExecuteInstalledReportRuntimeVerification(
+          $input: ExecuteOneLogicFunctionInput!
+        ) {
+          executeOneLogicFunction(input: $input) {
+            status
+            data
+          }
+        }
+      `,
+      {
+        input: {
+          id: runtimeFunction.id,
+          payload: {
+            confirmation:
+              'VERIFY_CORGI_CRM_REPORT_RUNTIME_WITH_TELEGRAM_DISABLED',
+            expectedUserWorkspaceId: requiredEnvironment(
+              'CORGI_CRM_EXPECTED_USER_WORKSPACE_ID',
+            ),
+            expectedWorkspaceMemberId: workspaceMemberId,
+          },
+        },
+      },
+      75_000,
+    );
+    const isRecord = (value: unknown): value is Record<string, unknown> =>
+      Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+    const { status, data } = execution.executeOneLogicFunction;
+    if (
+      status !== 'SUCCESS' ||
+      !isRecord(data) ||
+      Object.keys(data).length !== 2 ||
+      data.status !== 'verified' ||
+      !Array.isArray(data.reports) ||
+      data.reports.length !== 3
+    )
+      throw new Error('Report runtime did not return verified evidence');
+    const reports = data.reports;
+    const reportKeys = [
+      'period',
+      'activityCount',
+      'meetingCount',
+      'windowHours',
+      'allOwners',
+      'activityLeaderboard',
+      'meetingLeaderboard',
+      'weeklyExcludesWeekends',
+    ];
+    reportRuntime = [
+      ['daily', 24],
+      ['weekly', 168],
+      ['monthly', 720],
+    ].map(([period, windowHours], index) => {
+      const report: unknown = reports[index];
+      if (
+        !isRecord(report) ||
+        Object.keys(report).length !== reportKeys.length ||
+        !reportKeys.every((key) =>
+          Object.prototype.hasOwnProperty.call(report, key),
+        ) ||
+        report.period !== period ||
+        report.windowHours !== windowHours ||
+        report.allOwners !== true ||
+        report.activityLeaderboard !== true ||
+        report.meetingLeaderboard !== true ||
+        report.weeklyExcludesWeekends !== (period === 'weekly') ||
+        typeof report.activityCount !== 'number' ||
+        !Number.isSafeInteger(report.activityCount) ||
+        report.activityCount < 0 ||
+        typeof report.meetingCount !== 'number' ||
+        !Number.isSafeInteger(report.meetingCount) ||
+        report.meetingCount < 0
+      )
+        throw new Error('Report runtime returned invalid period evidence');
+      return {
+        period: String(period),
+        windowHours: Number(windowHours),
+        activityCount: report.activityCount,
+        meetingCount: report.meetingCount,
+      };
+    });
+    await assertDisabled();
+  } catch {
+    throw new Error(
+      'Installed report runtime verification failed after exact meeting cleanup',
+    );
+  }
   console.log(
     JSON.stringify({
       meetingCanary: 'passed',
@@ -586,6 +745,8 @@ test('books and reschedules a native CRM meeting while Telegram is disabled', as
       nativeCalendar: true,
       telegramDisabled: true,
       exactRecordCleanupVerified: cleanupVerified,
+      installedReportRuntime: 'LIVE_FROM_SOURCE',
+      reportRuntime,
     }),
   );
 });

@@ -26,6 +26,8 @@ const MEETING_BOOKED_ALERT_FUNCTION_ID =
   '4d407d33-c0b2-4f8e-8300-be86c2e3dc7d';
 const MEETING_NOTIFICATION_WORKER_ID =
   'fb84094f-d44a-4180-9f50-ff7971f670e6';
+const REPORT_RUNTIME_VERIFICATION_ID =
+  '8d6ea72a-aa6f-4a1c-83a7-ad539819bd47';
 const APPROVED_ORIGIN = 'https://crm.corgiinvest.com';
 const PAGE_SIZE = 100;
 const MAX_PAGES = 100;
@@ -431,6 +433,23 @@ const verifyMeetingApplicationContract = (application) => {
   ) {
     throw new Error('Meeting notification worker must be untriggered');
   }
+  const reportVerifier = exactlyOne(
+    application.logicFunctions ?? [],
+    (candidate) => candidate?.universalIdentifier === REPORT_RUNTIME_VERIFICATION_ID,
+    'Report runtime verification function',
+  );
+  if (
+    reportVerifier.name !== 'verify-report-runtime' ||
+    [
+      'databaseEventTriggerSettings',
+      'httpRouteTriggerSettings',
+      'cronTriggerSettings',
+      'toolTriggerSettings',
+      'workflowActionTriggerSettings',
+    ].some((key) => reportVerifier[key] != null)
+  ) {
+    throw new Error('Report runtime verification function must be untriggered');
+  }
 };
 
 const TELEGRAM_PERSISTENCE_OBJECTS = {
@@ -696,6 +715,8 @@ const verifyInstalledApplication = async ({
           databaseEventTriggerSettings
           httpRouteTriggerSettings
           cronTriggerSettings
+          toolTriggerSettings
+          workflowActionTriggerSettings
         }
       }
     }`,

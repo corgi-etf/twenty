@@ -633,6 +633,15 @@ describe('installed meeting booking verification', () => {
           httpRouteTriggerSettings: null,
           cronTriggerSettings: null,
         },
+        {
+          universalIdentifier: '8d6ea72a-aa6f-4a1c-83a7-ad539819bd47',
+          name: 'verify-report-runtime',
+          databaseEventTriggerSettings: null,
+          httpRouteTriggerSettings: null,
+          cronTriggerSettings: null,
+          toolTriggerSettings: null,
+          workflowActionTriggerSettings: null,
+        },
       ],
     };
     assert.doesNotThrow(() => verifyMeetingApplicationContract(application));
@@ -647,6 +656,33 @@ describe('installed meeting booking verification', () => {
         }),
       /alert/i,
     );
+    const runtimeId = '8d6ea72a-aa6f-4a1c-83a7-ad539819bd47';
+    assert.throws(
+      () => verifyMeetingApplicationContract({
+        logicFunctions: application.logicFunctions.filter(
+          (logicFunction) => logicFunction.universalIdentifier !== runtimeId,
+        ),
+      }),
+      /report runtime/i,
+    );
+    for (const field of [
+      'databaseEventTriggerSettings',
+      'httpRouteTriggerSettings',
+      'cronTriggerSettings',
+      'toolTriggerSettings',
+      'workflowActionTriggerSettings',
+    ]) {
+      assert.throws(
+        () => verifyMeetingApplicationContract({
+          logicFunctions: application.logicFunctions.map((logicFunction) =>
+            logicFunction.universalIdentifier === runtimeId
+              ? { ...logicFunction, [field]: {} }
+              : logicFunction,
+          ),
+        }),
+        /report runtime.*untriggered/i,
+      );
+    }
   });
 });
 
