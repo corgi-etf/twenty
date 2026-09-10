@@ -865,13 +865,49 @@ export const buildActivityImportPlan = (input: {
     existingById.set(activity.id, matches);
   }
 
+  // Report every unmatched row at once. Throwing on the first hides the other 62
+  // behind it, so each dry run surfaced a single name and the real scale of the
+  // mismatch stayed invisible across repeated runs.
+  const unmatched = input.rows
+    .map((row) => ({
+      row,
+      count: (companiesByExactName.get(row.companyName) ?? []).length,
+    }))
+    .filter(({ count }) => count !== 1);
+  if (unmatched.length > 0) {
+    // Suggestions only -- matching itself stays exact. Reporting the near miss
+    // turns "row N did not match" into an actionable mapping without loosening
+    // the fail-closed contract.
+    const loosen = (value: string) =>
+      value
+        .toLowerCase()
+        .replace(/&/g, ' and ')
+        .replace(/[,.'"|/()-]/g, ' ')
+        .replace(/\b(llc|l l c|inc|incorporated|corp|corporation|ltd|limited|lp|llp|pc|pllc|co|company)\b/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+    const byLoose = new Map<string, string[]>();
+    for (const company of input.companies) {
+      const key = loosen(company.name);
+      if (!key) continue;
+      byLoose.set(key, [...(byLoose.get(key) ?? []), company.name]);
+    }
+    throw new Error(
+      unmatched
+        .map(({ row, count }) => {
+          const near = byLoose.get(loosen(row.companyName)) ?? [];
+          const hint = near.length ? ` near: ${near.slice(0, 3).join(' | ')}` : ' near: none';
+          return (
+            `Activity import row ${row.rowNumber} must match exactly one company ` +
+            `("${row.companyName}" matched ${count};${hint})`
+          );
+        })
+        .join('\n'),
+    );
+  }
+
   const activities = input.rows.map((row): PlannedActivity => {
     const companyMatches = companiesByExactName.get(row.companyName) ?? [];
-    if (companyMatches.length !== 1) {
-      throw new Error(
-        `Activity import row ${row.rowNumber} must match exactly one company`,
-      );
-    }
     const companyId = companyMatches[0]!.id;
     const completedActivity =
       input.csvOptions.sourceFormat === 'completed-actions-v2';
