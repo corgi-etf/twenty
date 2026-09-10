@@ -178,4 +178,55 @@ describe('CoreWholesalerRepository external object access', () => {
     expect(generated.query).toHaveBeenCalledTimes(2);
     expect(raw.request).not.toHaveBeenCalled();
   });
+
+  it('reads roles through the proven filtered Wholesaler query and drops non-UUID owner sentinels', async () => {
+    const other = { ...record, id: '33333333-3333-4333-8333-333333333333' };
+    const { generated, raw, repository } = buildRepository({
+      rawResult: {
+        wholesalers: { edges: [{ node: record }, { node: other }] },
+      },
+    });
+
+    await expect(
+      repository.findRolesByIds([
+        record.id,
+        ' ' + record.id + ' ',
+        other.id,
+        'unassigned',
+        '',
+      ]),
+    ).resolves.toEqual([record, other]);
+    expect(generated.query).not.toHaveBeenCalled();
+    expect(raw.request).toHaveBeenCalledOnce();
+    expect(raw.request).toHaveBeenCalledWith({
+      operationName: 'CorgiFindWholesalerRolesByIds',
+      document: expect.stringMatching(/wholesalers\(first: \$first, filter: \{ id: \{ in: \$wholesalerIds \} \}\)/),
+      variables: { wholesalerIds: [record.id, other.id], first: 2 },
+    });
+  });
+
+  it('reads nothing at all when every owner identity is a sentinel', async () => {
+    const { raw, repository } = buildRepository();
+
+    await expect(repository.findRolesByIds(['unassigned', ' '])).resolves.toEqual(
+      [],
+    );
+    expect(raw.request).not.toHaveBeenCalled();
+  });
+
+  it('refuses to classify only part of an oversized roster', async () => {
+    const { raw, repository } = buildRepository({
+      rawResult: { wholesalers: { edges: [] } },
+    });
+    const ids = Array.from(
+      { length: 1001 },
+      (_value, index) =>
+        `${index.toString(16).padStart(8, '0')}-1111-4111-8111-111111111111`,
+    );
+
+    await expect(repository.findRolesByIds(ids)).rejects.toThrow(
+      'Wholesaler role lookup exceeded its batch budget',
+    );
+    expect(raw.request).not.toHaveBeenCalled();
+  });
 });

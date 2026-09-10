@@ -2,6 +2,7 @@ import { type CoreApiClient } from 'twenty-client-sdk/core';
 
 import { type RawCoreGraphqlTransport } from 'src/modules/core/graphql/raw-core-graphql.transport';
 import {
+  findWholesalerRolesByIds,
   findWholesalersByEmail,
   findWholesalersByWorkspaceMemberId,
 } from 'src/modules/wholesaler/onboarding/graphql/queries/find-wholesalers';
@@ -21,6 +22,14 @@ import { normalizeEmail } from 'src/modules/wholesaler/onboarding/utils/normaliz
 
 type GeneratedCoreClient = Pick<CoreApiClient, 'query'>;
 type RawCoreRequester = Pick<RawCoreGraphqlTransport, 'request'>;
+
+const ROLE_LOOKUP_BATCH_SIZE = 50;
+const MAX_ROLE_LOOKUP_BATCHES = 20;
+
+// The role filter argument is UUID-typed, so a sentinel owner identity such as
+// the report's 'unassigned' would make the server reject the whole query.
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 const isNullableString = (value: unknown): value is string | null | undefined =>
   value === null || value === undefined || typeof value === 'string';
@@ -88,6 +97,37 @@ export class CoreWholesalerRepository implements WholesalerRepository {
     return nodes(await findWholesalersByEmail(this.rawClient, email)).filter(
       (record) => normalizeEmail(record.email ?? '') === email,
     );
+  }
+
+  public async findRolesByIds(
+    wholesalerIds: string[],
+  ): Promise<WholesalerRecord[]> {
+    const uniqueIds = [
+      ...new Set(
+        wholesalerIds
+          .map((wholesalerId) =>
+            typeof wholesalerId === 'string' ? wholesalerId.trim() : '',
+          )
+          .filter((wholesalerId) => UUID_PATTERN.test(wholesalerId)),
+      ),
+    ];
+    if (uniqueIds.length === 0) return [];
+    if (uniqueIds.length > ROLE_LOOKUP_BATCH_SIZE * MAX_ROLE_LOOKUP_BATCHES) {
+      // Classifying only the first batches would silently drop real EWs from
+      // the report; the caller degrades the whole section instead.
+      throw new Error('Wholesaler role lookup exceeded its batch budget');
+    }
+    const records = new Map<string, WholesalerRecord>();
+    for (
+      let offset = 0;
+      offset < uniqueIds.length;
+      offset += ROLE_LOOKUP_BATCH_SIZE
+    ) {
+      const batch = uniqueIds.slice(offset, offset + ROLE_LOOKUP_BATCH_SIZE);
+      const result = await findWholesalerRolesByIds(this.rawClient, batch);
+      for (const record of nodes(result)) records.set(record.id, record);
+    }
+    return [...records.values()];
   }
 
   public async create(

@@ -25,6 +25,13 @@ export type WorkspaceMemberPage = {
   nextCursor?: string;
 };
 
+// A capability, not part of WholesalerRepository: the outreach report depends
+// only on this, and nothing that reads roles for the report may oblige an
+// onboarding test double to grow a method it never calls.
+export type WholesalerRoleReader = {
+  findRolesByIds(wholesalerIds: string[]): Promise<WholesalerRecord[]>;
+};
+
 export type WholesalerRepository = {
   findByWorkspaceMemberId(memberId: string): Promise<WholesalerRecord[]>;
   findByEmail(email: string): Promise<WholesalerRecord[]>;

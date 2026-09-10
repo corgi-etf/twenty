@@ -49,3 +49,37 @@ export const findWholesalersByEmail = (
     document: FIND_WHOLESALERS_BY_EMAIL_DOCUMENT,
     variables: { emailPattern: escapeSqlLikePattern(email) },
   });
+
+export type FindWholesalerRolesData = {
+  wholesalers: {
+    edges: Array<{ node: WholesalerRecord }>;
+  };
+};
+
+// Deliberately the same root query and filter argument shape as the onboarding
+// lookups above, over a subset of their fields: the report must never be the
+// first caller of a read the release-time least-privilege role has not already
+// proven in production. Roles are matched in code rather than filtered
+// server-side because the stored value is hand-entered.
+export const FIND_WHOLESALER_ROLES_BY_IDS_DOCUMENT = `
+  query CorgiFindWholesalerRolesByIds($wholesalerIds: [UUID!]!, $first: Int!) {
+    wholesalers(first: $first, filter: { id: { in: $wholesalerIds } }) {
+      edges {
+        node { id name wholesalerRole }
+      }
+    }
+  }
+`;
+
+export const findWholesalerRolesByIds = (
+  client: RawCoreRequester,
+  wholesalerIds: string[],
+) =>
+  client.request<
+    FindWholesalerRolesData,
+    { wholesalerIds: string[]; first: number }
+  >({
+    operationName: 'CorgiFindWholesalerRolesByIds',
+    document: FIND_WHOLESALER_ROLES_BY_IDS_DOCUMENT,
+    variables: { wholesalerIds, first: wholesalerIds.length },
+  });

@@ -222,6 +222,20 @@ describe('internal read-only production report verification', () => {
     );
   });
 
+  // The ARR section is deliberately uncoupled from this gate: it fails closed
+  // and deletes the live Telegram webhook, so a section built from data it
+  // never reads can never take the bot down again.
+  it('verifies a report whose ARR section degraded, and reads no wholesaler role data', async () => {
+    const { dependencies, request } = fixtures();
+
+    await expect(
+      handleReportRuntimeVerification(payload, context, dependencies),
+    ).resolves.toMatchObject({ status: 'verified' });
+    for (const call of request.mock.calls)
+      expect(call[0]!.document).not.toContain('wholesalers(');
+    expect(request).toHaveBeenCalledTimes(6);
+  });
+
   it.each([
     ['missing context', undefined],
     ['different workspace', { ...context, workspaceId: OTHER_ID }],

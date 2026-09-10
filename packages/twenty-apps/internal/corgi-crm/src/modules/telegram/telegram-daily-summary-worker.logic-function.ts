@@ -14,6 +14,7 @@ import { readTelegramReportSnapshot } from 'src/modules/telegram/services/telegr
 import { type KeyValueStore } from 'src/modules/telegram/types';
 import { type OutreachRepository } from 'src/modules/outreach/types';
 import { type MeetingBookingReportRepository } from 'src/modules/outreach/report-meeting-booking.types';
+import { type WholesalerRoleReader } from 'src/modules/wholesaler/onboarding/types';
 import { type DailySummaryJobPayload } from 'src/modules/telegram/services/daily-summary-cron.service';
 import { TelegramClient } from 'src/modules/telegram/services/telegram-client.service';
 import { deliverDailySummary } from 'src/modules/telegram/services/telegram-delivery.service';
@@ -75,6 +76,7 @@ type DailySummaryWorkerDependencies = {
 export const readScheduledDailyReport = ({
   repository,
   meetingRepository,
+  wholesalerRoleReader,
   scheduledInstant,
   timeZone,
   store,
@@ -82,6 +84,7 @@ export const readScheduledDailyReport = ({
 }: {
   repository: OutreachRepository;
   meetingRepository: MeetingBookingReportRepository;
+  wholesalerRoleReader: WholesalerRoleReader;
   scheduledInstant: string;
   timeZone: string;
   store: KeyValueStore;
@@ -94,6 +97,7 @@ export const readScheduledDailyReport = ({
       readReportSummary({
         repository,
         meetingRepository,
+        wholesalerRoleReader,
         period: 'daily',
         now: new Date(scheduledInstant),
         timeZone,
@@ -154,6 +158,7 @@ const processDailySummaryJob = async (rawPayload: unknown) => {
   const text = await readScheduledDailyReport({
     repository,
     meetingRepository: new CoreMeetingBookingReportRepository(rawTransport),
+    wholesalerRoleReader: wholesalerRepository,
     scheduledInstant: payload.scheduledInstant,
     store: kv,
     workspaceMemberId: payload.workspaceMemberId,

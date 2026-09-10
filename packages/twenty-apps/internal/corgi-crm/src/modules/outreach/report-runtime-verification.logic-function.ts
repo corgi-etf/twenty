@@ -104,6 +104,11 @@ export const handleReportRuntimeVerification = async (
   const reports = [];
   for (const period of ['daily', 'weekly', 'monthly'] as const) {
     try {
+      // No wholesalerRoleReader on purpose. This gate runs with Telegram
+      // disabled and deletes the live webhook when it fails, so it reads
+      // exactly what it asserts on and nothing more: the ARR section degrades
+      // to its explanatory line here and is asserted on by neither the
+      // section checks below nor the counts.
       const report = await readReportSummary({
         repository,
         meetingRepository,

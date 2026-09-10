@@ -7,6 +7,10 @@ export const POST_INSTALL_UNIVERSAL_IDENTIFIER =
 export const DEFAULT_ROLE_UNIVERSAL_IDENTIFIER =
   '2ce78384-b8ef-4837-98bd-1efb6212d679';
 export const DEFAULT_WHOLESALER_ROLE = 'Wholesaler';
+
+// External wholesalers are told apart from BDRs only by this hand-entered
+// wholesalerRole value, so readers compare it trimmed and case-insensitively.
+export const EXTERNAL_WHOLESALER_ROLE = 'EW';
 export const TELEGRAM_WEBHOOK_UNIVERSAL_IDENTIFIER =
   'a7693988-ab2a-4f07-b865-b4d4808c814a';
 export const TELEGRAM_UPDATE_WORKER_UNIVERSAL_IDENTIFIER =
