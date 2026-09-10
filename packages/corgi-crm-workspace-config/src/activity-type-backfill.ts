@@ -1,4 +1,4 @@
-import { QUICK_LOG_ACTIVITY_TYPE_SELECT_FIELD_DEFINITION } from './planner.ts';
+import { QUICK_LOG_ACTIVITY_TYPE_SELECT_FIELD_DEFINITION } from './quick-log-activity-type-field.ts';
 
 export type OutreachActivityRow = {
   id: string;
