@@ -71,4 +71,28 @@ describe('post-install handler', () => {
       repository: expect.anything(),
     });
   });
+
+  it('reports only aggregate stage and class counts for failed members', async () => {
+    vi.mocked(reconcileAllWorkspaceMembers).mockResolvedValue({
+      created: 0,
+      updated: 0,
+      unchanged: 0,
+      failures: [
+        { stage: 'lookup_email', code: 'schema_mismatch' },
+        { stage: 'create', code: 'permission_denied' },
+        { stage: 'lookup_email', code: 'schema_mismatch' },
+      ],
+    });
+
+    const failure = await handler(installPayload, executionContext).catch(
+      (error: unknown) => error,
+    );
+    expect(failure).toBeInstanceOf(Error);
+    expect((failure as Error).message).toBe(
+      'Wholesaler reconciliation failed closed for 3 workspace member(s): create/permission_denied=1, lookup_email/schema_mismatch=2',
+    );
+    expect((failure as Error).message).not.toMatch(
+      /member-\d|private|@|graphql|provider/i,
+    );
+  });
 });

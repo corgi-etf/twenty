@@ -42,13 +42,37 @@ describe('reconcileAllWorkspaceMembers', () => {
       unchanged: 0,
       failures: [
         {
-          memberId: 'member-2',
-          message:
-            'Ambiguous wholesaler identity for workspace member member-2: duplicate-1, duplicate-2',
+          stage: 'resolve_identity',
+          code: 'ambiguous_identity',
         },
       ],
     });
     expect(repository.listWorkspaceMembers).toHaveBeenNthCalledWith(1, undefined);
     expect(repository.listWorkspaceMembers).toHaveBeenNthCalledWith(2, 'next');
+  });
+
+  it('reduces unknown thrown values to a safe unexpected diagnostic', async () => {
+    const repository: WholesalerRepository = {
+      listWorkspaceMembers: vi.fn().mockResolvedValue({
+        members: [{ id: 'private-member-id', email: 'private@example.com' }],
+      }),
+      findByWorkspaceMemberId: vi.fn().mockRejectedValue({
+        secret: 'provider detail',
+      }),
+      findByEmail: vi.fn().mockResolvedValue([]),
+      create: vi.fn(),
+      update: vi.fn(),
+    };
+
+    await expect(
+      reconcileAllWorkspaceMembers({
+        workspaceId: 'corgi-workspace',
+        repository,
+      }),
+    ).resolves.toMatchObject({
+      failures: [
+        { stage: 'lookup_member_relation', code: 'unexpected' },
+      ],
+    });
   });
 });

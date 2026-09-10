@@ -9,6 +9,10 @@ import {
   normalizeEmail,
   normalizeMemberName,
 } from 'src/modules/wholesaler/onboarding/utils/normalize-member-identity';
+import {
+  runWholesalerReconciliationStage,
+  WholesalerReconciliationError,
+} from 'src/modules/wholesaler/onboarding/services/wholesaler-reconciliation.error';
 
 export type ReconcileWorkspaceMemberResult =
   | { status: 'created' | 'updated' | 'unchanged'; wholesalerId: string }
@@ -40,33 +44,40 @@ export const reconcileWorkspaceMember = async ({
 
   const email = normalizeEmail(member.email);
   if (!member.id.trim() || !email) {
-    throw new Error('Workspace member requires an id and email');
+    throw new WholesalerReconciliationError(
+      'validate_identity',
+      'invalid_identity',
+    );
   }
 
   const [memberMatches, emailMatches] = await Promise.all([
-    repository.findByWorkspaceMemberId(member.id),
-    repository.findByEmail(email),
+    runWholesalerReconciliationStage('lookup_member_relation', () =>
+      repository.findByWorkspaceMemberId(member.id),
+    ),
+    runWholesalerReconciliationStage('lookup_email', () =>
+      repository.findByEmail(email),
+    ),
   ]);
   const matches = uniqueRecords([...memberMatches, ...emailMatches]);
 
   if (matches.length > 1) {
-    throw new Error(
-      `Ambiguous wholesaler identity for workspace member ${member.id}: ${matches
-        .map(({ id }) => id)
-        .sort()
-        .join(', ')}`,
+    throw new WholesalerReconciliationError(
+      'resolve_identity',
+      'ambiguous_identity',
     );
   }
 
   const existing = matches[0];
   const name = normalizeMemberName({ ...member, email });
   if (!existing) {
-    await repository.create(member.id, {
-      name,
-      email,
-      wholesalerRole: DEFAULT_WHOLESALER_ROLE,
-      workspaceMemberId: member.id,
-    });
+    await runWholesalerReconciliationStage('create', () =>
+      repository.create(member.id, {
+        name,
+        email,
+        wholesalerRole: DEFAULT_WHOLESALER_ROLE,
+        workspaceMemberId: member.id,
+      }),
+    );
     return { status: 'created', wholesalerId: member.id };
   }
 
@@ -74,8 +85,9 @@ export const reconcileWorkspaceMember = async ({
     nonEmpty(existing.workspaceMemberId) &&
     existing.workspaceMemberId !== member.id
   ) {
-    throw new Error(
-      `Wholesaler ${existing.id} is already linked to another workspace member`,
+    throw new WholesalerReconciliationError(
+      'resolve_identity',
+      'conflicting_link',
     );
   }
 
@@ -93,6 +105,8 @@ export const reconcileWorkspaceMember = async ({
     return { status: 'unchanged', wholesalerId: existing.id };
   }
 
-  await repository.update(existing.id, changes);
+  await runWholesalerReconciliationStage('update', () =>
+    repository.update(existing.id, changes),
+  );
   return { status: 'updated', wholesalerId: existing.id };
 };

@@ -124,7 +124,11 @@ describe('reconcileWorkspaceMember', () => {
         member,
         repository: repo,
       }),
-    ).rejects.toThrow('Ambiguous wholesaler identity');
+    ).rejects.toMatchObject({
+      name: 'WholesalerReconciliationError',
+      stage: 'resolve_identity',
+      code: 'ambiguous_identity',
+    });
     expect(repo.create).not.toHaveBeenCalled();
     expect(repo.update).not.toHaveBeenCalled();
   });
@@ -145,7 +149,95 @@ describe('reconcileWorkspaceMember', () => {
         member,
         repository: repo,
       }),
-    ).rejects.toThrow('already linked to another workspace member');
+    ).rejects.toMatchObject({
+      name: 'WholesalerReconciliationError',
+      stage: 'resolve_identity',
+      code: 'conflicting_link',
+    });
+  });
+
+  it('classifies invalid member identity without exposing its values', async () => {
+    await expect(
+      reconcileWorkspaceMember({
+        eventWorkspaceId: TARGET_WORKSPACE_ID,
+        targetWorkspaceId: TARGET_WORKSPACE_ID,
+        member: { ...member, email: '' },
+        repository: repository(),
+      }),
+    ).rejects.toMatchObject({
+      name: 'WholesalerReconciliationError',
+      stage: 'validate_identity',
+      code: 'invalid_identity',
+      message: 'Wholesaler reconciliation failed at validate_identity (invalid_identity)',
+    });
+  });
+
+  it.each([
+    [
+      'lookup_member_relation',
+      'permission_denied',
+      () => {
+        const repo = repository();
+        vi.mocked(repo.findByWorkspaceMemberId).mockRejectedValue({
+          errors: [{ extensions: { code: 'FORBIDDEN' } }],
+        });
+        return repo;
+      },
+    ],
+    [
+      'lookup_email',
+      'schema_mismatch',
+      () => {
+        const repo = repository();
+        vi.mocked(repo.findByEmail).mockRejectedValue({
+          errors: [
+            { extensions: { code: 'GRAPHQL_VALIDATION_FAILED' } },
+          ],
+        });
+        return repo;
+      },
+    ],
+    [
+      'create',
+      'transport',
+      () => {
+        const repo = repository();
+        vi.mocked(repo.create).mockRejectedValue(new TypeError('fetch failed'));
+        return repo;
+      },
+    ],
+    [
+      'update',
+      'constraint_conflict',
+      () => {
+        const repo = repository([
+          {
+            id: 'wholesaler-1',
+            name: 'Old name',
+            email: 'damien@corgi.com',
+            wholesalerRole: 'Wholesaler',
+            workspaceMemberId: member.id,
+          },
+        ]);
+        vi.mocked(repo.update).mockRejectedValue(
+          new Error('duplicate key violates unique constraint'),
+        );
+        return repo;
+      },
+    ],
+  ])('classifies %s failures as %s', async (stage, code, buildRepository) => {
+    await expect(
+      reconcileWorkspaceMember({
+        eventWorkspaceId: TARGET_WORKSPACE_ID,
+        targetWorkspaceId: TARGET_WORKSPACE_ID,
+        member,
+        repository: buildRepository(),
+      }),
+    ).rejects.toMatchObject({
+      name: 'WholesalerReconciliationError',
+      stage,
+      code,
+    });
   });
 
   it('does nothing for another workspace', async () => {
