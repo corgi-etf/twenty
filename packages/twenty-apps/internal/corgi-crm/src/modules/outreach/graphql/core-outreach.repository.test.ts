@@ -134,6 +134,63 @@ describe('CoreOutreachRepository.listActivities', () => {
     ).rejects.toThrow(/pagination.*cursor/i);
     expect(query).toHaveBeenCalledTimes(3);
   });
+
+  it.each([
+    ['missing connection', {}],
+    ['null connection', { outreachActivities: null }],
+    [
+      'missing edges',
+      { outreachActivities: { pageInfo: { hasNextPage: false } } },
+    ],
+    [
+      'non-array edges',
+      {
+        outreachActivities: {
+          edges: {},
+          pageInfo: { hasNextPage: false },
+        },
+      },
+    ],
+    [
+      'missing page info',
+      { outreachActivities: { edges: [] } },
+    ],
+    [
+      'non-boolean hasNextPage',
+      {
+        outreachActivities: {
+          edges: [],
+          pageInfo: { hasNextPage: 'false' },
+        },
+      },
+    ],
+    [
+      'blank next cursor',
+      {
+        outreachActivities: {
+          edges: [],
+          pageInfo: { hasNextPage: true, endCursor: ' ' },
+        },
+      },
+    ],
+    [
+      'non-string next cursor',
+      {
+        outreachActivities: {
+          edges: [],
+          pageInfo: { hasNextPage: true, endCursor: 1 },
+        },
+      },
+    ],
+  ])('fails closed for a %s response', async (_label, response) => {
+    const query = vi.fn().mockResolvedValue(response);
+    await expect(
+      new CoreOutreachRepository({
+        query,
+      } as never).listActivities(window),
+    ).rejects.toThrow(/outreach activit.*connection|pagination/i);
+    expect(query).toHaveBeenCalledOnce();
+  });
 });
 
 describe('CoreOutreachRepository.findContacts', () => {
