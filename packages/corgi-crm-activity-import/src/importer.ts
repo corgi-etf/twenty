@@ -912,21 +912,34 @@ export type CompanyLinkSummary = {
   missingProbeFields: string[];
 };
 
+// Every child collection that can carry a company's history, as a REST plural
+// and the foreign key pointing back at the company. The probe counts each one
+// with its own filtered read rather than trusting a depth=1 expansion, so
+// emptiness never depends on how the server chose to expand relations.
+export const COMPANY_LINK_COLLECTIONS = [
+  { collection: 'people', foreignKey: 'companyId' },
+  { collection: 'opportunities', foreignKey: 'companyId' },
+  { collection: 'outreachActivities', foreignKey: 'companyId' },
+  { collection: 'meetingBookings', foreignKey: 'companyId' },
+  { collection: 'companyAllocations', foreignKey: 'companyId' },
+  { collection: 'attachments', foreignKey: 'companyId' },
+  { collection: 'noteTargets', foreignKey: 'companyId' },
+  { collection: 'taskTargets', foreignKey: 'companyId' },
+  { collection: 'calendarEventTargets', foreignKey: 'companyId' },
+  { collection: 'messageThreadTargets', foreignKey: 'companyId' },
+] as const;
+
 // A field the probe MUST come back with. Absence means the read could not see
 // that relation at all, which has to block the group: an unseen relation is
 // indistinguishable from an empty one, and guessing "empty" deletes history.
-export const REQUIRED_COMPANY_LINK_FIELDS: readonly string[] = [
-  'outreachActivities',
-  'meetings',
-  'people',
-  'allocations',
-  'opportunities',
-  'noteTargets',
-  'taskTargets',
-  'attachments',
-  'favorites',
-  'accountOwnerId',
-];
+export const REQUIRED_COMPANY_LINK_FIELDS: readonly string[] =
+  COMPANY_LINK_COLLECTIONS.map(({ collection }) => collection);
+
+// timelineActivities is the company's own audit trail, not a link to another
+// business record. Every company has one the moment it exists, the duplicate
+// this operation was built to remove included, so counting it would block
+// every group and remove nothing.
+const COMPANY_AUDIT_ONLY_FIELDS = new Set(['timelineActivities']);
 
 // A to-many relation arrives as a plain array, and some Twenty responses wrap
 // it as a connection instead. Anything that is neither is a scalar or one of
@@ -964,7 +977,7 @@ export const summarizeCompanyLinks = (input: {
 
   const linkedFieldNames = new Set<string>();
   for (const [key, value] of Object.entries(input.record)) {
-    if (key === 'id') continue;
+    if (key === 'id' || COMPANY_AUDIT_ONLY_FIELDS.has(key)) continue;
     const count = populatedLinkCount(value);
     if (count !== undefined) {
       if (count > 0) linkedFieldNames.add(key);

@@ -5,11 +5,14 @@ import { test } from 'node:test';
 import {
   runActivityImport,
   runActivityImportCompanyCreation,
+  runActivityImportDuplicateCompanyResolution,
   type ActivityImportApi,
   type ActivityImportCheckpoint,
 } from '../src/execution.ts';
 import {
   deterministicActivityId,
+  REQUIRED_COMPANY_LINK_FIELDS,
+  type ActivityImportCompany,
   type ActivityImportManifest,
   type OutreachActivityRecord,
 } from '../src/importer.ts';
@@ -37,11 +40,18 @@ const csvOptions = {
   importId: 'nash-calls-2026-09-09',
 };
 
+// A company with every link collection present and empty: the shape a probe
+// returns for a record that is genuinely safe to remove.
+const emptyLinks = (): Record<string, unknown> =>
+  Object.fromEntries(REQUIRED_COMPANY_LINK_FIELDS.map((field) => [field, []]));
+
 class FakeApi implements ActivityImportApi {
-  companies = [
+  companies: ActivityImportCompany[] = [
     { id: uuid('4'), name: 'Acme' },
     { id: uuid('5'), name: 'Beta' },
   ];
+  companyLinks = new Map<string, Record<string, unknown>>();
+  companyDeletes: string[] = [];
   wholesalers = [{ id: uuid('6'), workspaceMemberId: identities.Nash }];
   people = [];
   activities: OutreachActivityRecord[] = [];
@@ -72,6 +82,19 @@ class FakeApi implements ActivityImportApi {
   async createCompany(company: { name: string }) {
     this.companyCreates.push(company);
     this.companies.push({ id: uuid('7'), name: company.name });
+  }
+  async readCompanyLinks(companyId: string) {
+    return {
+      id: companyId,
+      ...emptyLinks(),
+      ...(this.companyLinks.get(companyId) ?? {}),
+    };
+  }
+  async deleteCompany(companyId: string) {
+    this.companyDeletes.push(companyId);
+    // A soft delete drops the record out of the default listing, which is the
+    // only thing the exact-match contract reads.
+    this.companies = this.companies.filter(({ id }) => id !== companyId);
   }
   async readCheckpoint() {
     return this.checkpoints[this.checkpoints.length - 1];
@@ -413,4 +436,243 @@ test('company creation fails closed when a write did not land', async () => {
     createCompanies(api, 'apply'),
     /post-write verification failed/,
   );
+});
+
+const OLDER_COMPANY = '2026-01-04T10:00:00.000Z';
+const NEWER_COMPANY = '2026-09-10T18:30:00.000Z';
+
+const resolveDuplicates = (
+  api: ActivityImportApi,
+  mode: 'dry-run' | 'apply',
+  overrides: { confirmation?: string } = {},
+) =>
+  runActivityImportDuplicateCompanyResolution(api, {
+    source,
+    csvOptions,
+    mode,
+    confirmation:
+      'confirmation' in overrides
+        ? overrides.confirmation
+        : mode === 'apply'
+          ? 'RESOLVE_CRM_DUPLICATE_COMPANIES'
+          : undefined,
+  });
+
+// The production shape: "Acme" exists once carrying its history, and the
+// company creation step minted a second empty one alongside it.
+const withMintedDuplicate = () => {
+  const api = new FakeApi();
+  api.companies = [
+    { id: uuid('4'), name: 'Acme', createdAt: OLDER_COMPANY },
+    { id: uuid('5'), name: 'Acme', createdAt: NEWER_COMPANY },
+    { id: uuid('6'), name: 'Beta', createdAt: OLDER_COMPANY },
+  ];
+  api.companyLinks.set(uuid('4'), {
+    outreachActivities: [{ id: uuid('8') }, { id: uuid('9') }],
+  });
+
+  return api;
+};
+
+test('duplicate resolution is off by default and leaves the import unchanged', async () => {
+  const untouched = new FakeApi();
+  const baseline = await run(new FakeApi(), 'dry-run');
+
+  // A resolve-capable API must not change what a plain import does.
+  assert.deepEqual(await run(untouched, 'dry-run'), baseline);
+  assert.equal(untouched.companyDeletes.length, 0);
+});
+
+test('duplicate resolution removes the empty duplicate and keeps the linked record', async () => {
+  const api = withMintedDuplicate();
+
+  const result = await resolveDuplicates(api, 'apply');
+
+  assert.equal(result.operation, 'resolve-duplicate-companies');
+  assert.equal(result.mode, 'apply');
+  assert.equal(result.duplicateGroupCount, 1);
+  assert.equal(result.removedCount, 1);
+  assert.equal(result.blockedGroupCount, 0);
+  assert.deepEqual(api.companyDeletes, [uuid('5')]);
+  // The survivor is the one carrying the history, not the one that is newer.
+  assert.deepEqual(
+    api.companies.map(({ id }) => id),
+    [uuid('4'), uuid('6')],
+  );
+  const retained = result.groups[0]?.records.find(
+    ({ decision }) => decision === 'retain-linked',
+  );
+  assert.equal(retained?.companyId, uuid('4'));
+  assert.deepEqual(retained?.linkedFieldNames, ['outreachActivities']);
+});
+
+test('duplicate resolution reports every record and why, so nothing is silent', async () => {
+  const result = await resolveDuplicates(withMintedDuplicate(), 'dry-run');
+
+  assert.equal(result.groups.length, 1);
+  assert.deepEqual(
+    result.groups[0]?.records.map(({ companyId, decision }) => ({
+      companyId,
+      decision,
+    })),
+    [
+      { companyId: uuid('4'), decision: 'retain-linked' },
+      { companyId: uuid('5'), decision: 'remove' },
+    ],
+  );
+  for (const record of result.groups[0]?.records ?? []) {
+    assert.match(record.reason, /\w/);
+  }
+});
+
+test('duplicate resolution dry-run removes nothing', async () => {
+  const api = withMintedDuplicate();
+
+  const result = await resolveDuplicates(api, 'dry-run');
+
+  assert.equal(result.mode, 'dry-run');
+  assert.equal(result.plannedRemovalCount, 1);
+  assert.equal(result.removedCount, 0);
+  assert.equal(api.companyDeletes.length, 0);
+  assert.equal(api.companies.length, 3);
+});
+
+test('duplicate resolution refuses when both duplicates carry links', async () => {
+  const api = withMintedDuplicate();
+  api.companyLinks.set(uuid('5'), { meetingBookings: [{ id: uuid('a') }] });
+
+  const result = await resolveDuplicates(api, 'apply');
+
+  assert.equal(result.removedCount, 0);
+  assert.equal(result.blockedGroupCount, 1);
+  assert.equal(api.companyDeletes.length, 0);
+  assert.equal(api.companies.length, 3);
+  assert.match(
+    result.groups[0]?.blockedReason ?? '',
+    /2 of 2 duplicates carry linked records/,
+  );
+});
+
+test('duplicate resolution removes nothing when every name matches one record', async () => {
+  const api = new FakeApi();
+  api.companies = [
+    { id: uuid('4'), name: 'Acme', createdAt: OLDER_COMPANY },
+    { id: uuid('6'), name: 'Beta', createdAt: OLDER_COMPANY },
+  ];
+
+  const result = await resolveDuplicates(api, 'apply');
+
+  assert.equal(result.duplicateGroupCount, 0);
+  assert.equal(result.removedCount, 0);
+  assert.deepEqual(result.groups, []);
+  assert.equal(api.companyDeletes.length, 0);
+});
+
+test('a second duplicate resolution run removes nothing', async () => {
+  const api = withMintedDuplicate();
+
+  const first = await resolveDuplicates(api, 'apply');
+  const second = await resolveDuplicates(api, 'apply');
+
+  assert.equal(first.removedCount, 1);
+  assert.equal(second.removedCount, 0);
+  assert.equal(second.duplicateGroupCount, 0);
+  assert.deepEqual(api.companyDeletes, [uuid('5')]);
+});
+
+test('duplicate resolution requires its own confirmation string', async () => {
+  const api = withMintedDuplicate();
+
+  await assert.rejects(
+    resolveDuplicates(api, 'apply', {
+      confirmation: 'CREATE_CRM_IMPORT_COMPANIES',
+    }),
+    /duplicate resolution confirmation is invalid/,
+  );
+  await assert.rejects(
+    resolveDuplicates(api, 'apply', { confirmation: undefined }),
+    /duplicate resolution confirmation is invalid/,
+  );
+  await assert.rejects(
+    resolveDuplicates(api, 'dry-run', {
+      confirmation: 'RESOLVE_CRM_DUPLICATE_COMPANIES',
+    }),
+    /cannot include apply approval/,
+  );
+  assert.equal(api.companyDeletes.length, 0);
+});
+
+test('duplicate resolution fails closed when the API cannot remove a company', async () => {
+  const api = withMintedDuplicate();
+  const { deleteCompany: _deleteCompany, ...withoutDelete } = {
+    listCompanies: () => api.listCompanies(),
+    listWholesalers: () => api.listWholesalers(),
+    listPeople: () => api.listPeople(),
+    listOutreachActivities: () => api.listOutreachActivities(),
+    createOutreachActivity: (record: OutreachActivityRecord) =>
+      api.createOutreachActivity(record),
+    readCompanyLinks: (companyId: string) => api.readCompanyLinks(companyId),
+    deleteCompany: (companyId: string) => api.deleteCompany(companyId),
+    readCheckpoint: () => api.readCheckpoint(),
+    writeCheckpoint: (checkpoint: ActivityImportCheckpoint) =>
+      api.writeCheckpoint(checkpoint),
+  };
+
+  await assert.rejects(
+    resolveDuplicates(withoutDelete, 'apply'),
+    /cannot remove companies/,
+  );
+  assert.equal(api.companyDeletes.length, 0);
+});
+
+test('duplicate resolution fails closed when it cannot probe company links', async () => {
+  const api = withMintedDuplicate();
+  const { readCompanyLinks: _readCompanyLinks, ...withoutProbe } = {
+    listCompanies: () => api.listCompanies(),
+    listWholesalers: () => api.listWholesalers(),
+    listPeople: () => api.listPeople(),
+    listOutreachActivities: () => api.listOutreachActivities(),
+    createOutreachActivity: (record: OutreachActivityRecord) =>
+      api.createOutreachActivity(record),
+    readCompanyLinks: (companyId: string) => api.readCompanyLinks(companyId),
+    deleteCompany: (companyId: string) => api.deleteCompany(companyId),
+    readCheckpoint: () => api.readCheckpoint(),
+    writeCheckpoint: (checkpoint: ActivityImportCheckpoint) =>
+      api.writeCheckpoint(checkpoint),
+  };
+
+  // Without a probe nothing can be proven empty, so neither mode may proceed.
+  await assert.rejects(
+    resolveDuplicates(withoutProbe, 'dry-run'),
+    /cannot inspect company links/,
+  );
+  await assert.rejects(
+    resolveDuplicates(withoutProbe, 'apply'),
+    /cannot inspect company links/,
+  );
+  assert.equal(api.companyDeletes.length, 0);
+});
+
+test('duplicate resolution fails when the removal did not take', async () => {
+  const api = withMintedDuplicate();
+  // A delete the CRM accepted but did not apply must not be reported as done.
+  api.deleteCompany = async (companyId: string) => {
+    api.companyDeletes.push(companyId);
+  };
+
+  await assert.rejects(
+    resolveDuplicates(api, 'apply'),
+    /post-write verification failed/,
+  );
+});
+
+test('duplicate resolution writes no CRM record and leaks no source text', async () => {
+  const api = withMintedDuplicate();
+
+  const result = await resolveDuplicates(api, 'apply');
+
+  assert.equal(api.creates.length, 0);
+  assert.equal(api.companyCreates.length, 0);
+  assert.equal(api.checkpoints.length, 0);
+  assert.doesNotMatch(JSON.stringify(result), /Reached them/);
 });

@@ -314,12 +314,13 @@ export const runActivityImportCompanyCreation = async (
   };
 };
 
-// Removal is a soft delete. Every record it touches is provably empty, so
-// nothing cascades either way, and a soft delete stays reversible from the
-// workspace's deleted-records view if this operation's emptiness proof ever
-// turns out to be wrong. A hard delete would not be. Twenty's default listing
-// excludes soft-deleted records, so the exact-match count drops immediately
-// and the blocked import proceeds.
+// Removal is a soft delete, and deleteCompany MUST request one: Twenty's REST
+// DELETE destroys by default, and destroying a company cascades into its
+// companyAllocations and nulls the company on its meetingBookings. Every
+// record this removes is provably empty so neither would bite today, but a
+// soft delete stays reversible if the emptiness proof is ever wrong and a
+// destroy does not. Twenty's default listing excludes soft-deleted records, so
+// the exact-match count drops immediately and the blocked import proceeds.
 export const runActivityImportDuplicateCompanyResolution = async (
   api: ActivityImportApi,
   input: {
