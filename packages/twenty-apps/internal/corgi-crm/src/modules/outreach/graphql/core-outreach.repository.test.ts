@@ -94,8 +94,18 @@ describe('CoreOutreachRepository.listActivities', () => {
       variables: {
         filter: {
           and: [
-            { occurredAt: { gte: window.start } },
-            { occurredAt: { lt: window.end } },
+            {
+              or: [
+                { occurredAt: { gte: window.start } },
+                { createdAt: { gte: window.start } },
+              ],
+            },
+            {
+              or: [
+                { occurredAt: { lt: window.end } },
+                { createdAt: { lt: window.end } },
+              ],
+            },
           ],
         },
         first: 100,
