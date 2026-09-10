@@ -143,6 +143,7 @@ Destroying a company destroys its allocations; an allocation carries no meaning
 once the company it belongs to is gone. Soft-deleting a company leaves them
 alone.
 
+
 ## Outreach activity ownership
 
 Every new Outreach Activity gets an owner. When a record is created without a
@@ -300,7 +301,15 @@ meeting-booking totals, activity and outcome breakdowns, an activity leaderboard
 and a meeting-booking leaderboard for the rolling last 24 hours, 7 days (local
 weekend events excluded), or 30 days. Owners come from the records themselves;
 there is no fixed people list. Meeting-only owners appear on the booking
-leaderboard. These three aggregate reports are available without a CRM link only
+leaderboard. Each report ends with an ARR-attributed-per-EW section listing every
+Wholesaler whose `wholesalerRole` reads `EW`, compared case-insensitively and
+trimmed because the value is human-entered; the set is derived from the records,
+not a fixed list. Every figure is `$0` because no ARR source is connected yet,
+and `PLACEHOLDER_ATTRIBUTED_ANNUAL_RECURRING_REVENUE` in
+`report-summary.service.ts` is the single place a real source replaces. When no
+record carries the role the section keeps its heading and says so, so an
+unpopulated field does not read as a missing feature. These three aggregate
+reports are available without a CRM link only
 when `CORGI_CRM_TELEGRAM_PUBLIC_REPORTS_ENABLED` is exactly `true`; Telegram's
 signed webhook, private-chat-or-allowlisted-topic restriction, workspace fence,
 update deduplication, and durable reply delivery still apply. `/help` shows the syntax;
