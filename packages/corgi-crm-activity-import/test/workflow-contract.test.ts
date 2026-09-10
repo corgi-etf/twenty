@@ -15,14 +15,20 @@ const restApiPath = new URL('../src/twenty-rest-api.ts', import.meta.url);
 const rootPackagePath = new URL('../../../package.json', import.meta.url);
 const yarnLockPath = new URL('../../../yarn.lock', import.meta.url);
 
-test('workflow is exact-SHA, serialized, two-phase, and secret-backed', async () => {
+test('workflow verifies live SHA and maintenance-only drift, serialized, two-phase, and secret-backed', async () => {
   const workflow = await readFile(workflowPath, 'utf8');
 
   assert.match(workflow, /group: crm-production-deploy/);
   assert.match(
     workflow,
-    /\[\[ "\$\{DEPLOYED_SHA\}" == "\$\{GITHUB_SHA\}" \]\]/,
+    /node packages\/twenty-apps\/internal\/corgi-crm\/scripts\/deployment-revision-guard\.mjs "\$\{DEPLOYED_SHA\}" "\$\{GITHUB_SHA\}"/,
   );
+  assert.ok(
+    workflow.indexOf('deployment-revision-guard.mjs') <
+      workflow.indexOf('Verify authenticated exact-workflow identity artifact lineage'),
+  );
+  assert.match(workflow, /fetch-depth: 0/);
+  assert.match(workflow, /imageTag=git-\$\{DEPLOYED_SHA\}/);
   assert.match(
     workflow,
     /Prove every live task uses the exact import revision/,
@@ -107,10 +113,11 @@ test('ownership is explicit, authenticated, and legacy Nash remains fail-closed'
 
   assert.match(
     workflow,
-    /Verify authenticated exact-SHA identity artifact lineage/,
+    /Verify authenticated exact-workflow identity artifact lineage/,
   );
   assert.match(workflow, /crm-territory-member-identities-/);
   assert.match(workflow, /\.head_sha == \$sha/);
+  assert.match(workflow, /--arg sha "\$\{GITHUB_SHA\}"/);
   assert.match(workflow, /\.digest[\s\S]*?sha256:/);
   assert.match(maintenanceSpec, /assertTerritoryIdentityArtifact/);
   assert.match(

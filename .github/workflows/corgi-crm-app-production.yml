@@ -94,10 +94,10 @@ jobs:
             [[ "${CONFIRMATION}" == "PUBLISH_AND_INSTALL_CORGI_CRM_APP" ]]
           fi
           [[ "${DEPLOYED_SHA}" =~ ^[0-9a-f]{40}$ ]]
-          [[ "${DEPLOYED_SHA}" == "${GITHUB_SHA}" ]]
           [[ "${BOOTSTRAP_RUN_ID}" =~ ^[1-9][0-9]*$ ]]
           [[ "${BOOTSTRAP_RUN_ATTEMPT}" =~ ^[1-9][0-9]*$ ]]
-          git cat-file -e "${DEPLOYED_SHA}^{commit}"
+          node "${APP_PATH}/scripts/deployment-revision-guard.mjs" \
+            "${DEPLOYED_SHA}" "${GITHUB_SHA}"
 
       - name: Verify exact-SHA metadata bootstrap lineage
         shell: bash
@@ -379,7 +379,6 @@ jobs:
         run: node "${APP_PATH}/scripts/configure-telegram.mjs" stage
 
       - name: Verify native CRM meeting booking while Telegram is disabled
-        if: inputs.operation == 'publish-and-install'
         env:
           FRONTEND_BASE_URL: ${{ env.CORGI_CRM_API_URL }}
           BACKEND_BASE_URL: ${{ env.CORGI_CRM_API_URL }}

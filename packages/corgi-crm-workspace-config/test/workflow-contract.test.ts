@@ -155,18 +155,27 @@ test('metadata bootstrap is exact-SHA, metadata-only, and precedes app preflight
   assert.match(appWorkflow, /\.head_sha == \$deployed_sha/);
 });
 
-test('territory identity discovery is read-only and bound to the exact live revision', async () => {
+test('territory identity discovery is read-only and proves maintenance-only revision drift', async () => {
   const [workflow, discoverySpec] = await Promise.all([
     readFile(discoveryWorkflowPath, 'utf8'),
     readFile(discoverySpecPath, 'utf8'),
   ]);
 
+  assert.match(workflow, /deployed_sha:[\s\S]*?required: true/);
+  assert.match(workflow, /DEPLOYED_SHA: \$\{\{ inputs\.deployed_sha \}\}/);
+  assert.match(workflow, /fetch-depth: 0/);
   assert.match(
     workflow,
-    /\[\[ "\$\{DEPLOYED_SHA\}" == "\$\{GITHUB_SHA\}" \]\]/,
+    /node packages\/twenty-apps\/internal\/corgi-crm\/scripts\/deployment-revision-guard\.mjs "\$\{DEPLOYED_SHA\}" "\$\{GITHUB_SHA\}"/,
   );
-  assert.match(workflow, /Verify exact-SHA app install lineage/);
-  assert.match(workflow, /\.head_sha == \$deployed_sha/);
+  assert.ok(
+    workflow.indexOf('deployment-revision-guard.mjs') <
+      workflow.indexOf('Configure read-only AWS deployment inspection'),
+  );
+  assert.match(workflow, /Verify exact-workflow app install lineage/);
+  assert.match(workflow, /--arg workflow_sha "\$\{GITHUB_SHA\}"/);
+  assert.match(workflow, /\.head_sha == \$workflow_sha/);
+  assert.match(workflow, /imageTag=git-\$\{DEPLOYED_SHA\}/);
   assert.match(workflow, /environment: production/);
   assert.match(workflow, /CRM_E2E_LOGIN: \$\{\{ secrets\.CRM_E2E_LOGIN \}\}/);
   assert.match(workflow, /CRM_TERRITORY_IDENTITY_DISCOVERY_ENABLED: 'true'/);
