@@ -22,6 +22,7 @@ const requiredEnvironment = (name: string): string => {
 
 type UpdateWorkerDependencies = {
   expectedWorkspaceId: string;
+  enabled: string | undefined;
   store: KeyValueStore;
   processCommand: typeof processTelegramCommand;
   createCrmClient(): CoreApiClient;
@@ -38,6 +39,7 @@ export const handleTelegramUpdateJob = async (
   if (context?.workspaceId !== dependencies.expectedWorkspaceId) {
     throw new Error('Telegram update worker refused an unexpected workspace');
   }
+  if (dependencies.enabled !== 'true') return { status: 'disabled' } as const;
   const update = parseQueuedTelegramUpdate(payload);
   const key = `telegram:update:${update.updateId}`;
   const existing = (await dependencies.store.get(key)) as {
@@ -134,6 +136,7 @@ export const handler = async (
 ) =>
   handleTelegramUpdateJob(payload, context, {
     expectedWorkspaceId: requiredEnvironment('CORGI_CRM_WORKSPACE_ID'),
+    enabled: process.env.CORGI_CRM_TELEGRAM_ENABLED,
     store: kv,
     processCommand: processTelegramCommand,
     createCrmClient: () => new CoreApiClient(),

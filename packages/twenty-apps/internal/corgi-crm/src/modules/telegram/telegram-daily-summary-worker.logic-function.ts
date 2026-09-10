@@ -60,14 +60,25 @@ const parsePayload = (value: unknown): DailySummaryJobPayload => {
   return payload as DailySummaryJobPayload;
 };
 
-export const handler = async (
+type DailySummaryWorkerDependencies = {
+  expectedWorkspaceId: string;
+  enabled: string | undefined;
+  processJob(payload: unknown): Promise<unknown>;
+};
+
+export const handleTelegramDailySummaryJob = async (
   rawPayload: unknown,
-  context?: LogicFunctionExecutionContext,
+  context: LogicFunctionExecutionContext | undefined,
+  dependencies: DailySummaryWorkerDependencies,
 ) => {
-  const expectedWorkspaceId = requiredEnvironment('CORGI_CRM_WORKSPACE_ID');
-  if (context?.workspaceId !== expectedWorkspaceId) {
+  if (context?.workspaceId !== dependencies.expectedWorkspaceId) {
     throw new Error('Telegram daily summary refused an unexpected workspace');
   }
+  if (dependencies.enabled !== 'true') return { status: 'disabled' } as const;
+  return dependencies.processJob(rawPayload);
+};
+
+const processDailySummaryJob = async (rawPayload: unknown) => {
   const payload = parsePayload(rawPayload);
   const bindings = parseTelegramLinkBindings(
     process.env.CORGI_CRM_TELEGRAM_LINK_CODES,
@@ -128,6 +139,16 @@ export const handler = async (
     send: (chatId, message) => telegram.sendMessage(chatId, message),
   });
 };
+
+export const handler = async (
+  rawPayload: unknown,
+  context?: LogicFunctionExecutionContext,
+) =>
+  handleTelegramDailySummaryJob(rawPayload, context, {
+    expectedWorkspaceId: requiredEnvironment('CORGI_CRM_WORKSPACE_ID'),
+    enabled: process.env.CORGI_CRM_TELEGRAM_ENABLED,
+    processJob: processDailySummaryJob,
+  });
 
 export default defineLogicFunction({
   universalIdentifier: TELEGRAM_DAILY_SUMMARY_WORKER_UNIVERSAL_IDENTIFIER,

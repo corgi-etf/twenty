@@ -336,6 +336,26 @@ const verifyTelegramApplicationContract = (application, workspaceId) => {
   );
 };
 
+const verifyTelegramDisabled = (application, workspaceId) => {
+  const variables = application.applicationVariables ?? [];
+  const workspaceVariable = exactlyOne(
+    variables,
+    (variable) => variable.key === 'CORGI_CRM_WORKSPACE_ID',
+    'workspace variable',
+  );
+  if (workspaceVariable.value !== workspaceId) {
+    throw new Error('Telegram application workspace variable is incorrect');
+  }
+  const enabledVariable = exactlyOne(
+    variables,
+    (variable) => variable.key === 'CORGI_CRM_TELEGRAM_ENABLED',
+    'Telegram enabled variable',
+  );
+  if (enabledVariable.value !== 'false') {
+    throw new Error('Telegram application is not disabled');
+  }
+};
+
 const verifyInstalledApplication = async ({
   graphql,
   version,
@@ -543,10 +563,11 @@ const main = async () => {
     mode !== 'target' &&
     mode !== 'role-env' &&
     mode !== 'installed' &&
-    mode !== 'telegram'
+    mode !== 'telegram' &&
+    mode !== 'telegram-disabled'
   ) {
     throw new Error(
-      'Usage: verify-production-install.mjs <target|role-env|installed|telegram>',
+      'Usage: verify-production-install.mjs <target|role-env|installed|telegram|telegram-disabled>',
     );
   }
   const origin = new URL(requiredEnvironment('CORGI_CRM_API_URL')).origin;
@@ -606,6 +627,8 @@ const main = async () => {
   const result = verifyReconciliation({ members, wholesalers });
   if (mode === 'telegram') {
     verifyTelegramApplicationContract(application, workspaceId);
+  } else if (mode === 'telegram-disabled') {
+    verifyTelegramDisabled(application, workspaceId);
   }
   console.log(
     `Verified installed app, active trigger, and ${result.members} member identities across ${result.wholesalers} wholesalers${mode === 'telegram' ? ', including the configured Telegram topology' : ''}.`,
@@ -624,4 +647,5 @@ export {
   verifyApplicationRoleContract,
   verifyReconciliation,
   verifyTelegramApplicationContract,
+  verifyTelegramDisabled,
 };

@@ -17,6 +17,7 @@ import { type KeyValueStore } from 'src/modules/telegram/types';
 
 type RetryWorkerDependencies = {
   expectedWorkspaceId: string;
+  enabled: string | undefined;
   store: KeyValueStore;
   createTelegramClient(): Pick<
     TelegramClient,
@@ -61,6 +62,7 @@ export const handleTelegramDeliveryRetryJob = async (
   if (context?.workspaceId !== dependencies.expectedWorkspaceId) {
     throw new Error('Telegram delivery retry refused an unexpected workspace');
   }
+  if (dependencies.enabled !== 'true') return { status: 'disabled' } as const;
   const payload = parsePayload(rawPayload);
   const audit = await readTelegramDeliveryResetAudit({
     requestId: payload.requestId,
@@ -114,6 +116,7 @@ export const handler = async (
 ) =>
   handleTelegramDeliveryRetryJob(payload, context, {
     expectedWorkspaceId: requiredEnvironment('CORGI_CRM_WORKSPACE_ID'),
+    enabled: process.env.CORGI_CRM_TELEGRAM_ENABLED,
     store: kv,
     createTelegramClient: () =>
       new TelegramClient({

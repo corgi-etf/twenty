@@ -6,6 +6,35 @@ const configurationModule = await import('./configure-telegram.mjs').catch(
 );
 
 describe('trusted Telegram application configuration', () => {
+  it('actively disables without requiring provider secrets', async () => {
+    const writes = [];
+    await configurationModule.configureTelegramApplication({
+      graphql: async ({ operationName, variables }) => {
+        if (operationName === 'FindCorgiCrmApplication') {
+          return {
+            findManyApplications: [
+              {
+                id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+                universalIdentifier: 'ca87ad48-b62a-41be-a790-7c17707ff1b4',
+              },
+            ],
+          };
+        }
+        writes.push(variables);
+        return { updateOneApplicationVariable: { key: variables.key } };
+      },
+      workspaceId: '11111111-1111-4111-8111-111111111111',
+      enabled: false,
+    });
+    assert.deepEqual(writes, [
+      {
+        applicationId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+        key: 'CORGI_CRM_TELEGRAM_ENABLED',
+        value: 'false',
+      },
+    ]);
+  });
+
   it('validates the complete trusted configuration before the first mutation', async () => {
     assert.equal(
       typeof configurationModule.configureTelegramApplication,
@@ -39,7 +68,7 @@ describe('trusted Telegram application configuration', () => {
           linkCodesJson: '{not-json',
           timeZone: 'America/Chicago',
           dailySummaryTime: '17:00',
-          enabled: false,
+          enabled: true,
         }),
       /json/i,
     );

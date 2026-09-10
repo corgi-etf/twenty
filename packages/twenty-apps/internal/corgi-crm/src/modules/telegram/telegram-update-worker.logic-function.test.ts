@@ -5,6 +5,32 @@ import { handleTelegramUpdateJob } from 'src/modules/telegram/telegram-update-wo
 const WORKSPACE_ID = '11111111-1111-4111-8111-111111111111';
 
 describe('Telegram update worker durable replies', () => {
+  it('does not parse or touch state, CRM, or Telegram while disabled', async () => {
+    const store = { get: vi.fn(), set: vi.fn(), delete: vi.fn() };
+    const processCommand = vi.fn();
+    const createCrmClient = vi.fn();
+    const createTelegramClient = vi.fn();
+    await expect(
+      handleTelegramUpdateJob(
+        { invalid: true },
+        { workspaceId: WORKSPACE_ID } as never,
+        {
+          expectedWorkspaceId: WORKSPACE_ID,
+          enabled: 'false',
+          store,
+          processCommand,
+          createCrmClient,
+          createTelegramClient,
+        } as never,
+      ),
+    ).resolves.toEqual({ status: 'disabled' });
+    expect(store.get).not.toHaveBeenCalled();
+    expect(store.set).not.toHaveBeenCalled();
+    expect(processCommand).not.toHaveBeenCalled();
+    expect(createCrmClient).not.toHaveBeenCalled();
+    expect(createTelegramClient).not.toHaveBeenCalled();
+  });
+
   it('routes every message and callback response through durable delivery state', async () => {
     const values = new Map<string, unknown>();
     const store = {
@@ -43,6 +69,7 @@ describe('Telegram update worker durable replies', () => {
         },
         {
           expectedWorkspaceId: WORKSPACE_ID,
+          enabled: 'true',
           store,
           processCommand: processCommand as never,
           createCrmClient: vi.fn(() => ({}) as never),

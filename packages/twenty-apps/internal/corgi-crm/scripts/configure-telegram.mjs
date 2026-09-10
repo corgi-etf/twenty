@@ -107,6 +107,14 @@ const validateTrustedTelegramConfiguration = ({
   };
 };
 
+const validateWorkspaceId = (workspaceId) => {
+  const normalized = required(workspaceId, 'Workspace ID');
+  if (!UUID_PATTERN.test(normalized)) {
+    throw new Error('Workspace ID must be a UUID');
+  }
+  return normalized;
+};
+
 const exactlyOneApplication = (applications) => {
   const matches = (applications ?? []).filter(
     (application) =>
@@ -119,9 +127,12 @@ const exactlyOneApplication = (applications) => {
 };
 
 const configureTelegramApplication = async ({ graphql, enabled, ...input }) => {
-  // Validate every trusted value before even looking up the app, and especially
-  // before the first mutation. Secrets are never read back from masked metadata.
-  const variables = validateTrustedTelegramConfiguration(input);
+  // Enabling validates every trusted value before even looking up the app.
+  // Disabling deliberately needs only the derived workspace identity so a
+  // missing provider secret can never prevent the fail-closed application gate.
+  const variables =
+    enabled === true ? validateTrustedTelegramConfiguration(input) : null;
+  validateWorkspaceId(input.workspaceId);
   const data = await graphql({
     endpoint: '/metadata',
     operationName: 'FindCorgiCrmApplication',
@@ -149,6 +160,7 @@ const configureTelegramApplication = async ({ graphql, enabled, ...input }) => {
   };
 
   await write('CORGI_CRM_TELEGRAM_ENABLED', 'false');
+  if (!variables) return { status: 'disabled' };
   for (const [key, value] of Object.entries(variables)) await write(key, value);
   if (enabled === true) await write('CORGI_CRM_TELEGRAM_ENABLED', 'true');
   return { status: enabled === true ? 'enabled' : 'disabled' };

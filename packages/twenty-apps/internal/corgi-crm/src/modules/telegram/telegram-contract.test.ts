@@ -3,8 +3,10 @@ import { describe, expect, it, vi } from 'vitest';
 import application from 'src/application-config';
 import dailySummary, * as dailyModule from 'src/modules/telegram/telegram-daily-summary.logic-function';
 import dailySummaryWorker from 'src/modules/telegram/telegram-daily-summary-worker.logic-function';
+import * as dailyWorkerModule from 'src/modules/telegram/telegram-daily-summary-worker.logic-function';
 import deliveryControl from 'src/modules/telegram/telegram-delivery-control.logic-function';
 import deliveryRetryWorker from 'src/modules/telegram/telegram-delivery-retry-worker.logic-function';
+import * as retryWorkerModule from 'src/modules/telegram/telegram-delivery-retry-worker.logic-function';
 import updateWorker, * as workerModule from 'src/modules/telegram/telegram-update-worker.logic-function';
 import webhook, * as webhookModule from 'src/modules/telegram/telegram-webhook.logic-function';
 
@@ -67,6 +69,40 @@ describe('Telegram application contract', () => {
         } as never,
       ),
     ).rejects.toThrow(/workspace/i);
+    expect(store.get).not.toHaveBeenCalled();
+    expect(store.set).not.toHaveBeenCalled();
+    expect(enqueue).not.toHaveBeenCalled();
+  });
+
+  it('authenticates a disabled webhook canary then no-ops before parsing, KV, or queue access', async () => {
+    const store = { get: vi.fn(), set: vi.fn(), delete: vi.fn() };
+    const enqueue = vi.fn();
+    const response = await webhookModule.handleTelegramWebhook(
+      {
+        headers: { 'x-telegram-bot-api-secret-token': 'secret' },
+        body: {},
+      } as never,
+      {
+        workspaceId: WORKSPACE_ID,
+        retryCount: 0,
+        maxRetries: 0,
+        userWorkspaceId: null,
+        workspaceMemberId: null,
+      },
+      {
+        expectedWorkspaceId: WORKSPACE_ID,
+        enabled: 'false',
+        webhookSecret: 'secret',
+        store,
+        enqueue,
+      },
+    );
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual({
+      ok: true,
+      accepted: false,
+      status: 'disabled',
+    });
     expect(store.get).not.toHaveBeenCalled();
     expect(store.set).not.toHaveBeenCalled();
     expect(enqueue).not.toHaveBeenCalled();
@@ -143,6 +179,65 @@ describe('Telegram application contract', () => {
     ).resolves.toEqual({ status: 'disabled' });
     expect(loadRoster).not.toHaveBeenCalled();
     expect(enqueue).not.toHaveBeenCalled();
+  });
+
+  it('disables queued workers and control before parsing or touching dependencies', async () => {
+    const store = { get: vi.fn(), set: vi.fn(), delete: vi.fn() };
+    const processCommand = vi.fn();
+    const createCrmClient = vi.fn();
+    const createTelegramClient = vi.fn();
+    await expect(
+      workerModule.handleTelegramUpdateJob(
+        { invalid: true },
+        { workspaceId: WORKSPACE_ID } as never,
+        {
+          expectedWorkspaceId: WORKSPACE_ID,
+          enabled: 'false',
+          store,
+          processCommand,
+          createCrmClient,
+          createTelegramClient,
+        } as never,
+      ),
+    ).resolves.toEqual({ status: 'disabled' });
+
+    const dailyHandler = (
+      dailyWorkerModule as unknown as {
+        handleTelegramDailySummaryJob: (...args: unknown[]) => Promise<unknown>;
+      }
+    ).handleTelegramDailySummaryJob;
+    expect(typeof dailyHandler).toBe('function');
+    await expect(
+      dailyHandler(
+        { invalid: true },
+        { workspaceId: WORKSPACE_ID } as never,
+        {
+          expectedWorkspaceId: WORKSPACE_ID,
+          enabled: 'false',
+          store,
+          createCrmClient,
+          createTelegramClient,
+        },
+      ),
+    ).resolves.toEqual({ status: 'disabled' });
+
+    await expect(
+      retryWorkerModule.handleTelegramDeliveryRetryJob(
+        { invalid: true },
+        { workspaceId: WORKSPACE_ID } as never,
+        {
+          expectedWorkspaceId: WORKSPACE_ID,
+          enabled: 'false',
+          store,
+          createTelegramClient,
+        },
+      ),
+    ).resolves.toEqual({ status: 'disabled' });
+    expect(store.get).not.toHaveBeenCalled();
+    expect(store.set).not.toHaveBeenCalled();
+    expect(processCommand).not.toHaveBeenCalled();
+    expect(createCrmClient).not.toHaveBeenCalled();
+    expect(createTelegramClient).not.toHaveBeenCalled();
   });
 
   it('keeps the Telegram webhook thin, open only to signed provider requests', () => {

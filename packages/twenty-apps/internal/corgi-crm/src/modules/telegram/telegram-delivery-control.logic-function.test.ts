@@ -48,4 +48,34 @@ describe('Telegram delivery control route', () => {
       forwardedRequestHeaders: ['x-corgi-telegram-operator-secret'],
     });
   });
+
+  it('authenticates the operator but does not inspect or enqueue while disabled', async () => {
+    const store = { get: vi.fn(), set: vi.fn(), delete: vi.fn() };
+    const enqueue = vi.fn();
+    await expect(
+      logicModule.handleTelegramDeliveryControl(
+        {
+          headers: { 'x-corgi-telegram-operator-secret': 'operator-secret' },
+          body: { action: 'inspect', deliveryKey: `telegram:delivery:${'a'.repeat(64)}` },
+        } as never,
+        {
+          workspaceId: WORKSPACE_ID,
+          workspaceMemberId: MEMBER_ID,
+          userWorkspaceId: 'user-workspace-1',
+          retryCount: 0,
+          maxRetries: 0,
+        },
+        {
+          expectedWorkspaceId: WORKSPACE_ID,
+          enabled: 'false',
+          operatorSecret: 'operator-secret',
+          store,
+          enqueue,
+        },
+      ),
+    ).resolves.toEqual({ status: 'disabled' });
+    expect(store.get).not.toHaveBeenCalled();
+    expect(store.set).not.toHaveBeenCalled();
+    expect(enqueue).not.toHaveBeenCalled();
+  });
 });

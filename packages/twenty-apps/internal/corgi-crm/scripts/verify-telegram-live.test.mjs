@@ -3,6 +3,8 @@ import { describe, it } from 'node:test';
 
 import {
   deliverGatedTestMessage,
+  unregisterTelegramWebhook,
+  verifyTelegramProviderDisabled,
   verifySignedWebhookCanary,
   verifyTelegramProvider,
 } from './verify-telegram-live.mjs';
@@ -16,6 +18,21 @@ const okJson = (result) =>
   });
 
 describe('live Telegram provider verification hooks', () => {
+  it('unregisters the webhook, drops pending updates, and verifies disabled provider state', async () => {
+    const calls = [];
+    const fetchImpl = async (url, init) => {
+      calls.push({ url: String(url), body: JSON.parse(init.body) });
+      return String(url).endsWith('/deleteWebhook')
+        ? okJson(true)
+        : okJson({ url: '', pending_update_count: 0 });
+    };
+    await unregisterTelegramWebhook({ fetchImpl, token: 'bot-secret' });
+    await verifyTelegramProviderDisabled({ fetchImpl, token: 'bot-secret' });
+    assert.match(calls[0].url, /\/deleteWebhook$/);
+    assert.deepEqual(calls[0].body, { drop_pending_updates: true });
+    assert.match(calls[1].url, /\/getWebhookInfo$/);
+  });
+
   it('registers the exact webhook, secret, and allowed update set', async () => {
     assert.equal(
       typeof liveVerificationModule.registerTelegramWebhook,
@@ -111,6 +128,27 @@ describe('live Telegram provider verification hooks', () => {
     assert.equal(
       calls[1].headers['x-telegram-bot-api-secret-token'],
       undefined,
+    );
+  });
+
+  it('proves a signed canary is an authenticated no-op while the app gate is disabled', async () => {
+    let calls = 0;
+    const fetchImpl = async () => {
+      calls += 1;
+      return calls === 1
+        ? new Response(
+            JSON.stringify({ ok: true, accepted: false, status: 'disabled' }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } },
+          )
+        : new Response('{}', { status: 401 });
+    };
+    await assert.doesNotReject(() =>
+      verifySignedWebhookCanary({
+        fetchImpl,
+        webhookUrl: 'https://crm.corgiinvest.com/s/telegram/webhook',
+        webhookSecret: 'webhook-secret',
+        enabled: false,
+      }),
     );
   });
 

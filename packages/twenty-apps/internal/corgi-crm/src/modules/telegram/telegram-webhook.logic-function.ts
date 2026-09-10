@@ -22,6 +22,7 @@ import {
 
 type WebhookDependencies = {
   expectedWorkspaceId: string;
+  enabled: string | undefined;
   webhookSecret: string | undefined;
   store: KeyValueStore;
   enqueue(
@@ -45,6 +46,12 @@ export const handleTelegramWebhook = async (
     );
   } catch {
     return new Response({ ok: false }, { status: 401 });
+  }
+  if (dependencies.enabled !== 'true') {
+    return new Response(
+      { ok: true, accepted: false, status: 'disabled' },
+      { status: 200 },
+    );
   }
 
   let update;
@@ -70,6 +77,7 @@ export const handler = async (
 ) =>
   handleTelegramWebhook(payload, context, {
     expectedWorkspaceId: process.env.CORGI_CRM_WORKSPACE_ID?.trim() ?? '',
+    enabled: process.env.CORGI_CRM_TELEGRAM_ENABLED,
     webhookSecret: process.env.CORGI_CRM_TELEGRAM_WEBHOOK_SECRET,
     store: kv,
     enqueue: (jobPayload, jobId) =>

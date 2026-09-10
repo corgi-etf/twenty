@@ -7,6 +7,7 @@ import {
   verifyApplicationRoleContract,
   verifyReconciliation,
   verifyTelegramApplicationContract,
+  verifyTelegramDisabled,
 } from './verify-production-install.mjs';
 
 const member = {
@@ -121,6 +122,24 @@ describe('production Telegram application verification', () => {
   it('accepts installed variables and the webhook/worker/cron topology', () => {
     assert.doesNotThrow(() =>
       verifyTelegramApplicationContract(application, 'workspace-1'),
+    );
+  });
+
+  it('verifies an explicit disabled state without requiring provider secrets', () => {
+    assert.doesNotThrow(() =>
+      verifyTelegramDisabled(
+        {
+          applicationVariables: [
+            { key: 'CORGI_CRM_WORKSPACE_ID', value: 'workspace-1' },
+            { key: 'CORGI_CRM_TELEGRAM_ENABLED', value: 'false' },
+          ],
+        },
+        'workspace-1',
+      ),
+    );
+    assert.throws(
+      () => verifyTelegramDisabled(application, 'workspace-1'),
+      /not disabled/i,
     );
   });
 

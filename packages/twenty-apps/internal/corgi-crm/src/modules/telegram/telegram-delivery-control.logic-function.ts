@@ -21,6 +21,7 @@ import { type KeyValueStore } from 'src/modules/telegram/types';
 
 type ControlDependencies = {
   expectedWorkspaceId: string;
+  enabled: string | undefined;
   operatorSecret: string | undefined;
   store: KeyValueStore;
   enqueue(payload: TelegramDeliveryResetJob, jobId: string): Promise<unknown>;
@@ -71,6 +72,7 @@ export const handleTelegramDeliveryControl = async (
   ) {
     throw new Error('Unauthorized Telegram delivery operator');
   }
+  if (dependencies.enabled !== 'true') return { status: 'disabled' } as const;
   const body = bodyObject(payload.body);
   const action = stringValue(body, 'action');
   const deliveryKey = stringValue(body, 'deliveryKey');
@@ -103,6 +105,7 @@ export const handler = async (
 ) =>
   handleTelegramDeliveryControl(payload, context, {
     expectedWorkspaceId: process.env.CORGI_CRM_WORKSPACE_ID?.trim() ?? '',
+    enabled: process.env.CORGI_CRM_TELEGRAM_ENABLED,
     operatorSecret: process.env.CORGI_CRM_TELEGRAM_OPERATOR_SECRET,
     store: kv,
     enqueue: (jobPayload, jobId) =>

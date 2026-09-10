@@ -57,6 +57,15 @@ describe('Corgi CRM production app workflow contract', () => {
     assert.match(workflow, /CORGI_CRM_TELEGRAM_SIGNED_CANARY_CONFIRM:\s*RUN_SIGNED_CANARY/);
   });
 
+  it('always disables and unregisters on opt-out, with idempotent failure cleanup', () => {
+    assert.match(workflow, /Configure Telegram disabled[\s\S]*if:[^\n]*always\(\)/);
+    assert.match(workflow, /Unregister Telegram provider[\s\S]*if:[^\n]*!inputs\.telegram_enable/);
+    assert.match(workflow, /verify-telegram-live\.mjs" disabled/);
+    assert.match(workflow, /Fail closed after Telegram setup failure[\s\S]*if:[^\n]*failure\(\)/);
+    assert.match(workflow, /continue-on-error:\s*true/);
+    assert.match(workflow, /configure-telegram\.mjs" disabled/);
+  });
+
   it('keeps real test delivery opt-in behind two independent workflow gates', () => {
     assert.match(workflow, /telegram_test_delivery_enabled/);
     assert.match(workflow, /CORGI_CRM_TELEGRAM_TEST_DELIVERY_ENABLED/);

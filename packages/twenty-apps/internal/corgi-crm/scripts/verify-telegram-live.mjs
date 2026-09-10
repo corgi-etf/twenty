@@ -93,10 +93,33 @@ const registerTelegramWebhook = async ({
   return { status: 'registered' };
 };
 
+const unregisterTelegramWebhook = async ({ fetchImpl, token }) => {
+  await telegramCall({
+    fetchImpl,
+    token,
+    method: 'deleteWebhook',
+    body: { drop_pending_updates: true },
+  });
+  return { status: 'unregistered' };
+};
+
+const verifyTelegramProviderDisabled = async ({ fetchImpl, token }) => {
+  const webhook = await telegramCall({
+    fetchImpl,
+    token,
+    method: 'getWebhookInfo',
+  });
+  if (webhook.url !== '' || webhook.pending_update_count !== 0) {
+    throw new Error('Telegram provider is not fully disabled');
+  }
+  return { status: 'disabled' };
+};
+
 const verifySignedWebhookCanary = async ({
   fetchImpl,
   webhookUrl,
   webhookSecret,
+  enabled = true,
 }) => {
   const url = new URL(required(webhookUrl, 'Webhook URL'));
   if (url.protocol !== 'https:') throw new Error('Webhook URL must use HTTPS');
@@ -111,8 +134,18 @@ const verifySignedWebhookCanary = async ({
   const signed = await request({
     'x-telegram-bot-api-secret-token': secret,
   });
-  if (signed.status !== 400) {
+  if (signed.status !== (enabled ? 400 : 200)) {
     throw new Error('Signed Telegram route canary did not reach update validation');
+  }
+  if (!enabled) {
+    const body = await signed.json();
+    if (
+      body?.ok !== true ||
+      body.accepted !== false ||
+      body.status !== 'disabled'
+    ) {
+      throw new Error('Disabled Telegram route canary did not no-op');
+    }
   }
   const unsigned = await request({});
   if (unsigned.status !== 401) {
@@ -147,6 +180,10 @@ const deliverGatedTestMessage = async ({
 };
 
 const main = async () => {
+  const mode = process.argv[2] ?? 'enabled';
+  if (mode !== 'enabled' && mode !== 'disabled') {
+    throw new Error('Usage: verify-telegram-live.mjs <enabled|disabled>');
+  }
   if (
     process.env.CORGI_CRM_TELEGRAM_LIVE_VERIFICATION_CONFIRM !==
     'VERIFY_TELEGRAM_LIVE'
@@ -157,6 +194,12 @@ const main = async () => {
     process.env.CORGI_CRM_TELEGRAM_BOT_TOKEN,
     'Telegram token',
   );
+  if (mode === 'disabled') {
+    await unregisterTelegramWebhook({ fetchImpl: fetch, token });
+    await verifyTelegramProviderDisabled({ fetchImpl: fetch, token });
+    console.log('Verified Telegram provider is disabled.');
+    return;
+  }
   const webhookUrl = required(
     process.env.CORGI_CRM_TELEGRAM_WEBHOOK_URL,
     'Webhook URL',
@@ -182,6 +225,7 @@ const main = async () => {
     fetchImpl: fetch,
     webhookUrl,
     webhookSecret: process.env.CORGI_CRM_TELEGRAM_WEBHOOK_SECRET,
+    enabled: false,
   });
   await deliverGatedTestMessage({
     fetchImpl: fetch,
@@ -205,6 +249,8 @@ if (
 export {
   deliverGatedTestMessage,
   registerTelegramWebhook,
+  unregisterTelegramWebhook,
   verifySignedWebhookCanary,
   verifyTelegramProvider,
+  verifyTelegramProviderDisabled,
 };

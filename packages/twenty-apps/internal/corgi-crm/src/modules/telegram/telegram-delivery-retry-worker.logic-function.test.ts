@@ -8,6 +8,26 @@ const unknownAt = '2026-09-09T22:00:00.000Z';
 const requestId = '11111111-1111-4111-8111-111111111111';
 
 describe('Telegram delivery retry worker', () => {
+  it('does not parse, read state, or construct a provider while disabled', async () => {
+    const store = { get: vi.fn(), set: vi.fn(), delete: vi.fn() };
+    const createTelegramClient = vi.fn();
+    await expect(
+      workerModule.handleTelegramDeliveryRetryJob(
+        { invalid: true },
+        { workspaceId: WORKSPACE_ID } as never,
+        {
+          expectedWorkspaceId: WORKSPACE_ID,
+          enabled: 'false',
+          store,
+          createTelegramClient,
+        },
+      ),
+    ).resolves.toEqual({ status: 'disabled' });
+    expect(store.get).not.toHaveBeenCalled();
+    expect(store.set).not.toHaveBeenCalled();
+    expect(createTelegramClient).not.toHaveBeenCalled();
+  });
+
   it('requires workspace context before KV or provider construction', async () => {
     expect(typeof workerModule.handleTelegramDeliveryRetryJob).toBe('function');
     const store = { get: vi.fn(), set: vi.fn(), delete: vi.fn() };
@@ -22,7 +42,12 @@ describe('Telegram delivery retry worker', () => {
           retryCount: 0,
           maxRetries: 5,
         },
-        { expectedWorkspaceId: WORKSPACE_ID, store, createTelegramClient },
+        {
+          expectedWorkspaceId: WORKSPACE_ID,
+          enabled: 'true',
+          store,
+          createTelegramClient,
+        },
       ),
     ).rejects.toThrow(/workspace/i);
     expect(store.get).not.toHaveBeenCalled();
@@ -74,6 +99,7 @@ describe('Telegram delivery retry worker', () => {
         },
         {
           expectedWorkspaceId: WORKSPACE_ID,
+          enabled: 'true',
           store,
           createTelegramClient: () => ({
             sendMessage,
@@ -100,6 +126,7 @@ describe('Telegram delivery retry worker', () => {
         },
         {
           expectedWorkspaceId: WORKSPACE_ID,
+          enabled: 'true',
           store,
           createTelegramClient: () => ({
             sendMessage,
