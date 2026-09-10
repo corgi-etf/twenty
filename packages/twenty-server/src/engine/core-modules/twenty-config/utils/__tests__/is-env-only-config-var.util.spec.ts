@@ -12,6 +12,13 @@ describe('isEnvOnlyConfigVar', () => {
     expect(isEnvOnlyConfigVar(key)).toBe(true);
   });
 
+  it.each<keyof ConfigVariables>([
+    'LOGIC_FUNCTION_TYPE',
+    'CODE_INTERPRETER_TYPE',
+  ])('prevents database override of runtime driver %s', (key) => {
+    expect(isEnvOnlyConfigVar(key)).toBe(true);
+  });
+
   it('keeps unrelated SMTP settings database-configurable', () => {
     expect(isEnvOnlyConfigVar('EMAIL_SMTP_HOST')).toBe(false);
   });

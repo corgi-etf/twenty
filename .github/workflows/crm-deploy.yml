@@ -31,6 +31,8 @@ env:
   PLATFORM_EMAIL_FROM_ADDRESS: noreply@corgiinvest.com
   PLATFORM_EMAIL_FROM_NAME: Corgi CRM
   EMAIL_VERIFICATION_REQUIRED: 'true'
+  LOGIC_FUNCTION_TYPE: LOCAL
+  CODE_INTERPRETER_TYPE: DISABLED
   # The production database was bootstrapped with the official v2.38.1 image.
   # Never report an older application version from a fork commit whose nearest
   # reachable source tag predates that patch release.
@@ -126,9 +128,20 @@ jobs:
             DOCKER_INPUT_CHANGED=false
           fi
 
+          RUNTIME_CONFIG_CHANGED=false
+          for runtime_config_path in \
+            '.github/workflows/crm-deploy.yml' \
+            'infra/aws/production/locals.tf'; do
+            if grep -Fxq "${runtime_config_path}" "${CHANGED_FILES_FILE}"; then
+              RUNTIME_CONFIG_CHANGED=true
+              break
+            fi
+          done
+
           if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]] ||
              [[ "${NX_RUNTIME_CHANGED}" == "true" ]] ||
-             [[ "${DOCKER_INPUT_CHANGED}" == "true" ]]; then
+             [[ "${DOCKER_INPUT_CHANGED}" == "true" ]] ||
+             [[ "${RUNTIME_CONFIG_CHANGED}" == "true" ]]; then
             DEPLOY_IMAGE=true
           else
             DEPLOY_IMAGE=false
@@ -136,6 +149,7 @@ jobs:
 
           echo "Nx runtime project changed: ${NX_RUNTIME_CHANGED}"
           echo "Non-project Docker input changed: ${DOCKER_INPUT_CHANGED}"
+          echo "Deployment runtime configuration changed: ${RUNTIME_CONFIG_CHANGED}"
           echo "Build and deploy image: ${DEPLOY_IMAGE}"
           echo "deploy_image=${DEPLOY_IMAGE}" >> "${GITHUB_OUTPUT}"
 
@@ -359,16 +373,48 @@ jobs:
             --arg from_name "${PLATFORM_EMAIL_FROM_NAME}" \
             --arg region "${AWS_REGION}" \
             --arg email_verification_required "${EMAIL_VERIFICATION_REQUIRED}" \
+            --arg logic_function_type "${LOGIC_FUNCTION_TYPE}" \
+            --arg code_interpreter_type "${CODE_INTERPRETER_TYPE}" \
             '[
               {name: "AWS_SES_REGION", value: $region},
+              {
+                name: "CODE_INTERPRETER_TYPE",
+                value: $code_interpreter_type
+              },
               {name: "EMAIL_DRIVER", value: $driver},
               {name: "EMAIL_FROM_ADDRESS", value: $from_address},
               {name: "EMAIL_FROM_NAME", value: $from_name},
               {
                 name: "IS_EMAIL_VERIFICATION_REQUIRED",
                 value: $email_verification_required
-              }
+              },
+              {name: "LOGIC_FUNCTION_TYPE", value: $logic_function_type}
             ]')"
+
+          assert_runtime_environment() {
+            local task_definition_file="$1"
+            local container_name="$2"
+
+            jq -e \
+              --arg name "${container_name}" \
+              --arg logic_function_type "${LOGIC_FUNCTION_TYPE}" \
+              --arg code_interpreter_type "${CODE_INTERPRETER_TYPE}" \
+              '([.containerDefinitions[] | select(.name == $name)] | length) == 1
+               and (
+                 (.containerDefinitions[] | select(.name == $name)) as $container
+                 | (($container.environment // [])
+                    | map(select(.name == "LOGIC_FUNCTION_TYPE"))) == [{
+                      name: "LOGIC_FUNCTION_TYPE",
+                      value: $logic_function_type
+                    }]
+                   and (($container.environment // [])
+                    | map(select(.name == "CODE_INTERPRETER_TYPE"))) == [{
+                      name: "CODE_INTERPRETER_TYPE",
+                      value: $code_interpreter_type
+                    }]
+               )' \
+              "${task_definition_file}" >/dev/null
+          }
 
           service_task_definition() {
             aws ecs describe-services \
@@ -491,6 +537,10 @@ jobs:
               "${TMP_DIR}/${stem}-expected.json" \
               "${TMP_DIR}/${stem}-actual.json" >/dev/null
 
+            assert_runtime_environment \
+              "${payload}" \
+              "${container_name}"
+
             aws ecs register-task-definition \
               --cli-input-json "file://${payload}" \
               --query 'taskDefinition.taskDefinitionArn' \
@@ -503,6 +553,7 @@ jobs:
             local container_name="$3"
             local service_json="${TMP_DIR}/${service}-service.json"
             local task_definition_json="${TMP_DIR}/${service}-task-definition.json"
+            local task_definition_payload="${TMP_DIR}/${service}-task-definition-payload.json"
 
             aws ecs wait services-stable \
               --cluster "${ECS_CLUSTER}" \
@@ -522,6 +573,11 @@ jobs:
 
             aws ecs describe-task-definition \
               --task-definition "${expected_task_definition}" > "${task_definition_json}"
+            jq -e '.taskDefinition' \
+              "${task_definition_json}" > "${task_definition_payload}"
+            assert_runtime_environment \
+              "${task_definition_payload}" \
+              "${container_name}"
             jq -e \
               --arg name "${container_name}" \
               --argjson required "${REQUIRED_DEPLOYMENT_ENVIRONMENT}" \

@@ -38,6 +38,8 @@ locals {
     { name = "IS_EMAIL_VERIFICATION_REQUIRED", value = "true" },
     { name = "SIGN_IN_PREFILLED", value = "false" },
     { name = "IS_WORKSPACE_CREATION_LIMITED_TO_SERVER_ADMINS", value = "true" },
+    { name = "LOGIC_FUNCTION_TYPE", value = "LOCAL" },
+    { name = "CODE_INTERPRETER_TYPE", value = "DISABLED" },
   ]
 
   common_secrets = [
