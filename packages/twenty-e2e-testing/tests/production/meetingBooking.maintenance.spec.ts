@@ -1,5 +1,8 @@
 import { expect, test, type Route } from '@playwright/test';
+import { execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
+import { resolve } from 'node:path';
+import { promisify } from 'node:util';
 
 import { assertWorkspaceConfigTenant } from '../../../corgi-crm-workspace-config/src/twenty-api.ts';
 import {
@@ -46,7 +49,7 @@ test.skip(
 test.describe.configure({ retries: 0 });
 test.use({ screenshot: 'off', trace: 'off', video: 'off', timezoneId: 'UTC' });
 
-test.beforeAll(() => {
+test.beforeAll(async () => {
   expect(requiredEnvironment('CRM_MEETING_CANARY_ENABLED')).toBe('true');
   expect(requiredEnvironment('CRM_MEETING_CANARY_CONFIRMATION')).toBe(
     'VERIFY_NATIVE_CRM_MEETING_WITH_TELEGRAM_DISABLED',
@@ -57,18 +60,44 @@ test.beforeAll(() => {
   expect(requiredEnvironment('GITHUB_WORKFLOW_REF')).toBe(
     `${requiredEnvironment('GITHUB_REPOSITORY')}/.github/workflows/corgi-crm-app-production.yml@refs/heads/main`,
   );
-  expect(requiredEnvironment('CRM_MEETING_CANARY_OPERATION')).toBe(
-    'publish-and-install',
+  expect(['publish-and-install', 'configure-telegram']).toContain(
+    requiredEnvironment('CRM_MEETING_CANARY_OPERATION'),
   );
-  expect(requiredEnvironment('CRM_DEPLOYED_SHA')).toMatch(/^[0-9a-f]{40}$/);
-  expect(requiredEnvironment('CRM_DEPLOYED_SHA')).toBe(
-    requiredEnvironment('GITHUB_SHA'),
-  );
+  const deployedSha = requiredEnvironment('CRM_DEPLOYED_SHA');
+  const workflowSha = requiredEnvironment('GITHUB_SHA');
+  expect(deployedSha).toMatch(/^[0-9a-f]{40}$/);
+  expect(workflowSha).toMatch(/^[0-9a-f]{40}$/);
   expect(requiredEnvironment('PLAYWRIGHT_NO_COPY_PROMPT')).toBe('1');
   const { FRONTEND_BASE_URL, BACKEND_BASE_URL } =
     requireProductionEnvironment();
   expect(new URL(FRONTEND_BASE_URL).origin).toBe(APPROVED_ORIGIN);
   expect(new URL(BACKEND_BASE_URL).origin).toBe(APPROVED_ORIGIN);
+  const repositoryRoot = resolve(__dirname, '../../../..');
+  try {
+    // Re-prove source equivalence; a workflow flag cannot authorize native writes.
+    await promisify(execFile)(
+      process.execPath,
+      [
+        resolve(
+          repositoryRoot,
+          'packages/twenty-apps/internal/corgi-crm/scripts/deployment-revision-guard.mjs',
+        ),
+        deployedSha,
+        workflowSha,
+      ],
+      {
+        cwd: repositoryRoot,
+        env: { PATH: process.env.PATH },
+        shell: false,
+        timeout: 15_000,
+        maxBuffer: 64 * 1024,
+      },
+    );
+  } catch {
+    throw new Error(
+      'Meeting canary failed during deployment revision preflight',
+    );
+  }
 });
 
 test('books and reschedules a native CRM meeting while Telegram is disabled', async ({

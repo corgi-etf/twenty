@@ -1,7 +1,10 @@
 import { expect, test } from '@playwright/test';
 import { buildSchema, parse, validate } from 'graphql';
+import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
+import { promisify } from 'node:util';
+import { runInNewContext } from 'node:vm';
 
 import {
   MEETING_CANARY_ACTOR_IDENTITY_QUERY,
@@ -215,5 +218,126 @@ for (const timeZone of ['system', null]) {
     value.members.workspaceMembers.edges[0]!.node.timeZone = timeZone;
 
     expect(resolveMeetingCanaryActor(value).timeZone).toBe('UTC');
+  });
+}
+
+const revisionPreflight = (
+  overrides: Record<string, string> = {},
+  childError?: Error,
+) => {
+  const canarySource = readFileSync(
+    join(__dirname, 'meetingBooking.maintenance.spec.ts'),
+    'utf8',
+  );
+  const beforeAllSource = canarySource.match(
+    /test\.beforeAll\(((?:async )?\(\) => \{[\s\S]*?\n\})\);/,
+  )?.[1];
+  expect(beforeAllSource).toBeDefined();
+  const origin = 'https://crm.corgiinvest.com';
+  const environment: Record<string, string> = {
+    CRM_MEETING_CANARY_ENABLED: 'true',
+    CRM_MEETING_CANARY_CONFIRMATION:
+      'VERIFY_NATIVE_CRM_MEETING_WITH_TELEGRAM_DISABLED',
+    GITHUB_ACTIONS: 'true',
+    GITHUB_EVENT_NAME: 'workflow_dispatch',
+    GITHUB_REF: 'refs/heads/main',
+    GITHUB_REPOSITORY: 'Corgi-ETF/twenty',
+    GITHUB_WORKFLOW_REF:
+      'Corgi-ETF/twenty/.github/workflows/corgi-crm-app-production.yml@refs/heads/main',
+    CRM_MEETING_CANARY_OPERATION: 'configure-telegram',
+    CRM_DEPLOYED_SHA: 'a'.repeat(40),
+    GITHUB_SHA: 'b'.repeat(40),
+    PLAYWRIGHT_NO_COPY_PROMPT: '1',
+    PATH: '/test/path',
+    CORGI_CRM_API_KEY: 'synthetic-secret-must-not-be-inherited',
+    ...overrides,
+  };
+  const calls: Array<{
+    executable: string;
+    args: string[];
+    options: Record<string, unknown>;
+  }> = [];
+  const execute = runInNewContext(`(${beforeAllSource})`, {
+    expect,
+    requiredEnvironment: (name: string) => environment[name],
+    requireProductionEnvironment: () => ({
+      FRONTEND_BASE_URL: origin,
+      BACKEND_BASE_URL: origin,
+    }),
+    APPROVED_ORIGIN: origin,
+    URL,
+    __dirname,
+    resolve,
+    promisify,
+    process: { execPath: process.execPath, env: environment },
+    execFile: (
+      executable: string,
+      args: string[],
+      options: Record<string, unknown>,
+      callback: (error: Error | null, stdout: string, stderr: string) => void,
+    ) => {
+      calls.push({ executable, args, options });
+      callback(childError ?? null, '', '');
+    },
+  }) as () => Promise<void>;
+  return { execute, calls, environment };
+};
+
+for (const operation of ['publish-and-install', 'configure-telegram']) {
+  test(`independently checks unchanged SHAs through the fixed guard for ${operation}`, async () => {
+    const { execute, calls, environment } = revisionPreflight({
+      CRM_MEETING_CANARY_OPERATION: operation,
+    });
+    const originalEnvironment = { ...environment };
+
+    await execute();
+
+    expect(calls).toEqual([
+      {
+        executable: process.execPath,
+        args: [
+          join(
+            repositoryRoot,
+            'packages/twenty-apps/internal/corgi-crm/scripts/deployment-revision-guard.mjs',
+          ),
+          'a'.repeat(40),
+          'b'.repeat(40),
+        ],
+        options: {
+          cwd: repositoryRoot,
+          env: { PATH: '/test/path' },
+          shell: false,
+          timeout: 15_000,
+          maxBuffer: 64 * 1024,
+        },
+      },
+    ]);
+    expect(environment).toEqual(originalEnvironment);
+  });
+}
+
+test('sanitizes revision-helper failures before any browser activity', async () => {
+  const { execute } = revisionPreflight(
+    {},
+    new Error('synthetic secret stderr'),
+  );
+
+  await assert.rejects(async () => execute(), {
+    message: 'Meeting canary failed during deployment revision preflight',
+  });
+});
+
+for (const [name, value] of [
+  ['CRM_DEPLOYED_SHA', 'invalid'],
+  ['GITHUB_SHA', 'A'.repeat(40)],
+  ['CRM_MEETING_CANARY_OPERATION', 'disable-telegram'],
+  ['GITHUB_REF', 'refs/heads/untrusted'],
+  ['GITHUB_EVENT_NAME', 'pull_request'],
+]) {
+  test(`rejects unapproved ${name} before invoking the revision helper`, async () => {
+    const { execute, calls } = revisionPreflight({ [name!]: value! });
+
+    await assert.rejects(async () => execute());
+    expect(calls).toEqual([]);
   });
 }
