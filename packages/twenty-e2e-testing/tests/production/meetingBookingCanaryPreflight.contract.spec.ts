@@ -991,3 +991,96 @@ test('canary stdout is restricted to synthetic receipts and static aggregate evi
     ].join(''),
   ]);
 });
+
+test('native day contract stays pinned to the audited react-datepicker runtime', () => {
+  const frontendPackage = JSON.parse(
+    readFileSync(
+      join(repositoryRoot, 'packages/twenty-front/package.json'),
+      'utf8',
+    ),
+  );
+  expect(frontendPackage.dependencies['react-datepicker']).toBe('^9.1.0');
+  const lock = readFileSync(join(repositoryRoot, 'yarn.lock'), 'utf8');
+  expect(lock).toMatch(
+    /"react-datepicker@npm:\^9\.1\.0":\s+version: 9\.1\.0\s+resolution: "react-datepicker@npm:9\.1\.0"/,
+  );
+});
+
+for (const timeZone of ['UTC', 'America/Chicago']) {
+  for (const placeholder of ['HH:mm', 'HH:mm AA']) {
+    test(`native day selector matches the pinned gridcell label and persists 10:00 in ${timeZone} with ${placeholder}`, async () => {
+      const source = readFileSync(
+        join(__dirname, 'meetingBooking.maintenance.spec.ts'),
+        'utf8',
+      );
+      const selectDaySource = source.match(
+        /const selectDay = async \(day: number\) => \{[\s\S]*?\n    \};/,
+      )?.[0];
+      expect(selectDaySource).toBeDefined();
+      // Audited v9.1.0 src/day.tsx and integrity-verified npm emitted Day:
+      // https://github.com/Hacker0x01/react-datepicker/blob/v9.1.0/src/day.tsx
+      // Day renders gridcell; getAriaLabel uses Choose + formatDate(day, PPPP).
+      // Pin above deliberately forces re-audit on any dependency upgrade.
+      const renderedDay = {
+        role: 'gridcell',
+        label: 'Choose Tuesday, September 15th, 2026',
+      };
+      const actions: string[] = [];
+      const timeInput = {
+        getAttribute: async () => placeholder,
+        fill: async (value: string) => actions.push(value),
+        press: async (key: string) => actions.push(key),
+      };
+      const boundaryExpect = Object.assign(
+        () => ({ toBeVisible: async () => undefined }),
+        {
+          poll: (read: () => Promise<boolean>) => ({
+            toBe: async (expected: boolean) =>
+              expect(await read()).toBe(expected),
+          }),
+        },
+      );
+      const selectDay = runInNewContext(
+        `${selectDaySource!.replace('(day: number)', '(day)')} selectDay;`,
+        {
+          month: 'September',
+          year: '2026',
+          timeZone,
+          Intl,
+          Date,
+          expect: boundaryExpect,
+          openField: async (field: string) => expect(field).toBe('scheduledAt'),
+          readMeeting: async () => ({
+            scheduledAt:
+              timeZone === 'UTC'
+                ? '2026-09-15T10:00:00Z'
+                : '2026-09-15T15:00:00Z',
+          }),
+          page: {
+            getByPlaceholder: (pattern: RegExp) => {
+              expect(pattern.test(placeholder)).toBe(true);
+              return timeInput;
+            },
+            getByRole: (role: string, { name }: { name: RegExp }) => {
+              expect(role).toBe(renderedDay.role);
+              expect(name.test(renderedDay.label)).toBe(true);
+              expect(name.test('Choose Wednesday, October 15th, 2026')).toBe(
+                false,
+              );
+              expect(name.test('Choose Wednesday, September 16th, 2026')).toBe(
+                false,
+              );
+              return { click: async () => actions.push('day clicked') };
+            },
+          },
+        },
+      ) as (day: number) => Promise<void>;
+      await selectDay(15);
+      expect(actions).toEqual([
+        placeholder === 'HH:mm AA' ? '10:00 AM' : '10:00',
+        'Tab',
+        'day clicked',
+      ]);
+    });
+  }
+}
