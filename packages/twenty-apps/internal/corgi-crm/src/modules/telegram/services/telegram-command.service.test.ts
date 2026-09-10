@@ -21,7 +21,9 @@ const base = () => {
     delete: vi.fn(async (key: string) => values.delete(key)),
   };
   const repository: OutreachRepository = {
-    findCompanies: vi.fn().mockResolvedValue([{ id: 'company-1', name: 'Acme' }]),
+    findCompanies: vi
+      .fn()
+      .mockResolvedValue([{ id: 'company-1', name: 'Acme' }]),
     findContacts: vi.fn().mockResolvedValue([]),
     createActivity: vi.fn().mockResolvedValue({ id: 'activity-1' }),
     listActivities: vi.fn().mockResolvedValue([]),
@@ -61,12 +63,171 @@ const update = (text: string) => ({
 });
 
 describe('processTelegramCommand', () => {
+  it.each([
+    ['/daily', 'daily', '2026-09-08T16:30:00.000Z', 'Daily outreach report'],
+    [
+      '/weekly@CorgiCrmBot',
+      'weekly',
+      '2026-09-02T16:30:00.000Z',
+      'Weekly outreach report',
+    ],
+    [
+      '/monthly',
+      'monthly',
+      '2026-08-10T16:30:00.000Z',
+      'Monthly outreach report',
+    ],
+  ])(
+    'returns a workspace report for %s without restricting the owner',
+    async (command, period, start, title) => {
+      const dependencies = base();
+      dependencies.repository.listActivities = vi.fn().mockResolvedValue([
+        {
+          id: 'activity-2',
+          wholesalerId: 'owner-2',
+          wholesalerName: 'Jordan',
+          companyName: 'Private company',
+          contactName: 'Private contact',
+          notes: 'Private notes',
+          activityType: 'phone_call',
+          outcome: 'connected',
+          occurredAt: '2026-09-09T15:30:00.000Z',
+        },
+      ]);
+
+      await expect(
+        processTelegramCommand(update(command!), dependencies),
+      ).resolves.toEqual({ status: 'report', period });
+      expect(dependencies.repository.listActivities).toHaveBeenCalledWith({
+        start,
+        end: '2026-09-09T16:30:00.000Z',
+      });
+      const message = dependencies.send.mock.calls
+        .map(([, text]) => text)
+        .join('\n');
+      expect(message).toContain(title);
+      expect(message).toContain('Total activities: 1');
+      expect(message).toContain('1. Jordan: 1');
+      expect(message).not.toContain('Private');
+    },
+  );
+
+  it.each(['/daily', '/weekly', '/monthly'])(
+    'requires a current identity before the %s report',
+    async (command) => {
+      const dependencies = base();
+      dependencies.identity.findWorkspaceMember.mockResolvedValue(null);
+      await expect(
+        processTelegramCommand(update(command), dependencies),
+      ).resolves.toEqual({ status: 'not_linked' });
+      expect(dependencies.repository.listActivities).not.toHaveBeenCalled();
+    },
+  );
+
+  it('splits a large leaderboard into Telegram-safe messages without dropping owners', async () => {
+    const dependencies = base();
+    dependencies.repository.listActivities = vi.fn().mockResolvedValue(
+      Array.from({ length: 400 }, (_, index) => ({
+        id: `activity-${index}`,
+        wholesalerId: `owner-${index}`,
+        wholesalerName: `Owner ${String(index).padStart(3, '0')}`,
+        companyName: 'Acme',
+        activityType: 'phone_call',
+        outcome: 'connected',
+        occurredAt: '2026-09-09T15:30:00.000Z',
+      })),
+    );
+    await processTelegramCommand(update('/daily'), dependencies);
+    const parts = dependencies.send.mock.calls.map(
+      ([, text]) => text as string,
+    );
+    expect(parts.length).toBeGreaterThan(1);
+    expect(parts.every((part) => part.length <= 4096)).toBe(true);
+    const text = parts.join('\n');
+    expect(text).toContain('Total activities: 400');
+    for (let index = 0; index < 400; index += 1) {
+      expect(text).toContain(
+        `${index + 1}. Owner ${String(index).padStart(3, '0')}: 1`,
+      );
+    }
+  });
+
+  it('links a Telegram deep-link start payload through the existing identity checks', async () => {
+    const dependencies = base();
+    dependencies.values.delete('telegram:user:101');
+    dependencies.linkCodesJson = JSON.stringify({
+      bindings: [
+        {
+          code: 'test_link-code',
+          telegramUserId: '101',
+          workspaceMemberId: '11111111-1111-4111-8111-111111111111',
+        },
+      ],
+    });
+
+    await expect(
+      processTelegramCommand(
+        update('/start@CorgiCrmBot test_link-code'),
+        dependencies,
+      ),
+    ).resolves.toEqual({ status: 'linked' });
+    expect(dependencies.values.get('telegram:user:101')).toMatchObject({
+      wholesalerId: 'wholesaler-1',
+    });
+    expect(dependencies.send).not.toHaveBeenCalledWith(
+      '101',
+      expect.stringContaining('test_link-code'),
+    );
+  });
+
+  it('rejects a deep-link code bound to a different Telegram account', async () => {
+    const dependencies = base();
+    dependencies.values.delete('telegram:user:101');
+    dependencies.linkCodesJson = JSON.stringify({
+      bindings: [
+        {
+          code: 'test_link-code',
+          telegramUserId: '202',
+          workspaceMemberId: '11111111-1111-4111-8111-111111111111',
+        },
+      ],
+    });
+
+    await expect(
+      processTelegramCommand(update('/start test_link-code'), dependencies),
+    ).resolves.toEqual({ status: 'link_failed' });
+    expect(dependencies.values.has('telegram:user:101')).toBe(false);
+    expect(dependencies.identity.findWorkspaceMember).not.toHaveBeenCalled();
+  });
+
+  it('keeps a plain start as help and advertises the report commands', async () => {
+    const dependencies = base();
+    await expect(
+      processTelegramCommand(update('/start'), dependencies),
+    ).resolves.toEqual({ status: 'help' });
+    expect(dependencies.send).toHaveBeenCalledWith(
+      '101',
+      expect.stringContaining('/daily'),
+    );
+    expect(dependencies.send).toHaveBeenCalledWith(
+      '101',
+      expect.stringContaining('/weekly'),
+    );
+    expect(dependencies.send).toHaveBeenCalledWith(
+      '101',
+      expect.stringContaining('/monthly'),
+    );
+  });
+
   it('requires a linked CRM identity before reads or writes', async () => {
     const dependencies = base();
     dependencies.values.delete('telegram:user:101');
 
     await expect(
-      processTelegramCommand(update('/log call | Acme | connected'), dependencies),
+      processTelegramCommand(
+        update('/log call | Acme | connected'),
+        dependencies,
+      ),
     ).resolves.toEqual({ status: 'not_linked' });
     expect(dependencies.repository.createActivity).not.toHaveBeenCalled();
     expect(dependencies.send).toHaveBeenCalledWith(

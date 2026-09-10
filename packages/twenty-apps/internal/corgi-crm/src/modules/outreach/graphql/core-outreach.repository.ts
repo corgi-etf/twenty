@@ -17,6 +17,7 @@ type ActivityNode = {
   outcome?: string | null;
   notes?: string | null;
   occurredAt?: string | null;
+  wholesalerId?: string | null;
   company?: { name?: string | null } | null;
   contact?: { name?: { firstName?: string | null; lastName?: string | null } | null } | null;
   wholesaler?: { id?: string | null; name?: string | null } | null;
@@ -174,8 +175,12 @@ export class CoreOutreachRepository implements OutreachRepository {
     wholesalerId?: string;
   }): Promise<OutreachActivity[]> {
     const output: OutreachActivity[] = [];
+    const seenIds = new Set<string>();
+    const seenCursors = new Set<string>();
+    const startTime = Date.parse(start);
+    const endTime = Date.parse(end);
     let cursor: string | undefined;
-    for (let page = 0; page < MAX_PAGES; page += 1) {
+    while (true) {
       const filters: Array<Record<string, unknown>> = [
         { occurredAt: { gte: start } },
         { occurredAt: { lt: end } },
@@ -195,6 +200,7 @@ export class CoreOutreachRepository implements OutreachRepository {
               outcome: true,
               notes: true,
               occurredAt: true,
+              wholesalerId: true,
               company: { name: true },
               contact: { name: { firstName: true, lastName: true } },
               wholesaler: { id: true, name: true },
@@ -206,19 +212,24 @@ export class CoreOutreachRepository implements OutreachRepository {
       const connection = result.outreachActivities;
       for (const edge of connection?.edges ?? []) {
         const node = edge?.node as ActivityNode | null | undefined;
+        const occurredAt = Date.parse(node?.occurredAt ?? '');
         if (
           !node?.id ||
           !node.occurredAt ||
-          !node.wholesaler?.id ||
-          !node.company?.name
+          !(occurredAt >= startTime && occurredAt < endTime) ||
+          seenIds.has(node.id)
         ) {
           continue;
         }
+        seenIds.add(node.id);
+        const ownerId = node.wholesalerId?.trim() || node.wholesaler?.id?.trim();
         output.push({
           id: node.id,
-          wholesalerId: node.wholesaler.id,
-          wholesalerName: node.wholesaler.name?.trim() || 'Team member',
-          companyName: node.company.name,
+          wholesalerId: ownerId || 'unassigned',
+          wholesalerName:
+            node.wholesaler?.name?.trim() ||
+            (ownerId ? `Unassigned (${ownerId})` : 'Unassigned'),
+          companyName: node.company?.name?.trim() || 'Unknown company',
           ...(fullName(node.contact?.name)
             ? { contactName: fullName(node.contact?.name) }
             : {}),
@@ -230,11 +241,11 @@ export class CoreOutreachRepository implements OutreachRepository {
       }
       if (!connection?.pageInfo?.hasNextPage) return output;
       const nextCursor = connection.pageInfo.endCursor;
-      if (!nextCursor || nextCursor === cursor) {
-        throw new Error('Outreach activity pagination omitted its cursor');
+      if (!nextCursor || seenCursors.has(nextCursor)) {
+        throw new Error('Outreach activity pagination has a missing or repeated cursor');
       }
+      seenCursors.add(nextCursor);
       cursor = nextCursor;
     }
-    throw new Error(`Outreach activity pagination exceeded ${MAX_PAGES} pages`);
   }
 }
