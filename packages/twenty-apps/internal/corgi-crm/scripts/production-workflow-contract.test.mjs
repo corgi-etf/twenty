@@ -198,6 +198,21 @@ describe('Corgi CRM production app workflow contract', () => {
     assert.match(cleanup, /exit 1/);
   });
 
+  it('gates app installation on native meeting verification before provider activation', () => {
+    const stage = position('configure-telegram.mjs" stage');
+    const canary = position('Verify native CRM meeting booking while Telegram is disabled');
+    const register = position('Register and verify the live Telegram provider');
+    assert.ok(stage < canary && canary < register);
+    const canaryBlock = workflow.slice(canary, register);
+    assert.match(canaryBlock, /if: inputs\.operation == 'publish-and-install'/);
+    assert.doesNotMatch(canaryBlock, /if: inputs\.telegram_enable/);
+    assert.match(canaryBlock, /CRM_MEETING_CANARY_ENABLED: 'true'/);
+    assert.match(canaryBlock, /VERIFY_NATIVE_CRM_MEETING_WITH_TELEGRAM_DISABLED/);
+    assert.match(canaryBlock, /meetingBooking\.maintenance\.spec\.ts/);
+    assert.match(canaryBlock, /--project=production-chromium --no-deps --retries=0/);
+    assert.doesNotMatch(canaryBlock, /continue-on-error/);
+  });
+
   it('keeps real test delivery opt-in behind two independent workflow gates', () => {
     assert.match(workflow, /telegram_test_delivery_enabled/);
     assert.match(workflow, /CORGI_CRM_TELEGRAM_TEST_DELIVERY_ENABLED/);
