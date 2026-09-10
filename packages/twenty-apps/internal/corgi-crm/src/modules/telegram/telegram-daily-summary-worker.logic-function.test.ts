@@ -14,6 +14,7 @@ describe('scheduled Telegram team report', () => {
       delete: async (key: string) => values.delete(key),
     };
     const listActivities = vi.fn().mockResolvedValue([]);
+    const listMeetingBookings = vi.fn().mockResolvedValue([]);
     const send = vi
       .fn()
       .mockRejectedValueOnce(new TelegramDeliveryError('rate limit', false))
@@ -22,6 +23,7 @@ describe('scheduled Telegram team report', () => {
       send(
         await readScheduledDailyReport({
           repository: { listActivities } as never,
+          meetingRepository: { listMeetingBookings },
           scheduledInstant: '2026-09-10T17:00:00.000Z',
           timeZone: 'America/Chicago',
           store,
@@ -30,9 +32,11 @@ describe('scheduled Telegram team report', () => {
       );
     await expect(attempt()).rejects.toThrow('rate limit');
     listActivities.mockRejectedValue(new Error('must not requery'));
+    listMeetingBookings.mockRejectedValue(new Error('must not requery bookings'));
     await expect(attempt()).resolves.toBeUndefined();
     expect(send.mock.calls[1]?.[0]).toBe(send.mock.calls[0]?.[0]);
     expect(listActivities).toHaveBeenCalledOnce();
+    expect(listMeetingBookings).toHaveBeenCalledOnce();
   });
 
   it('uses the exact rolling 24-hour window and all activity owners', async () => {
@@ -56,8 +60,16 @@ describe('scheduled Telegram team report', () => {
         occurredAt: '2026-09-10T16:59:59.000Z',
       },
     ]);
+    const listMeetingBookings = vi.fn().mockResolvedValue([{
+      id: 'booking-1',
+      bookedAt: '2026-09-10T16:59:59.000Z',
+      scheduledAt: '2026-10-01T15:00:00.000Z',
+      wholesalerId: 'owner-2',
+      wholesalerName: 'Alex',
+    }]);
     const text = await readScheduledDailyReport({
       repository: { listActivities } as never,
+      meetingRepository: { listMeetingBookings },
       scheduledInstant: '2026-09-10T17:00:00.000Z',
       timeZone: 'America/Chicago',
       workspaceMemberId: 'member-1',
@@ -72,9 +84,15 @@ describe('scheduled Telegram team report', () => {
       start: '2026-09-09T17:00:00.000Z',
       end: '2026-09-10T17:00:00.000Z',
     });
+    expect(listMeetingBookings).toHaveBeenCalledWith({
+      start: '2026-09-09T17:00:00.000Z',
+      end: '2026-09-10T17:00:00.000Z',
+    });
     expect(text).toContain('Total activities: 2');
     expect(text).toContain('1. Alex: 1');
     expect(text).toContain('2. Nash: 1');
+    expect(text).toContain('Meetings set: 1');
+    expect(text).toContain('1. Alex: 1 activity · 1 meeting set');
   });
 
   it('keeps concurrent member jobs and their retries on separate immutable reports', async () => {
@@ -103,6 +121,7 @@ describe('scheduled Telegram team report', () => {
     const read = (workspaceMemberId: string) =>
       readScheduledDailyReport({
         repository: { listActivities } as never,
+        meetingRepository: { listMeetingBookings: vi.fn().mockResolvedValue([]) },
         store,
         workspaceMemberId,
         scheduledInstant: '2026-09-10T17:00:00.000Z',

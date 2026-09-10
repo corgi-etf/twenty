@@ -1,5 +1,8 @@
 import { type SummaryCount } from 'src/modules/outreach/services/daily-summary.service';
-import { type ReportMeetingBooking } from 'src/modules/outreach/report-meeting-booking.types';
+import {
+  type MeetingBookingReportRepository,
+  type ReportMeetingBooking,
+} from 'src/modules/outreach/report-meeting-booking.types';
 import {
   isQuickLogActivityType,
   isQuickLogOutcome,
@@ -84,17 +87,20 @@ const compareOwners = (left: OwnerCount, right: OwnerCount) =>
 
 export const buildReportSummary = ({
   activities,
-  meetingBookings = [],
+  meetingBookings,
   period,
   now,
   timeZone,
 }: {
   activities: OutreachActivity[];
-  meetingBookings?: ReportMeetingBooking[];
+  meetingBookings: ReportMeetingBooking[];
   period: ReportPeriod;
   now: Date;
   timeZone: string;
 }): ReportSummary => {
+  if (!Array.isArray(meetingBookings)) {
+    throw new Error('Meeting booking report data is unavailable');
+  }
   const { start, end } = getReportWindow({ period, now });
   const weekday = new Intl.DateTimeFormat('en-US', {
     timeZone,
@@ -208,21 +214,27 @@ export const formatReportSummary = (summary: ReportSummary): string => {
 
 export const readReportSummary = async ({
   repository,
+  meetingRepository,
   period,
   now,
   timeZone,
 }: {
-  repository: OutreachRepository;
+  repository: Pick<OutreachRepository, 'listActivities'>;
+  meetingRepository: MeetingBookingReportRepository;
   period: ReportPeriod;
   now: Date;
   timeZone: string;
 }): Promise<string> => {
   const window = getReportWindow({ period, now });
-  const activities = await repository.listActivities({
+  const input = {
     start: window.start.toISOString(),
     end: window.end.toISOString(),
-  });
+  };
+  const [activities, meetingBookings] = await Promise.all([
+    repository.listActivities(input),
+    meetingRepository.listMeetingBookings(input),
+  ]);
   return formatReportSummary(
-    buildReportSummary({ activities, period, now, timeZone }),
+    buildReportSummary({ activities, meetingBookings, period, now, timeZone }),
   );
 };

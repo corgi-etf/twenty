@@ -1,9 +1,10 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import {
   buildReportSummary,
   formatReportSummary,
   getReportWindow,
+  readReportSummary,
 } from 'src/modules/outreach/services/report-summary.service';
 import { type OutreachActivity } from 'src/modules/outreach/types';
 
@@ -27,9 +28,36 @@ const defaults = {
   period: 'daily' as const,
   now: new Date('2026-09-09T16:30:00.000Z'),
   timeZone: 'America/Chicago',
+  meetingBookings: [],
 };
 
 describe('outreach report summaries', () => {
+  it('reads all-owner bookings and activities with the same window and never masks a failed booking read', async () => {
+    const repository = { listActivities: vi.fn().mockResolvedValue([]) };
+    const meetingRepository = {
+      listMeetingBookings: vi.fn().mockResolvedValue([{
+        id: 'booking-1',
+        bookedAt: '2026-09-09T15:00:00.000Z',
+        wholesalerId: 'owner-booker',
+        wholesalerName: 'Casey',
+      }]),
+    };
+    const input = { ...defaults, repository, meetingRepository };
+    const text = await readReportSummary(input);
+    const window = {
+      start: '2026-09-08T16:30:00.000Z',
+      end: '2026-09-09T16:30:00.000Z',
+    };
+    expect(repository.listActivities).toHaveBeenCalledWith(window);
+    expect(meetingRepository.listMeetingBookings).toHaveBeenCalledWith(window);
+    expect(text).toContain('Meetings set: 1');
+    expect(text).toContain('Total activities: 0');
+    meetingRepository.listMeetingBookings.mockRejectedValue(new Error('Meeting read unavailable'));
+    await expect(readReportSummary(input)).rejects.toThrow('Meeting read unavailable');
+    meetingRepository.listMeetingBookings.mockResolvedValue(undefined);
+    await expect(readReportSummary(input)).rejects.toThrow();
+  });
+
   it('counts meetings by booking time independently of activity totals and scheduled dates', () => {
     const meetingBookings = [
       {
@@ -268,6 +296,9 @@ describe('outreach report summaries', () => {
     const activities = [
       activity('saturday-utc', { occurredAt: '2026-09-05T03:00:00.000Z' }),
     ];
+    const meetingBookings = activities.map(({ id, occurredAt, wholesalerId, wholesalerName }) => ({
+      id, bookedAt: occurredAt, wholesalerId, wholesalerName,
+    }));
     expect(
       buildReportSummary({ ...defaults, period: 'weekly', activities }).total,
     ).toBe(1);
@@ -279,6 +310,8 @@ describe('outreach report summaries', () => {
         activities,
       }).total,
     ).toBe(0);
+    expect(buildReportSummary({ ...defaults, period: 'weekly', activities: [], meetingBookings }).totalMeetingsSet).toBe(1);
+    expect(buildReportSummary({ ...defaults, period: 'weekly', timeZone: 'Asia/Tokyo', activities: [], meetingBookings }).totalMeetingsSet).toBe(0);
   });
 
   it.each(['2026-03-09T05:30:00.000Z', '2026-11-02T06:30:00.000Z'])(

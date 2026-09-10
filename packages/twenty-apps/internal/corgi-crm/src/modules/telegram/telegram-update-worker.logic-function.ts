@@ -4,6 +4,7 @@ import { kv, type LogicFunctionExecutionContext } from 'twenty-sdk/logic-functio
 
 import { TELEGRAM_UPDATE_WORKER_UNIVERSAL_IDENTIFIER } from 'src/constants';
 import { CoreOutreachRepository } from 'src/modules/outreach/graphql/core-outreach.repository';
+import { CoreMeetingBookingReportRepository } from 'src/modules/outreach/graphql/core-meeting-booking-report.repository';
 import { TelegramClient } from 'src/modules/telegram/services/telegram-client.service';
 import { processTelegramCommand } from 'src/modules/telegram/services/telegram-command.service';
 import {
@@ -63,6 +64,7 @@ export const handleTelegramUpdateJob = async (
   try {
     const result = await dependencies.processCommand(update, {
       repository: new CoreOutreachRepository(coreClient),
+      meetingRepository: new CoreMeetingBookingReportRepository(coreClient),
       store: dependencies.store,
       timeZone: dependencies.timeZone,
       linkCodesJson: dependencies.linkCodesJson,
