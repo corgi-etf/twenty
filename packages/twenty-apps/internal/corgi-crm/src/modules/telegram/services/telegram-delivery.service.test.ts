@@ -6,6 +6,57 @@ import {
 } from 'src/modules/telegram/services/telegram-delivery.service';
 import * as deliveryModule from 'src/modules/telegram/services/telegram-delivery.service';
 import { TelegramDeliveryError } from 'src/modules/telegram/services/telegram-client.service';
+import { type TelegramDeliveryRecord } from 'src/modules/telegram/graphql/core-telegram-delivery.repository';
+
+class AtomicDeliveryRepository {
+  public readonly records = new Map<string, TelegramDeliveryRecord>();
+  public failClaimAfterCommit = false;
+  public failCompleteOnce = false;
+
+  async claim(record: TelegramDeliveryRecord) {
+    const existing = this.records.get(record.deliveryKey);
+    if (existing) {
+      if (existing.operationDigest !== record.operationDigest) {
+        throw new Error('Telegram delivery deterministic claim collision');
+      }
+      return { acquired: false as const, record: existing };
+    }
+    this.records.set(record.deliveryKey, record);
+    if (this.failClaimAfterCommit) {
+      this.failClaimAfterCommit = false;
+      throw new Error('claim response lost after commit');
+    }
+    return { acquired: true as const, record };
+  }
+
+  async get(deliveryKey: string) {
+    return this.records.get(deliveryKey) ?? null;
+  }
+
+  async transition(input: {
+    id: string;
+    expectedStatus: TelegramDeliveryRecord['status'];
+    expectedStateToken: string;
+    patch: Partial<TelegramDeliveryRecord>;
+  }) {
+    const record = [...this.records.values()].find(
+      (candidate) => candidate.id === input.id,
+    );
+    if (
+      !record ||
+      record.status !== input.expectedStatus ||
+      record.stateToken !== input.expectedStateToken
+    ) {
+      return false;
+    }
+    if (input.patch.status === 'complete' && this.failCompleteOnce) {
+      this.failCompleteOnce = false;
+      throw new Error('completion checkpoint unavailable');
+    }
+    this.records.set(record.deliveryKey, { ...record, ...input.patch });
+    return true;
+  }
+}
 
 const queuedUpdate = {
   updateId: 42,
@@ -387,5 +438,87 @@ describe('durable interactive Telegram delivery', () => {
     ).rejects.toThrow(/explicitly rejected/i);
     expect(readyWrites).toBe(2);
     expect([...values.values()][0]).toMatchObject({ status: 'ready' });
+  });
+});
+
+describe('database-authoritative Telegram delivery', () => {
+  const key = `telegram:delivery:${'9'.repeat(64)}`;
+  const setup = () => {
+    const envelopes = new Map<string, unknown>();
+    return {
+      repository: new AtomicDeliveryRepository(),
+      store: {
+        get: vi.fn(async (name: string) => envelopes.get(name) ?? null),
+        set: vi.fn(async (name: string, value: unknown) => {
+          envelopes.set(name, value);
+        }),
+        delete: vi.fn(),
+      },
+    };
+  };
+
+  it('allows one sender under concurrent admission and conservatively marks the race unknown', async () => {
+    const { repository, store } = setup();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const perform = vi.fn(async () => gate);
+    const input = {
+      deliveryKey: key,
+      retryEnvelope: { kind: 'message' as const, chatId: '101', text: 'one' },
+      repository: repository as never,
+      store,
+      perform,
+      now: () => new Date('2026-09-09T22:00:00.000Z'),
+    };
+    const first = deliveryModule.deliverTelegramOperation(input);
+    await vi.waitFor(() => expect(perform).toHaveBeenCalledOnce());
+    const second = deliveryModule.deliverTelegramOperation(input);
+    await expect(second).resolves.toEqual({ status: 'unknown' });
+    release();
+
+    await expect(first).resolves.toEqual({ status: 'unknown' });
+    expect(perform).toHaveBeenCalledOnce();
+  });
+
+  it('does not send after a process loses the atomic-create response', async () => {
+    const { repository, store } = setup();
+    repository.failClaimAfterCommit = true;
+    const perform = vi.fn();
+    const input = {
+      deliveryKey: key,
+      retryEnvelope: { kind: 'message' as const, chatId: '101', text: 'one' },
+      repository: repository as never,
+      store,
+      perform,
+      now: () => new Date('2026-09-09T22:00:00.000Z'),
+    };
+    await expect(deliveryModule.deliverTelegramOperation(input)).rejects.toThrow(
+      /response lost/i,
+    );
+    await expect(deliveryModule.deliverTelegramOperation(input)).resolves.toEqual({
+      status: 'unknown',
+    });
+    expect(perform).not.toHaveBeenCalled();
+  });
+
+  it('alerts and durably records unknown when the post-send complete checkpoint fails', async () => {
+    const { repository, store } = setup();
+    repository.failCompleteOnce = true;
+    const alerts: unknown[] = [];
+    await expect(
+      deliveryModule.deliverTelegramOperation({
+        deliveryKey: key,
+        retryEnvelope: { kind: 'message', chatId: '101', text: 'one' },
+        repository: repository as never,
+        store,
+        perform: vi.fn().mockResolvedValue(undefined),
+        now: () => new Date('2026-09-09T22:00:00.000Z'),
+        onUnknown: (event) => alerts.push(event),
+      }),
+    ).resolves.toEqual({ status: 'unknown' });
+    expect(repository.records.get(key)).toMatchObject({ status: 'unknown' });
+    expect(alerts).toHaveLength(1);
   });
 });

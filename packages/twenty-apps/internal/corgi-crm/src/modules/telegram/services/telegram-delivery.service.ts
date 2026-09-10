@@ -1,10 +1,15 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 
 import {
   type KeyValueStore,
   type ParsedTelegramUpdate,
 } from 'src/modules/telegram/types';
 import { TelegramDeliveryError } from 'src/modules/telegram/services/telegram-client.service';
+import {
+  type CoreTelegramDeliveryRepository,
+  type TelegramDeliveryRecord,
+} from 'src/modules/telegram/graphql/core-telegram-delivery.repository';
+import { getTelegramDeliveryId } from 'src/modules/telegram/services/telegram-identifiers.service';
 
 export type TelegramRetryEnvelope =
   | { kind: 'message'; chatId: string; text: string }
@@ -47,6 +52,205 @@ const unknownEvent = (
   reasonCode: state.lastReasonCode,
 });
 
+const envelopeKey = (deliveryKey: string) =>
+  `telegram:delivery-envelope:${deliveryKey.slice('telegram:delivery:'.length)}`;
+
+const digestEnvelope = (envelope: TelegramRetryEnvelope) =>
+  createHash('sha256').update(JSON.stringify(envelope)).digest('hex');
+
+const persistExactEnvelope = async (
+  store: KeyValueStore,
+  deliveryKey: string,
+  envelope: TelegramRetryEnvelope,
+) => {
+  const key = envelopeKey(deliveryKey);
+  const existing = (await store.get(key)) as TelegramRetryEnvelope | null;
+  if (existing && JSON.stringify(existing) !== JSON.stringify(envelope)) {
+    throw new Error('Telegram delivery envelope collision');
+  }
+  if (!existing) await store.set(key, envelope);
+};
+
+export const readTelegramRetryEnvelope = async (
+  store: KeyValueStore,
+  deliveryKey: string,
+) => (await store.get(envelopeKey(deliveryKey))) as TelegramRetryEnvelope | null;
+
+const durableUnknownEvent = (
+  record: TelegramDeliveryRecord,
+  reasonCode: 'provider_ambiguous' | 'checkpoint_ambiguous',
+) => ({
+  event: 'telegram_delivery_unknown' as const,
+  deliveryKey: record.deliveryKey,
+  status: 'unknown' as const,
+  unknownAt: record.unknownAt,
+  reasonCode,
+});
+
+const deliverWithAtomicRepository = async ({
+  deliveryKey,
+  retryEnvelope,
+  store,
+  repository,
+  perform,
+  now,
+  onUnknown,
+}: {
+  deliveryKey: string;
+  retryEnvelope: TelegramRetryEnvelope;
+  store: KeyValueStore;
+  repository: CoreTelegramDeliveryRepository;
+  perform(envelope: TelegramRetryEnvelope): Promise<void>;
+  now(): Date;
+  onUnknown(event: ReturnType<typeof durableUnknownEvent>): void;
+}) => {
+  await persistExactEnvelope(store, deliveryKey, retryEnvelope);
+  const timestamp = now().toISOString();
+  const seed: TelegramDeliveryRecord = {
+    id: getTelegramDeliveryId(deliveryKey),
+    deliveryKey,
+    operationDigest: digestEnvelope(retryEnvelope),
+    status: 'intent',
+    stateToken: randomUUID(),
+    attempts: 1,
+    resetCount: 0,
+    createdAt: timestamp,
+    updatedAt: timestamp,
+  };
+  const claim = await repository.claim(seed);
+  let intent = claim.record;
+  if (!claim.acquired) {
+    if (intent.status === 'complete') return { status: 'complete' } as const;
+    if (intent.status === 'unknown') return { status: 'unknown' } as const;
+    if (intent.status === 'intent') {
+      const unknownAt = now().toISOString();
+      const transitioned = await repository.transition({
+        id: intent.id,
+        expectedStatus: 'intent',
+        expectedStateToken: intent.stateToken,
+        patch: {
+          status: 'unknown',
+          stateToken: randomUUID(),
+          unknownAt,
+          updatedAt: unknownAt,
+          lastReasonCode: 'checkpoint_ambiguous',
+        },
+      });
+      const unknown = transitioned
+        ? { ...intent, status: 'unknown' as const, unknownAt }
+        : await repository.get(deliveryKey);
+      if (unknown?.status === 'complete') {
+        return { status: 'complete' } as const;
+      }
+      if (!unknown || unknown.status !== 'unknown') {
+        throw new Error('Could not confirm ambiguous Telegram delivery claim');
+      }
+      onUnknown(durableUnknownEvent(unknown, 'checkpoint_ambiguous'));
+      return { status: 'unknown' } as const;
+    }
+    const nextToken = randomUUID();
+    const transitioned = await repository.transition({
+      id: intent.id,
+      expectedStatus: intent.status,
+      expectedStateToken: intent.stateToken,
+      patch: {
+        status: 'intent',
+        stateToken: nextToken,
+        attempts: intent.attempts + 1,
+        updatedAt: timestamp,
+        unknownAt: null,
+        lastReasonCode: null,
+      },
+    });
+    if (!transitioned) return { status: 'unknown' } as const;
+    intent = {
+      ...intent,
+      status: 'intent',
+      stateToken: nextToken,
+      attempts: intent.attempts + 1,
+    };
+  }
+
+  try {
+    await perform(retryEnvelope);
+  } catch (error) {
+    if (error instanceof TelegramDeliveryError && !error.mayHaveSucceeded) {
+      const readyAt = now().toISOString();
+      await repository.transition({
+        id: intent.id,
+        expectedStatus: 'intent',
+        expectedStateToken: intent.stateToken,
+        patch: {
+          status: 'ready',
+          stateToken: randomUUID(),
+          updatedAt: readyAt,
+        },
+      });
+      throw error;
+    }
+    const unknownAt = now().toISOString();
+    await repository.transition({
+      id: intent.id,
+      expectedStatus: 'intent',
+      expectedStateToken: intent.stateToken,
+      patch: {
+        status: 'unknown',
+        stateToken: randomUUID(),
+        updatedAt: unknownAt,
+        unknownAt,
+        lastReasonCode: 'provider_ambiguous',
+      },
+    });
+    const unknown = (await repository.get(deliveryKey)) ?? {
+      ...intent,
+      status: 'unknown' as const,
+      unknownAt,
+    };
+    onUnknown(durableUnknownEvent(unknown, 'provider_ambiguous'));
+    return { status: 'unknown' } as const;
+  }
+  let completed: boolean;
+  try {
+    completed = await repository.transition({
+      id: intent.id,
+      expectedStatus: 'intent',
+      expectedStateToken: intent.stateToken,
+      patch: {
+        status: 'complete',
+        stateToken: randomUUID(),
+        updatedAt: now().toISOString(),
+      },
+    });
+  } catch {
+    const unknownAt = now().toISOString();
+    const unknown = { ...intent, status: 'unknown' as const, unknownAt };
+    try {
+      await repository.transition({
+        id: intent.id,
+        expectedStatus: 'intent',
+        expectedStateToken: intent.stateToken,
+        patch: {
+          status: 'unknown',
+          stateToken: randomUUID(),
+          updatedAt: unknownAt,
+          unknownAt,
+          lastReasonCode: 'checkpoint_ambiguous',
+        },
+      });
+    } finally {
+      onUnknown(durableUnknownEvent(unknown, 'checkpoint_ambiguous'));
+    }
+    return { status: 'unknown' } as const;
+  }
+  if (!completed) {
+    const current = await repository.get(deliveryKey);
+    if (current?.status === 'complete') return { status: 'complete' } as const;
+    if (current?.status === 'unknown') return { status: 'unknown' } as const;
+    throw new Error('Telegram delivery completion checkpoint failed');
+  }
+  return { status: 'complete' } as const;
+};
+
 export const deliverTelegramOperation = async ({
   deliveryKey,
   retryEnvelope,
@@ -54,6 +258,7 @@ export const deliverTelegramOperation = async ({
   perform,
   now,
   onUnknown = (event) => console.error(JSON.stringify(event)),
+  repository,
 }: {
   deliveryKey: string;
   retryEnvelope: TelegramRetryEnvelope;
@@ -61,8 +266,20 @@ export const deliverTelegramOperation = async ({
   perform(envelope: TelegramRetryEnvelope): Promise<void>;
   now(): Date;
   onUnknown?(event: ReturnType<typeof unknownEvent>): void;
+  repository?: CoreTelegramDeliveryRepository;
 }) => {
   assertTelegramDeliveryKey(deliveryKey);
+  if (repository) {
+    return deliverWithAtomicRepository({
+      deliveryKey,
+      retryEnvelope,
+      store,
+      repository,
+      perform,
+      now,
+      onUnknown,
+    });
+  }
   const existing = (await store.get(deliveryKey)) as TelegramDeliveryState | null;
   if (existing?.status === 'complete') return { status: 'complete' } as const;
   if (existing?.status === 'unknown') return { status: 'unknown' } as const;
