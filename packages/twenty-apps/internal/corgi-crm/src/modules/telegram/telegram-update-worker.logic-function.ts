@@ -3,6 +3,7 @@ import { defineLogicFunction } from 'twenty-sdk/define';
 import { kv, type LogicFunctionExecutionContext } from 'twenty-sdk/logic-function';
 
 import { TELEGRAM_UPDATE_WORKER_UNIVERSAL_IDENTIFIER } from 'src/constants';
+import { RawCoreGraphqlTransport } from 'src/modules/core/graphql/raw-core-graphql.transport';
 import { CoreOutreachRepository } from 'src/modules/outreach/graphql/core-outreach.repository';
 import { CoreMeetingBookingReportRepository } from 'src/modules/outreach/graphql/core-meeting-booking-report.repository';
 import { TelegramClient } from 'src/modules/telegram/services/telegram-client.service';
@@ -28,6 +29,7 @@ type UpdateWorkerDependencies = {
   store: KeyValueStore;
   processCommand: typeof processTelegramCommand;
   createCrmClient(): CoreApiClient;
+  createRawCrmTransport(): RawCoreGraphqlTransport;
   createTelegramClient(): TelegramClient;
   timeZone: string;
   linkCodesJson: string | undefined;
@@ -57,14 +59,18 @@ export const handleTelegramUpdateJob = async (
 
   const telegram = dependencies.createTelegramClient();
   const coreClient = dependencies.createCrmClient();
-  const wholesalerRepository = new CoreWholesalerRepository(coreClient);
+  const rawTransport = dependencies.createRawCrmTransport();
+  const wholesalerRepository = new CoreWholesalerRepository(
+    coreClient,
+    rawTransport,
+  );
   const deliveryRepository = new CoreTelegramDeliveryRepository(coreClient);
   let messageIndex = 0;
   let callbackIndex = 0;
   try {
     const result = await dependencies.processCommand(update, {
-      repository: new CoreOutreachRepository(coreClient),
-      meetingRepository: new CoreMeetingBookingReportRepository(coreClient),
+      repository: new CoreOutreachRepository(coreClient, rawTransport),
+      meetingRepository: new CoreMeetingBookingReportRepository(rawTransport),
       store: dependencies.store,
       timeZone: dependencies.timeZone,
       linkCodesJson: dependencies.linkCodesJson,
@@ -148,6 +154,7 @@ export const handler = async (
     store: kv,
     processCommand: processTelegramCommand,
     createCrmClient: () => new CoreApiClient(),
+    createRawCrmTransport: () => new RawCoreGraphqlTransport(),
     createTelegramClient: () =>
       new TelegramClient({
         token: requiredEnvironment('CORGI_CRM_TELEGRAM_BOT_TOKEN'),

@@ -2,6 +2,7 @@ import { CoreApiClient } from 'twenty-client-sdk/core';
 import { defineLogicFunction } from 'twenty-sdk/define';
 import { type LogicFunctionExecutionContext } from 'twenty-sdk/logic-function';
 
+import { RawCoreGraphqlTransport } from 'src/modules/core/graphql/raw-core-graphql.transport';
 import { CoreMeetingBookingReportRepository } from 'src/modules/outreach/graphql/core-meeting-booking-report.repository';
 import { CoreOutreachRepository } from 'src/modules/outreach/graphql/core-outreach.repository';
 import {
@@ -16,6 +17,7 @@ type VerificationDependencies = {
   timeZone: string | undefined;
   now(): Date;
   createCrmClient(): CoreApiClient;
+  createRawCrmTransport(): RawCoreGraphqlTransport;
 };
 
 export const REPORT_RUNTIME_VERIFICATION_IDENTIFIER =
@@ -87,16 +89,18 @@ export const handleReportRuntimeVerification = async (
     throw new Error('Report runtime verification denied');
   }
 
-  // Only the server-injected identity reaches CoreApiClient. Payload identities
+  // Both transports retain the server-injected identity. Payload identities
   // are expectations, never an alternate actor or an authorization override.
   let client: CoreApiClient;
+  let rawTransport: RawCoreGraphqlTransport;
   try {
     client = dependencies.createCrmClient();
+    rawTransport = dependencies.createRawCrmTransport();
   } catch {
     throw new Error('Report runtime client initialization failed');
   }
-  const repository = new CoreOutreachRepository(client);
-  const meetingRepository = new CoreMeetingBookingReportRepository(client);
+  const repository = new CoreOutreachRepository(client, rawTransport);
+  const meetingRepository = new CoreMeetingBookingReportRepository(rawTransport);
   const reports = [];
   for (const period of ['daily', 'weekly', 'monthly'] as const) {
     try {
@@ -145,6 +149,7 @@ export const handler = async (
     timeZone: process.env.CORGI_CRM_TELEGRAM_TIME_ZONE,
     now: () => new Date(),
     createCrmClient: () => new CoreApiClient(),
+    createRawCrmTransport: () => new RawCoreGraphqlTransport(),
   });
 
 export default defineLogicFunction({

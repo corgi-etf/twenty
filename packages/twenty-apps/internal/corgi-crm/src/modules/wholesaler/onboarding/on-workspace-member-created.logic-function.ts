@@ -6,6 +6,7 @@ import {
 } from 'twenty-sdk/define';
 
 import { ON_WORKSPACE_MEMBER_CREATED_UNIVERSAL_IDENTIFIER } from 'src/constants';
+import { RawCoreGraphqlTransport } from 'src/modules/core/graphql/raw-core-graphql.transport';
 import { CoreWholesalerRepository } from 'src/modules/wholesaler/onboarding/graphql/core-wholesaler.repository';
 import { reconcileWorkspaceMember } from 'src/modules/wholesaler/onboarding/services/reconcile-workspace-member.service';
 
@@ -32,7 +33,7 @@ export const handler = async (
       firstName: after.name?.firstName,
       lastName: after.name?.lastName,
     },
-    repository: new CoreWholesalerRepository(client),
+    repository: new CoreWholesalerRepository(client, new RawCoreGraphqlTransport()),
   });
 };
 

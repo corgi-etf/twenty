@@ -1,6 +1,5 @@
 import { createHash } from 'node:crypto';
 
-import { CoreApiClient } from 'twenty-client-sdk/core';
 import {
   type DatabaseEventPayload,
   defineLogicFunction,
@@ -17,6 +16,7 @@ import {
   TELEGRAM_NOTIFICATION_DELIVERY_WORKER_UNIVERSAL_IDENTIFIER,
 } from 'src/constants';
 import { CoreMeetingNotificationRepository } from 'src/modules/telegram/graphql/core-meeting-notification.repository';
+import { RawCoreGraphqlTransport } from 'src/modules/core/graphql/raw-core-graphql.transport';
 import {
   assertIanaTimeZone,
   MeetingBookedNotificationValidationError,
@@ -136,7 +136,9 @@ export const handler = async (payload: MeetingBookedUpdatePayload) => {
     timeZone: process.env.CORGI_CRM_TELEGRAM_TIME_ZONE,
     store: kv,
     readMeetingBooking: (meetingId) => {
-      repository ??= new CoreMeetingNotificationRepository(new CoreApiClient());
+      repository ??= new CoreMeetingNotificationRepository(
+        new RawCoreGraphqlTransport(),
+      );
       return repository.findById(meetingId);
     },
     enqueue: (jobs) =>

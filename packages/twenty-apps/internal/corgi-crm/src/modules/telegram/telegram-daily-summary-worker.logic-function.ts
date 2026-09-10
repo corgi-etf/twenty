@@ -6,6 +6,7 @@ import {
 } from 'twenty-sdk/logic-function';
 
 import { TELEGRAM_DAILY_SUMMARY_WORKER_UNIVERSAL_IDENTIFIER } from 'src/constants';
+import { RawCoreGraphqlTransport } from 'src/modules/core/graphql/raw-core-graphql.transport';
 import { CoreOutreachRepository } from 'src/modules/outreach/graphql/core-outreach.repository';
 import { CoreMeetingBookingReportRepository } from 'src/modules/outreach/graphql/core-meeting-booking-report.repository';
 import { readReportSummary } from 'src/modules/outreach/services/report-summary.service';
@@ -122,7 +123,11 @@ const processDailySummaryJob = async (rawPayload: unknown) => {
   if (!binding) return { status: 'unlinked' } as const;
 
   const coreClient = new CoreApiClient();
-  const wholesalerRepository = new CoreWholesalerRepository(coreClient);
+  const rawTransport = new RawCoreGraphqlTransport();
+  const wholesalerRepository = new CoreWholesalerRepository(
+    coreClient,
+    rawTransport,
+  );
   const roster = await getValidatedTelegramDeliveryRoster({
     store: kv,
     configuredBindings: [binding],
@@ -145,10 +150,10 @@ const processDailySummaryJob = async (rawPayload: unknown) => {
   const link = roster[0];
   if (!link) return { status: 'unlinked' } as const;
 
-  const repository = new CoreOutreachRepository(coreClient);
+  const repository = new CoreOutreachRepository(coreClient, rawTransport);
   const text = await readScheduledDailyReport({
     repository,
-    meetingRepository: new CoreMeetingBookingReportRepository(coreClient),
+    meetingRepository: new CoreMeetingBookingReportRepository(rawTransport),
     scheduledInstant: payload.scheduledInstant,
     store: kv,
     workspaceMemberId: payload.workspaceMemberId,

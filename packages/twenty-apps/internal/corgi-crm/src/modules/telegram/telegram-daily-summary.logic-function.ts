@@ -20,6 +20,7 @@ import {
   type TelegramLink,
 } from 'src/modules/telegram/services/telegram-link.service';
 import { CoreWholesalerRepository } from 'src/modules/wholesaler/onboarding/graphql/core-wholesaler.repository';
+import { RawCoreGraphqlTransport } from 'src/modules/core/graphql/raw-core-graphql.transport';
 
 const requiredEnvironment = (name: string): string => {
   const value = process.env[name]?.trim();
@@ -71,7 +72,10 @@ export const handler = async (
     localTime: process.env.CORGI_CRM_TELEGRAM_DAILY_SUMMARY_TIME,
     loadRoster: async () => {
       const coreClient = new CoreApiClient();
-      const wholesalerRepository = new CoreWholesalerRepository(coreClient);
+      const wholesalerRepository = new CoreWholesalerRepository(
+        coreClient,
+        new RawCoreGraphqlTransport(),
+      );
       return getValidatedTelegramDeliveryRoster({
         store: kv,
         configuredBindings: parseTelegramLinkBindings(
