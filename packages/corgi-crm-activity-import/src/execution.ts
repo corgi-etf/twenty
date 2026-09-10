@@ -1,5 +1,6 @@
 import {
   buildActivityImportPlan,
+  buildCompanyCreationPlan,
   parseActivityCsv,
   type ActivityImportCompany,
   type ActivityImportCsvOptions,
@@ -170,6 +171,9 @@ export type ActivityImportApi = {
   listPeople(): Promise<ActivityImportPerson[]>;
   listOutreachActivities(): Promise<OutreachActivityRecord[]>;
   createOutreachActivity(record: OutreachActivityRecord): Promise<void>;
+  // Optional so an API that only imports activities still satisfies this
+  // contract; company creation fails closed when it is absent.
+  createCompany?(company: { name: string }): Promise<void>;
   readCheckpoint(): Promise<ActivityImportCheckpoint | undefined>;
   writeCheckpoint(checkpoint: ActivityImportCheckpoint): Promise<void>;
 };
@@ -182,6 +186,112 @@ export type ActivityImportRunResult = {
   plannedCount: number;
   createdCount: number;
   alreadyPresentCount: number;
+};
+
+export type CompanyCreationRunResult = {
+  schemaVersion: 1;
+  operation: 'create-companies';
+  mode: 'dry-run' | 'apply';
+  plannedCount: number;
+  createdCount: number;
+  alreadyPresentCount: number;
+  plannedNames: string[];
+};
+
+// Deliberately separate from runActivityImport rather than a flag inside it:
+// company creation cannot produce an activity manifest while the companies are
+// still missing, so it is its own operation and the import path stays untouched.
+export const runActivityImportCompanyCreation = async (
+  api: ActivityImportApi,
+  input: {
+    source: Uint8Array;
+    csvOptions: ActivityImportCsvOptions;
+    mode: 'dry-run' | 'apply';
+    confirmation?: string;
+  },
+): Promise<CompanyCreationRunResult> => {
+  if (input.mode !== 'dry-run' && input.mode !== 'apply') {
+    throw new Error('Activity import company creation mode is invalid');
+  }
+  // Bound rather than detached: an API implemented as a class would lose
+  // its receiver through a bare method reference.
+  const createCompany = api.createCompany?.bind(api);
+  if (input.mode === 'apply') {
+    if (input.confirmation !== 'CREATE_CRM_IMPORT_COMPANIES') {
+      throw new Error(
+        'Activity import company creation confirmation is invalid',
+      );
+    }
+    if (!createCompany) {
+      throw new Error('Activity import API cannot create companies');
+    }
+  } else if (input.confirmation) {
+    throw new Error('Dry-run company creation cannot include apply approval');
+  }
+
+  const rows = parseActivityCsv(input.source, input.csvOptions);
+  const plan = buildCompanyCreationPlan({
+    rows,
+    companies: await api.listCompanies(),
+  });
+  // A row matching two or more companies stays fail-closed. The exact-match
+  // contract is what surfaced the missing companies in the first place, and a
+  // duplicate is a human decision rather than a reason to mint another record.
+  if (plan.ambiguousRows.length > 0) {
+    throw new Error(
+      plan.ambiguousRows
+        .map(
+          ({ rowNumber, companyName, matchCount }) =>
+            `Activity import row ${rowNumber} matched ${matchCount} companies ` +
+            `("${companyName}"); resolve the duplicate before creating companies`,
+        )
+        .join('\n'),
+    );
+  }
+  const plannedNames = plan.creations.map(({ name }) => name);
+
+  if (input.mode === 'dry-run') {
+    return {
+      schemaVersion: 1,
+      operation: 'create-companies',
+      mode: 'dry-run',
+      plannedCount: plannedNames.length,
+      createdCount: 0,
+      alreadyPresentCount: plan.alreadyPresentCount,
+      plannedNames,
+    };
+  }
+  if (!createCompany) {
+    throw new Error('Activity import API cannot create companies');
+  }
+
+  for (const creation of plan.creations) {
+    // Name only, verbatim from the source row. The Company object carries no
+    // phone or email field, so the source contact columns cannot land here.
+    await createCompany({ name: creation.name });
+  }
+
+  // Re-read rather than trusting the writes: the next import matches on what
+  // the CRM actually stored, not on what these requests claimed to store.
+  const verified = buildCompanyCreationPlan({
+    rows,
+    companies: await api.listCompanies(),
+  });
+  if (verified.creations.length > 0 || verified.ambiguousRows.length > 0) {
+    throw new Error(
+      'Activity import company creation post-write verification failed',
+    );
+  }
+
+  return {
+    schemaVersion: 1,
+    operation: 'create-companies',
+    mode: 'apply',
+    plannedCount: plannedNames.length,
+    createdCount: plannedNames.length,
+    alreadyPresentCount: plan.alreadyPresentCount,
+    plannedNames,
+  };
 };
 
 export const runActivityImport = async (
