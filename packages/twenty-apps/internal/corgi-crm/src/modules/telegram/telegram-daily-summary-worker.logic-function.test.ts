@@ -89,10 +89,10 @@ describe('scheduled Telegram team report', () => {
       end: '2026-09-10T17:00:00.000Z',
     });
     expect(text).toContain('Total activities: 2');
-    expect(text).toContain('1. Alex: 1');
-    expect(text).toContain('2. Nash: 1');
+    expect(text).toContain('🥇 Alex: 1');
+    expect(text).toContain('🥈 Nash: 1');
     expect(text).toContain('Meetings set: 1');
-    expect(text).toContain('1. Alex: 1 activity · 1 meeting set');
+    expect(text).toContain('🥇 Alex: 1 activity · 1 meeting set');
   });
 
   it('keeps concurrent member jobs and their retries on separate immutable reports', async () => {

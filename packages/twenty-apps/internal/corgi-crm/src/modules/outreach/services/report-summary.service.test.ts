@@ -153,9 +153,9 @@ describe('outreach report summaries', () => {
       }),
     ).toEqual(summary);
     const text = formatReportSummary(summary);
-    expect(text).toContain('🥇 1. Jordan: 2 activities · 0 meetings set');
-    expect(text).toContain('🥈 2. Alex: 1 activity · 0 meetings set');
-    expect(text).toContain('🥉 3. Alex: 1 activity · 0 meetings set');
+    expect(text).toContain('🥇 Jordan: 2 activities · 0 meetings set');
+    expect(text).toContain('🥈 Alex: 1 activity · 0 meetings set');
+    expect(text).toContain('🥉 Alex: 1 activity · 0 meetings set');
     expect(text).toContain('4. Taylor: 1 activity · 0 meetings set');
     expect(text).toContain('5. Unassigned: 1 activity · 0 meetings set');
     expect(text).not.toContain('Private');
@@ -178,8 +178,9 @@ describe('outreach report summaries', () => {
     expect(text).toContain('By activity: Phone call: 1');
     expect(text).toContain('By outcome: Connected: 1');
     expect(text).toContain('🏆 Activity leaderboard');
-    expect(text).toContain('🥇 1. Jordan: 1 activity · 1 meeting set');
-    expect(text).toContain('🤝 Meeting-booking leaderboard\n🥇 1. Jordan: 1 meeting set');
+    expect(text).toContain('🥇 Jordan: 1 activity · 1 meeting set');
+    expect(text).toContain('🤝 Meeting-booking leaderboard\n🥇 Jordan: 1 meeting set');
+    expect(text).not.toMatch(/[🥇🥈🥉] [123]\./u);
     expect(text).toContain('Meetings counted when booked, not when scheduled.');
     expect(text).not.toMatch(/ARR|revenue|Private/);
   });
@@ -362,7 +363,7 @@ describe('outreach report summaries', () => {
         }),
       ],
     });
-    expect(formatReportSummary(summary)).toContain('1. Jordan Example: 1');
+    expect(formatReportSummary(summary)).toContain('🥇 Jordan Example: 1');
     expect(summary.activityCounts).toEqual([{ label: 'phone_call', count: 1 }]);
   });
 });

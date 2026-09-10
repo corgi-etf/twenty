@@ -176,7 +176,7 @@ export const formatReportSummary = (summary: ReportSummary): string => {
   ) =>
     counts.map(({ label, count }) => `${labelFor(label)}: ${count}`).join(', ') || 'None';
   const formatRank = (index: number) =>
-    `${['🥇 ', '🥈 ', '🥉 '][index] ?? ''}${index + 1}.`;
+    ['🥇', '🥈', '🥉'][index] ?? `${index + 1}.`;
   const formatMeetings = (count: number) =>
     `${count} ${count === 1 ? 'meeting' : 'meetings'} set`;
 
