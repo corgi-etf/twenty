@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
@@ -96,54 +96,58 @@ describe('Corgi CRM production app workflow contract', () => {
     );
   });
 
-  it('exports tenant and role identifiers to the current runner environment file', async () => {
-    const directory = await mkdtemp(join(tmpdir(), 'corgi-crm-runner-env-'));
-    const staleEnvironmentPath = join(directory, 'previous-step.env');
-    const currentEnvironmentPath = join(directory, 'current-step.env');
-    await Promise.all([
-      writeFile(staleEnvironmentPath, ''),
-      writeFile(currentEnvironmentPath, ''),
-    ]);
+  it(
+    'exports tenant and role identifiers to the current runner environment file',
+    async (testContext) => {
+      const directory = await mkdtemp(join(tmpdir(), 'corgi-crm-runner-env-'));
+      testContext.after(() => rm(directory, { recursive: true }));
+      const staleEnvironmentPath = join(directory, 'previous-step.env');
+      const currentEnvironmentPath = join(directory, 'current-step.env');
+      await Promise.all([
+        writeFile(staleEnvironmentPath, ''),
+        writeFile(currentEnvironmentPath, ''),
+      ]);
 
-    const runtimeExports = [
-      workflow.match(/export CRM_WORKSPACE_ENV_PATH="\$GITHUB_ENV"/)?.[0],
-      workflow.match(/export CORGI_CRM_ROLE_ENV_PATH="\$GITHUB_ENV"/)?.[0],
-    ];
-    assert.ok(runtimeExports.every(Boolean));
+      const runtimeExports = [
+        workflow.match(/export CRM_WORKSPACE_ENV_PATH="\$GITHUB_ENV"/)?.[0],
+        workflow.match(/export CORGI_CRM_ROLE_ENV_PATH="\$GITHUB_ENV"/)?.[0],
+      ];
+      assert.ok(runtimeExports.every(Boolean));
 
-    await execFileAsync(
-      'bash',
-      [
-        '-c',
-        `${runtimeExports.join('\n')}\n` +
-          'printf "%s\\n" "CORGI_CRM_EXPECTED_WORKSPACE_ID=$WORKSPACE_ID" >> "$CRM_WORKSPACE_ENV_PATH"\n' +
-          'printf "%s\\n" "CORGI_CRM_WHOLESALER_OBJECT_UNIVERSAL_IDENTIFIER=$WHOLESALER_ID" >> "$CORGI_CRM_ROLE_ENV_PATH"',
-      ],
-      {
-        env: {
-          ...process.env,
-          GITHUB_ENV: currentEnvironmentPath,
-          CRM_WORKSPACE_ENV_PATH: staleEnvironmentPath,
-          CORGI_CRM_ROLE_ENV_PATH: staleEnvironmentPath,
-          WORKSPACE_ID: '11111111-1111-4111-8111-111111111111',
-          WHOLESALER_ID: '22222222-2222-4222-8222-222222222222',
+      await execFileAsync(
+        'bash',
+        [
+          '-c',
+          `${runtimeExports.join('\n')}\n` +
+            'printf "%s\\n" "CORGI_CRM_EXPECTED_WORKSPACE_ID=$WORKSPACE_ID" >> "$CRM_WORKSPACE_ENV_PATH"\n' +
+            'printf "%s\\n" "CORGI_CRM_WHOLESALER_OBJECT_UNIVERSAL_IDENTIFIER=$WHOLESALER_ID" >> "$CORGI_CRM_ROLE_ENV_PATH"',
+        ],
+        {
+          env: {
+            ...process.env,
+            GITHUB_ENV: currentEnvironmentPath,
+            CRM_WORKSPACE_ENV_PATH: staleEnvironmentPath,
+            CORGI_CRM_ROLE_ENV_PATH: staleEnvironmentPath,
+            WORKSPACE_ID: '11111111-1111-4111-8111-111111111111',
+            WHOLESALER_ID: '22222222-2222-4222-8222-222222222222',
+          },
         },
-      },
-    );
+      );
 
-    assert.equal(await readFile(staleEnvironmentPath, 'utf8'), '');
-    const nextStepEnvironment = parseRunnerEnvironment(
-      await readFile(currentEnvironmentPath, 'utf8'),
-    );
-    assert.equal(
-      nextStepEnvironment.CORGI_CRM_EXPECTED_WORKSPACE_ID,
-      '11111111-1111-4111-8111-111111111111',
-    );
-    assert.equal(
-      nextStepEnvironment.CORGI_CRM_WHOLESALER_OBJECT_UNIVERSAL_IDENTIFIER,
-      '22222222-2222-4222-8222-222222222222',
-    );
-  });
+      assert.equal(await readFile(staleEnvironmentPath, 'utf8'), '');
+      const nextStepEnvironment = parseRunnerEnvironment(
+        await readFile(currentEnvironmentPath, 'utf8'),
+      );
+      assert.equal(
+        nextStepEnvironment.CORGI_CRM_EXPECTED_WORKSPACE_ID,
+        '11111111-1111-4111-8111-111111111111',
+      );
+      assert.equal(
+        nextStepEnvironment.CORGI_CRM_WHOLESALER_OBJECT_UNIVERSAL_IDENTIFIER,
+        '22222222-2222-4222-8222-222222222222',
+      );
+    },
+  );
 
   it('prevalidates trusted config, verifies the exact provider contract, then enables Telegram', () => {
     const configureDisabled = position('configure-telegram.mjs" disabled');
