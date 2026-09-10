@@ -113,7 +113,10 @@ const fixture = (): WorkspaceConfigSnapshot => {
     },
     field('outreachActivity', 'outcome', 'TEXT'),
     field('outreachActivity', 'followUpDate', 'DATE'),
-    field('outreachActivity', 'occurredAt', 'DATE_TIME'),
+    {
+      ...field('outreachActivity', 'occurredAt', 'DATE_TIME'),
+      defaultValue: 'now',
+    },
     field('outreachActivity', 'notes', 'TEXT'),
     field('outreachActivity', 'activityType', 'TEXT'),
   ];
@@ -360,15 +363,30 @@ class FakeApi implements WorkspaceConfigApi {
     this.events.push('metadata-create');
   }
 
-  async updateMetadataFieldLabel(): Promise<void> {
+  async updateMetadataFieldLabel(
+    id: string,
+    label: string,
+    defaultValue?: string,
+  ): Promise<void> {
     this.events.push('metadata-update');
+    const field = this.snapshot.objects
+      .flatMap(({ fields }) => fields)
+      .find((candidate) => candidate.id === id)!;
+    field.label = label;
+    if (defaultValue !== undefined) {
+      field.defaultValue = defaultValue;
+    }
   }
 
   async conditionalPatchCompany(id: string, _updatedAt: string, data: object) {
     this.events.push(`company:${id}`);
-    Object.assign(this.companies.find((company) => company.id === id)!, data, {
-      updatedAt: '2026-09-08T00:00:01.000Z',
-    });
+    Object.assign(
+      this.companies.find((company) => company.id === id)!,
+      data,
+      {
+        updatedAt: '2026-09-08T00:00:01.000Z',
+      },
+    );
   }
 
   async conditionalPatchWholesaler(
@@ -536,6 +554,9 @@ class BootstrapFakeApi implements WorkspaceMetadataBootstrapApi {
       name: input.name,
       label: input.label,
       type: input.type,
+      ...(input.defaultValue === undefined
+        ? {}
+        : { defaultValue: input.defaultValue }),
       ...(input.relationCreationPayload
         ? {
             relationTargetObjectMetadataId:
@@ -563,12 +584,19 @@ class BootstrapFakeApi implements WorkspaceMetadataBootstrapApi {
     }
   }
 
-  async updateMetadataFieldLabel(id: string, label: string): Promise<void> {
+  async updateMetadataFieldLabel(
+    id: string,
+    label: string,
+    defaultValue?: string,
+  ): Promise<void> {
     this.events.push(`metadata-update:${id}`);
     const field = this.snapshot.objects
       .flatMap(({ fields }) => fields)
       .find((candidate) => candidate.id === id)!;
     field.label = label;
+    if (defaultValue !== undefined) {
+      field.defaultValue = defaultValue;
+    }
   }
 }
 

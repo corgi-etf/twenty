@@ -46,7 +46,11 @@ export type WorkspaceConfigApi = {
   createMetadataField(
     input: WorkspaceConfigPlan['metadataFieldsToCreate'][number],
   ): Promise<void>;
-  updateMetadataFieldLabel(id: string, label: string): Promise<void>;
+  updateMetadataFieldLabel(
+    id: string,
+    label: string,
+    defaultValue?: string,
+  ): Promise<void>;
   conditionalPatchCompany(
     id: string,
     expectedUpdatedAt: string,
@@ -95,7 +99,11 @@ export type WorkspaceMetadataBootstrapApi = {
   createMetadataField(
     input: WorkspaceMetadataBootstrapPlan['metadataFieldsToCreate'][number],
   ): Promise<void>;
-  updateMetadataFieldLabel(id: string, label: string): Promise<void>;
+  updateMetadataFieldLabel(
+    id: string,
+    label: string,
+    defaultValue?: string,
+  ): Promise<void>;
 };
 
 export type WorkspaceMetadataBootstrapOptions = {
@@ -157,7 +165,7 @@ export const WORKSPACE_METADATA_BOOTSTRAP_CONTRACT_HASH = operationHash({
     'outreachActivity.activityType:TEXT:Activity Type',
     'outreachActivity.outcome:TEXT:Outcome',
     'outreachActivity.notes:TEXT:Notes',
-    'outreachActivity.occurredAt:DATE_TIME:Occurred At',
+    'outreachActivity.occurredAt:DATE_TIME:Occurred At:default=now',
     'outreachActivity.followUpDate:DATE:Follow-up Date',
     'outreachActivity.company:RELATION:MANY_TO_ONE:company:Company',
     'outreachActivity.contact:RELATION:MANY_TO_ONE:person:Contact',
@@ -273,7 +281,11 @@ export const runWorkspaceMetadataBootstrap = async (
     metadataMutations += 1;
   }
   for (const update of initialPlan.metadataFieldsToUpdate) {
-    await api.updateMetadataFieldLabel(update.id, update.label);
+    await api.updateMetadataFieldLabel(
+      update.id,
+      update.label,
+      update.defaultValue,
+    );
     metadataMutations += 1;
   }
 
@@ -327,7 +339,11 @@ const applyMetadataPlan = async ({
     });
   }
   for (const update of plan.metadataFieldsToUpdate) {
-    await api.updateMetadataFieldLabel(update.id, update.label);
+    await api.updateMetadataFieldLabel(
+      update.id,
+      update.label,
+      update.defaultValue,
+    );
     applied += 1;
     await recordCompletedOperation(api, checkpoint, {
       kind: 'update-metadata-field-label',

@@ -632,11 +632,15 @@ export const createTwentyWorkspaceConfigApi = ({
       await response.dispose();
     },
 
-    async updateMetadataFieldLabel(id, label) {
+    async updateMetadataFieldLabel(id, label, defaultValue) {
       const response = await requestGate(() =>
         request.patch(restUrl(`metadata/fields/${encodeURIComponent(id)}`), {
           headers,
-          data: { label, isLabelSyncedWithName: false },
+          data: {
+            label,
+            isLabelSyncedWithName: false,
+            ...(defaultValue === undefined ? {} : { defaultValue }),
+          },
         }),
       );
       await assertSuccessfulResponse(response, 'Update territory field label');
@@ -1016,7 +1020,7 @@ export const createTwentyWorkspaceMetadataBootstrapApi = ({
   return {
     listWorkspaceConfigSnapshot: () => api.listWorkspaceConfigSnapshot(),
     createMetadataField: (input) => api.createMetadataField(input),
-    updateMetadataFieldLabel: (id, label) =>
-      api.updateMetadataFieldLabel(id, label),
+    updateMetadataFieldLabel: (id, label, defaultValue) =>
+      api.updateMetadataFieldLabel(id, label, defaultValue),
   };
 };
