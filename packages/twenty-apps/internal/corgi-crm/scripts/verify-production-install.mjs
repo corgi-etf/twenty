@@ -64,6 +64,18 @@ const classifyGraphqlError = (error) => {
   if (/duplicate key|unique constraint|foreign key constraint/i.test(message)) {
     return 'constraint_conflict';
   }
+  if (/\bcolumn\b.*\bdoes not exist\b/i.test(message)) {
+    return 'database_missing_column';
+  }
+  if (/\brelation\b.*\bdoes not exist\b/i.test(message)) {
+    return 'database_missing_relation';
+  }
+  if (/operator does not exist/i.test(message)) {
+    return 'database_operator_type_mismatch';
+  }
+  if (/invalid input syntax for type/i.test(message)) {
+    return 'database_value_type_mismatch';
+  }
   if (/invalid filter|filter .* invalid|invalid argument: "filter"/i.test(message)) {
     return 'invalid_filter';
   }
@@ -82,13 +94,25 @@ const summarizeGraphqlErrors = (errors) => {
     .map(([key, count]) => `${key}=${count}`).join(', ');
 };
 
+class VerificationGraphqlError extends Error {
+  constructor(operationName, rawErrors) {
+    const safeDiagnostics = summarizeGraphqlErrors(
+      Array.isArray(rawErrors) && rawErrors.length > 0 ? rawErrors : [null],
+    );
+    super(`${operationName} returned GraphQL errors: ${safeDiagnostics}`);
+    this.name = 'VerificationGraphqlError';
+    this.operationName = operationName;
+    this.safeDiagnostics = safeDiagnostics;
+  }
+}
+
 const parseResponse = async (response, operationName) => {
   if (!response.ok) {
     throw new Error(`${operationName} failed with HTTP ${response.status}`);
   }
   const body = await response.json();
   if (Array.isArray(body.errors) && body.errors.length > 0) {
-    throw new Error(`${operationName} returned GraphQL errors: ${summarizeGraphqlErrors(body.errors)}`);
+    throw new VerificationGraphqlError(operationName, body.errors);
   }
   if (!body.data) throw new Error(`${operationName} returned no data`);
   return body.data;
@@ -1002,30 +1026,76 @@ const inspectReconciliationPreflight = async ({ graphql }) => {
     if (matches.some((row) => row.workspaceMemberId && row.workspaceMemberId !== member.id)) {
       result.conflictingMemberLink += 1;
     }
-    const data = await graphql({
-      endpoint: '/graphql', operationName: 'PreflightOwnerIdentityFilters',
-      query: `query PreflightOwnerIdentityFilters($memberId: UUID!, $emailPattern: String!) {
-        byMember: wholesalers(first: 3, filter: { workspaceMemberId: { eq: $memberId } }) {
-          edges { node { id } }
-        }
-        byEmail: wholesalers(first: 3, filter: { email: { ilike: $emailPattern } }) {
+    const filteredReads = [
+      {
+        operationName: 'PreflightOwnerByMember',
+        query: `query PreflightOwnerByMember($memberId: UUID!) {
+        wholesalers(first: 3, filter: { workspaceMemberId: { eq: $memberId } }) {
           edges { node { id } }
         }
       }`,
-      variables: {
-        memberId: member.id,
-        emailPattern: email.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_'),
+        variables: { memberId: member.id },
+        baseline: byMember,
       },
-    });
-    for (const root of ['byMember', 'byEmail']) {
-      if (!Array.isArray(data[root]?.edges) || data[root].edges.some((edge) => !edge?.node?.id)) {
-        throw new Error('Owner reconciliation preflight returned an invalid filtered connection');
+      {
+        operationName: 'PreflightOwnerByEmail',
+        query: `query PreflightOwnerByEmail($emailPattern: String!) {
+        wholesalers(first: 3, filter: { email: { ilike: $emailPattern } }) {
+          edges { node { id } }
+        }
+      }`,
+        variables: {
+          emailPattern: email.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_'),
+        },
+        baseline: byEmail,
+      },
+    ];
+    const settledReads = await Promise.allSettled(
+      filteredReads.map(({ operationName, query, variables }) =>
+        graphql({
+          endpoint: '/graphql',
+          operationName,
+          query,
+          variables,
+        }),
+      ),
+    );
+    const failures = [];
+    let filteredReadMismatch = false;
+    for (const [index, settled] of settledReads.entries()) {
+      if (settled.status === 'fulfilled') continue;
+      const operationName = filteredReads[index].operationName;
+      const safeDiagnostics =
+        settled.reason instanceof VerificationGraphqlError &&
+        settled.reason.operationName === operationName
+          ? settled.reason.safeDiagnostics
+          : 'UNKNOWN/unexpected=1';
+      failures.push(`${operationName}=${safeDiagnostics}`);
+    }
+    if (failures.length > 0) {
+      throw new Error(
+        `Owner reconciliation filtered reads failed: ${failures.join(', ')}`,
+      );
+    }
+    for (const [index, settled] of settledReads.entries()) {
+      const operationName = filteredReads[index].operationName;
+      const connection = settled.value.wholesalers;
+      if (
+        !Array.isArray(connection?.edges) ||
+        connection.edges.some((edge) => !edge?.node?.id)
+      ) {
+        throw new Error(
+          `Owner reconciliation ${operationName} returned an invalid filtered connection`,
+        );
+      }
+      if (
+        ids(connection.edges.map(({ node }) => node)) !==
+        ids(filteredReads[index].baseline)
+      ) {
+        filteredReadMismatch = true;
       }
     }
-    if (ids(data.byMember.edges.map(({ node }) => node)) !== ids(byMember) ||
-        ids(data.byEmail.edges.map(({ node }) => node)) !== ids(byEmail)) {
-      result.filteredReadMismatch += 1;
-    }
+    if (filteredReadMismatch) result.filteredReadMismatch += 1;
   }
   return result;
 };
@@ -1146,4 +1216,5 @@ export {
   verifyTelegramApplicationContract,
   verifyTelegramDisabled,
   verifyTelegramPersistenceSchema,
+  VerificationGraphqlError,
 };

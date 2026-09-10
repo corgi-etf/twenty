@@ -40,6 +40,10 @@ describe('privacy-safe GraphQL verification diagnostics', () => {
       ['Invalid filter for owner@example.invalid', 'invalid_filter'],
       ['Permission denied for owner@example.invalid', 'permission_denied'],
       ['duplicate key value violates unique constraint "PrivateConstraint"', 'constraint_conflict'],
+      ['column "privateOwnerId" does not exist', 'database_missing_column'],
+      ['relation "privateWholesaler" does not exist', 'database_missing_relation'],
+      ['operator does not exist: uuid = text', 'database_operator_type_mismatch'],
+      ['invalid input syntax for type uuid: "private-owner"', 'database_value_type_mismatch'],
     ]) {
       await assert.rejects(parseResponse(response({ errors: [{ message,
         extensions: { code: 'BAD_USER_INPUT' } }] }), 'OwnerPreflight'), (error) => {
