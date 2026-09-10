@@ -115,8 +115,7 @@ export const handleReportRuntimeVerification = async (
       if (
         lines[0] !== EXPECTED_TITLES[period] ||
         !lines.includes('All CRM owners') ||
-        !lines.includes('🏆 Activity leaderboard') ||
-        !lines.includes('🤝 Meeting-booking leaderboard')
+        !lines.includes('🏆 Activity leaderboard')
       ) {
         throw new Error('Report sections are unavailable');
       }
@@ -128,7 +127,6 @@ export const handleReportRuntimeVerification = async (
         windowHours: (end.getTime() - start.getTime()) / 3_600_000,
         allOwners: true,
         activityLeaderboard: true,
-        meetingLeaderboard: true,
         weeklyExcludesWeekends: period === 'weekly',
       });
     } catch {

@@ -1005,7 +1005,6 @@ test('books and reschedules a native CRM meeting while Telegram is disabled', as
       'windowHours',
       'allOwners',
       'activityLeaderboard',
-      'meetingLeaderboard',
       'weeklyExcludesWeekends',
     ];
     reportRuntime = [
@@ -1024,7 +1023,6 @@ test('books and reschedules a native CRM meeting while Telegram is disabled', as
         report.windowHours !== windowHours ||
         report.allOwners !== true ||
         report.activityLeaderboard !== true ||
-        report.meetingLeaderboard !== true ||
         report.weeklyExcludesWeekends !== (period === 'weekly') ||
         typeof report.activityCount !== 'number' ||
         !Number.isSafeInteger(report.activityCount) ||

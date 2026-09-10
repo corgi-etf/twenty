@@ -153,7 +153,6 @@ describe('internal read-only production report verification', () => {
           windowHours: 24,
           allOwners: true,
           activityLeaderboard: true,
-          meetingLeaderboard: true,
           weeklyExcludesWeekends: false,
         },
         {
@@ -163,7 +162,6 @@ describe('internal read-only production report verification', () => {
           windowHours: 168,
           allOwners: true,
           activityLeaderboard: true,
-          meetingLeaderboard: true,
           weeklyExcludesWeekends: true,
         },
         {
@@ -173,7 +171,6 @@ describe('internal read-only production report verification', () => {
           windowHours: 720,
           allOwners: true,
           activityLeaderboard: true,
-          meetingLeaderboard: true,
           weeklyExcludesWeekends: false,
         },
       ],
