@@ -37,6 +37,14 @@ test('workflow is exact-SHA, serialized, two-phase, and secret-backed', async ()
   assert.match(workflow, /legacy-nash-outreach-v1/);
   assert.match(workflow, /completed-actions-v2/);
   assert.match(workflow, /owner_label:/);
+  assert.match(
+    workflow,
+    /owner_label:[\s\S]*?default: select-owner[\s\S]*?options:[\s\S]*?- select-owner[\s\S]*?- Grace[\s\S]*?- Kelly[\s\S]*?- Nash/,
+  );
+  assert.match(
+    workflow,
+    /\[\[ "\$\{OWNER_LABEL\}" == "Grace" \|\| "\$\{OWNER_LABEL\}" == "Kelly" \|\| "\$\{OWNER_LABEL\}" == "Nash" \]\]/,
+  );
   assert.match(workflow, /provenance_sha256:/);
   assert.match(workflow, /expected_row_sequence_sha256:/);
   assert.match(workflow, /source_sha256:/);

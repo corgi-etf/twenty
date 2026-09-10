@@ -26,9 +26,10 @@ on:
       owner_label:
         description: Explicit activity owner from the authenticated identity artifact
         required: true
-        default: Nash
+        default: select-owner
         type: choice
         options:
+          - select-owner
           - Grace
           - Kelly
           - Nash
