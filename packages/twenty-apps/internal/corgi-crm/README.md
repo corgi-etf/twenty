@@ -47,9 +47,13 @@ role requires both at build time. The installed verifier then checks the actual
 role has read-only access to WorkspaceMember, Company, and Person; read/write
 access to Wholesaler, OutreachActivity, and the app-owned TelegramDelivery and
 TelegramDeliveryAudit objects; read/update access to MeetingBooking; and no
-other object, delete, global, or settings permission. It also verifies the
-app-owned object schemas and the three unique indexes that fence delivery
-claims, reset generations, and request replays.
+other object, delete, global, or settings permission. CompanyAllocation is
+deliberately absent from that role: no logic function reads or writes an
+allocation, so granting one would widen the exactly-eight-permission contract
+for nothing. It also verifies the app-owned object schemas — including the
+CompanyAllocation fields, their user editability, and the Allocations section
+on Company — and the three unique indexes that fence delivery claims, reset
+generations, and request replays.
 
 The generated Core SDK describes standard objects and this application's own
 objects; granting access to an existing workspace object does not add it to
@@ -89,6 +93,33 @@ meeting was booked, not its future scheduled date. Rescheduling, completing,
 cancelling, or reopening the same record does not count a second booking or
 send another booked alert. Historical bookings remain counted after a later
 cancellation. A meeting booking does not create an extra outreach activity.
+
+## Company allocations
+
+Every company record carries an **Allocations** section listing one row per
+ticker. A row holds a **Ticker** and an **Amount**, and both are typed directly
+by CRM users — unlike **Booked at** or **Booked by**, nothing in the app writes
+them. Add, edit, and remove rows from the section on the company, or work the
+`companyAllocation` object directly.
+
+**Ticker** is deliberately free text. Real symbols carry dots, hyphens, and
+suffixes (`BRK.B`, `RY-PA.TO`, `7203.T`), and this is a CRM rather than an
+exchange feed, so the app neither rejects nor rewrites what is typed. Nothing
+normalizes case, so `aapl` and `AAPL` stay distinct strings.
+
+Nothing stops two rows carrying the same ticker for one company. That is
+usually a data-entry mistake, but a unique constraint would reject the empty
+row the section's add button creates and would block the transient duplicate a
+correction produces, so duplicates are left visible and correctable instead.
+
+**Amount** is a Twenty currency field, the same composite `opportunity.amount`
+and `company.annualRevenue` use, so it stores `amountMicros` plus a currency
+code, formats and sums like every other money field, and follows the workspace
+currency rather than assuming dollars in the column.
+
+Destroying a company destroys its allocations; an allocation carries no meaning
+once the company it belongs to is gone. Soft-deleting a company leaves them
+alone.
 
 ## Outreach activity ownership
 
