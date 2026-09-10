@@ -37,11 +37,44 @@ const source = Buffer.from(
 );
 
 const options = (overrides: Partial<ActivityImportCsvOptions> = {}) => ({
+  sourceFormat: 'legacy-nash-outreach-v1' as const,
+  ownerLabel: 'Nash' as const,
   sourceSha256: createHash('sha256').update(source).digest('hex'),
+  provenanceSha256: createHash('sha256').update(source).digest('hex'),
   expectedRows: 2,
   activityDate: '2026-09-09',
   timeZone: 'America/Chicago',
   importId: 'nash-calls-2026-09-09',
+  ...overrides,
+});
+
+const completedColumns = [
+  ['7', '1', 'Acme, Inc.', 'phone_call', 'left_voicemail', 'Try again'],
+  ['7', '2', 'Acme, Inc.', 'email', 'no_response', 'Sent recap'],
+] as const;
+const completedSource = Buffer.from(
+  '7,1,"Acme, Inc.",phone_call,left_voicemail,Try again\n' +
+    '7,2,"Acme, Inc.",email,no_response,Sent recap\n',
+);
+const completedRowSequenceSha256 = createHash('sha256')
+  .update(
+    completedColumns
+      .map((columns) =>
+        createHash('sha256').update(JSON.stringify(columns)).digest('hex'),
+      )
+      .join('\n'),
+  )
+  .digest('hex');
+const completedOptions = (overrides = {}) => ({
+  sourceFormat: 'completed-actions-v2' as const,
+  ownerLabel: 'Grace' as const,
+  sourceSha256: createHash('sha256').update(completedSource).digest('hex'),
+  provenanceSha256: 'a'.repeat(64),
+  expectedRowSequenceSha256: completedRowSequenceSha256,
+  expectedRows: 2,
+  activityDate: '2026-09-09',
+  timeZone: 'America/Chicago',
+  importId: 'completed-actions-2026-09-09',
   ...overrides,
 });
 
@@ -82,9 +115,58 @@ test('parses quoted multiline headerless rows and preserves blank activities', (
   ]);
 });
 
+test('parses completed action rows with exact provenance and row hashes', () => {
+  assert.deepEqual(parseActivityCsv(completedSource, completedOptions()), [
+    {
+      rowNumber: 1,
+      sourceRowNumber: 7,
+      actionOrdinal: 1,
+      companyName: 'Acme, Inc.',
+      activityType: 'phone_call',
+      outcome: 'left_voicemail',
+      notes: 'Try again',
+      occurredAt: '2026-09-09T17:00:00.000Z',
+    },
+    {
+      rowNumber: 2,
+      sourceRowNumber: 7,
+      actionOrdinal: 2,
+      companyName: 'Acme, Inc.',
+      activityType: 'email',
+      outcome: 'no_response',
+      notes: 'Sent recap',
+      occurredAt: '2026-09-09T17:00:00.000Z',
+    },
+  ]);
+
+  assert.throws(
+    () =>
+      parseActivityCsv(
+        completedSource,
+        completedOptions({ expectedRowSequenceSha256: '0'.repeat(64) }),
+      ),
+    /row sequence SHA-256 mismatch/,
+  );
+  assert.throws(
+    () =>
+      parseActivityCsv(
+        completedSource,
+        completedOptions({ provenanceSha256: 'invalid' }),
+      ),
+    /provenance SHA-256 is invalid/,
+  );
+});
+
 test('rejects a changed source, wrong row count, malformed width, and invalid timezone', () => {
   assert.throws(
-    () => parseActivityCsv(source, options({ sourceSha256: '0'.repeat(64) })),
+    () =>
+      parseActivityCsv(
+        source,
+        options({
+          sourceSha256: '0'.repeat(64),
+          provenanceSha256: '0'.repeat(64),
+        }),
+      ),
     /source SHA-256 mismatch/,
   );
   assert.throws(
@@ -97,6 +179,7 @@ test('rejects a changed source, wrong row count, malformed width, and invalid ti
       parseActivityCsv(malformed, {
         ...options(),
         sourceSha256: createHash('sha256').update(malformed).digest('hex'),
+        provenanceSha256: createHash('sha256').update(malformed).digest('hex'),
         expectedRows: 1,
       }),
     /exactly 10 columns/,
@@ -180,6 +263,90 @@ test('plans one call per row with exact company and Nash ownership only', () => 
   assert.ok(!('outcome' in plan.activities[0]!.record));
 });
 
+test('plans canonical completed actions for one explicitly selected owner', () => {
+  const rows = parseActivityCsv(completedSource, completedOptions());
+  const plan = buildActivityImportPlan({
+    rows,
+    csvOptions: completedOptions(),
+    identityArtifact,
+    companies: [{ id: uuid('4'), name: 'Acme, Inc.' }],
+    wholesalers: [
+      { id: uuid('6'), workspaceMemberId: identities.Nash },
+      { id: uuid('7'), workspaceMemberId: identities.Grace },
+      { id: uuid('8'), workspaceMemberId: identities.Kelly },
+    ],
+    people: [],
+    existingActivities: [],
+  });
+
+  assert.deepEqual(
+    plan.activities.map(({ record }) => record),
+    [
+      {
+        id: deterministicActivityId(
+          completedOptions().importId,
+          'source-row:7:action:1',
+        ),
+        name: 'Phone call · Left voicemail',
+        companyId: uuid('4'),
+        wholesalerId: uuid('7'),
+        activityType: 'phone_call',
+        outcome: 'left_voicemail',
+        occurredAt: '2026-09-09T17:00:00.000Z',
+        notes: 'Try again',
+        contactId: null,
+      },
+      {
+        id: deterministicActivityId(
+          completedOptions().importId,
+          'source-row:7:action:2',
+        ),
+        name: 'Email · No response',
+        companyId: uuid('4'),
+        wholesalerId: uuid('7'),
+        activityType: 'email',
+        outcome: 'no_response',
+        occurredAt: '2026-09-09T17:00:00.000Z',
+        notes: 'Sent recap',
+        contactId: null,
+      },
+    ],
+  );
+  assert.equal(plan.manifest.ownerLabel, 'Grace');
+  assert.equal(plan.manifest.provenanceSha256, 'a'.repeat(64));
+  assert.equal(plan.manifest.rowSequenceSha256, completedRowSequenceSha256);
+});
+
+test('legacy source remains Nash-only and every owner must resolve uniquely', () => {
+  assert.throws(
+    () => parseActivityCsv(source, options({ ownerLabel: 'Grace' as never })),
+    /legacy source owner must be Nash/,
+  );
+  assert.throws(
+    () =>
+      buildActivityImportPlan({
+        ...planInput(),
+        csvOptions: options({ ownerLabel: 'Kelly' as never }),
+      }),
+    /legacy source owner must be Nash/,
+  );
+
+  const rows = parseActivityCsv(completedSource, completedOptions());
+  assert.throws(
+    () =>
+      buildActivityImportPlan({
+        rows,
+        csvOptions: completedOptions(),
+        identityArtifact,
+        companies: [{ id: uuid('4'), name: 'Acme, Inc.' }],
+        wholesalers: [],
+        people: [],
+        existingActivities: [],
+      }),
+    /Grace must match exactly one wholesaler/,
+  );
+});
+
 test('sets contact null when evidence is missing, ambiguous, or cross-company', () => {
   const missing = buildActivityImportPlan({ ...planInput(), people: [] });
   assert.deepEqual(
@@ -258,6 +425,8 @@ test('emits a stable PII-free manifest', () => {
   assert.doesNotMatch(serialized, /Acme|Beta|voicemail|555|a@example/);
   for (const hash of [
     manifest.sourceSha256,
+    manifest.provenanceSha256,
+    manifest.rowSequenceSha256,
     manifest.importIdHash,
     manifest.activityIdSetHash,
     manifest.planHash,
