@@ -7,6 +7,7 @@ import { buildSchema, parse, validate } from 'graphql';
 import {
   resolveCorgiRoleObjectIdentifiers,
   verifyApplicationRoleContract,
+  verifyCompanyAllocationSchema,
   verifyInstalledApplication,
   verifyMeetingApplicationContract,
   verifyMeetingBookingSchema,
@@ -1028,6 +1029,98 @@ describe('installed Telegram persistence schema verification', () => {
           audit,
         ]),
       /invalid type/i,
+    );
+  });
+});
+
+describe('installed company allocation schema verification', () => {
+  const allocation = {
+    nameSingular: 'companyAllocation',
+    universalIdentifier: '330842b1-7877-4f25-8ccc-5ad27e852bdd',
+    isActive: true,
+    fieldsList: [
+      { id: 'allocation-ticker', name: 'ticker', type: 'TEXT', isActive: true },
+      { id: 'allocation-amount', name: 'amount', type: 'CURRENCY', isActive: true },
+      {
+        id: 'allocation-company',
+        name: 'company',
+        type: 'RELATION',
+        isActive: true,
+        relation: { targetObjectMetadata: { nameSingular: 'company' } },
+      },
+    ],
+  };
+  const company = {
+    nameSingular: 'company',
+    isActive: true,
+    fieldsList: [
+      {
+        id: 'company-allocations',
+        name: 'allocations',
+        type: 'RELATION',
+        isActive: true,
+        relation: {
+          targetObjectMetadata: { nameSingular: 'companyAllocation' },
+        },
+      },
+    ],
+  };
+  const withAllocationField = (name, overrides) => ({
+    ...allocation,
+    fieldsList: allocation.fieldsList.map((field) =>
+      field.name === name ? { ...field, ...overrides } : field,
+    ),
+  });
+
+  it('requires the pinned allocation object, its typed fields, and the company section', () => {
+    assert.doesNotThrow(() =>
+      verifyCompanyAllocationSchema([allocation, company]),
+    );
+  });
+
+  it('rejects a renamed object, a wrong amount type, or a missing company section', () => {
+    assert.throws(
+      () =>
+        verifyCompanyAllocationSchema([
+          { ...allocation, universalIdentifier: 'aaaaaaaa-0000-4000-8000-000000000000' },
+          company,
+        ]),
+      /companyAllocation metadata object/,
+    );
+    assert.throws(
+      () =>
+        verifyCompanyAllocationSchema([
+          withAllocationField('amount', { type: 'NUMBER' }),
+          company,
+        ]),
+      /invalid type/i,
+    );
+    assert.throws(
+      () =>
+        verifyCompanyAllocationSchema([
+          allocation,
+          { ...company, fieldsList: [] },
+        ]),
+      /company\.allocations field/,
+    );
+  });
+
+  it('rejects an allocation input CRM users could not edit', () => {
+    assert.throws(
+      () =>
+        verifyCompanyAllocationSchema([
+          withAllocationField('ticker', { isUIEditable: false }),
+          company,
+        ]),
+      /not editable by CRM users/,
+    );
+    assert.throws(
+      () =>
+        verifyCompanyAllocationSchema([
+          withAllocationField('amount', { writability: 'APPLICATION' }),
+          company,
+        ]),
+      /not editable by CRM users/,
     );
   });
 });
