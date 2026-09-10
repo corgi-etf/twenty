@@ -105,6 +105,13 @@ Meetings booked before this rule shipped keep their empty EW and are never
 rewritten. The Meetings table shows **EW / external wholesaler** next to
 **Owner**, so filtering that column on empty finds the ones worth revisiting.
 
+A meeting that names an EW also needs an **Allocation requested** amount: the
+money the RIA asked to allocate, as the EW reports it. It is a currency field,
+so it carries its own amount and currency code, which is what a future
+per-EW attribution will need. An explicitly entered `0` is a real answer and
+books; only a missing amount holds the booking in Draft. Nothing defaults or
+back-fills the amount, and a meeting with no EW is never asked for one.
+
 ## Outreach activity ownership
 
 Every new Outreach Activity gets an owner. When a record is created without a
