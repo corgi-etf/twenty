@@ -6,12 +6,14 @@ import {
 } from 'twenty-sdk/define';
 import { RetryableLogicFunctionError } from 'twenty-sdk/logic-function';
 
+import { RawCoreGraphqlTransport } from 'src/modules/core/graphql/raw-core-graphql.transport';
 import { CoreMeetingBookingRepository } from 'src/modules/meeting/graphql/core-meeting-booking.repository';
 import {
   MEETING_BOOKING_CREATED_FUNCTION_UNIVERSAL_IDENTIFIER,
   MEETING_BOOKING_STATUS,
 } from 'src/modules/meeting/meeting-identifiers';
 import { reconcileMeetingBooking } from 'src/modules/meeting/services/reconcile-meeting-booking.service';
+import { CoreWholesalerRepository } from 'src/modules/wholesaler/onboarding/graphql/core-wholesaler.repository';
 
 type MeetingBookingEventRecord = {
   id?: string | null;
@@ -44,11 +46,14 @@ export const handler = async (
     throw new Error('Meeting booking event has an invalid timestamp');
   }
   try {
+    const client = new CoreApiClient();
+    const transport = new RawCoreGraphqlTransport();
     return await reconcileMeetingBooking({
       meetingId,
       eventOccurredAt: after.updatedAt,
       actorWorkspaceMemberId: after.updatedBy?.workspaceMemberId ?? null,
-      repository: new CoreMeetingBookingRepository(new CoreApiClient()),
+      repository: new CoreMeetingBookingRepository(client),
+      ownerRepository: new CoreWholesalerRepository(client, transport),
     });
   } catch {
     throw new RetryableLogicFunctionError(

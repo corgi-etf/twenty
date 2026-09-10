@@ -386,10 +386,12 @@ const verifyMeetingBookingSchema = (objects, experience) => {
     scheduledAt: 'DATE_TIME',
     status: 'SELECT',
     bookedAt: 'DATE_TIME',
+    allocationRequested: 'CURRENCY',
     notes: 'RICH_TEXT',
     bookingValidationMessage: 'TEXT',
     company: 'RELATION',
     wholesaler: 'RELATION',
+    externalWholesaler: 'RELATION',
     bookedBy: 'RELATION',
   };
   const fieldByName = new Map();
@@ -410,6 +412,14 @@ const verifyMeetingBookingSchema = (objects, experience) => {
       throw new Error(`meetingBooking.${name} writability is not protected`);
     }
   }
+  // A person fills both of these in by hand, so protecting either would make
+  // the rules that require them impossible to satisfy from the CRM.
+  for (const name of ['externalWholesaler', 'allocationRequested']) {
+    const field = fieldByName.get(name);
+    if (field.writability === 'APPLICATION' || field.isUIEditable === false) {
+      throw new Error(`meetingBooking.${name} is not enterable`);
+    }
+  }
   const statusOptions = parseJsonValue(fieldByName.get('status').options);
   if (
     !Array.isArray(statusOptions) ||
@@ -421,6 +431,7 @@ const verifyMeetingBookingSchema = (objects, experience) => {
   for (const [fieldName, targetName] of [
     ['company', 'company'],
     ['wholesaler', 'wholesaler'],
+    ['externalWholesaler', 'wholesaler'],
     ['bookedBy', 'workspaceMember'],
   ]) {
     if (

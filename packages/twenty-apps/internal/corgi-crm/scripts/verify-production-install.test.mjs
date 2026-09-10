@@ -753,6 +753,7 @@ describe('installed meeting booking verification', () => {
       isUIEditable: false,
       writability: 'APPLICATION',
     }),
+    field('meeting-allocation', 'allocationRequested', 'CURRENCY'),
     field('meeting-notes', 'notes', 'RICH_TEXT'),
     field('meeting-validation', 'bookingValidationMessage', 'TEXT', {
       isUIEditable: false,
@@ -762,6 +763,9 @@ describe('installed meeting booking verification', () => {
       relation: { targetObjectMetadata: { nameSingular: 'company' } },
     }),
     field('meeting-owner', 'wholesaler', 'RELATION', {
+      relation: { targetObjectMetadata: { nameSingular: 'wholesaler' } },
+    }),
+    field('meeting-external-wholesaler', 'externalWholesaler', 'RELATION', {
       relation: { targetObjectMetadata: { nameSingular: 'wholesaler' } },
     }),
     field('meeting-booker', 'bookedBy', 'RELATION', {
@@ -841,6 +845,47 @@ describe('installed meeting booking verification', () => {
       /calendar/i,
     );
   });
+
+  for (const name of ['externalWholesaler', 'allocationRequested']) {
+    it(`requires ${name} to stay enterable in the CRM`, () => {
+      assert.throws(
+        () =>
+          verifyMeetingBookingSchema(
+            [
+              {
+                ...object,
+                fieldsList: fieldsList.map((candidate) =>
+                  candidate.name === name
+                    ? {
+                        ...candidate,
+                        isUIEditable: false,
+                        writability: 'APPLICATION',
+                      }
+                    : candidate,
+                ),
+              },
+            ],
+            experience,
+          ),
+        new RegExp(`${name} is not enterable`, 'i'),
+      );
+      assert.throws(
+        () =>
+          verifyMeetingBookingSchema(
+            [
+              {
+                ...object,
+                fieldsList: fieldsList.filter(
+                  (candidate) => candidate.name !== name,
+                ),
+              },
+            ],
+            experience,
+          ),
+        new RegExp(`${name} field`, 'i'),
+      );
+    });
+  }
 
   it('requires server-valid exact status values', () => {
     assert.throws(

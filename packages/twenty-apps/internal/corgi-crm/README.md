@@ -94,6 +94,28 @@ cancelling, or reopening the same record does not count a second booking or
 send another booked alert. Historical bookings remain counted after a later
 cancellation. A meeting booking does not create an extra outreach activity.
 
+When the meeting's **Owner** is a BDR, the booking also needs an **EW /
+external wholesaler** — the external wholesaler the meeting is attributed to.
+The check reads the owner's own `wholesalerRole` when the booking happens and
+applies only when that role reads exactly `BDR`, ignoring case and surrounding
+spaces. There is no list of people anywhere in this app, so the rule turns on
+one Wholesaler at a time as roles are filled in, with no release involved. An
+owner whose role is empty, still the legacy `Wholesaler` default, unrecognised,
+or unreadable books exactly as it did before, because a rule that guessed would
+stop the whole workspace from booking meetings. Unlike **Booked at** and
+**Booked by**, ordinary CRM users select the EW themselves.
+
+Meetings booked before this rule shipped keep their empty EW and are never
+rewritten. The Meetings table shows **EW / external wholesaler** next to
+**Owner**, so filtering that column on empty finds the ones worth revisiting.
+
+A meeting that names an EW also needs an **Allocation requested** amount: the
+money the RIA asked to allocate, as the EW reports it. It is a currency field,
+so it carries its own amount and currency code, which is what a future
+per-EW attribution will need. An explicitly entered `0` is a real answer and
+books; only a missing amount holds the booking in Draft. Nothing defaults or
+back-fills the amount, and a meeting with no EW is never asked for one.
+
 ## Company allocations
 
 Every company record carries an **Allocations** section listing one row per
