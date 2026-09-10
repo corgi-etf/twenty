@@ -1,6 +1,11 @@
 import { defineObject, FieldType } from 'twenty-sdk/define';
 
 import {
+  TELEGRAM_DELIVERY_REASON_VALUES,
+  TELEGRAM_DELIVERY_STATUS_VALUES,
+} from 'src/modules/telegram/telegram-persistence-values';
+
+import {
   TELEGRAM_DELIVERY_APPROVED_UNKNOWN_AT_FIELD_UNIVERSAL_IDENTIFIER,
   TELEGRAM_DELIVERY_ATTEMPTS_FIELD_UNIVERSAL_IDENTIFIER,
   TELEGRAM_DELIVERY_KEY_FIELD_UNIVERSAL_IDENTIFIER,
@@ -59,39 +64,39 @@ export default defineObject({
       name: 'status',
       label: 'Status',
       icon: 'IconProgress',
-      defaultValue: "'ready'",
+      defaultValue: `'${TELEGRAM_DELIVERY_STATUS_VALUES.ready}'`,
       options: [
         {
           id: TELEGRAM_DELIVERY_STATUS_OPTION_UNIVERSAL_IDENTIFIERS.ready,
-          value: 'ready',
+          value: TELEGRAM_DELIVERY_STATUS_VALUES.ready,
           label: 'Ready',
           position: 0,
           color: 'gray',
         },
         {
           id: TELEGRAM_DELIVERY_STATUS_OPTION_UNIVERSAL_IDENTIFIERS.retryApproved,
-          value: 'retry_approved',
+          value: TELEGRAM_DELIVERY_STATUS_VALUES.retry_approved,
           label: 'Retry approved',
           position: 1,
           color: 'blue',
         },
         {
           id: TELEGRAM_DELIVERY_STATUS_OPTION_UNIVERSAL_IDENTIFIERS.intent,
-          value: 'intent',
+          value: TELEGRAM_DELIVERY_STATUS_VALUES.intent,
           label: 'Sending',
           position: 2,
           color: 'orange',
         },
         {
           id: TELEGRAM_DELIVERY_STATUS_OPTION_UNIVERSAL_IDENTIFIERS.unknown,
-          value: 'unknown',
+          value: TELEGRAM_DELIVERY_STATUS_VALUES.unknown,
           label: 'Unknown',
           position: 3,
           color: 'red',
         },
         {
           id: TELEGRAM_DELIVERY_STATUS_OPTION_UNIVERSAL_IDENTIFIERS.complete,
-          value: 'complete',
+          value: TELEGRAM_DELIVERY_STATUS_VALUES.complete,
           label: 'Complete',
           position: 4,
           color: 'green',
@@ -145,14 +150,14 @@ export default defineObject({
       options: [
         {
           id: TELEGRAM_DELIVERY_REASON_OPTION_UNIVERSAL_IDENTIFIERS.providerAmbiguous,
-          value: 'provider_ambiguous',
+          value: TELEGRAM_DELIVERY_REASON_VALUES.provider_ambiguous,
           label: 'Provider ambiguous',
           position: 0,
           color: 'red',
         },
         {
           id: TELEGRAM_DELIVERY_REASON_OPTION_UNIVERSAL_IDENTIFIERS.checkpointAmbiguous,
-          value: 'checkpoint_ambiguous',
+          value: TELEGRAM_DELIVERY_REASON_VALUES.checkpoint_ambiguous,
           label: 'Checkpoint ambiguous',
           position: 1,
           color: 'orange',

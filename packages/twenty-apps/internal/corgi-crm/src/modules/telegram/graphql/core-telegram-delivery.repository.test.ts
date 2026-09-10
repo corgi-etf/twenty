@@ -14,14 +14,16 @@ const delivery = {
   updatedAt: '2026-09-09T12:00:00.000Z',
 };
 
+const storedDelivery = { ...delivery, status: 'INTENT' };
+
 describe('CoreTelegramDeliveryRepository', () => {
   it('uses deterministic create as the authoritative atomic claim and validates collisions', async () => {
     const mutation = vi
       .fn()
-      .mockResolvedValueOnce({ createTelegramDelivery: delivery })
+      .mockResolvedValueOnce({ createTelegramDelivery: storedDelivery })
       .mockRejectedValueOnce(new Error('DUPLICATE_ENTRY_DETECTED'));
     const query = vi.fn().mockResolvedValue({
-      telegramDeliveries: { edges: [{ node: delivery }] },
+      telegramDeliveries: { edges: [{ node: storedDelivery }] },
     });
     const repository = new CoreTelegramDeliveryRepository({
       mutation,
@@ -39,7 +41,7 @@ describe('CoreTelegramDeliveryRepository', () => {
 
     query.mockResolvedValueOnce({
       telegramDeliveries: {
-        edges: [{ node: { ...delivery, operationDigest: 'c'.repeat(64) } }],
+        edges: [{ node: { ...storedDelivery, operationDigest: 'c'.repeat(64) } }],
       },
     });
     await expect(repository.claim(delivery)).rejects.toThrow(/collision/i);
@@ -48,15 +50,15 @@ describe('CoreTelegramDeliveryRepository', () => {
   it.each([
     null,
     { id: delivery.id },
-    { ...delivery, id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' },
-    { ...delivery, operationDigest: 'c'.repeat(64) },
-    { ...delivery, status: 'complete' },
-    { ...delivery, stateToken: 'wrong-token' },
+    { ...storedDelivery, id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' },
+    { ...storedDelivery, operationDigest: 'c'.repeat(64) },
+    { ...storedDelivery, status: 'COMPLETE' },
+    { ...storedDelivery, stateToken: 'wrong-token' },
   ])('does not trust a malformed resolved create payload %#', async (created) => {
     const repository = new CoreTelegramDeliveryRepository({
       mutation: vi.fn().mockResolvedValue({ createTelegramDelivery: created }),
       query: vi.fn().mockResolvedValue({
-        telegramDeliveries: { edges: [{ node: delivery }] },
+        telegramDeliveries: { edges: [{ node: storedDelivery }] },
       }),
     } as never);
 
@@ -70,11 +72,11 @@ describe('CoreTelegramDeliveryRepository', () => {
     const query = vi
       .fn()
       .mockResolvedValueOnce({
-        telegramDeliveries: { edges: [{ node: delivery }] },
+        telegramDeliveries: { edges: [{ node: storedDelivery }] },
       })
       .mockResolvedValueOnce({
         telegramDeliveries: {
-          edges: [{ node: { ...delivery, stateToken: 'competitor-token' } }],
+          edges: [{ node: { ...storedDelivery, stateToken: 'competitor-token' } }],
         },
       });
     const repository = new CoreTelegramDeliveryRepository({
@@ -104,7 +106,7 @@ describe('CoreTelegramDeliveryRepository', () => {
   it('performs compare-and-set transitions with all expected fields', async () => {
     const mutation = vi.fn().mockResolvedValue({
       updateTelegramDeliveries: [
-        { ...delivery, status: 'complete', stateToken: 'token-2' },
+        { ...storedDelivery, status: 'COMPLETE', stateToken: 'token-2' },
       ],
     });
     const repository = new CoreTelegramDeliveryRepository({
@@ -124,7 +126,7 @@ describe('CoreTelegramDeliveryRepository', () => {
       .toEqual({
         and: [
           { id: { eq: delivery.id } },
-          { status: { eq: 'intent' } },
+          { status: { eq: 'INTENT' } },
           { stateToken: { eq: 'token-1' } },
         ],
       });
@@ -134,11 +136,11 @@ describe('CoreTelegramDeliveryRepository', () => {
     null,
     [],
     [{ id: delivery.id }],
-    [{ ...delivery, id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', status: 'complete', stateToken: 'token-2' }],
-    [{ ...delivery, status: 'ready', stateToken: 'token-2' }],
-    [{ ...delivery, status: 'complete', stateToken: 'wrong-token' }],
+    [{ ...storedDelivery, id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', status: 'COMPLETE', stateToken: 'token-2' }],
+    [{ ...storedDelivery, status: 'READY', stateToken: 'token-2' }],
+    [{ ...storedDelivery, status: 'COMPLETE', stateToken: 'wrong-token' }],
   ])('does not trust a malformed transition response %#', async (response) => {
-    const persisted = { ...delivery, status: 'complete', stateToken: 'token-2' };
+    const persisted = { ...storedDelivery, status: 'COMPLETE', stateToken: 'token-2' };
     const repository = new CoreTelegramDeliveryRepository({
       mutation: vi.fn().mockResolvedValue({ updateTelegramDeliveries: response }),
       query: vi.fn().mockResolvedValue({
@@ -161,7 +163,7 @@ describe('CoreTelegramDeliveryRepository', () => {
       query: vi.fn().mockResolvedValue({
         telegramDeliveries: {
           edges: [
-            { node: { ...delivery, status: 'complete', stateToken: 'competitor' } },
+            { node: { ...storedDelivery, status: 'COMPLETE', stateToken: 'competitor' } },
           ],
         },
       }),
@@ -184,9 +186,9 @@ describe('CoreTelegramDeliveryRepository', () => {
           edges: [
             {
               node: {
-                ...delivery,
+                ...storedDelivery,
                 id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
-                status: 'complete',
+                status: 'COMPLETE',
                 stateToken: 'token-2',
               },
             },

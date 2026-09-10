@@ -1,11 +1,29 @@
 import { type CoreApiClient } from 'twenty-client-sdk/core';
 
-export type TelegramDeliveryStatus =
-  | 'ready'
-  | 'retry_approved'
-  | 'intent'
-  | 'unknown'
-  | 'complete';
+import {
+  TELEGRAM_DELIVERY_REASON_VALUES,
+  TELEGRAM_DELIVERY_STATUS_VALUES,
+} from 'src/modules/telegram/telegram-persistence-values';
+
+export type TelegramDeliveryStatus = keyof typeof TELEGRAM_DELIVERY_STATUS_VALUES;
+
+const fromStoredEnum = <T extends string>(
+  values: Record<T, string>, value: unknown, label: string,
+): T => {
+  const entry = (Object.entries(values) as Array<[T, string]>)
+    .find(([, storedValue]) => storedValue === value);
+  if (!entry) throw new Error(`Invalid stored Telegram delivery ${label}`);
+  return entry[0];
+};
+
+const toStoredEnum = <T extends string>(
+  values: Record<T, string>, value: string, label: string,
+): string => {
+  if (!Object.prototype.hasOwnProperty.call(values, value)) {
+    throw new Error(`Invalid Telegram delivery ${label}`);
+  }
+  return values[value as T];
+};
 
 export type TelegramDeliveryRecord = {
   id: string;
@@ -37,6 +55,24 @@ type DynamicCoreApiClient = {
   query(selection: Record<string, unknown>): Promise<Record<string, unknown>>;
   mutation(selection: Record<string, unknown>): Promise<Record<string, unknown>>;
 };
+
+const fromStoredDelivery = (record: TelegramDeliveryRecord): TelegramDeliveryRecord => ({
+  ...record,
+  status: fromStoredEnum(TELEGRAM_DELIVERY_STATUS_VALUES, record.status, 'status'),
+  ...(record.lastReasonCode == null ? {} : {
+    lastReasonCode: fromStoredEnum(TELEGRAM_DELIVERY_REASON_VALUES, record.lastReasonCode, 'reason'),
+  }),
+});
+
+const toStoredPatch = (record: Partial<TelegramDeliveryRecord>) => ({
+  ...record,
+  ...(record.status === undefined ? {} : {
+    status: toStoredEnum(TELEGRAM_DELIVERY_STATUS_VALUES, record.status, 'status'),
+  }),
+  ...(record.lastReasonCode == null ? {} : {
+    lastReasonCode: toStoredEnum(TELEGRAM_DELIVERY_REASON_VALUES, record.lastReasonCode, 'reason'),
+  }),
+});
 
 const deliverySelection = {
   id: true,
@@ -121,7 +157,7 @@ export class CoreTelegramDeliveryRepository {
     });
     const records = edgesFrom<TelegramDeliveryRecord>(result, 'telegramDeliveries');
     if (records.length > 1) throw new Error('Telegram delivery key is not unique');
-    return records[0] ?? null;
+    return records[0] ? fromStoredDelivery(records[0]) : null;
   }
 
   private async getById(id: string): Promise<TelegramDeliveryRecord | null> {
@@ -133,7 +169,7 @@ export class CoreTelegramDeliveryRepository {
     });
     const records = edgesFrom<TelegramDeliveryRecord>(result, 'telegramDeliveries');
     if (records.length > 1) throw new Error('Telegram delivery ID is not unique');
-    return records[0] ?? null;
+    return records[0] ? fromStoredDelivery(records[0]) : null;
   }
 
   public async claim(record: TelegramDeliveryRecord) {
@@ -146,7 +182,7 @@ export class CoreTelegramDeliveryRepository {
               name: record.deliveryKey.slice(-12),
               deliveryKey: record.deliveryKey,
               operationDigest: record.operationDigest,
-              status: record.status,
+              status: toStoredEnum(TELEGRAM_DELIVERY_STATUS_VALUES, record.status, 'status'),
               stateToken: record.stateToken,
               attempts: record.attempts,
               resetCount: record.resetCount,
@@ -155,10 +191,11 @@ export class CoreTelegramDeliveryRepository {
           ...deliverySelection,
         },
       });
-      const created = result.createTelegramDelivery as
+      const stored = result.createTelegramDelivery as
         | TelegramDeliveryRecord
         | null
         | undefined;
+      const created = stored ? fromStoredDelivery(stored) : null;
       if (created && exactOwnedIntent(created, record)) {
         return { acquired: true, record: created } as const;
       }
@@ -195,11 +232,11 @@ export class CoreTelegramDeliveryRepository {
       const result = await this.dynamicClient.mutation({
         updateTelegramDeliveries: {
           __args: {
-            data: patch,
+            data: toStoredPatch(patch),
             filter: {
               and: [
                 { id: { eq: id } },
-                { status: { eq: expectedStatus } },
+                { status: { eq: toStoredEnum(TELEGRAM_DELIVERY_STATUS_VALUES, expectedStatus, 'status') } },
                 { stateToken: { eq: expectedStateToken } },
               ],
             },
@@ -214,7 +251,7 @@ export class CoreTelegramDeliveryRepository {
         Array.isArray(records) &&
         records.length === 1 &&
         records[0]?.id === id &&
-        records[0]?.status === patch.status &&
+        records[0]?.status === TELEGRAM_DELIVERY_STATUS_VALUES[patch.status] &&
         records[0]?.stateToken === patch.stateToken
       ) {
         return true;

@@ -125,6 +125,6 @@ describe('Telegram update worker durable replies', () => {
     expect(answerCallbackQuery).toHaveBeenCalledOnce();
     expect(deliveryRecords).toHaveLength(3);
     expect([...deliveryRecords.values()].every((value) =>
-      value.status === 'complete')).toBe(true);
+      value.status === 'COMPLETE')).toBe(true);
   });
 });

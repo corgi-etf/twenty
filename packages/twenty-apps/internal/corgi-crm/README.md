@@ -21,8 +21,9 @@ existing `Wholesaler` object, which was created before this app.
    current workspace. No production workspace UUID is embedded in the app or
    verifier. Do not publish or install this tenant-specific app elsewhere.
 
-Version `1.1.0` adds the Telegram channel and must be published as a new
-immutable app version; it must not reuse the baseline `1.0.0` release.
+Version `1.1.1` adds the Telegram channel with server-compatible delivery
+enum storage. It is a new immutable version: `1.1.0` was published but rejected
+at installation and must not be overwritten or reused.
 
 The two custom CRM objects predate this app, so their universal identifiers are
 not guessed or committed. Immediately before packaging, use the short-lived
