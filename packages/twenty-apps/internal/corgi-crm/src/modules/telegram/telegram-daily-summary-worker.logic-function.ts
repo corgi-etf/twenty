@@ -4,11 +4,8 @@ import { kv, type LogicFunctionExecutionContext } from 'twenty-sdk/logic-functio
 
 import { TELEGRAM_DAILY_SUMMARY_WORKER_UNIVERSAL_IDENTIFIER } from 'src/constants';
 import { CoreOutreachRepository } from 'src/modules/outreach/graphql/core-outreach.repository';
-import {
-  buildDailySummaries,
-  formatDailySummary,
-  formatEmptyDailySummary,
-} from 'src/modules/outreach/services/daily-summary.service';
+import { readReportSummary } from 'src/modules/outreach/services/report-summary.service';
+import { type OutreachRepository } from 'src/modules/outreach/types';
 import { type DailySummaryJobPayload } from 'src/modules/telegram/services/daily-summary-cron.service';
 import { TelegramClient } from 'src/modules/telegram/services/telegram-client.service';
 import { deliverDailySummary } from 'src/modules/telegram/services/telegram-delivery.service';
@@ -67,6 +64,22 @@ type DailySummaryWorkerDependencies = {
   processJob(payload: unknown): Promise<unknown>;
 };
 
+export const readScheduledDailyReport = ({
+  repository,
+  end,
+  timeZone,
+}: {
+  repository: OutreachRepository;
+  end: string;
+  timeZone: string;
+}) =>
+  readReportSummary({
+    repository,
+    period: 'daily',
+    now: new Date(end),
+    timeZone,
+  });
+
 export const handleTelegramDailySummaryJob = async (
   rawPayload: unknown,
   context: LogicFunctionExecutionContext | undefined,
@@ -115,17 +128,11 @@ const processDailySummaryJob = async (rawPayload: unknown) => {
   if (!link) return { status: 'unlinked' } as const;
 
   const repository = new CoreOutreachRepository(coreClient);
-  const activities = await repository.listActivities({
-    start: payload.start,
+  const text = await readScheduledDailyReport({
+    repository,
     end: payload.end,
-    wholesalerId: link.wholesalerId,
+    timeZone: requiredEnvironment('CORGI_CRM_TELEGRAM_TIME_ZONE'),
   });
-  const summary = buildDailySummaries(activities, payload.localDate).find(
-    ({ wholesalerId }) => wholesalerId === link.wholesalerId,
-  );
-  const text = summary
-    ? formatDailySummary(summary)
-    : formatEmptyDailySummary(link.wholesalerName, payload.localDate);
   const telegram = new TelegramClient({
     token: requiredEnvironment('CORGI_CRM_TELEGRAM_BOT_TOKEN'),
   });
