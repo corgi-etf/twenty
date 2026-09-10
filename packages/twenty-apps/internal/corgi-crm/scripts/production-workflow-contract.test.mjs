@@ -29,16 +29,13 @@ describe('Corgi CRM production app workflow contract', () => {
       workflow,
       /CORGI_CRM_EXPECTED_WORKSPACE_ID:\s+[0-9a-f-]{36}/i,
     );
-    assert.doesNotMatch(workflow, /APPROVED_WORKSPACE_ID/);
-    assert.doesNotMatch(verifier, /APPROVED_WORKSPACE_ID/);
-    assert.doesNotMatch(
-      verifier,
-      /eabf5d9d-fc99-4acb-b160-710ecb1db996/i,
-    );
+    assert.doesNotMatch(workflow, /APPROVED_(USER_)?WORKSPACE_ID/);
+    assert.doesNotMatch(verifier, /APPROVED_(USER_)?WORKSPACE_ID/);
     assert.match(workflow, /CRM_WORKSPACE_ENV_PATH:\s*\$\{\{ github\.env \}\}/);
     assert.match(bootstrapSpec, /assertCompletedWorkspaceMetadataBootstrap/);
     assert.match(bootstrapSpec, /validated\.workspaceId/);
     assert.match(bootstrapSpec, /CORGI_CRM_EXPECTED_WORKSPACE_ID/);
+    assert.match(bootstrapSpec, /CORGI_CRM_EXPECTED_USER_WORKSPACE_ID/);
   });
 
   it('resolves build-time role identifiers after acquiring the key and before publish', () => {

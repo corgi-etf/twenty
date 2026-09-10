@@ -27,10 +27,9 @@ import type {
 import type { TerritoryIdentityDiscoveryApi } from './territory-identity-discovery.ts';
 
 export const WORKSPACE_CONFIG_APPROVED_ORIGIN = 'https://crm.corgiinvest.com';
-export const WORKSPACE_CONFIG_APPROVED_WORKSPACE_ID =
-  'eabf5d9d-fc99-4acb-b160-710ecb1db996';
-export const WORKSPACE_CONFIG_APPROVED_USER_WORKSPACE_ID =
-  '767771e9-834d-4a89-88ca-1df32d101a40';
+
+const WORKSPACE_ID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 export type WorkspaceConfigResponse = {
   ok(): boolean;
@@ -193,9 +192,16 @@ export const createWorkspaceConfigRequestGate = ({
 type TenantResponse = {
   data?: {
     currentUser?: {
-      currentWorkspace?: { id?: unknown; displayName?: unknown } | null;
+      id?: unknown;
+      currentWorkspace?: {
+        id?: unknown;
+        displayName?: unknown;
+        activationStatus?: unknown;
+      } | null;
       currentUserWorkspace?: {
         id?: unknown;
+        userId?: unknown;
+        deletedAt?: unknown;
         permissionFlags?: unknown;
         isImpersonating?: unknown;
       } | null;
@@ -212,7 +218,7 @@ export const assertWorkspaceConfigTenant = async ({
   request: WorkspaceConfigRequestContext;
   origin: string;
   requestGate?: ReturnType<typeof createWorkspaceConfigRequestGate>;
-}): Promise<{ workspaceId: string }> => {
+}): Promise<{ workspaceId: string; userWorkspaceId: string }> => {
   if (origin !== WORKSPACE_CONFIG_APPROVED_ORIGIN) {
     throw new Error('Workspace configuration tenant origin is not approved');
   }
@@ -223,8 +229,15 @@ export const assertWorkspaceConfigTenant = async ({
         operationName: 'WorkspaceConfigurationTenantPreflight',
         query: `query WorkspaceConfigurationTenantPreflight {
           currentUser {
-            currentWorkspace { id displayName }
-            currentUserWorkspace { id permissionFlags isImpersonating }
+            id
+            currentWorkspace { id displayName activationStatus }
+            currentUserWorkspace {
+              id
+              userId
+              deletedAt
+              permissionFlags
+              isImpersonating
+            }
           }
         }`,
       },
@@ -245,15 +258,22 @@ export const assertWorkspaceConfigTenant = async ({
     (Array.isArray(body.errors)
       ? body.errors.length > 0
       : Boolean(body.errors)) ||
-    workspace?.id !== WORKSPACE_CONFIG_APPROVED_WORKSPACE_ID ||
-    workspace.displayName !== 'Corgi ETF'
+    typeof workspace?.id !== 'string' ||
+    !WORKSPACE_ID_PATTERN.test(workspace.id) ||
+    workspace.displayName !== 'Corgi ETF' ||
+    workspace.activationStatus !== 'ACTIVE'
   ) {
     throw new Error(
       'Authenticated workspace configuration tenant is not approved',
     );
   }
   if (
-    membership?.id !== WORKSPACE_CONFIG_APPROVED_USER_WORKSPACE_ID ||
+    typeof user?.id !== 'string' ||
+    !WORKSPACE_ID_PATTERN.test(user.id) ||
+    typeof membership?.id !== 'string' ||
+    !WORKSPACE_ID_PATTERN.test(membership.id) ||
+    membership.userId !== user.id ||
+    membership.deletedAt !== null ||
     !Array.isArray(membership.permissionFlags) ||
     !membership.permissionFlags.includes('DATA_MODEL') ||
     membership.isImpersonating === true
@@ -263,7 +283,7 @@ export const assertWorkspaceConfigTenant = async ({
     );
   }
 
-  return { workspaceId: workspace.id as string };
+  return { workspaceId: workspace.id, userWorkspaceId: membership.id };
 };
 
 const checkpointHash = (checkpoint: WorkspaceConfigCheckpoint): string =>

@@ -8,8 +8,6 @@ import {
 } from '../../../twenty-apps/internal/corgi-crm/scripts/deployment-api-key.mjs';
 
 const APPROVED_ORIGIN = 'https://crm.corgiinvest.com';
-const APPROVED_WORKSPACE_ID = 'eabf5d9d-fc99-4acb-b160-710ecb1db996';
-const APPROVED_USER_WORKSPACE_ID = '767771e9-834d-4a89-88ca-1df32d101a40';
 
 type GraphqlRequest = {
   operationName: string;
@@ -69,8 +67,12 @@ test('manage the short-lived Corgi CRM deployment key', async ({ page }) => {
   if (operation === 'acquire') {
     const key = await createDeploymentApiKey({
       graphql,
-      expectedWorkspaceId: APPROVED_WORKSPACE_ID,
-      expectedUserWorkspaceId: APPROVED_USER_WORKSPACE_ID,
+      expectedWorkspaceId: requiredEnvironment(
+        'CORGI_CRM_EXPECTED_WORKSPACE_ID',
+      ),
+      expectedUserWorkspaceId: requiredEnvironment(
+        'CORGI_CRM_EXPECTED_USER_WORKSPACE_ID',
+      ),
       runId: requiredEnvironment('GITHUB_RUN_ID'),
       runAttempt: requiredEnvironment('GITHUB_RUN_ATTEMPT'),
     });

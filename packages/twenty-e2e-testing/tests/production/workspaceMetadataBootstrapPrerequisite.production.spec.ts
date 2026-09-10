@@ -25,17 +25,18 @@ test.skip(
 test('proves the exact deployed revision completed metadata bootstrap', async ({
   page,
 }) => {
-  const validated = await assertCompletedWorkspaceMetadataBootstrap({
-    artifactPath: requiredEnvironmentValue(
-      'CRM_WORKSPACE_METADATA_BOOTSTRAP_ARTIFACT_PATH',
-    ),
-    expectedDeployedSha: requiredEnvironmentValue('CRM_DEPLOYED_SHA'),
-  });
   const { FRONTEND_BASE_URL } = requireProductionEnvironment();
   const tenant = await assertWorkspaceConfigTenant({
     request: page.request,
     origin: new URL(FRONTEND_BASE_URL).origin,
     requestGate: createWorkspaceConfigRequestGate(),
+  });
+  const validated = await assertCompletedWorkspaceMetadataBootstrap({
+    artifactPath: requiredEnvironmentValue(
+      'CRM_WORKSPACE_METADATA_BOOTSTRAP_ARTIFACT_PATH',
+    ),
+    expectedDeployedSha: requiredEnvironmentValue('CRM_DEPLOYED_SHA'),
+    expectedWorkspaceId: tenant.workspaceId,
   });
   expect(validated.workspaceId).toMatch(
     /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
@@ -46,7 +47,8 @@ test('proves the exact deployed revision completed metadata bootstrap', async ({
   );
   await appendFile(
     workspaceEnvironmentPath,
-    `CORGI_CRM_EXPECTED_WORKSPACE_ID=${validated.workspaceId}\n`,
+    `CORGI_CRM_EXPECTED_WORKSPACE_ID=${validated.workspaceId}\n` +
+      `CORGI_CRM_EXPECTED_USER_WORKSPACE_ID=${tenant.userWorkspaceId}\n`,
     'utf8',
   );
   expect(validated.status).toBe('complete');

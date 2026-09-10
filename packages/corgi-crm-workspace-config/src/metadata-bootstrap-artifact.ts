@@ -11,12 +11,11 @@ import {
 import { dirname, resolve, sep } from 'node:path';
 
 import { WORKSPACE_METADATA_BOOTSTRAP_CONTRACT_HASH } from './execution.ts';
-import {
-  WORKSPACE_CONFIG_APPROVED_ORIGIN,
-  WORKSPACE_CONFIG_APPROVED_WORKSPACE_ID,
-} from './twenty-api.ts';
+import { WORKSPACE_CONFIG_APPROVED_ORIGIN } from './twenty-api.ts';
 
 const HASH_PATTERN = /^[0-9a-f]{64}$/;
+const WORKSPACE_ID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 export type WorkspaceMetadataBootstrapArtifact = {
   schemaVersion: 1;
@@ -49,10 +48,15 @@ const artifactHash = (artifact: WorkspaceMetadataBootstrapArtifact): string =>
 
 export const buildWorkspaceMetadataBootstrapArtifact = ({
   deployedSha,
+  workspaceId,
 }: {
   deployedSha: string;
+  workspaceId: string;
 }): WorkspaceMetadataBootstrapArtifact => {
-  if (!/^[0-9a-f]{40}$/.test(deployedSha)) {
+  if (
+    !/^[0-9a-f]{40}$/.test(deployedSha) ||
+    !WORKSPACE_ID_PATTERN.test(workspaceId)
+  ) {
     throw new Error('Workspace metadata bootstrap deployed SHA is invalid');
   }
 
@@ -60,7 +64,7 @@ export const buildWorkspaceMetadataBootstrapArtifact = ({
     schemaVersion: 1,
     status: 'complete',
     origin: WORKSPACE_CONFIG_APPROVED_ORIGIN,
-    workspaceId: WORKSPACE_CONFIG_APPROVED_WORKSPACE_ID,
+    workspaceId,
     deployedSha,
     metadataContractHash: WORKSPACE_METADATA_BOOTSTRAP_CONTRACT_HASH,
   };
@@ -69,6 +73,7 @@ export const buildWorkspaceMetadataBootstrapArtifact = ({
 const assertArtifact = (
   value: unknown,
   expectedDeployedSha: string,
+  expectedWorkspaceId: string,
 ): WorkspaceMetadataBootstrapArtifact => {
   const artifact = value as WorkspaceMetadataBootstrapArtifact;
   if (
@@ -79,7 +84,8 @@ const assertArtifact = (
     artifact?.schemaVersion !== 1 ||
     artifact.status !== 'complete' ||
     artifact.origin !== WORKSPACE_CONFIG_APPROVED_ORIGIN ||
-    artifact.workspaceId !== WORKSPACE_CONFIG_APPROVED_WORKSPACE_ID ||
+    !WORKSPACE_ID_PATTERN.test(expectedWorkspaceId) ||
+    artifact.workspaceId !== expectedWorkspaceId ||
     artifact.deployedSha !== expectedDeployedSha ||
     !/^[0-9a-f]{40}$/.test(artifact.deployedSha) ||
     artifact.metadataContractHash !== WORKSPACE_METADATA_BOOTSTRAP_CONTRACT_HASH
@@ -136,7 +142,11 @@ export const writeWorkspaceMetadataBootstrapArtifact = async (
   artifactPath: string,
   artifact: WorkspaceMetadataBootstrapArtifact,
 ): Promise<void> => {
-  const validated = assertArtifact(artifact, artifact.deployedSha);
+  const validated = assertArtifact(
+    artifact,
+    artifact.deployedSha,
+    artifact.workspaceId,
+  );
   const temporaryPath = `${artifactPath}.tmp-${randomUUID()}`;
   const envelope: WorkspaceMetadataBootstrapArtifactEnvelope = {
     sha256: artifactHash(validated),
@@ -157,9 +167,11 @@ export const writeWorkspaceMetadataBootstrapArtifact = async (
 export const assertCompletedWorkspaceMetadataBootstrap = async ({
   artifactPath,
   expectedDeployedSha,
+  expectedWorkspaceId,
 }: {
   artifactPath: string;
   expectedDeployedSha: string;
+  expectedWorkspaceId: string;
 }): Promise<WorkspaceMetadataBootstrapArtifact> => {
   let envelope: WorkspaceMetadataBootstrapArtifactEnvelope;
   try {
@@ -169,7 +181,11 @@ export const assertCompletedWorkspaceMetadataBootstrap = async ({
   } catch {
     throw new Error('Workspace metadata bootstrap artifact is invalid JSON');
   }
-  const artifact = assertArtifact(envelope.bootstrap, expectedDeployedSha);
+  const artifact = assertArtifact(
+    envelope.bootstrap,
+    expectedDeployedSha,
+    expectedWorkspaceId,
+  );
   if (
     !HASH_PATTERN.test(envelope.sha256) ||
     envelope.sha256 !== artifactHash(artifact)
