@@ -20,12 +20,40 @@ export const FIND_WHOLESALERS_BY_WORKSPACE_MEMBER_DOCUMENT = `
   }
 `;
 
+export const FIND_WHOLESALER_BY_ID_DOCUMENT = `
+  query CorgiFindWholesalerById($wholesalerId: UUID!) {
+    wholesalers(first: 2, filter: { id: { eq: $wholesalerId } }) {
+      edges {
+        node { id name email wholesalerRole workspaceMemberId }
+      }
+    }
+  }
+`;
+
 export const FIND_WHOLESALERS_BY_EMAIL_DOCUMENT = `
   query CorgiFindWholesalersByEmail($emailPattern: String!) {
     wholesalers(first: 3, filter: { email: { ilike: $emailPattern } }) {
       edges {
         node { id name email wholesalerRole workspaceMemberId }
       }
+    }
+  }
+`;
+
+export type ListWholesalersData = {
+  wholesalers: {
+    edges: Array<{ node: WholesalerRecord }>;
+    pageInfo: { hasNextPage: boolean; endCursor?: string | null };
+  };
+};
+
+export const LIST_WHOLESALERS_DOCUMENT = `
+  query CorgiListWholesalers($first: Int!, $after: String) {
+    wholesalers(first: $first, after: $after) {
+      edges {
+        node { id name email wholesalerRole workspaceMemberId }
+      }
+      pageInfo { hasNextPage endCursor }
     }
   }
 `;
@@ -48,4 +76,27 @@ export const findWholesalersByEmail = (
     operationName: 'CorgiFindWholesalersByEmail',
     document: FIND_WHOLESALERS_BY_EMAIL_DOCUMENT,
     variables: { emailPattern: escapeSqlLikePattern(email) },
+  });
+
+export const findWholesalerById = (
+  client: RawCoreRequester,
+  wholesalerId: string,
+) =>
+  client.request<FindWholesalersData, { wholesalerId: string }>({
+    operationName: 'CorgiFindWholesalerById',
+    document: FIND_WHOLESALER_BY_ID_DOCUMENT,
+    variables: { wholesalerId },
+  });
+
+// Roles are read for the whole roster rather than filtered server-side: the
+// stored value is human-entered, so only a normalized comparison in code can
+// match spacing and casing variants.
+export const listWholesalersPage = (
+  client: RawCoreRequester,
+  variables: { first: number; after: string | null },
+) =>
+  client.request<ListWholesalersData, { first: number; after: string | null }>({
+    operationName: 'CorgiListWholesalers',
+    document: LIST_WHOLESALERS_DOCUMENT,
+    variables,
   });

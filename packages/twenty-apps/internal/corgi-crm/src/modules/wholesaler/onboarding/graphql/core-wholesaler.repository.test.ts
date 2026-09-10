@@ -45,6 +45,51 @@ describe('CoreWholesalerRepository external object access', () => {
     });
   });
 
+  it('reads one Wholesaler role by ID through raw GraphQL', async () => {
+    const { generated, raw, repository } = buildRepository({
+      rawResult: { wholesalers: { edges: [{ node: record }] } },
+    });
+
+    await expect(repository.findById(record.id)).resolves.toEqual(record);
+    expect(generated.query).not.toHaveBeenCalled();
+    expect(raw.request).toHaveBeenCalledWith({
+      operationName: 'CorgiFindWholesalerById',
+      document: expect.stringMatching(
+        /query CorgiFindWholesalerById\(\$wholesalerId: UUID!\)/,
+      ),
+      variables: { wholesalerId: record.id },
+    });
+  });
+
+  it('reports an absent Wholesaler instead of guessing one', async () => {
+    const { repository } = buildRepository({
+      rawResult: { wholesalers: { edges: [] } },
+    });
+
+    await expect(repository.findById(record.id)).resolves.toBeNull();
+  });
+
+  it.each([
+    [
+      'a duplicated ID',
+      { wholesalers: { edges: [{ node: record }, { node: record }] } },
+      /not unique/i,
+    ],
+    [
+      'a record that is not the one requested',
+      {
+        wholesalers: {
+          edges: [{ node: { ...record, id: '99999999-9999-4999-8999-999999999999' } }],
+        },
+      },
+      /different record/i,
+    ],
+  ])('refuses %s for a Wholesaler read by ID', async (_label, rawResult, expected) => {
+    const { repository } = buildRepository({ rawResult });
+
+    await expect(repository.findById(record.id)).rejects.toThrow(expected);
+  });
+
   it('escapes and verifies the exact email returned by raw GraphQL', async () => {
     const { raw, repository } = buildRepository({
       rawResult: {
@@ -177,5 +222,77 @@ describe('CoreWholesalerRepository external object access', () => {
     });
     expect(generated.query).toHaveBeenCalledTimes(2);
     expect(raw.request).not.toHaveBeenCalled();
+  });
+
+  it('pages the whole roster through raw GraphQL, keeping every role value', async () => {
+    const page = (
+      nodes: Array<Record<string, unknown>>,
+      hasNextPage: boolean,
+      endCursor: string | null,
+    ) => ({
+      wholesalers: {
+        edges: nodes.map((node) => ({ node })),
+        pageInfo: { hasNextPage, endCursor },
+      },
+    });
+    const external = {
+      ...record,
+      id: '33333333-3333-4333-8333-333333333333',
+      name: 'Alex',
+      wholesalerRole: ' ew ',
+    };
+    const generated = { query: vi.fn() };
+    const raw = {
+      request: vi
+        .fn()
+        .mockResolvedValueOnce(page([record], true, 'cursor-1'))
+        // A repeated node across pages must not be counted twice.
+        .mockResolvedValueOnce(page([record, external], false, null)),
+    };
+    const repository = new CoreWholesalerRepository(
+      generated as never,
+      raw as never,
+    );
+
+    await expect(repository.listWholesalers()).resolves.toEqual([
+      record,
+      external,
+    ]);
+    expect(generated.query).not.toHaveBeenCalled();
+    expect(raw.request.mock.calls.map(([selection]) => selection.variables)).toEqual([
+      { first: 100, after: null },
+      { first: 100, after: 'cursor-1' },
+    ]);
+    expect(raw.request.mock.calls[0][0]).toMatchObject({
+      operationName: 'CorgiListWholesalers',
+      document: expect.stringMatching(
+        /query CorgiListWholesalers\(\$first: Int!, \$after: String\)/,
+      ),
+    });
+  });
+
+  it.each([
+    [{ hasNextPage: true, endCursor: null }, 'missing or repeated cursor'],
+    [{ hasNextPage: 'yes', endCursor: 'cursor-1' }, 'malformed connection'],
+  ] as const)('fails closed on unusable roster pagination', async (pageInfo, message) => {
+    const { repository } = buildRepository({
+      rawResult: { wholesalers: { edges: [{ node: record }], pageInfo } },
+    });
+    await expect(repository.listWholesalers()).rejects.toThrow(message);
+  });
+
+  it('stops a roster cursor loop instead of paging forever', async () => {
+    const { raw, repository } = buildRepository({
+      rawResult: {
+        wholesalers: {
+          edges: [{ node: record }],
+          pageInfo: { hasNextPage: true, endCursor: 'same-cursor' },
+        },
+      },
+    });
+    await expect(repository.listWholesalers()).rejects.toThrow(
+      'missing or repeated cursor',
+    );
+    expect(raw.request).toHaveBeenCalledTimes(2);
   });
 });

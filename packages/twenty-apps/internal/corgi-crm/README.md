@@ -47,9 +47,13 @@ role requires both at build time. The installed verifier then checks the actual
 role has read-only access to WorkspaceMember, Company, and Person; read/write
 access to Wholesaler, OutreachActivity, and the app-owned TelegramDelivery and
 TelegramDeliveryAudit objects; read/update access to MeetingBooking; and no
-other object, delete, global, or settings permission. It also verifies the
-app-owned object schemas and the three unique indexes that fence delivery
-claims, reset generations, and request replays.
+other object, delete, global, or settings permission. CompanyAllocation is
+deliberately absent from that role: no logic function reads or writes an
+allocation, so granting one would widen the exactly-eight-permission contract
+for nothing. It also verifies the app-owned object schemas — including the
+CompanyAllocation fields, their user editability, and the Allocations section
+on Company — and the three unique indexes that fence delivery claims, reset
+generations, and request replays.
 
 The generated Core SDK describes standard objects and this application's own
 objects; granting access to an existing workspace object does not add it to
@@ -89,6 +93,56 @@ meeting was booked, not its future scheduled date. Rescheduling, completing,
 cancelling, or reopening the same record does not count a second booking or
 send another booked alert. Historical bookings remain counted after a later
 cancellation. A meeting booking does not create an extra outreach activity.
+
+When the meeting's **Owner** is a BDR, the booking also needs an **EW /
+external wholesaler** — the external wholesaler the meeting is attributed to.
+The check reads the owner's own `wholesalerRole` when the booking happens and
+applies only when that role reads exactly `BDR`, ignoring case and surrounding
+spaces. There is no list of people anywhere in this app, so the rule turns on
+one Wholesaler at a time as roles are filled in, with no release involved. An
+owner whose role is empty, still the legacy `Wholesaler` default, unrecognised,
+or unreadable books exactly as it did before, because a rule that guessed would
+stop the whole workspace from booking meetings. Unlike **Booked at** and
+**Booked by**, ordinary CRM users select the EW themselves.
+
+Meetings booked before this rule shipped keep their empty EW and are never
+rewritten. The Meetings table shows **EW / external wholesaler** next to
+**Owner**, so filtering that column on empty finds the ones worth revisiting.
+
+A meeting that names an EW also needs an **Allocation requested** amount: the
+money the RIA asked to allocate, as the EW reports it. It is a currency field,
+so it carries its own amount and currency code, which is what a future
+per-EW attribution will need. An explicitly entered `0` is a real answer and
+books; only a missing amount holds the booking in Draft. Nothing defaults or
+back-fills the amount, and a meeting with no EW is never asked for one.
+
+## Company allocations
+
+Every company record carries an **Allocations** section listing one row per
+ticker. A row holds a **Ticker** and an **Amount**, and both are typed directly
+by CRM users — unlike **Booked at** or **Booked by**, nothing in the app writes
+them. Add, edit, and remove rows from the section on the company, or work the
+`companyAllocation` object directly.
+
+**Ticker** is deliberately free text. Real symbols carry dots, hyphens, and
+suffixes (`BRK.B`, `RY-PA.TO`, `7203.T`), and this is a CRM rather than an
+exchange feed, so the app neither rejects nor rewrites what is typed. Nothing
+normalizes case, so `aapl` and `AAPL` stay distinct strings.
+
+Nothing stops two rows carrying the same ticker for one company. That is
+usually a data-entry mistake, but a unique constraint would reject the empty
+row the section's add button creates and would block the transient duplicate a
+correction produces, so duplicates are left visible and correctable instead.
+
+**Amount** is a Twenty currency field, the same composite `opportunity.amount`
+and `company.annualRevenue` use, so it stores `amountMicros` plus a currency
+code, formats and sums like every other money field, and follows the workspace
+currency rather than assuming dollars in the column.
+
+Destroying a company destroys its allocations; an allocation carries no meaning
+once the company it belongs to is gone. Soft-deleting a company leaves them
+alone.
+
 
 ## Outreach activity ownership
 
@@ -247,7 +301,15 @@ meeting-booking totals, activity and outcome breakdowns, an activity leaderboard
 and a meeting-booking leaderboard for the rolling last 24 hours, 7 days (local
 weekend events excluded), or 30 days. Owners come from the records themselves;
 there is no fixed people list. Meeting-only owners appear on the booking
-leaderboard. These three aggregate reports are available without a CRM link only
+leaderboard. Each report ends with an ARR-attributed-per-EW section listing every
+Wholesaler whose `wholesalerRole` reads `EW`, compared case-insensitively and
+trimmed because the value is human-entered; the set is derived from the records,
+not a fixed list. Every figure is `$0` because no ARR source is connected yet,
+and `PLACEHOLDER_ATTRIBUTED_ANNUAL_RECURRING_REVENUE` in
+`report-summary.service.ts` is the single place a real source replaces. When no
+record carries the role the section keeps its heading and says so, so an
+unpopulated field does not read as a missing feature. These three aggregate
+reports are available without a CRM link only
 when `CORGI_CRM_TELEGRAM_PUBLIC_REPORTS_ENABLED` is exactly `true`; Telegram's
 signed webhook, private-chat-or-allowlisted-topic restriction, workspace fence,
 update deduplication, and durable reply delivery still apply. `/help` shows the syntax;

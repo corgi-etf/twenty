@@ -28,6 +28,7 @@ export type WorkspaceMemberPage = {
 export type WholesalerRepository = {
   findByWorkspaceMemberId(memberId: string): Promise<WholesalerRecord[]>;
   findByEmail(email: string): Promise<WholesalerRecord[]>;
+  listWholesalers(): Promise<WholesalerRecord[]>;
   create(
     id: string,
     data: Required<WholesalerWrite>,

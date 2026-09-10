@@ -10,6 +10,7 @@ import {
   readReportSummary,
   type ReportPeriod,
 } from 'src/modules/outreach/services/report-summary.service';
+import { CoreWholesalerRepository } from 'src/modules/wholesaler/onboarding/graphql/core-wholesaler.repository';
 
 type VerificationDependencies = {
   expectedWorkspaceId: string | undefined;
@@ -101,12 +102,17 @@ export const handleReportRuntimeVerification = async (
   }
   const repository = new CoreOutreachRepository(client, rawTransport);
   const meetingRepository = new CoreMeetingBookingReportRepository(rawTransport);
+  const wholesalerRepository = new CoreWholesalerRepository(
+    client,
+    rawTransport,
+  );
   const reports = [];
   for (const period of ['daily', 'weekly', 'monthly'] as const) {
     try {
       const report = await readReportSummary({
         repository,
         meetingRepository,
+        wholesalerRepository,
         period,
         now,
         timeZone: dependencies.timeZone,
@@ -115,7 +121,8 @@ export const handleReportRuntimeVerification = async (
       if (
         lines[0] !== EXPECTED_TITLES[period] ||
         !lines.includes('All CRM owners') ||
-        !lines.includes('🏆 Activity leaderboard')
+        !lines.includes('🏆 Activity leaderboard') ||
+        !lines.includes('💰 ARR attributed per EW')
       ) {
         throw new Error('Report sections are unavailable');
       }
@@ -127,6 +134,7 @@ export const handleReportRuntimeVerification = async (
         windowHours: (end.getTime() - start.getTime()) / 3_600_000,
         allOwners: true,
         activityLeaderboard: true,
+        externalWholesalerRevenue: true,
         weeklyExcludesWeekends: period === 'weekly',
       });
     } catch {

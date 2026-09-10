@@ -22,6 +22,7 @@ const MEETING_BOOKING_STATUS_FUNCTION_ID =
 const MEETING_BOOKED_ALERT_FUNCTION_ID = '4d407d33-c0b2-4f8e-8300-be86c2e3dc7d';
 const MEETING_NOTIFICATION_WORKER_ID = 'fb84094f-d44a-4180-9f50-ff7971f670e6';
 const REPORT_RUNTIME_VERIFICATION_ID = '8d6ea72a-aa6f-4a1c-83a7-ad539819bd47';
+const COMPANY_ALLOCATION_OBJECT_ID = '330842b1-7877-4f25-8ccc-5ad27e852bdd';
 const APPROVED_ORIGIN = 'https://crm.corgiinvest.com';
 const PAGE_SIZE = 100;
 const MAX_PAGES = 100;
@@ -385,10 +386,12 @@ const verifyMeetingBookingSchema = (objects, experience) => {
     scheduledAt: 'DATE_TIME',
     status: 'SELECT',
     bookedAt: 'DATE_TIME',
+    allocationRequested: 'CURRENCY',
     notes: 'RICH_TEXT',
     bookingValidationMessage: 'TEXT',
     company: 'RELATION',
     wholesaler: 'RELATION',
+    externalWholesaler: 'RELATION',
     bookedBy: 'RELATION',
   };
   const fieldByName = new Map();
@@ -409,6 +412,14 @@ const verifyMeetingBookingSchema = (objects, experience) => {
       throw new Error(`meetingBooking.${name} writability is not protected`);
     }
   }
+  // A person fills both of these in by hand, so protecting either would make
+  // the rules that require them impossible to satisfy from the CRM.
+  for (const name of ['externalWholesaler', 'allocationRequested']) {
+    const field = fieldByName.get(name);
+    if (field.writability === 'APPLICATION' || field.isUIEditable === false) {
+      throw new Error(`meetingBooking.${name} is not enterable`);
+    }
+  }
   const statusOptions = parseJsonValue(fieldByName.get('status').options);
   if (
     !Array.isArray(statusOptions) ||
@@ -420,6 +431,7 @@ const verifyMeetingBookingSchema = (objects, experience) => {
   for (const [fieldName, targetName] of [
     ['company', 'company'],
     ['wholesaler', 'wholesaler'],
+    ['externalWholesaler', 'wholesaler'],
     ['bookedBy', 'workspaceMember'],
   ]) {
     if (
@@ -486,6 +498,77 @@ const verifyMeetingBookingSchema = (objects, experience) => {
     )
   ) {
     throw new Error('Meeting record page is invalid');
+  }
+};
+
+const COMPANY_ALLOCATION_FIELDS = {
+  ticker: 'TEXT',
+  amount: 'CURRENCY',
+  company: 'RELATION',
+};
+
+const verifyCompanyAllocationSchema = (objects) => {
+  const object = exactlyOne(
+    objects,
+    (candidate) =>
+      candidate?.nameSingular === 'companyAllocation' &&
+      candidate.isActive === true &&
+      candidate.universalIdentifier === COMPANY_ALLOCATION_OBJECT_ID,
+    'companyAllocation metadata object',
+  );
+  const fields = object.fieldsList ?? [];
+  const fieldByName = new Map();
+  for (const [name, type] of Object.entries(COMPANY_ALLOCATION_FIELDS)) {
+    const field = exactlyOne(
+      fields,
+      (candidate) => candidate?.name === name && candidate.isActive !== false,
+      `companyAllocation.${name} field`,
+    );
+    if (field.type !== type) {
+      throw new Error(`companyAllocation.${name} field has an invalid type`);
+    }
+    fieldByName.set(name, field);
+  }
+  // Wholesalers type both values themselves, so neither may end up locked to
+  // the application the way first-booked meeting evidence deliberately is.
+  for (const name of ['ticker', 'amount']) {
+    const field = fieldByName.get(name);
+    if (
+      field.isUIEditable === false ||
+      field.writability === 'APPLICATION' ||
+      field.writability === 'SYSTEM'
+    ) {
+      throw new Error(
+        `companyAllocation.${name} is not editable by CRM users`,
+      );
+    }
+  }
+  if (
+    fieldByName.get('company').relation?.targetObjectMetadata?.nameSingular !==
+    'company'
+  ) {
+    throw new Error('companyAllocation.company relation is invalid');
+  }
+  // The inverse side is the Allocations section on a company record, so its
+  // absence would leave the object installed but unreachable from a company.
+  const companyObject = exactlyOne(
+    objects,
+    (candidate) =>
+      candidate?.nameSingular === 'company' && candidate.isActive === true,
+    'company metadata object',
+  );
+  const inverse = exactlyOne(
+    companyObject.fieldsList ?? [],
+    (candidate) =>
+      candidate?.name === 'allocations' && candidate.isActive !== false,
+    'company.allocations field',
+  );
+  if (
+    inverse.type !== 'RELATION' ||
+    inverse.relation?.targetObjectMetadata?.nameSingular !==
+      'companyAllocation'
+  ) {
+    throw new Error('company.allocations relation is invalid');
   }
 };
 
@@ -1281,6 +1364,7 @@ const main = async () => {
     workspaceId,
   });
   verifyTelegramPersistenceSchema(metadataObjects);
+  verifyCompanyAllocationSchema(metadataObjects);
   const meetingObject = exactlyOne(
     metadataObjects,
     (candidate) =>
@@ -1339,6 +1423,7 @@ export {
   parseResponse,
   resolveCorgiRoleObjectIdentifiers,
   verifyApplicationRoleContract,
+  verifyCompanyAllocationSchema,
   verifyInstalledApplication,
   verifyMeetingApplicationContract,
   verifyMeetingBookingSchema,

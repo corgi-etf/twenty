@@ -5,6 +5,11 @@ import {
   type MeetingBookingStatus,
 } from 'src/modules/meeting/meeting-identifiers';
 
+export type MeetingBookingAllocation = {
+  amountMicros: number | null;
+  currencyCode: string | null;
+};
+
 export type MeetingBookingRecord = {
   id: string;
   name: string;
@@ -14,6 +19,8 @@ export type MeetingBookingRecord = {
   bookedById: string | null;
   companyId: string | null;
   wholesalerId: string | null;
+  externalWholesalerId: string | null;
+  allocationRequested: MeetingBookingAllocation | null;
   bookingValidationMessage: string | null;
   updatedAt: string;
 };
@@ -34,12 +41,35 @@ const selection = {
   bookedById: true,
   companyId: true,
   wholesalerId: true,
+  externalWholesalerId: true,
+  allocationRequested: { amountMicros: true, currencyCode: true },
   bookingValidationMessage: true,
   updatedAt: true,
 };
 
 const isNullableString = (value: unknown): value is string | null =>
   value === null || typeof value === 'string';
+
+// Currency arrives as a composite whose amount crosses the wire through a
+// BigFloat scalar. Read whatever shape it takes without ever rejecting the
+// record over it: a booking must stay readable even if this one field is
+// unrecognisable, and an unreadable amount simply counts as no amount.
+const parseAllocation = (value: unknown): MeetingBookingAllocation | null => {
+  if (!value || typeof value !== 'object') return null;
+  const candidate = value as Record<string, unknown>;
+  const rawAmount = candidate.amountMicros;
+  const amount =
+    typeof rawAmount === 'number'
+      ? rawAmount
+      : typeof rawAmount === 'string' && rawAmount.trim().length > 0
+        ? Number(rawAmount)
+        : Number.NaN;
+  return {
+    amountMicros: Number.isFinite(amount) ? amount : null,
+    currencyCode:
+      typeof candidate.currencyCode === 'string' ? candidate.currencyCode : null,
+  };
+};
 
 const isMeetingBookingStatus = (
   value: unknown,
@@ -61,12 +91,16 @@ const parseMeetingBooking = (value: unknown): MeetingBookingRecord | null => {
     !isNullableString(candidate.bookedById) ||
     !isNullableString(candidate.companyId) ||
     !isNullableString(candidate.wholesalerId) ||
+    !isNullableString(candidate.externalWholesalerId) ||
     !isNullableString(candidate.bookingValidationMessage) ||
     typeof candidate.updatedAt !== 'string'
   ) {
     return null;
   }
-  return candidate as MeetingBookingRecord;
+  return {
+    ...(candidate as MeetingBookingRecord),
+    allocationRequested: parseAllocation(candidate.allocationRequested),
+  };
 };
 
 const nodesFrom = (result: Record<string, unknown>): unknown[] => {
