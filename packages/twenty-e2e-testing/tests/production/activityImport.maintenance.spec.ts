@@ -75,6 +75,21 @@ test('runs a guarded, idempotent outreach activity import', async ({
   if (mode !== 'dry-run' && mode !== 'apply') {
     throw new Error('CRM_ACTIVITY_IMPORT_MODE must be dry-run or apply');
   }
+  const sourceFormat = requiredEnvironment('CRM_ACTIVITY_IMPORT_SOURCE_FORMAT');
+  if (
+    sourceFormat !== 'legacy-nash-outreach-v1' &&
+    sourceFormat !== 'completed-actions-v2'
+  ) {
+    throw new Error('CRM_ACTIVITY_IMPORT_SOURCE_FORMAT is invalid');
+  }
+  const ownerLabel = requiredEnvironment('CRM_ACTIVITY_IMPORT_OWNER_LABEL');
+  if (
+    ownerLabel !== 'Grace' &&
+    ownerLabel !== 'Kelly' &&
+    ownerLabel !== 'Nash'
+  ) {
+    throw new Error('CRM_ACTIVITY_IMPORT_OWNER_LABEL is invalid');
+  }
   const paths = await preflightActivityImportArtifacts({
     runnerTemp: requiredEnvironment('RUNNER_TEMP'),
     sourcePath: requiredEnvironment('CRM_ACTIVITY_IMPORT_SOURCE_PATH'),
@@ -101,7 +116,15 @@ test('runs a guarded, idempotent outreach activity import', async ({
     {
       source,
       csvOptions: {
+        sourceFormat,
+        ownerLabel,
         sourceSha256: requiredEnvironment('CRM_ACTIVITY_IMPORT_SOURCE_SHA256'),
+        provenanceSha256: requiredEnvironment(
+          'CRM_ACTIVITY_IMPORT_PROVENANCE_SHA256',
+        ),
+        expectedRowSequenceSha256:
+          process.env.CRM_ACTIVITY_IMPORT_EXPECTED_ROW_SEQUENCE_SHA256 ||
+          undefined,
         expectedRows: Number(
           requiredEnvironment('CRM_ACTIVITY_IMPORT_EXPECTED_ROWS'),
         ),

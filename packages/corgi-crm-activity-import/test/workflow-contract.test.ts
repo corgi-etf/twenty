@@ -33,6 +33,12 @@ test('workflow is exact-SHA, serialized, two-phase, and secret-backed', async ()
   assert.match(workflow, /IMPORT_CRM_OUTREACH_ACTIVITIES/);
   assert.match(workflow, /CRM_ACTIVITY_IMPORT_CSV_BASE64/);
   assert.match(workflow, /base64 --decode/);
+  assert.match(workflow, /source_format:/);
+  assert.match(workflow, /legacy-nash-outreach-v1/);
+  assert.match(workflow, /completed-actions-v2/);
+  assert.match(workflow, /owner_label:/);
+  assert.match(workflow, /provenance_sha256:/);
+  assert.match(workflow, /expected_row_sequence_sha256:/);
   assert.match(workflow, /source_sha256:/);
   assert.match(workflow, /expected_rows:/);
   assert.match(workflow, /activity_date:/);
@@ -45,9 +51,13 @@ test('workflow is exact-SHA, serialized, two-phase, and secret-backed', async ()
     /d0c00183b467ef4a8e03c7307edf9af28fadbe6eddaadb1b1e30ee3c3438051f/,
   );
   assert.doesNotMatch(workflow, /Nash - Calls|Sheet1\.csv|expected_rows:\s*63/);
+  assert.doesNotMatch(
+    workflow,
+    /8df6f973c386ce05ffc4059fb78072f392f3c56e6330620fe6b2fc5c59c1cf74|expected_rows:\s*(25|36)/,
+  );
 });
 
-test('Nash ownership comes only from authenticated identity-discovery evidence', async () => {
+test('ownership is explicit, authenticated, and legacy Nash remains fail-closed', async () => {
   const [workflow, maintenanceSpec, importer] = await Promise.all([
     readFile(workflowPath, 'utf8'),
     readFile(maintenanceSpecPath, 'utf8'),
@@ -62,7 +72,12 @@ test('Nash ownership comes only from authenticated identity-discovery evidence',
   assert.match(workflow, /\.head_sha == \$sha/);
   assert.match(workflow, /\.digest[\s\S]*?sha256:/);
   assert.match(maintenanceSpec, /assertTerritoryIdentityArtifact/);
-  assert.match(importer, /identityArtifact\.workspaceMemberIds\.Nash/);
+  assert.match(
+    importer,
+    /identityArtifact\.workspaceMemberIds\[input\.csvOptions\.ownerLabel\]/,
+  );
+  assert.match(importer, /legacy source owner must be Nash/);
+  assert.match(maintenanceSpec, /CRM_ACTIVITY_IMPORT_OWNER_LABEL/);
   assert.doesNotMatch(
     `${workflow}\n${maintenanceSpec}\n${importer}`,
     /NASH_WORKSPACE_MEMBER_ID|nashWorkspaceMemberId:\s*['"][0-9a-f-]+/,
@@ -80,6 +95,7 @@ test('runtime is create-only, collision-checked, and uploads no source PII', asy
   assert.match(importer, /must match exactly one company/);
   assert.match(importer, /deterministic activity ID collision/);
   assert.match(importer, /activityType: 'call'/);
+  assert.match(importer, /activityType: row\.activityType/);
   assert.match(importer, /contactId: record\.contactId \?\? null/);
   assert.match(importer, /outcome: record\.outcome \?\? null/);
   assert.match(restApi, /restUrl\('outreachActivities'\)/);
@@ -105,6 +121,7 @@ test('runtime is create-only, collision-checked, and uploads no source PII', asy
   );
   assert.match(upload, /activity-import-checkpoint\.json/);
   assert.match(upload, /activity-import-result\.json/);
+  assert.doesNotMatch(workflow, /PDF_BASE64|source\.pdf|unchecked/);
 });
 
 test('package is a locked root workspace for immutable installs', async () => {
