@@ -18,11 +18,18 @@ const meeting: MeetingBookingRecord = {
   companyId: '22222222-2222-4222-8222-222222222222',
   wholesalerId: '33333333-3333-4333-8333-333333333333',
   externalWholesalerId: null,
+  allocationRequested: null,
   bookingValidationMessage: null,
   updatedAt: '2026-09-10T13:14:59.000Z',
 };
 
 const EXTERNAL_WHOLESALER_ID = '55555555-5555-4555-8555-555555555555';
+
+const attributedMeeting = {
+  ...meeting,
+  externalWholesalerId: EXTERNAL_WHOLESALER_ID,
+  allocationRequested: { amountMicros: 2_500_000, currencyCode: 'USD' },
+};
 
 const repository = (
   record: MeetingBookingRecord = meeting,
@@ -203,10 +210,7 @@ describe('reconcileMeetingBooking', () => {
   );
 
   it('books a BDR meeting that names an EW without reading the owner', async () => {
-    const repo = repository({
-      ...meeting,
-      externalWholesalerId: EXTERNAL_WHOLESALER_ID,
-    });
+    const repo = repository(attributedMeeting);
     const owners = ownerRepository('BDR');
 
     await expect(
@@ -261,6 +265,103 @@ describe('reconcileMeetingBooking', () => {
       }),
     ).resolves.toEqual({ status: 'booked', meetingId: meeting.id });
     expect(repo.rejectInvalidBooking).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['no allocation at all', null],
+    ['an empty allocation', { amountMicros: null, currencyCode: null }],
+    ['a currency with no amount', { amountMicros: null, currencyCode: 'USD' }],
+  ])('keeps a meeting attributed to an EW in DRAFT with %s', async (_label, allocationRequested) => {
+    const repo = repository({
+      ...attributedMeeting,
+      allocationRequested,
+    });
+    const owners = ownerRepository();
+
+    await expect(
+      reconcileMeetingBooking({
+        meetingId: meeting.id,
+        eventOccurredAt: '2026-09-10T13:15:00.000Z',
+        actorWorkspaceMemberId: null,
+        repository: repo,
+        ownerRepository: owners,
+      }),
+    ).resolves.toEqual({
+      status: 'invalid',
+      meetingId: meeting.id,
+      message: 'Set allocation requested before booking.',
+    });
+    expect(repo.stampBooked).not.toHaveBeenCalled();
+    // The amount is on the record itself, so no owner role read is needed.
+    expect(owners.findById).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['a positive amount', { amountMicros: 2_500_000, currencyCode: 'USD' }],
+    ['an explicit zero', { amountMicros: 0, currencyCode: 'USD' }],
+    ['an amount with no currency code', { amountMicros: 750_000, currencyCode: null }],
+  ])('books a meeting attributed to an EW that lists %s', async (_label, allocationRequested) => {
+    const repo = repository({ ...attributedMeeting, allocationRequested });
+
+    await expect(
+      reconcileMeetingBooking({
+        meetingId: meeting.id,
+        eventOccurredAt: '2026-09-10T13:15:00.000Z',
+        actorWorkspaceMemberId: null,
+        repository: repo,
+        ownerRepository: ownerRepository(),
+      }),
+    ).resolves.toEqual({ status: 'booked', meetingId: meeting.id });
+    expect(repo.rejectInvalidBooking).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [
+      'the legacy default role',
+      DEFAULT_WHOLESALER_ROLE,
+      { status: 'booked', meetingId: meeting.id },
+    ],
+    [
+      'a BDR role',
+      'BDR',
+      {
+        status: 'invalid',
+        meetingId: meeting.id,
+        message: 'Set EW before booking.',
+      },
+    ],
+  ])('never asks for an allocation on a meeting with no EW, owned by %s', async (_label, role, expected) => {
+    await expect(
+      reconcileMeetingBooking({
+        meetingId: meeting.id,
+        eventOccurredAt: '2026-09-10T13:15:00.000Z',
+        actorWorkspaceMemberId: null,
+        repository: repository({ ...meeting, allocationRequested: null }),
+        ownerRepository: ownerRepository(role),
+      }),
+    ).resolves.toEqual(expected);
+  });
+
+  it('names every missing field, including the allocation, in one message', async () => {
+    const repo = repository({
+      ...attributedMeeting,
+      name: ' ',
+      allocationRequested: null,
+    });
+
+    await expect(
+      reconcileMeetingBooking({
+        meetingId: meeting.id,
+        eventOccurredAt: '2026-09-10T13:15:00.000Z',
+        actorWorkspaceMemberId: null,
+        repository: repo,
+        ownerRepository: ownerRepository(),
+      }),
+    ).resolves.toEqual({
+      status: 'invalid',
+      meetingId: meeting.id,
+      message: 'Set meeting title, allocation requested before booking.',
+    });
   });
 
   it('books an EW-less meeting when the owner record cannot be found', async () => {

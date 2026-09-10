@@ -47,6 +47,16 @@ const missingBookingFields = (record: MeetingBookingRecord): string[] => {
   ) {
     missing.push('scheduled date and time');
   }
+  // The EW named on a meeting is the one who reports what the RIA asked to
+  // allocate, so an attributed meeting is incomplete until that amount is
+  // there. An explicitly entered 0 is an answer; only an absent one is not,
+  // and a meeting with no EW is never asked for it.
+  if (
+    isRelationSelected(record.externalWholesalerId) &&
+    typeof record.allocationRequested?.amountMicros !== 'number'
+  ) {
+    missing.push('allocation requested');
+  }
   return missing;
 };
 
