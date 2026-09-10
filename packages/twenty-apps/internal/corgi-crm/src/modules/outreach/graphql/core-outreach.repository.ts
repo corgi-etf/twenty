@@ -4,6 +4,8 @@ import { type RawCoreGraphqlTransport } from 'src/modules/core/graphql/raw-core-
 import {
   type NamedRecord,
   type OutreachActivity,
+  type OutreachActivityOwner,
+  type OutreachActivityOwnerRepository,
   type OutreachActivityWrite,
   type OutreachRepository,
 } from 'src/modules/outreach/types';
@@ -44,6 +46,40 @@ const CREATE_OUTREACH_ACTIVITY_DOCUMENT = `
   mutation CreateOutreachActivity($data: OutreachActivityCreateInput!) {
     createOutreachActivity(data: $data) {
       id
+    }
+  }
+`;
+
+const FIND_OUTREACH_ACTIVITY_OWNER_DOCUMENT = `
+  query FindOutreachActivityOwner(
+    $filter: OutreachActivityFilterInput
+    $first: Int!
+  ) {
+    outreachActivities(filter: $filter, first: $first) {
+      edges {
+        node {
+          id
+          wholesalerId
+        }
+      }
+      pageInfo {
+        hasNextPage
+        endCursor
+      }
+    }
+  }
+`;
+
+// The NULL owner is part of the filter, not just a precondition read, so the
+// server refuses the write outright once anyone has picked a wholesaler.
+const ASSIGN_OUTREACH_ACTIVITY_OWNER_DOCUMENT = `
+  mutation AssignOutreachActivityOwner(
+    $filter: OutreachActivityFilterInput!
+    $data: OutreachActivityUpdateInput!
+  ) {
+    updateOutreachActivities(filter: $filter, data: $data) {
+      id
+      wholesalerId
     }
   }
 `;
@@ -117,6 +153,16 @@ type CreateOutreachActivityResponse = {
   createOutreachActivity?: unknown;
 };
 
+type UpdateOutreachActivitiesResponse = {
+  updateOutreachActivities?: unknown;
+};
+
+type OutreachActivityOwnerFilter = {
+  and: Array<
+    { id: { eq: string } } | { wholesalerId: { is: 'NULL' } }
+  >;
+};
+
 // Rows whose occurredAt is NULL fail every gte/lt comparison, so a bare
 // occurredAt window silently drops them. Widen the server-side filter to an OR
 // across occurredAt and createdAt -- a deliberate superset. The authoritative
@@ -165,6 +211,24 @@ const parseActivityConnection = (value: unknown): ActivityConnection => {
   };
 };
 
+const parseActivityOwner = (value: unknown): OutreachActivityOwner => {
+  if (
+    !isRecord(value) ||
+    typeof value.id !== 'string' ||
+    !value.id.trim() ||
+    !(
+      value.wholesalerId === null ||
+      value.wholesalerId === undefined ||
+      typeof value.wholesalerId === 'string'
+    )
+  ) {
+    throw new Error('Outreach activity owner response was malformed');
+  }
+  const wholesalerId =
+    typeof value.wholesalerId === 'string' ? value.wholesalerId.trim() : '';
+  return { id: value.id, wholesalerId: wholesalerId || null };
+};
+
 const fullName = (
   name:
     { firstName?: string | null; lastName?: string | null } | null | undefined,
@@ -174,7 +238,9 @@ const fullName = (
     .filter(Boolean)
     .join(' ');
 
-export class CoreOutreachRepository implements OutreachRepository {
+export class CoreOutreachRepository
+  implements OutreachRepository, OutreachActivityOwnerRepository
+{
   public constructor(
     private readonly client: CoreApiClient,
     private readonly rawTransport: RawCoreGraphqlTransport,
@@ -282,6 +348,69 @@ export class CoreOutreachRepository implements OutreachRepository {
       if (concurrent) return this.assertSameActivity(concurrent, data);
       throw error;
     }
+  }
+
+  public async getActivityOwner(
+    id: string,
+  ): Promise<OutreachActivityOwner | null> {
+    const result = await this.rawTransport.request<
+      OutreachActivitiesResponse,
+      { filter: { id: { eq: string } }; first: number }
+    >({
+      operationName: 'FindOutreachActivityOwner',
+      document: FIND_OUTREACH_ACTIVITY_OWNER_DOCUMENT,
+      variables: { filter: { id: { eq: id } }, first: 2 },
+    });
+    const nodes = parseActivityConnection(result.outreachActivities).edges.map(
+      (edge) => parseActivityOwner(edge?.node),
+    );
+    if (nodes.length > 1) {
+      throw new Error(`Duplicate outreach activity ID ${id}`);
+    }
+    const owner = nodes[0];
+    if (owner && owner.id !== id) {
+      throw new Error('Outreach activity owner query returned another record');
+    }
+    return owner ?? null;
+  }
+
+  public async assignUnassignedActivityOwner({
+    id,
+    wholesalerId,
+  }: {
+    id: string;
+    wholesalerId: string;
+  }): Promise<boolean> {
+    try {
+      const result = await this.rawTransport.request<
+        UpdateOutreachActivitiesResponse,
+        {
+          filter: OutreachActivityOwnerFilter;
+          data: { wholesalerId: string };
+        }
+      >({
+        operationName: 'AssignOutreachActivityOwner',
+        document: ASSIGN_OUTREACH_ACTIVITY_OWNER_DOCUMENT,
+        variables: {
+          filter: {
+            and: [{ id: { eq: id } }, { wholesalerId: { is: 'NULL' } }],
+          },
+          data: { wholesalerId },
+        },
+      });
+      const rows = result.updateOutreachActivities;
+      if (Array.isArray(rows) && rows.length === 1) {
+        const updated = parseActivityOwner(rows[0]);
+        if (updated.id === id && updated.wholesalerId === wholesalerId) {
+          return true;
+        }
+      }
+    } catch {
+      // A committed mutation can still lose its response. Exact readback is the
+      // only safe way to tell that apart from a competing owner selection.
+    }
+    const persisted = await this.getActivityOwner(id);
+    return persisted?.wholesalerId === wholesalerId;
   }
 
   private async findActivityWrite(
