@@ -494,7 +494,7 @@ jobs:
         run: >-
           npx nx test:production twenty-e2e-testing --
           tests/production/meetingBooking.maintenance.spec.ts
-          --project=production-chromium --no-deps --retries=0
+          --project=production-chromium --no-deps --retries=0 --reporter=line
 
       - name: Register and verify the live Telegram provider
         if: inputs.telegram_enable

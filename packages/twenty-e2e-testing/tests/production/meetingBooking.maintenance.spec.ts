@@ -42,7 +42,13 @@ test.skip(
   'Meeting creation is available only through the protected app-install workflow.',
 );
 test.describe.configure({ retries: 0 });
-test.use({ screenshot: 'off', trace: 'off', video: 'off', timezoneId: 'UTC' });
+test.use({
+  screenshot: 'off',
+  trace: 'off',
+  video: 'off',
+  timezoneId: 'UTC',
+  actionTimeout: 15_000,
+});
 
 test.beforeAll(async () => {
   expect(requiredEnvironment('CRM_MEETING_CANARY_ENABLED')).toBe('true');
@@ -337,13 +343,26 @@ test('books and reschedules a native CRM meeting while Telegram is disabled', as
     record: ExistingRecord,
   ) => {
     await openField(fieldName);
-    await page.getByRole('combobox').fill(record.name);
-    await page
-      .getByTestId('menu-item')
-      .filter({
-        has: page.getByText(record.name, { exact: true }),
-      })
-      .click();
+    step = `${fieldName}: relation search`;
+    const relationDropdown = page
+      .locator('[data-select-disable="false"]:visible')
+      .filter({ has: page.getByPlaceholder('Search', { exact: true }) });
+    locatorCounts.relationDropdowns = await relationDropdown.count();
+    await expect(relationDropdown).toHaveCount(1);
+    const search = relationDropdown.getByPlaceholder('Search', { exact: true });
+    locatorCounts.relationSearchInputs = await search.count();
+    await expect(search).toHaveCount(1);
+    await expect(search).toBeVisible();
+    await search.fill(record.name);
+    step = `${fieldName}: relation choice`;
+    const choice = relationDropdown.getByTestId('menu-item').filter({
+      has: page.getByText(record.name, { exact: true }),
+    });
+    locatorCounts.relationChoices = await choice.count();
+    await expect(choice).toHaveCount(1);
+    await expect(choice).toBeVisible();
+    await choice.click();
+    step = `${fieldName}: relation persistence`;
     await expect
       .poll(async () => {
         const meeting = await readMeeting();
