@@ -20,6 +20,7 @@ import {
 import { parseTelegramLogCommand } from 'src/modules/telegram/services/parse-telegram-log-command.service';
 import { splitTelegramMessage } from 'src/modules/telegram/services/split-telegram-message.service';
 import { getTelegramActivityId } from 'src/modules/telegram/services/telegram-identifiers.service';
+import { readTelegramReportSnapshot } from 'src/modules/telegram/services/telegram-report-snapshot.service';
 
 const HELP = [
   'Corgi CRM outreach bot',
@@ -120,11 +121,16 @@ export const processTelegramCommand = async (
         : command === '/weekly'
           ? 'weekly'
           : 'monthly';
-    const text = await readReportSummary({
-      repository: dependencies.repository,
-      period,
-      now: dependencies.now(),
-      timeZone: dependencies.timeZone,
+    const text = await readTelegramReportSnapshot({
+      key: `interactive:${update.updateId}:${command}`,
+      store: dependencies.store,
+      read: () =>
+        readReportSummary({
+          repository: dependencies.repository,
+          period,
+          now: dependencies.now(),
+          timeZone: dependencies.timeZone,
+        }),
     });
     await sendParts(dependencies.send, update.chatId, text);
     return { status: 'report', period } as const;
@@ -191,23 +197,26 @@ export const processTelegramCommand = async (
     command === '/summary' ||
     update.text === 'today'
   ) {
-    const window = getZonedDayWindow({
-      now: dependencies.now(),
-      timeZone: dependencies.timeZone,
+    const text = await readTelegramReportSnapshot({
+      key: `interactive:${update.updateId}:${command}`,
+      store: dependencies.store,
+      read: async () => {
+        const window = getZonedDayWindow({
+          now: dependencies.now(),
+          timeZone: dependencies.timeZone,
+        });
+        const activities = await dependencies.repository.listActivities({
+          start: window.start.toISOString(),
+          end: window.end.toISOString(),
+          wholesalerId: link.wholesalerId,
+        });
+        const summary = buildDailySummaries(activities, window.localDate)[0];
+        return summary
+          ? formatDailySummary(summary)
+          : formatEmptyDailySummary(link.wholesalerName, window.localDate);
+      },
     });
-    const activities = await dependencies.repository.listActivities({
-      start: window.start.toISOString(),
-      end: window.end.toISOString(),
-      wholesalerId: link.wholesalerId,
-    });
-    const summary = buildDailySummaries(activities, window.localDate)[0];
-    await sendParts(
-      dependencies.send,
-      update.chatId,
-      summary
-        ? formatDailySummary(summary)
-        : formatEmptyDailySummary(link.wholesalerName, window.localDate),
-    );
+    await sendParts(dependencies.send, update.chatId, text);
     return { status: 'summary' } as const;
   }
 

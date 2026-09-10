@@ -1,10 +1,15 @@
 import { CoreApiClient } from 'twenty-client-sdk/core';
 import { defineLogicFunction } from 'twenty-sdk/define';
-import { kv, type LogicFunctionExecutionContext } from 'twenty-sdk/logic-function';
+import {
+  kv,
+  type LogicFunctionExecutionContext,
+} from 'twenty-sdk/logic-function';
 
 import { TELEGRAM_DAILY_SUMMARY_WORKER_UNIVERSAL_IDENTIFIER } from 'src/constants';
 import { CoreOutreachRepository } from 'src/modules/outreach/graphql/core-outreach.repository';
 import { readReportSummary } from 'src/modules/outreach/services/report-summary.service';
+import { readTelegramReportSnapshot } from 'src/modules/telegram/services/telegram-report-snapshot.service';
+import { type KeyValueStore } from 'src/modules/telegram/types';
 import { type OutreachRepository } from 'src/modules/outreach/types';
 import { type DailySummaryJobPayload } from 'src/modules/telegram/services/daily-summary-cron.service';
 import { TelegramClient } from 'src/modules/telegram/services/telegram-client.service';
@@ -68,16 +73,25 @@ export const readScheduledDailyReport = ({
   repository,
   scheduledInstant,
   timeZone,
+  store,
+  workspaceMemberId,
 }: {
   repository: OutreachRepository;
   scheduledInstant: string;
   timeZone: string;
+  store: KeyValueStore;
+  workspaceMemberId: string;
 }) =>
-  readReportSummary({
-    repository,
-    period: 'daily',
-    now: new Date(scheduledInstant),
-    timeZone,
+  readTelegramReportSnapshot({
+    key: `scheduled:${workspaceMemberId}:${scheduledInstant}:${timeZone}`,
+    store,
+    read: () =>
+      readReportSummary({
+        repository,
+        period: 'daily',
+        now: new Date(scheduledInstant),
+        timeZone,
+      }),
   });
 
 export const handleTelegramDailySummaryJob = async (
@@ -98,8 +112,7 @@ const processDailySummaryJob = async (rawPayload: unknown) => {
     process.env.CORGI_CRM_TELEGRAM_LINK_CODES,
   );
   const binding = bindings.find(
-    ({ workspaceMemberId }) =>
-      workspaceMemberId === payload.workspaceMemberId,
+    ({ workspaceMemberId }) => workspaceMemberId === payload.workspaceMemberId,
   );
   if (!binding) return { status: 'unlinked' } as const;
 
@@ -131,6 +144,8 @@ const processDailySummaryJob = async (rawPayload: unknown) => {
   const text = await readScheduledDailyReport({
     repository,
     scheduledInstant: payload.scheduledInstant,
+    store: kv,
+    workspaceMemberId: payload.workspaceMemberId,
     timeZone: requiredEnvironment('CORGI_CRM_TELEGRAM_TIME_ZONE'),
   });
   const telegram = new TelegramClient({

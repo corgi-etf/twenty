@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { processTelegramCommand } from 'src/modules/telegram/services/telegram-command.service';
 import { getTelegramActivityId } from 'src/modules/telegram/services/telegram-identifiers.service';
 import { type OutreachRepository } from 'src/modules/outreach/types';
+import { TelegramDeliveryError } from 'src/modules/telegram/services/telegram-client.service';
 
 const base = () => {
   const values = new Map<string, unknown>();
@@ -63,6 +64,25 @@ const update = (text: string) => ({
 });
 
 describe('processTelegramCommand', () => {
+  it('reuses the original report after safe rejection even when CRM data changes', async () => {
+    const dependencies = base();
+    dependencies.send.mockRejectedValueOnce(
+      new TelegramDeliveryError('rate limit', false),
+    );
+    await expect(
+      processTelegramCommand(update('/daily'), dependencies),
+    ).rejects.toThrow('rate limit');
+    const original = dependencies.send.mock.calls[0]?.[1];
+    dependencies.repository.listActivities = vi
+      .fn()
+      .mockRejectedValue(new Error('must not requery'));
+    await expect(
+      processTelegramCommand(update('/daily'), dependencies),
+    ).resolves.toMatchObject({ status: 'report' });
+    expect(dependencies.send.mock.calls[1]?.[1]).toBe(original);
+    expect(dependencies.repository.listActivities).not.toHaveBeenCalled();
+  });
+
   it.each([
     ['/daily', 'daily', '2026-09-08T16:30:00.000Z', 'Daily outreach report'],
     [
