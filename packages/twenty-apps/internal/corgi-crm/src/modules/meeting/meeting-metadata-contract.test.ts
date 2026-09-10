@@ -29,6 +29,12 @@ const { default: wholesalerOnMeetingBooking } = await import(
 const { default: meetingsOnWholesaler } = await import(
   'src/fields/meeting-bookings-on-wholesaler.field'
 );
+const { default: externalWholesalerOnMeetingBooking } = await import(
+  'src/fields/external-wholesaler-on-meeting-booking.field'
+);
+const { default: meetingsAttributedOnWholesaler } = await import(
+  'src/fields/meeting-bookings-attributed-on-wholesaler.field'
+);
 const { default: bookedByOnMeetingBooking } = await import(
   'src/fields/booked-by-on-meeting-booking.field'
 );
@@ -127,6 +133,40 @@ describe('Meeting booking metadata', () => {
     );
   });
 
+  it('lets a booker choose the EW a meeting is attributed to', () => {
+    expect(externalWholesalerOnMeetingBooking.success).toBe(true);
+    expect(externalWholesalerOnMeetingBooking.config).toMatchObject({
+      name: 'externalWholesaler',
+      label: 'EW / external wholesaler',
+      isNullable: true,
+      objectUniversalIdentifier:
+        identifiers.MEETING_BOOKING_OBJECT_UNIVERSAL_IDENTIFIER,
+      relationTargetObjectMetadataUniversalIdentifier: WHOLESALER_OBJECT_ID,
+      relationTargetFieldMetadataUniversalIdentifier:
+        identifiers.MEETING_BOOKINGS_ATTRIBUTED_ON_WHOLESALER_FIELD_UNIVERSAL_IDENTIFIER,
+      universalSettings: { joinColumnName: 'externalWholesalerId' },
+    });
+    // The EW is a human choice, so it must not inherit the application-owned
+    // protection the booking evidence fields carry.
+    expect(externalWholesalerOnMeetingBooking.config.isUIEditable).not.toBe(
+      false,
+    );
+    expect(externalWholesalerOnMeetingBooking.config.writability).not.toBe(
+      MetadataWritability.APPLICATION,
+    );
+    expect(externalWholesalerOnMeetingBooking.config.universalIdentifier).not.toBe(
+      identifiers.WHOLESALER_ON_MEETING_BOOKING_FIELD_UNIVERSAL_IDENTIFIER,
+    );
+    expect(meetingsAttributedOnWholesaler.config).toMatchObject({
+      name: 'attributedMeetings',
+      objectUniversalIdentifier: WHOLESALER_OBJECT_ID,
+      relationTargetObjectMetadataUniversalIdentifier:
+        identifiers.MEETING_BOOKING_OBJECT_UNIVERSAL_IDENTIFIER,
+      relationTargetFieldMetadataUniversalIdentifier:
+        identifiers.EXTERNAL_WHOLESALER_ON_MEETING_BOOKING_FIELD_UNIVERSAL_IDENTIFIER,
+    });
+  });
+
   it('provides native table, calendar, and record fields experiences', () => {
     expect(allMeetingsView.config).toMatchObject({
       objectUniversalIdentifier:
@@ -151,6 +191,21 @@ describe('Meeting booking metadata', () => {
           identifiers.MEETING_BOOKING_VALIDATION_MESSAGE_FIELD_UNIVERSAL_IDENTIFIER,
       ),
     ).toBe(true);
+    for (const view of [allMeetingsView, meetingRecordFieldsView]) {
+      expect(
+        (view.config.fields ?? []).some(
+          (viewField) =>
+            viewField.fieldMetadataUniversalIdentifier ===
+            identifiers.EXTERNAL_WHOLESALER_ON_MEETING_BOOKING_FIELD_UNIVERSAL_IDENTIFIER,
+        ),
+      ).toBe(true);
+    }
+    for (const view of [allMeetingsView, meetingRecordFieldsView]) {
+      const positions = (view.config.fields ?? []).map(
+        (viewField) => viewField.position,
+      );
+      expect(new Set(positions).size).toBe(positions.length);
+    }
     expect(meetingRecordPage.success).toBe(true);
     expect(meetingRecordPage.config).toMatchObject({
       type: 'RECORD_PAGE',
