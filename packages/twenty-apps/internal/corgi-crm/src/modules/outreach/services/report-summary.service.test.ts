@@ -407,8 +407,8 @@ describe('outreach report summaries', () => {
     expect(text).toContain(
       'No ARR source is connected yet, so every figure reads $0.',
     );
-    expect(text).toContain('• Alex: $0');
-    expect(text).toContain('• Casey: $0');
+    expect(text).toContain('1. Alex: $0');
+    expect(text).toContain('2. Casey: $0');
     for (const excluded of ['Sam', 'Robin', 'Kim'])
       expect(text).not.toContain(excluded);
   });
@@ -520,10 +520,18 @@ describe('outreach report summaries', () => {
     expect(withRoles.total).toBe(withoutRoles.total);
     expect(withRoles.totalMeetingsSet).toBe(withoutRoles.totalMeetingsSet);
     expect(withRoles.leaderboard).toEqual(withoutRoles.leaderboard);
-    const leaderboardLines = (summary: typeof withRoles) =>
-      formatReportSummary(summary)
-        .split('\n')
+    // Scoped to the leaderboard's own block: the EW list is ranked too, so a
+    // global "starts with a rank" match would sweep it in and this assertion
+    // would stop being about per-person counts at all.
+    const leaderboardLines = (summary: typeof withRoles) => {
+      const lines = formatReportSummary(summary).split('\n');
+      const start = lines.indexOf('🏆 Activity leaderboard') + 1;
+      const end = lines.indexOf('', start);
+
+      return lines
+        .slice(start, end === -1 ? undefined : end)
         .filter((line) => /^[🥇🥈🥉]|^\d+\./u.test(line));
+    };
     expect(leaderboardLines(withRoles)).toEqual(leaderboardLines(withoutRoles));
     expect(leaderboardLines(withRoles)).toEqual([
       '🥇 Alex: 1 activity · 1 meeting set',
@@ -560,7 +568,7 @@ describe('outreach report summaries', () => {
       'owner-jordan',
       'owner-booker',
     ]);
-    expect(text).toContain('• Jordan: $0');
+    expect(text).toContain('1. Jordan: $0');
   });
 
   it('never reads roles when the period returned nobody', async () => {
@@ -664,7 +672,7 @@ describe('outreach report summaries', () => {
       [
         '💰 ARR attributed per EW',
         'No ARR source is connected yet, so every figure reads $0.',
-        '• Alex: $0',
+        '1. Alex: $0',
         'Total ARR: $0',
       ],
     ],

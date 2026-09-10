@@ -329,11 +329,21 @@ const formatExternalWholesalerRevenue = (
       running + attributedAnnualRecurringRevenue,
     0,
   );
+  // Ranked by ARR, then by name so the order is stable while every figure is
+  // the same placeholder zero -- otherwise the list would reshuffle between
+  // reports for no reason the reader can see.
+  const ranked = [...section.wholesalers].sort(
+    (left, right) =>
+      right.attributedAnnualRecurringRevenue -
+        left.attributedAnnualRecurringRevenue ||
+      left.name.localeCompare(right.name),
+  );
+
   return [
     EXTERNAL_WHOLESALER_REVENUE_ZERO_NOTE,
-    ...section.wholesalers.map(
-      ({ name, attributedAnnualRecurringRevenue }) =>
-        `\u2022 ${name}: ${money.format(attributedAnnualRecurringRevenue)}`,
+    ...ranked.map(
+      ({ name, attributedAnnualRecurringRevenue }, index) =>
+        `${index + 1}. ${name}: ${money.format(attributedAnnualRecurringRevenue)}`,
     ),
     `Total ARR: ${money.format(total)}`,
   ];

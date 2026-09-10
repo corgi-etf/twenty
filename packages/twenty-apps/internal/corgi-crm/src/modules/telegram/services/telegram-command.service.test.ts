@@ -291,7 +291,7 @@ describe('processTelegramCommand', () => {
       '11111111-1111-4111-8111-111111111111',
     ]);
     expect(message).toContain('\u{1f4b0} ARR attributed per EW');
-    expect(message).toContain('\u2022 Jordan: $0');
+    expect(message).toContain('1. Jordan: $0');
     expect(message).not.toContain('Sam');
   });
 
