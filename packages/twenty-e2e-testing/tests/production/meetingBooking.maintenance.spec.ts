@@ -8,7 +8,16 @@ import { assertWorkspaceConfigTenant } from '../../../corgi-crm-workspace-config
 import {
   MEETING_CANARY_ACTOR_IDENTITY_QUERY,
   MEETING_CANARY_MEMBERS_QUERY,
+  createMeetingCanaryReceipt,
+  meetingCanaryFailureCategory,
+  meetingCanaryGraphqlFailure,
+  meetingCanaryRecords,
+  MeetingCanaryCheckError,
+  type MeetingCanaryRecord as Meeting,
+  parseMeetingCanaryRecovery,
   resolveMeetingCanaryActor,
+  resolveMeetingCanaryRecord,
+  validateMeetingCanaryRecoveryRecord,
 } from './meetingBookingCanaryPreflight';
 import { requireProductionEnvironment } from './requireProductionEnvironment';
 
@@ -17,20 +26,6 @@ const APPLICATION_IDENTIFIER = 'ca87ad48-b62a-41be-a790-7c17707ff1b4';
 const REPORT_RUNTIME_IDENTIFIER = '8d6ea72a-aa6f-4a1c-83a7-ad539819bd47';
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-
-type Meeting = {
-  id: string;
-  name: string | null;
-  createdAt: string;
-  createdBy: { workspaceMemberId: string | null };
-  companyId: string | null;
-  wholesalerId: string | null;
-  scheduledAt: string | null;
-  status: string;
-  bookedAt: string | null;
-  bookedById: string | null;
-  bookingValidationMessage: string | null;
-};
 
 type ExistingRecord = { id: string; name: string };
 type Connection<TRecord> = { edges: Array<{ node: TRecord }> };
@@ -105,6 +100,8 @@ test('books and reschedules a native CRM meeting while Telegram is disabled', as
 }) => {
   test.setTimeout(6 * 60_000);
   let phase = 'authenticated tenant permission preflight';
+  let step = 'start';
+  const locatorCounts: Record<string, number> = {};
   let meetingId: string | undefined;
   let initialName: string | null | undefined;
   let named = false;
@@ -113,7 +110,9 @@ test('books and reschedules a native CRM meeting while Telegram is disabled', as
   let cleanupVerified = false;
   let failure: Error | undefined;
   const request = page.request;
-  const meetingName = `CRM meeting canary ${requiredEnvironment('GITHUB_RUN_ID')}-${requiredEnvironment('GITHUB_RUN_ATTEMPT')}-${randomUUID()}`;
+  const nameNonce = randomUUID();
+  const meetingName = `CRM meeting canary ${requiredEnvironment('GITHUB_RUN_ID')}-${requiredEnvironment('GITHUB_RUN_ATTEMPT')}-${nameNonce}`;
+  const recovery = parseMeetingCanaryRecovery(process.env);
 
   const graphql = async <TData>(
     endpoint: '/metadata' | '/graphql',
@@ -132,9 +131,7 @@ test('books and reschedules a native CRM meeting while Telegram is disabled', as
     );
     try {
       if (!response.ok()) {
-        throw new Error(
-          `${operationName} failed with HTTP ${response.status()}`,
-        );
+        throw new MeetingCanaryCheckError('HTTP');
       }
       const body = (await response.json()) as {
         data?: TData;
@@ -146,7 +143,7 @@ test('books and reschedules a native CRM meeting while Telegram is disabled', as
           : Boolean(body.errors)) ||
         !body.data
       ) {
-        throw new Error(`${operationName} returned GraphQL errors or no data`);
+        throw meetingCanaryGraphqlFailure(body.errors);
       }
       return body.data;
     } finally {
@@ -211,40 +208,50 @@ test('books and reschedules a native CRM meeting while Telegram is disabled', as
     return application.id;
   };
 
-  const readMeeting = async (): Promise<Meeting | null> => {
-    if (!meetingId || !UUID_PATTERN.test(meetingId)) {
+  const readMeetingById = async (id: string): Promise<Meeting | null> => {
+    if (!UUID_PATTERN.test(id)) {
       throw new Error('No exact native meeting creation ID was captured');
     }
-    const result = await graphql<{ meetingBooking: Meeting | null }>(
+    const result = await graphql<unknown>(
       '/graphql',
       'ReadRunOwnedMeetingCanary',
       `
         query ReadRunOwnedMeetingCanary($id: UUID!) {
-          meetingBooking(
+          meetingBookings(
+            first: 2
             filter: {
               id: { eq: $id }
               or: [{ deletedAt: { is: NULL } }, { deletedAt: { is: NOT_NULL } }]
             }
           ) {
-            id
-            name
-            createdAt
-            createdBy {
-              workspaceMemberId
+            edges {
+              node {
+                id
+                name
+                createdAt
+                updatedAt
+                createdBy {
+                  workspaceMemberId
+                }
+                companyId
+                wholesalerId
+                scheduledAt
+                status
+                bookedAt
+                bookedById
+                bookingValidationMessage
+              }
             }
-            companyId
-            wholesalerId
-            scheduledAt
-            status
-            bookedAt
-            bookedById
-            bookingValidationMessage
           }
         }
       `,
-      { id: meetingId },
+      { id },
     );
-    return result.meetingBooking;
+    return resolveMeetingCanaryRecord(result, id);
+  };
+  const readMeeting = () => {
+    if (!meetingId) throw new MeetingCanaryCheckError('OWNERSHIP');
+    return readMeetingById(meetingId);
   };
 
   const guardNativeMutation = async (route: Route) => {
@@ -272,6 +279,17 @@ test('books and reschedules a native CRM meeting while Telegram is disabled', as
         meetingId = id;
         initialName = body.variables?.input?.name;
         creationRequestedAt = Date.now();
+        console.log(
+          JSON.stringify({
+            meetingCanaryReceipt: createMeetingCanaryReceipt({
+              runId: requiredEnvironment('GITHUB_RUN_ID'),
+              attempt: requiredEnvironment('GITHUB_RUN_ATTEMPT'),
+              meetingId,
+              nameNonce,
+              creationRequestedAt,
+            }),
+          }),
+        );
       } else if (
         body.operationName !== 'UpdateOneMeetingBooking' ||
         !meetingId ||
@@ -285,21 +303,39 @@ test('books and reschedules a native CRM meeting while Telegram is disabled', as
     }
   };
 
-  const openField = async (fieldName: string) => {
+  const openField = async (
+    fieldName: 'status' | 'company' | 'wholesaler' | 'scheduledAt',
+  ) => {
+    step = `${fieldName}: disabled gate`;
     await assertDisabled();
     const field = page
       .getByTestId('record-fields-widget')
       .locator(`[id$="-${meetingId}-${fieldName}"]:not([id^="label-"])`);
+    step = `${fieldName}: field anchor`;
+    locatorCounts.widgets = await page
+      .getByTestId('record-fields-widget')
+      .count();
+    locatorCounts.field = await field.count();
     await expect(field).toBeVisible();
     // FieldsWidget mounts its interactive display inside a second, anchored
     // portal on hover. Click that display, as the widget's own stories do.
+    step = `${fieldName}: field hover`;
     await field.hover();
     const hoverPortal = field.locator(':scope > div').nth(1);
+    step = `${fieldName}: hover portal`;
+    locatorCounts.hoverPortal = await hoverPortal.count();
     await expect(hoverPortal).toBeVisible();
+    step = `${fieldName}: editor click`;
     await hoverPortal.locator(':scope > div > div > div').first().click();
+    locatorCounts.editors = await page
+      .getByTestId('inline-cell-edit-mode-container')
+      .count();
   };
 
-  const selectRelation = async (fieldName: string, record: ExistingRecord) => {
+  const selectRelation = async (
+    fieldName: 'company' | 'wholesaler',
+    record: ExistingRecord,
+  ) => {
     await openField(fieldName);
     await page.getByRole('combobox').fill(record.name);
     await page
@@ -320,7 +356,12 @@ test('books and reschedules a native CRM meeting while Telegram is disabled', as
 
   const selectBooked = async () => {
     await openField('status');
+    step = 'status: Booked option';
+    locatorCounts.bookedOptions = await page
+      .getByText('Booked', { exact: true })
+      .count();
     await page.getByText('Booked', { exact: true }).click();
+    step = 'status: persisted booking validation';
   };
 
   try {
@@ -359,6 +400,118 @@ test('books and reschedules a native CRM meeting while Telegram is disabled', as
     workspaceMemberId = actor.workspaceMemberId;
     const { workspaceMembers, timeZone } = actor;
 
+    if (recovery) {
+      phase = 'prior-run meeting recovery';
+      step = 'recovery: disabled gate';
+      await assertDisabled();
+      step = 'recovery: bounded candidate read';
+      const result = await graphql<unknown>(
+        '/graphql',
+        'FindPriorRunMeetingCanary',
+        `
+          query FindPriorRunMeetingCanary(
+            $prefix: String!
+            $after: DateTime!
+            $before: DateTime!
+          ) {
+            meetingBookings(
+              first: 2
+              filter: {
+                name: { startsWith: $prefix }
+                createdAt: { gte: $after, lt: $before }
+                or: [
+                  { deletedAt: { is: NULL } }
+                  { deletedAt: { is: NOT_NULL } }
+                ]
+              }
+            ) {
+              edges {
+                node {
+                  id
+                  name
+                  createdAt
+                  updatedAt
+                  createdBy {
+                    workspaceMemberId
+                  }
+                  companyId
+                  wholesalerId
+                  scheduledAt
+                  status
+                  bookedAt
+                  bookedById
+                  bookingValidationMessage
+                }
+              }
+            }
+          }
+        `,
+        {
+          prefix: `CRM meeting canary ${recovery.runId}-${recovery.attempt}-`,
+          after: recovery.createdAfter,
+          before: recovery.createdBefore,
+        },
+      );
+      const candidates = meetingCanaryRecords(result);
+      if (candidates.length > 1) throw new MeetingCanaryCheckError('OWNERSHIP');
+      const candidate = candidates[0];
+      let destroyed = false;
+      if (candidate) {
+        step = 'recovery: candidate ownership';
+        validateMeetingCanaryRecoveryRecord(
+          candidate,
+          recovery,
+          workspaceMemberId,
+        );
+        step = 'recovery: exact-ID ownership reread';
+        const current = await readMeetingById(candidate.id);
+        if (current) {
+          validateMeetingCanaryRecoveryRecord(
+            current,
+            recovery,
+            workspaceMemberId,
+          );
+          if (
+            current.name !== candidate.name ||
+            current.createdAt !== candidate.createdAt ||
+            current.updatedAt !== candidate.updatedAt
+          ) {
+            throw new MeetingCanaryCheckError('OWNERSHIP');
+          }
+          step = 'recovery: final disabled gate';
+          await assertDisabled();
+          step = 'recovery: exact-ID destroy';
+          const deletion = await graphql<{
+            destroyMeetingBooking: { id: string };
+          }>(
+            '/graphql',
+            'DestroyPriorRunMeetingCanary',
+            `
+              mutation DestroyPriorRunMeetingCanary($id: UUID!) {
+                destroyMeetingBooking(id: $id) {
+                  id
+                }
+              }
+            `,
+            { id: candidate.id },
+          );
+          expect(deletion.destroyMeetingBooking.id === candidate.id).toBe(true);
+          destroyed = true;
+        }
+        step = 'recovery: exact-ID absence verification';
+        expect(await readMeetingById(candidate.id)).toBeNull();
+      }
+      console.log(
+        JSON.stringify({
+          meetingCanaryRecovery: destroyed
+            ? 'deleted-exact-run-record'
+            : 'already-absent',
+          candidateCount: candidates.length,
+        }),
+      );
+    }
+
+    step = 'start';
     phase = 'existing company and active owner discovery';
     const candidates = await graphql<{
       companies: Connection<ExistingRecord>;
@@ -570,17 +723,23 @@ test('books and reschedules a native CRM meeting while Telegram is disabled', as
       finalMeeting?.bookedAt === bookedMeeting.bookedAt &&
         finalMeeting?.bookedById === bookedMeeting.bookedById,
     ).toBe(true);
-  } catch {
+  } catch (error) {
     // Locator errors can contain real company/owner names; keep diagnostics
     // limited to the failed phase and never attach production DOM snapshots.
-    failure = new Error(`Meeting canary failed during ${phase}`);
+    failure = new Error(
+      `Meeting canary failed during ${phase} / ${step} [${meetingCanaryFailureCategory(error)}]; locatorCounts=${JSON.stringify(locatorCounts)}`,
+    );
   } finally {
-    await page.unroute(`${APPROVED_ORIGIN}/graphql`, guardNativeMutation);
-    if (meetingId) {
-      try {
+    let cleanupStep = 'remove native request guard';
+    try {
+      await page.unroute(`${APPROVED_ORIGIN}/graphql`, guardNativeMutation);
+      if (meetingId) {
+        cleanupStep = 'disabled gate';
         await assertDisabled();
+        cleanupStep = 'exact-ID reread';
         const meeting = await readMeeting();
         if (meeting) {
+          cleanupStep = 'run-owned identity verification';
           const createdAt = Date.parse(meeting.createdAt);
           if (
             meeting.id !== meetingId ||
@@ -591,7 +750,8 @@ test('books and reschedules a native CRM meeting while Telegram is disabled', as
             (meeting.name !== meetingName &&
               (named || (meeting.name ?? '') !== (initialName ?? '')))
           )
-            throw new Error('Run-owned meeting cleanup identity check failed');
+            throw new MeetingCanaryCheckError('OWNERSHIP');
+          cleanupStep = 'exact-ID destroy';
           const result = await graphql<{
             destroyMeetingBooking: { id: string };
           }>(
@@ -608,13 +768,16 @@ test('books and reschedules a native CRM meeting while Telegram is disabled', as
           );
           expect(result.destroyMeetingBooking.id === meetingId).toBe(true);
         }
+        cleanupStep = 'exact-ID absence verification';
         expect(await readMeeting()).toBeNull();
         cleanupVerified = true;
-      } catch {
-        failure = new Error(
-          `Meeting canary cleanup failed after ${phase}; review run ${requiredEnvironment('GITHUB_RUN_ID')} before enabling Telegram`,
-        );
       }
+    } catch (error) {
+      const originalFailure =
+        failure?.message ?? `No prior failure during ${phase}`;
+      failure = new Error(
+        `${originalFailure}; cleanup failed during ${cleanupStep} [${meetingCanaryFailureCategory(error)}]; review run ${requiredEnvironment('GITHUB_RUN_ID')} before enabling Telegram`,
+      );
     }
     await page.close();
   }
