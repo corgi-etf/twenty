@@ -74,6 +74,23 @@ export const parseTelegramGroupTopics = (
   return topics;
 };
 
+// Admission and execution must survive a malformed allowlist identically:
+// refuse every group, leave private chats alone, and log the configuration
+// error. Throwing instead would make the webhook ignore every update and would
+// burn a worker job's whole retry budget without ever answering the sender.
+export const readAllowedTelegramGroupTopics = (
+  raw: string | undefined,
+): TelegramGroupTopic[] => {
+  try {
+    return parseTelegramGroupTopics(raw);
+  } catch {
+    console.error(
+      JSON.stringify({ event: 'telegram_group_topic_configuration_invalid' }),
+    );
+    return [];
+  }
+};
+
 export const isAllowedTelegramGroupTopic = (
   candidate: TelegramGroupTopic,
   allowedTopics: readonly TelegramGroupTopic[],

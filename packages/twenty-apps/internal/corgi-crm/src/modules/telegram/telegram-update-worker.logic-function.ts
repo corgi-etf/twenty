@@ -14,7 +14,7 @@ import {
 } from 'src/modules/telegram/services/telegram-delivery.service';
 import {
   isAllowedTelegramGroupTopic,
-  parseTelegramGroupTopics,
+  readAllowedTelegramGroupTopics,
 } from 'src/modules/telegram/services/telegram-group-topics.service';
 import { parseQueuedTelegramUpdate } from 'src/modules/telegram/services/telegram-security.service';
 import { type KeyValueStore } from 'src/modules/telegram/types';
@@ -61,7 +61,7 @@ export const handleTelegramUpdateJob = async (
         chatId: update.chatId,
         messageThreadId: update.messageThreadId,
       },
-      parseTelegramGroupTopics(dependencies.groupTopicsJson),
+      readAllowedTelegramGroupTopics(dependencies.groupTopicsJson),
     )
   ) {
     return { status: 'untrusted-group-topic' } as const;

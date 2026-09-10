@@ -193,6 +193,54 @@ describe('Telegram update worker durable replies', () => {
     );
   });
 
+  it('refuses instead of burning retries when the allowlist is malformed', async () => {
+    const test = harness();
+    const processCommand = vi.fn();
+
+    await expect(
+      handleTelegramUpdateJob(
+        {
+          updateId: 45,
+          userId: '101',
+          chatId: GROUP_CHAT_ID,
+          firstName: 'Nash',
+          text: '/daily',
+          messageTimestamp: '2026-09-09T22:00:00.000Z',
+          chatScope: 'group_topic',
+          messageThreadId: GROUP_THREAD_ID,
+        },
+        context,
+        test.dependencies(processCommand, '{ not json'),
+      ),
+    ).resolves.toEqual({ status: 'untrusted-group-topic' });
+    expect(processCommand).not.toHaveBeenCalled();
+    expect(test.store.set).not.toHaveBeenCalled();
+  });
+
+  it('still serves a private update while the group allowlist is malformed', async () => {
+    const test = harness();
+    const processCommand = vi.fn(async (_update, dependencies) => {
+      await dependencies.send('101', 'guide');
+      return { status: 'help' } as const;
+    });
+
+    await expect(
+      handleTelegramUpdateJob(
+        {
+          updateId: 46,
+          userId: '101',
+          chatId: '101',
+          firstName: 'Nash',
+          text: '/help',
+          messageTimestamp: '2026-09-09T22:00:00.000Z',
+        },
+        context,
+        test.dependencies(processCommand, '{ not json'),
+      ),
+    ).resolves.toEqual({ status: 'help' });
+    expect(test.sendMessage).toHaveBeenCalledWith('101', 'guide', undefined);
+  });
+
   it.each([
     ['the allowlist no longer holds the group', undefined],
     [

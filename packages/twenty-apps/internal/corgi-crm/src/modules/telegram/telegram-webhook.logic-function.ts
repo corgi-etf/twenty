@@ -11,7 +11,7 @@ import {
   TELEGRAM_WEBHOOK_UNIVERSAL_IDENTIFIER,
 } from 'src/constants';
 import { enqueueTelegramUpdateOnce } from 'src/modules/telegram/services/telegram-delivery.service';
-import { parseTelegramGroupTopics } from 'src/modules/telegram/services/telegram-group-topics.service';
+import { readAllowedTelegramGroupTopics } from 'src/modules/telegram/services/telegram-group-topics.service';
 import {
   assertTelegramWebhookSecret,
   parseTelegramUpdate,
@@ -31,20 +31,6 @@ type WebhookDependencies = {
     payload: ParsedTelegramUpdate,
     jobId: string,
   ): Promise<unknown>;
-};
-
-// A malformed allowlist must not take private chats down with it, and a non-2xx
-// here would make Telegram retry every update forever. Refuse every group
-// instead and leave the configuration error in the logs.
-const readAllowedGroupTopics = (groupTopicsJson: string | undefined) => {
-  try {
-    return parseTelegramGroupTopics(groupTopicsJson);
-  } catch {
-    console.error(
-      JSON.stringify({ event: 'telegram_group_topic_configuration_invalid' }),
-    );
-    return [];
-  }
 };
 
 export const handleTelegramWebhook = async (
@@ -74,7 +60,7 @@ export const handleTelegramWebhook = async (
   try {
     update = parseTelegramUpdate(
       payload.body,
-      readAllowedGroupTopics(dependencies.groupTopicsJson),
+      readAllowedTelegramGroupTopics(dependencies.groupTopicsJson),
     );
   } catch {
     // An update Telegram itself sent (a sticker, a group message, a bot
