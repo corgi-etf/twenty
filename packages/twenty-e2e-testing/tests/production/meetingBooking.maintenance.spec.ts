@@ -2,6 +2,11 @@ import { expect, test, type Route } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
 
 import { assertWorkspaceConfigTenant } from '../../../corgi-crm-workspace-config/src/twenty-api.ts';
+import {
+  MEETING_CANARY_ACTOR_IDENTITY_QUERY,
+  MEETING_CANARY_MEMBERS_QUERY,
+  resolveMeetingCanaryActor,
+} from './meetingBookingCanaryPreflight';
 import { requireProductionEnvironment } from './requireProductionEnvironment';
 
 const APPROVED_ORIGIN = 'https://crm.corgiinvest.com';
@@ -70,7 +75,7 @@ test('books and reschedules a native CRM meeting while Telegram is disabled', as
   page,
 }) => {
   test.setTimeout(6 * 60_000);
-  let phase = 'authenticated workspace preflight';
+  let phase = 'authenticated tenant permission preflight';
   let meetingId: string | undefined;
   let initialName: string | null | undefined;
   let named = false;
@@ -292,35 +297,36 @@ test('books and reschedules a native CRM meeting while Telegram is disabled', as
       request: page.request,
       origin: APPROVED_ORIGIN,
     });
+    phase = 'authenticated tenant expected identity comparison';
     expect(
       tenant.workspaceId ===
         requiredEnvironment('CORGI_CRM_EXPECTED_WORKSPACE_ID') &&
         tenant.userWorkspaceId ===
           requiredEnvironment('CORGI_CRM_EXPECTED_USER_WORKSPACE_ID'),
     ).toBe(true);
+    phase = 'installed application and Telegram-disabled preflight';
     await assertDisabled();
-    const members = await graphql<{
-      workspaceMembers: Connection<{
-        id: string;
-        userWorkspaceId: string;
-        timeZone: string | null;
-      }>;
-    }>(
+    phase = 'authenticated actor metadata identity query';
+    const identity = await graphql<unknown>(
+      '/metadata',
+      'ReadMeetingCanaryActorIdentity',
+      MEETING_CANARY_ACTOR_IDENTITY_QUERY,
+    );
+    phase = 'workspace member Core query';
+    const members = await graphql<unknown>(
       '/graphql',
       'FindMeetingCanaryActor',
-      'query FindMeetingCanaryActor { workspaceMembers(first: 100) { edges { node { id userWorkspaceId timeZone } } } }',
+      MEETING_CANARY_MEMBERS_QUERY,
     );
-    const workspaceMembers = members.workspaceMembers.edges.map(
-      ({ node }) => node,
-    );
-    const actors = workspaceMembers.filter(
-      (member) => member.userWorkspaceId === tenant.userWorkspaceId,
-    );
-    expect(actors.length).toBe(1);
-    workspaceMemberId = actors[0]!.id;
-    expect(UUID_PATTERN.test(workspaceMemberId)).toBe(true);
-    const timeZone =
-      actors[0]!.timeZone === 'system' ? 'UTC' : (actors[0]!.timeZone ?? 'UTC');
+    phase = 'authenticated actor Core identity comparison';
+    const actor = resolveMeetingCanaryActor({
+      identity,
+      members,
+      expectedWorkspaceId: tenant.workspaceId,
+      expectedUserWorkspaceId: tenant.userWorkspaceId,
+    });
+    workspaceMemberId = actor.workspaceMemberId;
+    const { workspaceMembers, timeZone } = actor;
 
     phase = 'existing company and active owner discovery';
     const candidates = await graphql<{
@@ -363,8 +369,7 @@ test('books and reschedules a native CRM meeting while Telegram is disabled', as
           UUID_PATTERN.test(record.id) &&
           record.name?.trim() &&
           workspaceMembers.some(
-            (member) =>
-              member.id === record.workspaceMemberId && member.userWorkspaceId,
+            (member) => member.id === record.workspaceMemberId && member.userId,
           ),
       );
     if (!company || !wholesaler)
