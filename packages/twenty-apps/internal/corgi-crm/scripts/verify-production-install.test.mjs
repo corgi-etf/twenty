@@ -7,7 +7,6 @@ import { buildSchema, parse, validate } from 'graphql';
 import {
   resolveCorgiRoleObjectIdentifiers,
   verifyApplicationRoleContract,
-  verifyCompanyAllocationSchema,
   verifyInstalledApplication,
   verifyMeetingApplicationContract,
   verifyMeetingBookingSchema,
@@ -329,7 +328,7 @@ describe('application release contract', () => {
     const packageJson = JSON.parse(
       await fs.readFile(new URL('../package.json', import.meta.url), 'utf8'),
     );
-    assert.equal(packageJson.version, '1.2.13');
+    assert.equal(packageJson.version, '1.2.14');
   });
 
   it('resolves exact custom object universal identifiers from live metadata', () => {
@@ -753,7 +752,6 @@ describe('installed meeting booking verification', () => {
       isUIEditable: false,
       writability: 'APPLICATION',
     }),
-    field('meeting-allocation', 'allocationRequested', 'CURRENCY'),
     field('meeting-notes', 'notes', 'RICH_TEXT'),
     field('meeting-validation', 'bookingValidationMessage', 'TEXT', {
       isUIEditable: false,
@@ -763,9 +761,6 @@ describe('installed meeting booking verification', () => {
       relation: { targetObjectMetadata: { nameSingular: 'company' } },
     }),
     field('meeting-owner', 'wholesaler', 'RELATION', {
-      relation: { targetObjectMetadata: { nameSingular: 'wholesaler' } },
-    }),
-    field('meeting-external-wholesaler', 'externalWholesaler', 'RELATION', {
       relation: { targetObjectMetadata: { nameSingular: 'wholesaler' } },
     }),
     field('meeting-booker', 'bookedBy', 'RELATION', {
@@ -845,47 +840,6 @@ describe('installed meeting booking verification', () => {
       /calendar/i,
     );
   });
-
-  for (const name of ['externalWholesaler', 'allocationRequested']) {
-    it(`requires ${name} to stay enterable in the CRM`, () => {
-      assert.throws(
-        () =>
-          verifyMeetingBookingSchema(
-            [
-              {
-                ...object,
-                fieldsList: fieldsList.map((candidate) =>
-                  candidate.name === name
-                    ? {
-                        ...candidate,
-                        isUIEditable: false,
-                        writability: 'APPLICATION',
-                      }
-                    : candidate,
-                ),
-              },
-            ],
-            experience,
-          ),
-        new RegExp(`${name} is not enterable`, 'i'),
-      );
-      assert.throws(
-        () =>
-          verifyMeetingBookingSchema(
-            [
-              {
-                ...object,
-                fieldsList: fieldsList.filter(
-                  (candidate) => candidate.name !== name,
-                ),
-              },
-            ],
-            experience,
-          ),
-        new RegExp(`${name} field`, 'i'),
-      );
-    });
-  }
 
   it('requires server-valid exact status values', () => {
     assert.throws(
@@ -1074,98 +1028,6 @@ describe('installed Telegram persistence schema verification', () => {
           audit,
         ]),
       /invalid type/i,
-    );
-  });
-});
-
-describe('installed company allocation schema verification', () => {
-  const allocation = {
-    nameSingular: 'companyAllocation',
-    universalIdentifier: '330842b1-7877-4f25-8ccc-5ad27e852bdd',
-    isActive: true,
-    fieldsList: [
-      { id: 'allocation-ticker', name: 'ticker', type: 'TEXT', isActive: true },
-      { id: 'allocation-amount', name: 'amount', type: 'CURRENCY', isActive: true },
-      {
-        id: 'allocation-company',
-        name: 'company',
-        type: 'RELATION',
-        isActive: true,
-        relation: { targetObjectMetadata: { nameSingular: 'company' } },
-      },
-    ],
-  };
-  const company = {
-    nameSingular: 'company',
-    isActive: true,
-    fieldsList: [
-      {
-        id: 'company-allocations',
-        name: 'allocations',
-        type: 'RELATION',
-        isActive: true,
-        relation: {
-          targetObjectMetadata: { nameSingular: 'companyAllocation' },
-        },
-      },
-    ],
-  };
-  const withAllocationField = (name, overrides) => ({
-    ...allocation,
-    fieldsList: allocation.fieldsList.map((field) =>
-      field.name === name ? { ...field, ...overrides } : field,
-    ),
-  });
-
-  it('requires the pinned allocation object, its typed fields, and the company section', () => {
-    assert.doesNotThrow(() =>
-      verifyCompanyAllocationSchema([allocation, company]),
-    );
-  });
-
-  it('rejects a renamed object, a wrong amount type, or a missing company section', () => {
-    assert.throws(
-      () =>
-        verifyCompanyAllocationSchema([
-          { ...allocation, universalIdentifier: 'aaaaaaaa-0000-4000-8000-000000000000' },
-          company,
-        ]),
-      /companyAllocation metadata object/,
-    );
-    assert.throws(
-      () =>
-        verifyCompanyAllocationSchema([
-          withAllocationField('amount', { type: 'NUMBER' }),
-          company,
-        ]),
-      /invalid type/i,
-    );
-    assert.throws(
-      () =>
-        verifyCompanyAllocationSchema([
-          allocation,
-          { ...company, fieldsList: [] },
-        ]),
-      /company\.allocations field/,
-    );
-  });
-
-  it('rejects an allocation input CRM users could not edit', () => {
-    assert.throws(
-      () =>
-        verifyCompanyAllocationSchema([
-          withAllocationField('ticker', { isUIEditable: false }),
-          company,
-        ]),
-      /not editable by CRM users/,
-    );
-    assert.throws(
-      () =>
-        verifyCompanyAllocationSchema([
-          withAllocationField('amount', { writability: 'APPLICATION' }),
-          company,
-        ]),
-      /not editable by CRM users/,
     );
   });
 });
