@@ -1,6 +1,12 @@
 import { type SummaryCount } from 'src/modules/outreach/services/daily-summary.service';
 import { type ReportMeetingBooking } from 'src/modules/outreach/report-meeting-booking.types';
 import {
+  isQuickLogActivityType,
+  isQuickLogOutcome,
+  QUICK_LOG_ACTIVITY_LABELS,
+  QUICK_LOG_OUTCOME_LABELS,
+} from 'src/modules/outreach/quick-log-taxonomy';
+import {
   type OutreachActivity,
   type OutreachRepository,
 } from 'src/modules/outreach/types';
@@ -158,21 +164,45 @@ export const formatReportSummary = (summary: ReportSummary): string => {
     minute: '2-digit',
     timeZoneName: 'short',
   });
-  const formatCounts = (counts: SummaryCount[]) =>
-    counts.map(({ label, count }) => `${label}: ${count}`).join(', ') || 'None';
+  const formatCounts = (
+    counts: SummaryCount[],
+    labelFor: (label: string) => string,
+  ) =>
+    counts.map(({ label, count }) => `${labelFor(label)}: ${count}`).join(', ') || 'None';
+  const formatRank = (index: number) =>
+    `${['🥇 ', '🥈 ', '🥉 '][index] ?? ''}${index + 1}.`;
+  const formatMeetings = (count: number) =>
+    `${count} ${count === 1 ? 'meeting' : 'meetings'} set`;
 
   return [
-    REPORT_TITLES[summary.period],
+    `🎉 ${REPORT_TITLES[summary.period]}`,
     `${timestamp.format(summary.start)} → ${timestamp.format(summary.end)} (${summary.timeZone})`,
     'All CRM owners',
-    `Total activities: ${summary.total}`,
-    `By activity: ${formatCounts(summary.activityCounts)}`,
-    `By outcome: ${formatCounts(summary.outcomeCounts)}`,
-    'Leaderboard:',
+    '',
+    `📊 Total activities: ${summary.total}`,
+    `📅 Meetings set: ${summary.totalMeetingsSet}`,
+    'Meetings counted when booked, not when scheduled.',
+    '',
+    `📋 By activity: ${formatCounts(summary.activityCounts, (label) =>
+      isQuickLogActivityType(label) ? QUICK_LOG_ACTIVITY_LABELS[label] : label,
+    )}`,
+    `🎯 By outcome: ${formatCounts(summary.outcomeCounts, (label) =>
+      isQuickLogOutcome(label) ? QUICK_LOG_OUTCOME_LABELS[label] : label,
+    )}`,
+    '',
+    '🏆 Activity leaderboard',
     ...summary.leaderboard.map(
-      ({ name, count }, index) => `${index + 1}. ${name}: ${count}`,
+      ({ name, count, meetingsSet }, index) =>
+        `${formatRank(index)} ${name}: ${count} ${count === 1 ? 'activity' : 'activities'} · ${formatMeetings(meetingsSet)}`,
     ),
     ...(summary.total === 0 ? ['No outreach logged in this period.'] : []),
+    '',
+    '🤝 Meeting-booking leaderboard',
+    ...summary.meetingLeaderboard.map(
+      ({ name, count }, index) =>
+        `${formatRank(index)} ${name}: ${formatMeetings(count)}`,
+    ),
+    ...(summary.totalMeetingsSet === 0 ? ['No meetings booked in this period.'] : []),
   ].join('\n');
 };
 

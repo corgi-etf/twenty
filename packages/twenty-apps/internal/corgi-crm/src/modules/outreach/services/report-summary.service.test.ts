@@ -125,10 +125,35 @@ describe('outreach report summaries', () => {
       }),
     ).toEqual(summary);
     const text = formatReportSummary(summary);
-    expect(text).toContain(
-      '1. Jordan: 2\n2. Alex: 1\n3. Alex: 1\n4. Taylor: 1\n5. Unassigned: 1',
-    );
+    expect(text).toContain('🥇 1. Jordan: 2 activities · 0 meetings set');
+    expect(text).toContain('🥈 2. Alex: 1 activity · 0 meetings set');
+    expect(text).toContain('🥉 3. Alex: 1 activity · 0 meetings set');
+    expect(text).toContain('4. Taylor: 1 activity · 0 meetings set');
+    expect(text).toContain('5. Unassigned: 1 activity · 0 meetings set');
     expect(text).not.toContain('Private');
+  });
+
+  it('renders celebratory medals, truthful totals, readable taxonomy and separate booking rankings', () => {
+    const text = formatReportSummary(buildReportSummary({
+      ...defaults,
+      activities: [activity('1')],
+      meetingBookings: [{
+        id: 'booking-1',
+        bookedAt: '2026-09-09T15:00:00.000Z',
+        wholesalerId: 'owner-jordan',
+        wholesalerName: 'Jordan',
+      }],
+    }));
+    expect(text).toContain('🎉 Daily outreach report — last 24 hours');
+    expect(text).toContain('📊 Total activities: 1');
+    expect(text).toContain('📅 Meetings set: 1');
+    expect(text).toContain('By activity: Phone call: 1');
+    expect(text).toContain('By outcome: Connected: 1');
+    expect(text).toContain('🏆 Activity leaderboard');
+    expect(text).toContain('🥇 1. Jordan: 1 activity · 1 meeting set');
+    expect(text).toContain('🤝 Meeting-booking leaderboard\n🥇 1. Jordan: 1 meeting set');
+    expect(text).toContain('Meetings counted when booked, not when scheduled.');
+    expect(text).not.toMatch(/ARR|revenue|Private/);
   });
 
   it.each(['daily', 'weekly', 'monthly'] as const)(
@@ -285,9 +310,12 @@ describe('outreach report summaries', () => {
     );
     expect(text).toContain('Daily outreach report — last 24 hours');
     expect(text).toContain('America/Chicago');
-    expect(text).toContain(
-      'Total activities: 0\nBy activity: None\nBy outcome: None\nLeaderboard:\nNo outreach logged in this period.',
-    );
+    expect(text).toContain('Total activities: 0');
+    expect(text).toContain('Meetings set: 0');
+    expect(text).toContain('By activity: None');
+    expect(text).toContain('By outcome: None');
+    expect(text).toContain('No outreach logged in this period.');
+    expect(text).toContain('No meetings booked in this period.');
   });
 
   it('keeps owner and category labels on single lines in plain Telegram text', () => {
