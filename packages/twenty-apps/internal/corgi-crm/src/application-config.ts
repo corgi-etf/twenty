@@ -23,6 +23,13 @@ export default defineApplication({
       isSecret: false,
       value: 'false',
     },
+    CORGI_CRM_TELEGRAM_PUBLIC_REPORTS_ENABLED: {
+      universalIdentifier: 'efed240f-6856-46f3-973c-67b429287e0a',
+      description:
+        'Allows any Telegram sender to request read-only whole-workspace daily, weekly, and monthly reports. Defaults off and does not authorize identity or CRM write commands.',
+      isSecret: false,
+      value: 'false',
+    },
     CORGI_CRM_TELEGRAM_BOT_TOKEN: {
       universalIdentifier: 'e3cd12fd-524c-4414-a1ac-9885cb35f36b',
       description:

@@ -68,7 +68,9 @@ const validateNotificationRoutes = (raw) => {
   try {
     parsed = JSON.parse(raw);
   } catch {
-    throw new Error('Telegram notification route configuration must be valid JSON');
+    throw new Error(
+      'Telegram notification route configuration must be valid JSON',
+    );
   }
   if (
     parsed &&
@@ -113,7 +115,8 @@ const validateNotificationRoutes = (raw) => {
     }
     if (
       route.messageThreadId !== undefined &&
-      (!Number.isSafeInteger(route.messageThreadId) || route.messageThreadId <= 0)
+      (!Number.isSafeInteger(route.messageThreadId) ||
+        route.messageThreadId <= 0)
     ) {
       throw new Error('Telegram notification route is invalid');
     }
@@ -154,7 +157,11 @@ const validateTrustedTelegramConfiguration = ({
   notificationRoutesJson,
   timeZone,
   dailySummaryTime,
+  publicReportsEnabled = 'false',
 }) => {
+  if (publicReportsEnabled !== 'true' && publicReportsEnabled !== 'false') {
+    throw new Error('Telegram public reports policy must be true or false');
+  }
   const normalizedWorkspaceId = required(workspaceId, 'Workspace ID');
   if (!UUID_PATTERN.test(normalizedWorkspaceId)) {
     throw new Error('Workspace ID must be a UUID');
@@ -184,6 +191,7 @@ const validateTrustedTelegramConfiguration = ({
     ),
     CORGI_CRM_TELEGRAM_TIME_ZONE: normalizedTimeZone,
     CORGI_CRM_TELEGRAM_DAILY_SUMMARY_TIME: normalizedTime,
+    CORGI_CRM_TELEGRAM_PUBLIC_REPORTS_ENABLED: publicReportsEnabled,
   };
 };
 
@@ -257,7 +265,10 @@ const configureTelegramApplication = async ({
 
   await write('CORGI_CRM_TELEGRAM_ENABLED', 'false');
   if (!variables) {
-    await write('CORGI_CRM_WORKSPACE_ID', validateWorkspaceId(input.workspaceId));
+    await write(
+      'CORGI_CRM_WORKSPACE_ID',
+      validateWorkspaceId(input.workspaceId),
+    );
     if (input.timeZone?.trim()) {
       await write(
         'CORGI_CRM_TELEGRAM_TIME_ZONE',
@@ -322,10 +333,11 @@ const main = async () => {
     webhookSecret: process.env.CORGI_CRM_TELEGRAM_WEBHOOK_SECRET,
     operatorSecret: process.env.CORGI_CRM_TELEGRAM_OPERATOR_SECRET,
     linkCodesJson: process.env.CORGI_CRM_TELEGRAM_LINK_CODES,
-    notificationRoutesJson:
-      process.env.CORGI_CRM_TELEGRAM_NOTIFICATION_ROUTES,
+    notificationRoutesJson: process.env.CORGI_CRM_TELEGRAM_NOTIFICATION_ROUTES,
     timeZone: process.env.CORGI_CRM_TELEGRAM_TIME_ZONE,
     dailySummaryTime: process.env.CORGI_CRM_TELEGRAM_DAILY_SUMMARY_TIME,
+    publicReportsEnabled:
+      process.env.CORGI_CRM_TELEGRAM_PUBLIC_REPORTS_ENABLED || 'false',
     enabled: mode === 'enable',
     stage: mode === 'stage',
   });

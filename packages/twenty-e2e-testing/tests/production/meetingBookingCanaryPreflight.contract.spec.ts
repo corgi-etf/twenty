@@ -19,6 +19,7 @@ import {
   meetingCanaryRecords,
   meetingCanaryGraphqlFailure,
   inspectMeetingCanaryCalendarResponse,
+  auditMeetingCanaryCalendarPresentation,
 } from './meetingBookingCanaryPreflight';
 
 const repositoryRoot = join(__dirname, '../../../..');
@@ -396,6 +397,7 @@ for (const operation of ['publish-and-install', 'configure-telegram']) {
           ),
           'a'.repeat(40),
           'b'.repeat(40),
+          operation === 'publish-and-install' ? 'app-release' : 'maintenance',
         ],
         options: {
           cwd: repositoryRoot,
@@ -968,7 +970,7 @@ test('canary stdout is restricted to synthetic receipts and static aggregate evi
   );
   expect(
     Array.from(source.matchAll(/console\.\w+\(/g), ([call]) => call),
-  ).toEqual(['console.log(', 'console.log(', 'console.log(']);
+  ).toEqual(['console.log(', 'console.log(', 'console.log(', 'console.log(']);
   const outputs = Array.from(
     source.matchAll(
       /console\.log\(\s*JSON\.stringify\(\{([\s\S]*?)\n\s*\}\),\s*\);/g,
@@ -983,10 +985,11 @@ test('canary stdout is restricted to synthetic receipts and static aggregate evi
       'meetingId,nameNonce,creationRequestedAt,}),',
     ].join(''),
     "meetingCanaryRecovery:destroyed?'deleted-exact-run-record':'already-absent',candidateCount:candidates.length,",
+    'meetingCalendarPresentationAudit:calendarPresentationAudit,step,locatorCounts,calendarQueryEvidence,',
     [
       "meetingCanary:'passed',nativeCreate:true,invalidBookingRejected:true,",
       'companyAndOwnerSelected:true,nativeSchedule:true,bookingStamped:true,',
-      'reschedulePreservedAttribution:true,nativeCalendar:true,telegramDisabled:true,',
+      "reschedulePreservedAttribution:true,nativeCalendar:calendarPresentationAudit?.status==='passed',calendarPresentationAudit,telegramDisabled:true,",
       'exactRecordCleanupVerified:cleanupVerified,',
       "installedReportRuntime:'LIVE_FROM_SOURCE',reportRuntime,",
     ].join(''),
@@ -1465,4 +1468,144 @@ test('calendar first-five evidence uses the target edge position within its own 
     expect(evidence?.targetPresent).toBe(true);
     expect(evidence?.targetWithinFirstFive).toBe(targetIndex < 5);
   }
+});
+
+test('calendar presentation audit truthfully reports success', async () => {
+  expect(await auditMeetingCanaryCalendarPresentation(async () => {})).toEqual({
+    status: 'passed',
+    category: null,
+  });
+});
+
+for (const [error, category] of [
+  [{ matcherResult: {}, message: 'private-calendar-name' }, 'ASSERTION'],
+  [{ name: 'TimeoutError', message: 'private-calendar-locator' }, 'TIMEOUT'],
+  [new Error('private-page-crash'), 'UNKNOWN'],
+] as const) {
+  test(`calendar-only ${category} remains an explicit failed presentation audit`, async () => {
+    const result = await auditMeetingCanaryCalendarPresentation(async () => {
+      throw error;
+    });
+    expect(result).toEqual({ status: 'failed', category });
+    expect(JSON.stringify(result)).not.toContain('private');
+  });
+}
+
+const runActualCalendarAuditBlock = (
+  options: {
+    uiError?: unknown;
+    disabledError?: boolean;
+    changedStamp?: boolean;
+  } = {},
+) => {
+  const source = readFileSync(
+    join(__dirname, 'meetingBooking.maintenance.spec.ts'),
+    'utf8',
+  );
+  const start = source.indexOf('calendarPresentationAudit = await');
+  const end = source.indexOf('\n  } catch (error) {', start);
+  expect(start).toBeGreaterThan(-1);
+  expect(end).toBeGreaterThan(start);
+  const block = source.slice(start, end);
+  const checks: string[] = [];
+  const output: unknown[] = [];
+  const calendarName = {};
+  const scope = {
+    step: 'start',
+    calendarPresentationAudit: undefined,
+    auditMeetingCanaryCalendarPresentation,
+    todayButton: { click: async () => {} },
+    calendar: {},
+    calendarName,
+    calendarDiagnosticLocators: {},
+    locatorCounts: {},
+    calendarObservations: new Set(),
+    calendarQueryEvidence: [],
+    page: {
+      goto: async () => {},
+      getByText: () => ({ click: async () => {} }),
+    },
+    console: { log: (value: string) => output.push(JSON.parse(value)) },
+    expect: (value: unknown) => ({
+      toBeVisible: async () => {
+        if (value === calendarName && options.uiError) throw options.uiError;
+      },
+      toBe: (expected: unknown) => expect(value).toBe(expected),
+    }),
+    assertDisabled: async () => {
+      checks.push('disabled');
+      if (options.disabledError)
+        throw new MeetingCanaryCheckError('GRAPHQL_PERMISSION');
+    },
+    bookedMeeting: {
+      bookedAt: '2026-09-10T12:00:00Z',
+      bookedById: 'synthetic-member',
+    },
+    readMeeting: async () => {
+      checks.push('persisted stamp');
+      return {
+        bookedAt: options.changedStamp ? null : '2026-09-10T12:00:00Z',
+        bookedById: 'synthetic-member',
+      };
+    },
+  };
+  return {
+    checks,
+    output,
+    execute: () =>
+      runInNewContext(
+        `(async () => { ${block} return calendarPresentationAudit; })()`,
+        scope,
+      ) as Promise<unknown>,
+  };
+};
+
+test('actual failed calendar presentation still executes the mandatory disabled and persisted-stamp checks', async () => {
+  const run = runActualCalendarAuditBlock({
+    uiError: { matcherResult: {}, message: 'private-name' },
+  });
+  expect(await run.execute()).toEqual({
+    status: 'failed',
+    category: 'ASSERTION',
+  });
+  expect(run.checks).toEqual(['disabled', 'persisted stamp']);
+  expect(run.output).toEqual([
+    {
+      meetingCalendarPresentationAudit: {
+        status: 'failed',
+        category: 'ASSERTION',
+      },
+      step: 'calendar run-owned name visibility',
+      locatorCounts: {},
+      calendarQueryEvidence: [],
+    },
+  ]);
+  expect(JSON.stringify(run.output)).not.toContain('private');
+});
+
+for (const options of [{ disabledError: true }, { changedStamp: true }]) {
+  test(`actual calendar audit cannot swallow mandatory check failure ${Object.keys(options)[0]}`, async () => {
+    const run = runActualCalendarAuditBlock({
+      uiError: { name: 'TimeoutError' },
+      ...options,
+    });
+    await assert.rejects(run.execute);
+  });
+}
+
+test('native calendar success is derived from its audit while cleanup and actual reports remain blocking', () => {
+  const source = readFileSync(
+    join(__dirname, 'meetingBooking.maintenance.spec.ts'),
+    'utf8',
+  );
+  expect(source).not.toContain('nativeCalendar: true');
+  expect(source).toContain(
+    "nativeCalendar: calendarPresentationAudit?.status === 'passed'",
+  );
+  const cleanup = source.indexOf('expect(cleanupVerified).toBe(true)');
+  const report = source.indexOf("'ExecuteInstalledReportRuntimeVerification'");
+  const completed = source.indexOf("meetingCanary: 'passed'");
+  expect(cleanup).toBeGreaterThan(source.indexOf('if (failure) throw failure'));
+  expect(report).toBeGreaterThan(cleanup);
+  expect(completed).toBeGreaterThan(report);
 });

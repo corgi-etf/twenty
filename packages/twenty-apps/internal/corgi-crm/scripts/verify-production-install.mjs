@@ -12,22 +12,16 @@ const TELEGRAM_DELIVERY_RETRY_WORKER_ID =
   '70e86a19-fbdd-4d17-aa36-f0b2ab62305b';
 const MEETING_BOOKING_OBJECT_ID = '0b252d63-b1de-464d-930e-1c1fb6a7eaee';
 const MEETING_BOOKING_ALL_VIEW_ID = '1b8237a7-2e7a-454e-925a-68390abb2992';
-const MEETING_BOOKING_CALENDAR_VIEW_ID =
-  '64fbb44e-e7cf-4fd3-a3b3-44af2beb9ac9';
-const MEETING_BOOKING_FIELDS_VIEW_ID =
-  '66755b49-ef0f-4f93-811e-d15a50bf0206';
-const MEETING_BOOKING_RECORD_PAGE_ID =
-  'f3af6625-cb1a-41f0-94da-4b11b6ff2ac1';
+const MEETING_BOOKING_CALENDAR_VIEW_ID = '64fbb44e-e7cf-4fd3-a3b3-44af2beb9ac9';
+const MEETING_BOOKING_FIELDS_VIEW_ID = '66755b49-ef0f-4f93-811e-d15a50bf0206';
+const MEETING_BOOKING_RECORD_PAGE_ID = 'f3af6625-cb1a-41f0-94da-4b11b6ff2ac1';
 const MEETING_BOOKING_CREATED_FUNCTION_ID =
   'a0b07c49-e3d1-48fa-9827-9ab9f564b1d1';
 const MEETING_BOOKING_STATUS_FUNCTION_ID =
   '3d425836-d5e6-4c37-9609-d9580b700c6c';
-const MEETING_BOOKED_ALERT_FUNCTION_ID =
-  '4d407d33-c0b2-4f8e-8300-be86c2e3dc7d';
-const MEETING_NOTIFICATION_WORKER_ID =
-  'fb84094f-d44a-4180-9f50-ff7971f670e6';
-const REPORT_RUNTIME_VERIFICATION_ID =
-  '8d6ea72a-aa6f-4a1c-83a7-ad539819bd47';
+const MEETING_BOOKED_ALERT_FUNCTION_ID = '4d407d33-c0b2-4f8e-8300-be86c2e3dc7d';
+const MEETING_NOTIFICATION_WORKER_ID = 'fb84094f-d44a-4180-9f50-ff7971f670e6';
+const REPORT_RUNTIME_VERIFICATION_ID = '8d6ea72a-aa6f-4a1c-83a7-ad539819bd47';
 const APPROVED_ORIGIN = 'https://crm.corgiinvest.com';
 const PAGE_SIZE = 100;
 const MAX_PAGES = 100;
@@ -43,24 +37,51 @@ const requiredEnvironment = (name) => {
 // Only this fixed vocabulary may reach CI logs. Server messages, paths,
 // extensions, query variables, and partial response data may contain CRM PII.
 const GRAPHQL_ERROR_CODES = new Set([
-  'GRAPHQL_PARSE_FAILED', 'GRAPHQL_VALIDATION_FAILED', 'UNAUTHENTICATED',
-  'FORBIDDEN', 'BAD_USER_INPUT', 'NOT_FOUND', 'METHOD_NOT_ALLOWED', 'CONFLICT',
-  'TIMEOUT', 'INTERNAL_SERVER_ERROR', 'METADATA_VALIDATION_FAILED',
-  'APPLICATION_INSTALLATION_FAILED', 'RATE_LIMITED', 'QUOTA_EXHAUSTED',
+  'GRAPHQL_PARSE_FAILED',
+  'GRAPHQL_VALIDATION_FAILED',
+  'UNAUTHENTICATED',
+  'FORBIDDEN',
+  'BAD_USER_INPUT',
+  'NOT_FOUND',
+  'METHOD_NOT_ALLOWED',
+  'CONFLICT',
+  'TIMEOUT',
+  'INTERNAL_SERVER_ERROR',
+  'METADATA_VALIDATION_FAILED',
+  'APPLICATION_INSTALLATION_FAILED',
+  'RATE_LIMITED',
+  'QUOTA_EXHAUSTED',
 ]);
 
 // Selected machine enums from the server query-runner and TwentyOrm exceptions.
 // Arbitrary extension subcodes must not become another route for PII into logs.
 const GRAPHQL_ERROR_SUBCODES = new Set([
-  'INVALID_QUERY_INPUT', 'INVALID_ARGS_FILTER', 'FIELD_NOT_FOUND',
-  'OBJECT_METADATA_NOT_FOUND', 'RELATION_SETTINGS_NOT_FOUND',
-  'RELATION_TARGET_OBJECT_METADATA_NOT_FOUND', 'UNSUPPORTED_OPERATOR',
-  'MALFORMED_METADATA', 'INVALID_INPUT', 'UNKNOWN_COLUMN', 'UNKNOWN_RELATION',
-  'UNKNOWN_OBJECT', 'MALFORMED_SQL', 'INVALID_QUERY', 'INVALID_PARAMETER',
-  'MISSING_PARAMETER', 'WORKSPACE_SCHEMA_NOT_FOUND', 'RLS_VALIDATION_FAILED',
-  'NO_ROLE_FOUND_FOR_USER_WORKSPACE', 'ROLES_PERMISSIONS_VERSION_NOT_FOUND',
-  'API_KEY_ROLE_MAP_VERSION_NOT_FOUND', 'UNKNOWN_METHOD', 'INVALID_RESULT_TYPE',
-  'NOT_IMPLEMENTED', 'QUERY_READ_TIMEOUT', 'TRANSIENT_DATABASE_ERROR',
+  'INVALID_QUERY_INPUT',
+  'INVALID_ARGS_FILTER',
+  'FIELD_NOT_FOUND',
+  'OBJECT_METADATA_NOT_FOUND',
+  'RELATION_SETTINGS_NOT_FOUND',
+  'RELATION_TARGET_OBJECT_METADATA_NOT_FOUND',
+  'UNSUPPORTED_OPERATOR',
+  'MALFORMED_METADATA',
+  'INVALID_INPUT',
+  'UNKNOWN_COLUMN',
+  'UNKNOWN_RELATION',
+  'UNKNOWN_OBJECT',
+  'MALFORMED_SQL',
+  'INVALID_QUERY',
+  'INVALID_PARAMETER',
+  'MISSING_PARAMETER',
+  'WORKSPACE_SCHEMA_NOT_FOUND',
+  'RLS_VALIDATION_FAILED',
+  'NO_ROLE_FOUND_FOR_USER_WORKSPACE',
+  'ROLES_PERMISSIONS_VERSION_NOT_FOUND',
+  'API_KEY_ROLE_MAP_VERSION_NOT_FOUND',
+  'UNKNOWN_METHOD',
+  'INVALID_RESULT_TYPE',
+  'NOT_IMPLEMENTED',
+  'QUERY_READ_TIMEOUT',
+  'TRANSIENT_DATABASE_ERROR',
 ]);
 
 const classifyGraphqlError = (error) => {
@@ -72,7 +93,9 @@ const classifyGraphqlError = (error) => {
     return 'schema_unknown_field';
   }
   if (/Unknown type/i.test(message)) return 'schema_unknown_type';
-  if (/permission denied|not authorized|unauthenticated|forbidden/i.test(message)) {
+  if (
+    /permission denied|not authorized|unauthenticated|forbidden/i.test(message)
+  ) {
     return 'permission_denied';
   }
   if (/duplicate key|unique constraint|foreign key constraint/i.test(message)) {
@@ -90,7 +113,9 @@ const classifyGraphqlError = (error) => {
   if (/invalid input syntax for type/i.test(message)) {
     return 'database_value_type_mismatch';
   }
-  if (/invalid filter|filter .* invalid|invalid argument: "filter"/i.test(message)) {
+  if (
+    /invalid filter|filter .* invalid|invalid argument: "filter"/i.test(message)
+  ) {
     return 'invalid_filter';
   }
   return 'unexpected';
@@ -100,14 +125,18 @@ const summarizeGraphqlErrors = (errors) => {
   const counts = new Map();
   for (const error of errors) {
     const code = GRAPHQL_ERROR_CODES.has(error?.extensions?.code)
-      ? error.extensions.code : 'UNKNOWN';
+      ? error.extensions.code
+      : 'UNKNOWN';
     const subCode = GRAPHQL_ERROR_SUBCODES.has(error?.extensions?.subCode)
-      ? `/${error.extensions.subCode}` : '';
+      ? `/${error.extensions.subCode}`
+      : '';
     const key = `${code}${subCode}/${classifyGraphqlError(error)}`;
     counts.set(key, (counts.get(key) ?? 0) + 1);
   }
-  return [...counts].sort(([left], [right]) => left.localeCompare(right))
-    .map(([key, count]) => `${key}=${count}`).join(', ');
+  return [...counts]
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([key, count]) => `${key}=${count}`)
+    .join(', ');
 };
 
 class VerificationGraphqlError extends Error {
@@ -235,15 +264,14 @@ const resolveCorgiRoleObjectIdentifiers = (objects) => {
       `${nameSingular} metadata object`,
     );
     if (!UUID_PATTERN.test(object.universalIdentifier ?? '')) {
-      throw new Error(`${nameSingular} object universal identifier is not a UUID`);
+      throw new Error(
+        `${nameSingular} object universal identifier is not a UUID`,
+      );
     }
     return [environmentKey, object.universalIdentifier];
   };
   return Object.fromEntries([
-    resolve(
-      'wholesaler',
-      'CORGI_CRM_WHOLESALER_OBJECT_UNIVERSAL_IDENTIFIER',
-    ),
+    resolve('wholesaler', 'CORGI_CRM_WHOLESALER_OBJECT_UNIVERSAL_IDENTIFIER'),
     resolve(
       'outreachActivity',
       'CORGI_CRM_OUTREACH_ACTIVITY_OBJECT_UNIVERSAL_IDENTIFIER',
@@ -314,7 +342,9 @@ const verifyApplicationRoleContract = (role, objects) => {
   for (const permission of permissions) {
     const contract = expected.get(permission.objectMetadataId);
     if (!contract || seen.has(permission.objectMetadataId)) {
-      throw new Error('Installed application role has an unexpected object permission');
+      throw new Error(
+        'Installed application role has an unexpected object permission',
+      );
     }
     seen.add(permission.objectMetadataId);
     if (
@@ -374,10 +404,7 @@ const verifyMeetingBookingSchema = (objects, experience) => {
   }
   for (const name of ['bookedAt', 'bookedBy', 'bookingValidationMessage']) {
     const field = fieldByName.get(name);
-    if (
-      field.writability !== 'APPLICATION' ||
-      field.isUIEditable !== false
-    ) {
+    if (field.writability !== 'APPLICATION' || field.isUIEditable !== false) {
       throw new Error(`meetingBooking.${name} writability is not protected`);
     }
   }
@@ -411,7 +438,9 @@ const verifyMeetingBookingSchema = (objects, experience) => {
         candidate.isActive === true,
       label,
     );
-  if (view(MEETING_BOOKING_ALL_VIEW_ID, 'meeting table view').type !== 'TABLE') {
+  if (
+    view(MEETING_BOOKING_ALL_VIEW_ID, 'meeting table view').type !== 'TABLE'
+  ) {
     throw new Error('Meeting table view is invalid');
   }
   const calendar = view(
@@ -467,8 +496,9 @@ const exactDatabaseTrigger = ({ application, id, name, settings, label }) => {
   );
   if (
     logicFunction.name !== name ||
-    JSON.stringify(parseTriggerSettings(logicFunction.databaseEventTriggerSettings)) !==
-      JSON.stringify(settings)
+    JSON.stringify(
+      parseTriggerSettings(logicFunction.databaseEventTriggerSettings),
+    ) !== JSON.stringify(settings)
   ) {
     throw new Error(`${label} database trigger is invalid`);
   }
@@ -504,7 +534,8 @@ const verifyMeetingApplicationContract = (application) => {
   });
   const worker = exactlyOne(
     application.logicFunctions ?? [],
-    (candidate) => candidate?.universalIdentifier === MEETING_NOTIFICATION_WORKER_ID,
+    (candidate) =>
+      candidate?.universalIdentifier === MEETING_NOTIFICATION_WORKER_ID,
     'Meeting notification worker',
   );
   if (
@@ -517,7 +548,8 @@ const verifyMeetingApplicationContract = (application) => {
   }
   const reportVerifier = exactlyOne(
     application.logicFunctions ?? [],
-    (candidate) => candidate?.universalIdentifier === REPORT_RUNTIME_VERIFICATION_ID,
+    (candidate) =>
+      candidate?.universalIdentifier === REPORT_RUNTIME_VERIFICATION_ID,
     'Report runtime verification function',
   );
   if (
@@ -621,7 +653,11 @@ const verifyTelegramPersistenceSchema = (objects) => {
   }
 };
 
-const verifyTelegramApplicationContract = (application, workspaceId) => {
+const verifyTelegramApplicationContract = (
+  application,
+  workspaceId,
+  publicReportsEnabled = 'false',
+) => {
   const variables = application.applicationVariables ?? [];
   const workspaceVariable = exactlyOne(
     variables,
@@ -638,6 +674,19 @@ const verifyTelegramApplicationContract = (application, workspaceId) => {
   );
   if (enabledVariable.value !== 'true') {
     throw new Error('Telegram application is not enabled');
+  }
+  const publicReportsVariable = exactlyOne(
+    variables,
+    (variable) => variable.key === 'CORGI_CRM_TELEGRAM_PUBLIC_REPORTS_ENABLED',
+    'Telegram public reports variable',
+  );
+  if (
+    !['true', 'false'].includes(publicReportsEnabled) ||
+    publicReportsVariable.value !== publicReportsEnabled
+  ) {
+    throw new Error(
+      'Telegram public reports policy does not match approved configuration',
+    );
   }
   for (const key of TELEGRAM_VARIABLE_KEYS) {
     const variable = exactlyOne(
@@ -656,9 +705,7 @@ const verifyTelegramApplicationContract = (application, workspaceId) => {
       `Telegram variable ${key}`,
     ).value.trim();
   assertIanaTimeZone(variableValue('CORGI_CRM_TELEGRAM_TIME_ZONE'));
-  assertQuarterHour(
-    variableValue('CORGI_CRM_TELEGRAM_DAILY_SUMMARY_TIME'),
-  );
+  assertQuarterHour(variableValue('CORGI_CRM_TELEGRAM_DAILY_SUMMARY_TIME'));
 
   const functions = application.logicFunctions ?? [];
   const webhook = exactlyOne(
@@ -686,8 +733,7 @@ const verifyTelegramApplicationContract = (application, workspaceId) => {
 
   exactlyOne(
     functions,
-    (logicFunction) =>
-      logicFunction.universalIdentifier === TELEGRAM_WORKER_ID,
+    (logicFunction) => logicFunction.universalIdentifier === TELEGRAM_WORKER_ID,
     'Telegram queued worker function',
   );
   const cron = exactlyOne(
@@ -727,8 +773,7 @@ const verifyTelegramApplicationContract = (application, workspaceId) => {
   exactlyOne(
     functions,
     (logicFunction) =>
-      logicFunction.universalIdentifier ===
-      TELEGRAM_DELIVERY_RETRY_WORKER_ID,
+      logicFunction.universalIdentifier === TELEGRAM_DELIVERY_RETRY_WORKER_ID,
     'Telegram delivery retry worker function',
   );
 };
@@ -854,12 +899,12 @@ const verifyInstalledApplication = async ({
     throw new Error('Workspace changed while verifying the application role');
   }
   const roles = Array.isArray(roleData.getRoles)
-    ? roleData.getRoles.filter(
-        (role) => role?.id === application.defaultRoleId,
-      )
+    ? roleData.getRoles.filter((role) => role?.id === application.defaultRoleId)
     : [];
   if (roles.length !== 1) {
-    throw new Error('Expected exactly one installed Corgi CRM application role');
+    throw new Error(
+      'Expected exactly one installed Corgi CRM application role',
+    );
   }
 
   return { ...application, defaultLogicFunctionRole: roles[0] };
@@ -906,13 +951,17 @@ const listAllMetadataObjects = async ({ graphql }) => {
     });
     const connection = data.objects;
     if (!connection || !Array.isArray(connection.edges)) {
-      throw new Error('Metadata object verification returned an invalid connection');
+      throw new Error(
+        'Metadata object verification returned an invalid connection',
+      );
     }
     objects.push(...connection.edges.map((edge) => edge?.node).filter(Boolean));
     if (!connection.pageInfo?.hasNextPage) return objects;
     cursor = connection.pageInfo.endCursor;
     if (!cursor || seenCursors.has(cursor)) {
-      throw new Error('Metadata object verification returned an invalid cursor');
+      throw new Error(
+        'Metadata object verification returned an invalid cursor',
+      );
     }
     seenCursors.add(cursor);
   }
@@ -1040,30 +1089,56 @@ const verifyReconciliation = ({ members, wholesalers }) => {
 // filters as the generated app client and disclose counts, never owner data.
 const inspectReconciliationPreflight = async ({ graphql }) => {
   const [members, wholesalers] = await Promise.all([
-    listAllRecords({ graphql, operationName: 'PreflightOwnerMembers',
-      root: 'workspaceMembers', selection: 'id userEmail name { firstName lastName }' }),
-    listAllRecords({ graphql, operationName: 'PreflightOwnerWholesalers',
-      root: 'wholesalers', selection: 'id name email wholesalerRole workspaceMemberId' }),
+    listAllRecords({
+      graphql,
+      operationName: 'PreflightOwnerMembers',
+      root: 'workspaceMembers',
+      selection: 'id userEmail name { firstName lastName }',
+    }),
+    listAllRecords({
+      graphql,
+      operationName: 'PreflightOwnerWholesalers',
+      root: 'wholesalers',
+      selection: 'id name email wholesalerRole workspaceMemberId',
+    }),
   ]);
   const result = {
-    members: members.length, wholesalers: wholesalers.length,
-    needsCreation: 0, existingIdentity: 0, missingMemberIdentity: 0,
-    ambiguousIdentity: 0, conflictingMemberLink: 0, filteredReadMismatch: 0,
+    members: members.length,
+    wholesalers: wholesalers.length,
+    needsCreation: 0,
+    existingIdentity: 0,
+    missingMemberIdentity: 0,
+    ambiguousIdentity: 0,
+    conflictingMemberLink: 0,
+    filteredReadMismatch: 0,
   };
-  const ids = (records) => [...new Set(records.map(({ id }) => id))].sort().join(',');
+  const ids = (records) =>
+    [...new Set(records.map(({ id }) => id))].sort().join(',');
   for (const member of members) {
     if (!UUID_PATTERN.test(member.id ?? '') || !member.userEmail?.trim()) {
       result.missingMemberIdentity += 1;
       continue;
     }
     const email = normalizeEmail(member.userEmail);
-    const byMember = wholesalers.filter((row) => row.workspaceMemberId === member.id);
-    const byEmail = wholesalers.filter((row) => normalizeEmail(row.email ?? '') === email);
-    const matches = [...new Map([...byMember, ...byEmail].map((row) => [row.id, row])).values()];
+    const byMember = wholesalers.filter(
+      (row) => row.workspaceMemberId === member.id,
+    );
+    const byEmail = wholesalers.filter(
+      (row) => normalizeEmail(row.email ?? '') === email,
+    );
+    const matches = [
+      ...new Map(
+        [...byMember, ...byEmail].map((row) => [row.id, row]),
+      ).values(),
+    ];
     if (matches.length === 0) result.needsCreation += 1;
     else if (matches.length === 1) result.existingIdentity += 1;
     else result.ambiguousIdentity += 1;
-    if (matches.some((row) => row.workspaceMemberId && row.workspaceMemberId !== member.id)) {
+    if (
+      matches.some(
+        (row) => row.workspaceMemberId && row.workspaceMemberId !== member.id,
+      )
+    ) {
       result.conflictingMemberLink += 1;
     }
     const filteredReads = [
@@ -1085,7 +1160,10 @@ const inspectReconciliationPreflight = async ({ graphql }) => {
         }
       }`,
         variables: {
-          emailPattern: email.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_'),
+          emailPattern: email
+            .replace(/\\/g, '\\\\')
+            .replace(/%/g, '\\%')
+            .replace(/_/g, '\\_'),
         },
         baseline: byEmail,
       },
@@ -1167,9 +1245,15 @@ const main = async () => {
   if (mode === 'target') {
     const preflight = await inspectReconciliationPreflight({ graphql });
     console.log(JSON.stringify({ ownerReconciliationPreflight: preflight }));
-    if (preflight.missingMemberIdentity || preflight.ambiguousIdentity ||
-        preflight.conflictingMemberLink || preflight.filteredReadMismatch) {
-      throw new Error('Owner reconciliation preflight requires review before publication');
+    if (
+      preflight.missingMemberIdentity ||
+      preflight.ambiguousIdentity ||
+      preflight.conflictingMemberLink ||
+      preflight.filteredReadMismatch
+    ) {
+      throw new Error(
+        'Owner reconciliation preflight requires review before publication',
+      );
     }
     console.log('Verified Corgi CRM production target workspace.');
     return;
@@ -1229,7 +1313,11 @@ const main = async () => {
   ]);
   const result = verifyReconciliation({ members, wholesalers });
   if (mode === 'telegram') {
-    verifyTelegramApplicationContract(application, workspaceId);
+    verifyTelegramApplicationContract(
+      application,
+      workspaceId,
+      process.env.CORGI_CRM_TELEGRAM_PUBLIC_REPORTS_ENABLED || 'false',
+    );
   } else if (mode === 'telegram-disabled') {
     verifyTelegramDisabled(application, workspaceId);
   }

@@ -27,6 +27,9 @@ delivery enum storage from `1.1.1`. Published versions are immutable: `1.1.0`
 and `1.1.1` were published but failed installation and must not be overwritten
 or reused.
 
+Version `1.2.1` adds an opt-in public read path for whole-workspace Telegram
+reports while keeping identity-scoped reads and CRM writes authenticated.
+
 The two custom CRM objects predate this app, so their universal identifiers are
 not guessed or committed. Immediately before packaging, use the short-lived
 deployment credential to resolve them from live metadata into the job
@@ -102,6 +105,10 @@ source:
 - `CORGI_CRM_TELEGRAM_ENABLED`: defaults to `false`; the production workflow
   changes it to `true` only after trusted configuration and live provider
   verification complete.
+- `CORGI_CRM_TELEGRAM_PUBLIC_REPORTS_ENABLED`: defaults to `false`. When set
+  to exactly `true`, any Telegram user in a private chat can request `/daily`,
+  `/weekly`, or `/monthly`. It does not authorize `/log`, `/today`, `/summary`,
+  linking, or any other CRM read or write.
 - `CORGI_CRM_TELEGRAM_BOT_TOKEN` (secret): token from BotFather.
 - `CORGI_CRM_TELEGRAM_WEBHOOK_SECRET` (secret): a new random Telegram webhook
   secret token.
@@ -191,7 +198,10 @@ meeting-booking totals, activity and outcome breakdowns, an activity leaderboard
 and a meeting-booking leaderboard for the rolling last 24 hours, 7 days (local
 weekend events excluded), or 30 days. Owners come from the records themselves;
 there is no fixed people list. Meeting-only owners appear on the booking
-leaderboard. `/help` shows the syntax;
+leaderboard. These three aggregate reports are available without a CRM link only
+when `CORGI_CRM_TELEGRAM_PUBLIC_REPORTS_ENABLED` is exactly `true`; Telegram's
+signed webhook, private-chat restriction, workspace fence, update deduplication,
+and durable reply delivery still apply. `/help` shows the syntax;
 there is no `/cancel` command because the bot does not hold mutable drafts. The
 cron sends the same whole-workspace rolling-24-hour report to each securely
 linked recipient. It runs every 15 minutes. From the configured local

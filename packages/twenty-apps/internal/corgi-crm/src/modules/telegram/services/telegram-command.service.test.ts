@@ -35,6 +35,7 @@ const base = () => {
     repository,
     meetingRepository: { listMeetingBookings: vi.fn().mockResolvedValue([]) },
     timeZone: 'America/Chicago',
+    publicReportsEnabled: 'false',
     linkCodesJson: '{}',
     identity: {
       findWorkspaceMember: vi.fn().mockResolvedValue({
@@ -67,6 +68,8 @@ const update = (text: string) => ({
 describe('processTelegramCommand', () => {
   it('reuses the original report after safe rejection even when CRM data changes', async () => {
     const dependencies = base();
+    dependencies.publicReportsEnabled = 'true';
+    dependencies.values.delete('telegram:user:101');
     dependencies.send.mockRejectedValueOnce(
       new TelegramDeliveryError('rate limit', false),
     );
@@ -148,6 +151,23 @@ describe('processTelegramCommand', () => {
     },
   );
 
+  it.each([undefined, 'false', 'TRUE', '1'])(
+    'keeps public reports closed for an unlinked sender when the gate is %s',
+    async (publicReportsEnabled) => {
+      const dependencies = base();
+      dependencies.publicReportsEnabled = publicReportsEnabled as string;
+      dependencies.values.delete('telegram:user:101');
+
+      await expect(
+        processTelegramCommand(update('/daily'), dependencies),
+      ).resolves.toEqual({ status: 'not_linked' });
+      expect(dependencies.repository.listActivities).not.toHaveBeenCalled();
+      expect(
+        dependencies.meetingRepository.listMeetingBookings,
+      ).not.toHaveBeenCalled();
+    },
+  );
+
   it.each(['/daily', '/weekly', '/monthly'])(
     'requires a current identity before the %s report',
     async (command) => {
@@ -158,6 +178,31 @@ describe('processTelegramCommand', () => {
       ).resolves.toEqual({ status: 'not_linked' });
       expect(dependencies.repository.listActivities).not.toHaveBeenCalled();
       expect(dependencies.meetingRepository.listMeetingBookings).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    ['/daily', 'daily'],
+    ['/weekly', 'weekly'],
+    ['/monthly', 'monthly'],
+  ] as const)(
+    'allows an unlinked sender to read the public %s workspace report',
+    async (command, period) => {
+      const dependencies = base();
+      dependencies.publicReportsEnabled = 'true';
+      dependencies.values.delete('telegram:user:101');
+
+      await expect(
+        processTelegramCommand(update(command), dependencies),
+      ).resolves.toEqual({ status: 'report', period });
+      expect(dependencies.repository.listActivities).toHaveBeenCalledOnce();
+      expect(
+        dependencies.meetingRepository.listMeetingBookings,
+      ).toHaveBeenCalledOnce();
+      expect(
+        dependencies.identity.findWorkspaceMember,
+      ).not.toHaveBeenCalled();
+      expect(dependencies.identity.findWholesalers).not.toHaveBeenCalled();
     },
   );
 
@@ -277,22 +322,28 @@ describe('processTelegramCommand', () => {
     );
   });
 
-  it('requires a linked CRM identity before reads or writes', async () => {
-    const dependencies = base();
-    dependencies.values.delete('telegram:user:101');
+  it.each([
+    ['/log call | Acme | connected', 'write'],
+    ['/today', 'personal read'],
+    ['/summary', 'personal read alias'],
+  ])(
+    'does not let the public-report gate authorize an unlinked %s',
+    async (command) => {
+      const dependencies = base();
+      dependencies.publicReportsEnabled = 'true';
+      dependencies.values.delete('telegram:user:101');
 
-    await expect(
-      processTelegramCommand(
-        update('/log call | Acme | connected'),
-        dependencies,
-      ),
-    ).resolves.toEqual({ status: 'not_linked' });
-    expect(dependencies.repository.createActivity).not.toHaveBeenCalled();
-    expect(dependencies.send).toHaveBeenCalledWith(
-      '101',
-      'Link your CRM identity first with /link CODE.',
-    );
-  });
+      await expect(
+        processTelegramCommand(update(command), dependencies),
+      ).resolves.toEqual({ status: 'not_linked' });
+      expect(dependencies.repository.createActivity).not.toHaveBeenCalled();
+      expect(dependencies.repository.listActivities).not.toHaveBeenCalled();
+      expect(dependencies.send).toHaveBeenCalledWith(
+        '101',
+        'Link your CRM identity first with /link CODE.',
+      );
+    },
+  );
 
   it('revalidates CRM ownership before every linked read or write', async () => {
     const writeDependencies = base();

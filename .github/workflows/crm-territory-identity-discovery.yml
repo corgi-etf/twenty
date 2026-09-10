@@ -58,7 +58,9 @@ jobs:
           set -euo pipefail
           [[ "${DEPLOYED_SHA}" =~ ^[0-9a-f]{40}$ ]]
           git cat-file -e "${DEPLOYED_SHA}^{commit}"
-          node packages/twenty-apps/internal/corgi-crm/scripts/deployment-revision-guard.mjs "${DEPLOYED_SHA}" "${GITHUB_SHA}"
+          # Server equivalence only; the next step requires the successful app
+          # installation workflow at this exact source revision.
+          node packages/twenty-apps/internal/corgi-crm/scripts/deployment-revision-guard.mjs "${DEPLOYED_SHA}" "${GITHUB_SHA}" app-release
 
       - name: Verify exact-workflow app install lineage
         shell: bash

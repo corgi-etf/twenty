@@ -123,6 +123,24 @@ export const meetingCanaryFailureCategory = (
   return 'UNKNOWN';
 };
 
+export type MeetingCanaryCalendarPresentationAudit = {
+  status: 'passed' | 'failed';
+  category: MeetingCanaryFailureCategory | null;
+};
+
+// Only the optional calendar presentation block may use this boundary. Native
+// booking, disabled checks, persisted invariants, cleanup and reports stay out.
+export const auditMeetingCanaryCalendarPresentation = async (
+  presentCalendar: () => Promise<void>,
+): Promise<MeetingCanaryCalendarPresentationAudit> => {
+  try {
+    await presentCalendar();
+    return { status: 'passed', category: null };
+  } catch (error) {
+    return { status: 'failed', category: meetingCanaryFailureCategory(error) };
+  }
+};
+
 export const meetingCanaryGraphqlFailure = (
   errors: unknown,
 ): MeetingCanaryCheckError => {

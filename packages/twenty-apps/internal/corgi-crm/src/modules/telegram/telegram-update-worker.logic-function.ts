@@ -32,6 +32,7 @@ type UpdateWorkerDependencies = {
   createRawCrmTransport(): RawCoreGraphqlTransport;
   createTelegramClient(): TelegramClient;
   timeZone: string;
+  publicReportsEnabled: string | undefined;
   linkCodesJson: string | undefined;
 };
 
@@ -73,6 +74,7 @@ export const handleTelegramUpdateJob = async (
       meetingRepository: new CoreMeetingBookingReportRepository(rawTransport),
       store: dependencies.store,
       timeZone: dependencies.timeZone,
+      publicReportsEnabled: dependencies.publicReportsEnabled,
       linkCodesJson: dependencies.linkCodesJson,
       identity: {
         findWorkspaceMember: (workspaceMemberId) =>
@@ -160,6 +162,8 @@ export const handler = async (
         token: requiredEnvironment('CORGI_CRM_TELEGRAM_BOT_TOKEN'),
       }),
     timeZone: requiredEnvironment('CORGI_CRM_TELEGRAM_TIME_ZONE'),
+    publicReportsEnabled:
+      process.env.CORGI_CRM_TELEGRAM_PUBLIC_REPORTS_ENABLED,
     linkCodesJson: process.env.CORGI_CRM_TELEGRAM_LINK_CODES,
   });
 

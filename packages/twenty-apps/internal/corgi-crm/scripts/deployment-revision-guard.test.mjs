@@ -61,6 +61,76 @@ const expectedGitCalls = (
 ];
 
 describe('production deployment revision guard', () => {
+  it('explicitly distinguishes a separately published app release from server runtime changes', () => {
+    const appPaths = [
+      'packages/twenty-apps/internal/corgi-crm/src/application-config.ts',
+      'packages/twenty-apps/internal/corgi-crm/src/modules/telegram/services/telegram-command.service.ts',
+      'packages/twenty-apps/internal/corgi-crm/package.json',
+      'packages/twenty-apps/internal/corgi-crm/README.md',
+      'packages/twenty-apps/internal/corgi-crm/scripts/configure-telegram.mjs',
+      'packages/twenty-apps/internal/corgi-crm/scripts/configure-telegram.test.mjs',
+    ];
+    assert.throws(() => assertAllowedChangedPaths(appPaths), {
+      code: 'NON_MAINTENANCE_CHANGE',
+    });
+    assert.deepEqual(assertAllowedChangedPaths(appPaths, 'app-release'), {
+      changedPathCount: appPaths.length,
+    });
+    for (const path of [
+      'packages/twenty-apps/internal/corgi-crm/yarn.lock',
+      'packages/twenty-apps/internal/corgi-crm/tsconfig.json',
+      'packages/twenty-apps/internal/other-app/src/index.ts',
+      'packages/twenty-server/src/server.ts',
+      'packages/twenty-client-sdk/src/index.ts',
+      'yarn.lock',
+      'infra/aws/production/locals.tf',
+    ])
+      assert.throws(() => assertAllowedChangedPaths([path], 'app-release'), {
+        code: 'SERVER_RUNTIME_CHANGE',
+      });
+    assert.throws(() => assertAllowedChangedPaths([], 'anything'), {
+      code: 'INVALID_SCOPE',
+    });
+  });
+
+  it('requires a version-only package bump for separately published app code', async () => {
+    const packagePath = 'packages/twenty-apps/internal/corgi-crm/package.json';
+    const appPath =
+      'packages/twenty-apps/internal/corgi-crm/src/application-config.ts';
+    const run = (before, after) =>
+      verifyDeploymentRevision({
+        deployedSha: DEPLOYED_SHA,
+        workflowSha: WORKFLOW_SHA,
+        scope: 'app-release',
+        executeFile: async (_file, args) => ({
+          stdout: Buffer.from(
+            args[0] === 'diff'
+              ? `${appPath}\0${packagePath}\0`
+              : args[0] === 'show'
+                ? JSON.stringify(
+                    args[1].startsWith(DEPLOYED_SHA) ? before : after,
+                  )
+                : '',
+          ),
+        }),
+      });
+    const before = {
+      name: 'corgi-crm',
+      version: '1.2.0',
+      scripts: { twenty: 'twenty' },
+    };
+    assert.deepEqual(await run(before, { ...before, version: '1.2.1' }), {
+      changedPathCount: 2,
+    });
+    for (const after of [
+      before,
+      { ...before, version: '1.1.9' },
+      { ...before, version: '1.2.1', scripts: {} },
+    ]) {
+      await assert.rejects(run(before, after), { code: 'INVALID_APP_RELEASE' });
+    }
+  });
+
   it('accepts only the exact reviewed maintenance paths', () => {
     assert.deepEqual(assertAllowedChangedPaths(ALLOWED_PATHS), {
       changedPathCount: ALLOWED_PATHS.length,

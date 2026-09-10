@@ -19,6 +19,40 @@ describe('trusted Telegram application configuration', () => {
     });
     assert.equal(variables.CORGI_CRM_TELEGRAM_LINK_CODES, '{"bindings":[]}');
     assert.equal(variables.CORGI_CRM_TELEGRAM_NOTIFICATION_ROUTES, '{}');
+    assert.equal(variables.CORGI_CRM_TELEGRAM_PUBLIC_REPORTS_ENABLED, 'false');
+  });
+
+  it('enables public reports only through an explicit canonical boolean', () => {
+    const configuration = {
+      workspaceId: '11111111-1111-4111-8111-111111111111',
+      token: 'token',
+      webhookSecret: 'secret',
+      operatorSecret: 'operator-secret',
+      linkCodesJson: '{"bindings":[]}',
+      timeZone: 'America/Chicago',
+      dailySummaryTime: '18:00',
+    };
+    for (const publicReportsEnabled of ['true', 'false']) {
+      const variables =
+        configurationModule.validateTrustedTelegramConfiguration({
+          ...configuration,
+          publicReportsEnabled,
+        });
+      assert.equal(
+        variables.CORGI_CRM_TELEGRAM_PUBLIC_REPORTS_ENABLED,
+        publicReportsEnabled,
+      );
+    }
+    for (const publicReportsEnabled of ['TRUE', 'yes', '1', true, {}, null]) {
+      assert.throws(
+        () =>
+          configurationModule.validateTrustedTelegramConfiguration({
+            ...configuration,
+            publicReportsEnabled,
+          }),
+        /public reports/i,
+      );
+    }
   });
 
   it('actively disables without requiring provider secrets', async () => {
@@ -72,8 +106,7 @@ describe('trusted Telegram application configuration', () => {
                 findManyApplications: [
                   {
                     id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
-                    universalIdentifier:
-                      'ca87ad48-b62a-41be-a790-7c17707ff1b4',
+                    universalIdentifier: 'ca87ad48-b62a-41be-a790-7c17707ff1b4',
                   },
                 ],
               };
@@ -294,6 +327,7 @@ describe('trusted Telegram application configuration', () => {
       [
         'CORGI_CRM_TELEGRAM_BOT_TOKEN',
         'CORGI_CRM_TELEGRAM_DAILY_SUMMARY_TIME',
+        'CORGI_CRM_TELEGRAM_PUBLIC_REPORTS_ENABLED',
         'CORGI_CRM_TELEGRAM_LINK_CODES',
         'CORGI_CRM_TELEGRAM_NOTIFICATION_ROUTES',
         'CORGI_CRM_TELEGRAM_OPERATOR_SECRET',

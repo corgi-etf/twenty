@@ -109,6 +109,7 @@ describe('production Telegram application verification', () => {
     applicationVariables: [
       { key: 'CORGI_CRM_WORKSPACE_ID', value: 'workspace-1' },
       { key: 'CORGI_CRM_TELEGRAM_ENABLED', value: 'true' },
+      { key: 'CORGI_CRM_TELEGRAM_PUBLIC_REPORTS_ENABLED', value: 'false' },
       { key: 'CORGI_CRM_TELEGRAM_BOT_TOKEN', value: '********' },
       { key: 'CORGI_CRM_TELEGRAM_WEBHOOK_SECRET', value: '********' },
       { key: 'CORGI_CRM_TELEGRAM_OPERATOR_SECRET', value: '********' },
@@ -158,6 +159,49 @@ describe('production Telegram application verification', () => {
     );
   });
 
+  it('requires the installed public-report policy to match the approved configuration', () => {
+    const withPublicPolicy = (value) => ({
+      ...application,
+      applicationVariables: application.applicationVariables.map((variable) =>
+        variable.key === 'CORGI_CRM_TELEGRAM_PUBLIC_REPORTS_ENABLED'
+          ? { ...variable, value }
+          : variable,
+      ),
+    });
+    assert.doesNotThrow(() =>
+      verifyTelegramApplicationContract(
+        withPublicPolicy('true'),
+        'workspace-1',
+        'true',
+      ),
+    );
+    assert.throws(
+      () =>
+        verifyTelegramApplicationContract(application, 'workspace-1', 'true'),
+      /public reports/i,
+    );
+    assert.throws(
+      () =>
+        verifyTelegramApplicationContract(
+          withPublicPolicy('true'),
+          'workspace-1',
+          'false',
+        ),
+      /public reports/i,
+    );
+    for (const value of ['', 'TRUE', 'yes', undefined]) {
+      assert.throws(
+        () =>
+          verifyTelegramApplicationContract(
+            withPublicPolicy(value),
+            'workspace-1',
+            'true',
+          ),
+        /public reports/i,
+      );
+    }
+  });
+
   it('verifies an explicit disabled state without requiring provider secrets', () => {
     assert.doesNotThrow(() =>
       verifyTelegramDisabled(
@@ -198,7 +242,9 @@ describe('production Telegram application verification', () => {
               'e61bb12c-a0f5-421b-97d2-e2596e56cf59'
                 ? {
                     ...logicFunction,
-                    cronTriggerSettings: JSON.stringify({ pattern: '0 0 * * *' }),
+                    cronTriggerSettings: JSON.stringify({
+                      pattern: '0 0 * * *',
+                    }),
                   }
                 : logicFunction,
             ),
@@ -281,7 +327,7 @@ describe('application release contract', () => {
     const packageJson = JSON.parse(
       await fs.readFile(new URL('../package.json', import.meta.url), 'utf8'),
     );
-    assert.equal(packageJson.version, '1.2.0');
+    assert.equal(packageJson.version, '1.2.1');
   });
 
   it('resolves exact custom object universal identifiers from live metadata', () => {
@@ -397,11 +443,16 @@ describe('installed application role verification', () => {
     assert.doesNotMatch(documents[0], /findManyApplications/);
     assert.doesNotMatch(documents[0], /defaultLogicFunctionRole/);
     assert.match(documents[1], /getRoles/);
-    assert.match(verifierSource, /applicationUniversalIdentifier:\s*APPLICATION_ID/);
+    assert.match(
+      verifierSource,
+      /applicationUniversalIdentifier:\s*APPLICATION_ID/,
+    );
 
     const findManyImplementation = applicationServiceSource.slice(
       applicationServiceSource.indexOf('async findManyApplications('),
-      applicationServiceSource.indexOf('async findManyInstalledFlatApplications('),
+      applicationServiceSource.indexOf(
+        'async findManyInstalledFlatApplications(',
+      ),
     );
     const findOneImplementation = applicationServiceSource.slice(
       applicationServiceSource.indexOf('async findOneApplication({'),
@@ -590,13 +641,15 @@ describe('installed application role verification', () => {
         verifyApplicationRoleContract(
           {
             ...role,
-            objectPermissions: role.objectPermissions.map((permission, index) =>
-              index === 7
-                ? {
-                    ...permission,
-                    objectMetadataId: role.objectPermissions[0].objectMetadataId,
-                  }
-                : permission,
+            objectPermissions: role.objectPermissions.map(
+              (permission, index) =>
+                index === 7
+                  ? {
+                      ...permission,
+                      objectMetadataId:
+                        role.objectPermissions[0].objectMetadataId,
+                    }
+                  : permission,
             ),
           },
           objects,
@@ -759,9 +812,7 @@ describe('installed meeting booking verification', () => {
   };
 
   it('requires exact fields, protected evidence, relations, and native views', () => {
-    assert.doesNotThrow(() =>
-      verifyMeetingBookingSchema([object], experience),
-    );
+    assert.doesNotThrow(() => verifyMeetingBookingSchema([object], experience));
     assert.throws(
       () =>
         verifyMeetingBookingSchema(
@@ -865,11 +916,12 @@ describe('installed meeting booking verification', () => {
     );
     const runtimeId = '8d6ea72a-aa6f-4a1c-83a7-ad539819bd47';
     assert.throws(
-      () => verifyMeetingApplicationContract({
-        logicFunctions: application.logicFunctions.filter(
-          (logicFunction) => logicFunction.universalIdentifier !== runtimeId,
-        ),
-      }),
+      () =>
+        verifyMeetingApplicationContract({
+          logicFunctions: application.logicFunctions.filter(
+            (logicFunction) => logicFunction.universalIdentifier !== runtimeId,
+          ),
+        }),
       /report runtime/i,
     );
     for (const field of [
@@ -880,13 +932,14 @@ describe('installed meeting booking verification', () => {
       'workflowActionTriggerSettings',
     ]) {
       assert.throws(
-        () => verifyMeetingApplicationContract({
-          logicFunctions: application.logicFunctions.map((logicFunction) =>
-            logicFunction.universalIdentifier === runtimeId
-              ? { ...logicFunction, [field]: {} }
-              : logicFunction,
-          ),
-        }),
+        () =>
+          verifyMeetingApplicationContract({
+            logicFunctions: application.logicFunctions.map((logicFunction) =>
+              logicFunction.universalIdentifier === runtimeId
+                ? { ...logicFunction, [field]: {} }
+                : logicFunction,
+            ),
+          }),
         /report runtime.*untriggered/i,
       );
     }

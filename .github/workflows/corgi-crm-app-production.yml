@@ -75,6 +75,7 @@ env:
   WORKER_SERVICE: crm-production-worker
   WORKER_CONTAINER: worker
   CORGI_CRM_API_URL: https://crm.corgiinvest.com
+  CORGI_CRM_TELEGRAM_PUBLIC_REPORTS_ENABLED: ${{ vars.CORGI_CRM_TELEGRAM_PUBLIC_REPORTS_ENABLED || 'false' }}
 
 jobs:
   publish-and-install:
@@ -101,15 +102,17 @@ jobs:
           set -euo pipefail
           if [[ "${OPERATION}" == "configure-telegram" ]]; then
             [[ "${CONFIRMATION}" == "CONFIGURE_CORGI_CRM_TELEGRAM" ]]
+            revision_scope=maintenance
           else
             [[ "${OPERATION}" == "publish-and-install" ]]
             [[ "${CONFIRMATION}" == "PUBLISH_AND_INSTALL_CORGI_CRM_APP" ]]
+            revision_scope=app-release
           fi
           [[ "${DEPLOYED_SHA}" =~ ^[0-9a-f]{40}$ ]]
           [[ "${BOOTSTRAP_RUN_ID}" =~ ^[1-9][0-9]*$ ]]
           [[ "${BOOTSTRAP_RUN_ATTEMPT}" =~ ^[1-9][0-9]*$ ]]
           node "${APP_PATH}/scripts/deployment-revision-guard.mjs" \
-            "${DEPLOYED_SHA}" "${GITHUB_SHA}"
+            "${DEPLOYED_SHA}" "${GITHUB_SHA}" "${revision_scope}"
 
       - name: Resolve prior meeting canary recovery evidence
         shell: bash
