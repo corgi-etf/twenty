@@ -50,10 +50,10 @@ describe('getZonedDayWindow', () => {
     ).toBe(false);
   });
 
-  it('admits a delayed cron anywhere in its deterministic 15-minute window', () => {
+  it('admits a missed tick for the rest of the same local date', () => {
     expect(
       getScheduledAdmission({
-        now: new Date('2026-09-09T22:07:59.000Z'),
+        now: new Date('2026-09-10T04:59:59.000Z'),
         timeZone: 'America/Chicago',
         localTime: '17:00',
       }),
@@ -63,7 +63,43 @@ describe('getZonedDayWindow', () => {
     });
     expect(
       getScheduledAdmission({
-        now: new Date('2026-09-09T22:15:00.000Z'),
+        now: new Date('2026-09-09T21:59:59.000Z'),
+        timeZone: 'America/Chicago',
+        localTime: '17:00',
+      }),
+    ).toBeNull();
+  });
+
+  it('uses the first valid instant after a DST gap', () => {
+    expect(
+      getScheduledAdmission({
+        now: new Date('2026-03-08T08:05:00.000Z'),
+        timeZone: 'America/Chicago',
+        localTime: '02:15',
+      }),
+    ).toEqual({
+      localDate: '2026-03-08',
+      scheduledInstant: new Date('2026-03-08T08:00:00.000Z'),
+    });
+  });
+
+  it('uses the first occurrence during a DST fold', () => {
+    expect(
+      getScheduledAdmission({
+        now: new Date('2026-11-01T07:35:00.000Z'),
+        timeZone: 'America/Chicago',
+        localTime: '01:30',
+      }),
+    ).toEqual({
+      localDate: '2026-11-01',
+      scheduledInstant: new Date('2026-11-01T06:30:00.000Z'),
+    });
+  });
+
+  it('does not catch up a prior local date after the horizon closes', () => {
+    expect(
+      getScheduledAdmission({
+        now: new Date('2026-09-10T21:00:00.000Z'),
         timeZone: 'America/Chicago',
         localTime: '17:00',
       }),

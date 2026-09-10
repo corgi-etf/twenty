@@ -115,37 +115,29 @@ export const getScheduledAdmission = ({
   if (!/^(?:[01]\d|2[0-3]):(?:00|15|30|45)$/.test(localTime)) {
     throw new Error('Daily summary time must be HH:MM on a 15-minute boundary');
   }
-  const current = partsAt(now, timeZone);
+  const window = getZonedDayWindow({ now, timeZone });
   const [hour, minute] = localTime.split(':').map(Number) as [number, number];
-  const localDate = `${current.year}-${pad(current.month)}-${pad(current.day)}`;
-  const localAsUtc = Date.UTC(
-    current.year,
-    current.month - 1,
-    current.day,
-    hour,
-    minute,
-  );
-  let candidate = localAsUtc;
-  for (let iteration = 0; iteration < 4; iteration += 1) {
+  const targetMinute = hour * 60 + minute;
+  let scheduledInstant: Date | undefined;
+  // Scan the bounded local day in chronological order. This selects the first
+  // occurrence during a fold and the first valid wall minute after a gap.
+  for (
+    let candidate = window.start.getTime();
+    candidate < window.end.getTime();
+    candidate += 60_000
+  ) {
     const represented = partsAt(new Date(candidate), timeZone);
-    const representedAsUtc = Date.UTC(
-      represented.year,
-      represented.month - 1,
-      represented.day,
-      represented.hour,
-      represented.minute,
-      represented.second,
-    );
-    const next = candidate + (localAsUtc - representedAsUtc);
-    if (next === candidate) break;
-    candidate = next;
+    if (represented.hour * 60 + represented.minute >= targetMinute) {
+      scheduledInstant = new Date(candidate);
+      break;
+    }
   }
-  const scheduledInstant = new Date(candidate);
   if (
+    !scheduledInstant ||
     now.getTime() < scheduledInstant.getTime() ||
-    now.getTime() >= scheduledInstant.getTime() + 15 * 60_000
+    now.getTime() >= window.end.getTime()
   ) {
     return null;
   }
-  return { localDate, scheduledInstant };
+  return { localDate: window.localDate, scheduledInstant };
 };

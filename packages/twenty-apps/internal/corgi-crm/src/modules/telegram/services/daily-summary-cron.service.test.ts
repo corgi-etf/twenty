@@ -14,12 +14,12 @@ const roster = [
 ];
 
 describe('runDailySummaryCron', () => {
-  it('does no work outside the configured local minute', async () => {
+  it('does no work before the configured local time', async () => {
     const enqueue = vi.fn();
 
     await expect(
       runDailySummaryCron({
-        now: new Date('2026-09-09T22:15:00.000Z'),
+        now: new Date('2026-09-09T21:45:00.000Z'),
         timeZone: 'America/Chicago',
         localTime: '17:00',
         roster,
@@ -53,11 +53,11 @@ describe('runDailySummaryCron', () => {
     );
   });
 
-  it('uses the scheduled instant when execution is delayed within the admission window', async () => {
+  it('uses the scheduled instant when execution catches up more than 15 minutes late', async () => {
     const enqueue = vi.fn().mockResolvedValue({ enqueued: true });
     await expect(
       runDailySummaryCron({
-        now: new Date('2026-09-09T22:09:00.000Z'),
+        now: new Date('2026-09-10T01:30:00.000Z'),
         timeZone: 'America/Chicago',
         localTime: '17:00',
         roster,
@@ -71,6 +71,32 @@ describe('runDailySummaryCron', () => {
       }),
       `telegram-summary-2026-09-09-${MEMBER_ID}`,
     );
+  });
+
+  it('reuses the same local-date job after a process restart', async () => {
+    const jobIds: string[] = [];
+    const firstProcess = vi.fn(async (_payload: unknown, jobId: string) => {
+      jobIds.push(jobId);
+    });
+    const restartedProcess = vi.fn(async (_payload: unknown, jobId: string) => {
+      jobIds.push(jobId);
+    });
+    const input = {
+      now: new Date('2026-09-10T02:00:00.000Z'),
+      timeZone: 'America/Chicago',
+      localTime: '17:00',
+      roster,
+    };
+    await runDailySummaryCron({ ...input, enqueue: firstProcess });
+    await runDailySummaryCron({
+      ...input,
+      now: new Date('2026-09-10T03:00:00.000Z'),
+      enqueue: restartedProcess,
+    });
+    expect(jobIds).toEqual([
+      `telegram-summary-2026-09-09-${MEMBER_ID}`,
+      `telegram-summary-2026-09-09-${MEMBER_ID}`,
+    ]);
   });
 
   it('concurrent cron invocations address the same authoritative queue job', async () => {

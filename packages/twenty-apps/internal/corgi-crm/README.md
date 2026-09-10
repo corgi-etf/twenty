@@ -132,10 +132,13 @@ optional contact and follow-up:
 
 `/today` (or `/summary`) returns that person's current local-day breakdown.
 `/help` shows the syntax; there is no `/cancel` command because the bot does not
-hold mutable drafts. The cron runs every 15 minutes and admits the configured
-scheduled instant throughout its 15-minute window, so a short queue delay cannot
-miss the day. Each worker revalidates WorkspaceMember-to-Wholesaler ownership
-immediately before reading or writing.
+hold mutable drafts. The cron runs every 15 minutes. From the configured local
+time until that local date ends, every tick addresses the same deterministic
+per-member job, so missed ticks and restarts catch up without creating a second
+daily admission. A nonexistent DST wall time uses the first valid minute after
+the gap; a repeated wall time uses its first occurrence. Prior dates are never
+replayed automatically. Each worker revalidates WorkspaceMember-to-Wholesaler
+ownership immediately before reading or writing.
 
 Every interactive reply, callback answer, and daily message part records intent
 before the Telegram API call. A proven provider rejection is retryable. A

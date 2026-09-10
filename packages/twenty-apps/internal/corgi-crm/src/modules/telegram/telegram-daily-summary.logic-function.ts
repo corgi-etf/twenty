@@ -112,7 +112,7 @@ export default defineLogicFunction({
   universalIdentifier: TELEGRAM_DAILY_SUMMARY_UNIVERSAL_IDENTIFIER,
   name: 'telegram-daily-outreach-summary',
   description:
-    'Runs every 15 minutes, gates on configured IANA local time, and admits one deterministic delivery job per linked person.',
+    'Runs every 15 minutes and catches up one deterministic delivery job per linked person until the configured local date ends.',
   timeoutSeconds: 300,
   handler,
   cronTriggerSettings: { pattern: '*/15 * * * *' },
