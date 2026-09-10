@@ -34,7 +34,7 @@ describe('trusted Telegram application configuration', () => {
           };
         }
         writes.push(variables);
-        return { updateOneApplicationVariable: { key: variables.key } };
+        return { updateOneApplicationVariable: true };
       },
       workspaceId: '11111111-1111-4111-8111-111111111111',
       enabled: false,
@@ -46,6 +46,68 @@ describe('trusted Telegram application configuration', () => {
         value: 'false',
       },
     ]);
+  });
+
+  it('treats a proven absent app as already disabled without hiding invalid results', async () => {
+    const noApplication =
+      await configurationModule.configureTelegramApplication({
+        graphql: async () => ({ findManyApplications: [] }),
+        workspaceId: '11111111-1111-4111-8111-111111111111',
+        enabled: false,
+      });
+    assert.deepEqual(noApplication, { status: 'already-disabled' });
+
+    const duplicate = {
+      id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+      universalIdentifier: 'ca87ad48-b62a-41be-a790-7c17707ff1b4',
+    };
+    await assert.rejects(
+      () =>
+        configurationModule.configureTelegramApplication({
+          graphql: async () => ({
+            findManyApplications: [duplicate, duplicate],
+          }),
+          workspaceId: '11111111-1111-4111-8111-111111111111',
+          enabled: false,
+        }),
+      /found 2/i,
+    );
+    await assert.rejects(
+      () =>
+        configurationModule.configureTelegramApplication({
+          graphql: async () => ({ findManyApplications: null }),
+          workspaceId: '11111111-1111-4111-8111-111111111111',
+          enabled: false,
+        }),
+      /invalid/i,
+    );
+  });
+
+  it('requires an exact true application-variable mutation result', async () => {
+    for (const mutationResult of [false, null, undefined]) {
+      await assert.rejects(
+        () =>
+          configurationModule.configureTelegramApplication({
+            graphql: async ({ operationName }) =>
+              operationName === 'FindCorgiCrmApplication'
+                ? {
+                    findManyApplications: [
+                      {
+                        id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+                        universalIdentifier:
+                          'ca87ad48-b62a-41be-a790-7c17707ff1b4',
+                      },
+                    ],
+                  }
+                : mutationResult === undefined
+                  ? undefined
+                  : { updateOneApplicationVariable: mutationResult },
+            workspaceId: '11111111-1111-4111-8111-111111111111',
+            enabled: false,
+          }),
+        /was not updated/i,
+      );
+    }
   });
 
   it('validates the complete trusted configuration before the first mutation', async () => {
@@ -67,7 +129,7 @@ describe('trusted Telegram application configuration', () => {
         };
       }
       mutations.push(variables);
-      return { updateOneApplicationVariable: { key: variables.key } };
+      return { updateOneApplicationVariable: true };
     };
 
     await assert.rejects(
@@ -136,7 +198,7 @@ describe('trusted Telegram application configuration', () => {
           };
         }
         writes.push(variables);
-        return { updateOneApplicationVariable: { key: variables.key } };
+        return { updateOneApplicationVariable: true };
       },
       workspaceId: '11111111-1111-4111-8111-111111111111',
       token: 'token',

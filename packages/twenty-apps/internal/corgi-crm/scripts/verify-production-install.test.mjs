@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import { describe, it } from 'node:test';
 
+import { buildSchema, parse, validate } from 'graphql';
+
 import {
   resolveCorgiRoleObjectIdentifiers,
   verifyApplicationRoleContract,
@@ -542,5 +544,56 @@ describe('installed Telegram persistence schema verification', () => {
         ]),
       /invalid type/i,
     );
+  });
+});
+
+describe('production metadata query compatibility', () => {
+  it('validates every static deployment metadata document against the generated schema', async () => {
+    const [
+      verifierSource,
+      configurationSource,
+      deploymentKeySource,
+      schemaSource,
+    ] = await Promise.all([
+      fs.readFile(
+        new URL('./verify-production-install.mjs', import.meta.url),
+        'utf8',
+      ),
+      fs.readFile(new URL('./configure-telegram.mjs', import.meta.url), 'utf8'),
+      fs.readFile(new URL('./deployment-api-key.mjs', import.meta.url), 'utf8'),
+      fs.readFile(
+        new URL(
+          '../../../../twenty-client-sdk/src/metadata/generated/schema.graphql',
+          import.meta.url,
+        ),
+        'utf8',
+      ),
+    ]);
+    const endpointDocuments = [verifierSource, configurationSource].flatMap(
+      (source) =>
+        [
+          ...source.matchAll(
+            /endpoint: '\/metadata',[\s\S]*?query: `([\s\S]*?)`,/g,
+          ),
+        ].map(([, document]) => document.replaceAll('${PAGE_SIZE}', '100')),
+    );
+    const deploymentKeyDocuments = [
+      ...deploymentKeySource.matchAll(/query: `([\s\S]*?)`,/g),
+    ].map(([, document]) => document);
+    const documents = [...endpointDocuments, ...deploymentKeyDocuments];
+    assert.equal(
+      documents.length,
+      14,
+      'all static deployment metadata documents are covered',
+    );
+    const schema = buildSchema(schemaSource);
+
+    for (const document of documents) {
+      const errors = validate(schema, parse(document));
+      assert.deepEqual(
+        errors.map((error) => error.message),
+        [],
+      );
+    }
   });
 });

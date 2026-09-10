@@ -540,7 +540,7 @@ const listAllMetadataObjects = async ({ graphql }) => {
     const data = await graphql({
       endpoint: '/metadata',
       operationName: 'VerifyCorgiCrmMetadataObjects',
-      query: `query VerifyCorgiCrmMetadataObjects($after: String) {
+      query: `query VerifyCorgiCrmMetadataObjects($after: ConnectionCursor) {
         objects(paging: { first: ${PAGE_SIZE}, after: $after }, filter: {}) {
           edges {
             node {
@@ -550,7 +550,6 @@ const listAllMetadataObjects = async ({ graphql }) => {
               isActive
               fieldsList { id name type isActive universalIdentifier }
               indexMetadataList {
-                universalIdentifier
                 isUnique
                 indexFieldMetadataList { fieldMetadataId order }
               }
