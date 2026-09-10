@@ -8,6 +8,10 @@ import {
   CORGI_CRM_OUTREACH_ACTIVITY_OBJECT_UNIVERSAL_IDENTIFIER,
   CORGI_CRM_WHOLESALER_OBJECT_UNIVERSAL_IDENTIFIER,
 } from 'src/role-object-identifiers';
+import {
+  TELEGRAM_DELIVERY_AUDIT_OBJECT_UNIVERSAL_IDENTIFIER,
+  TELEGRAM_DELIVERY_OBJECT_UNIVERSAL_IDENTIFIER,
+} from 'src/modules/telegram/telegram-persistence-identifiers';
 
 const permission = (
   objectUniversalIdentifier: string,
@@ -50,6 +54,8 @@ export default defineApplicationRole({
     ),
     permission(CORGI_CRM_WHOLESALER_OBJECT_UNIVERSAL_IDENTIFIER, true),
     permission(CORGI_CRM_OUTREACH_ACTIVITY_OBJECT_UNIVERSAL_IDENTIFIER, true),
+    permission(TELEGRAM_DELIVERY_OBJECT_UNIVERSAL_IDENTIFIER, true),
+    permission(TELEGRAM_DELIVERY_AUDIT_OBJECT_UNIVERSAL_IDENTIFIER, true),
   ],
   fieldPermissions: [],
   permissionFlagUniversalIdentifiers: [],

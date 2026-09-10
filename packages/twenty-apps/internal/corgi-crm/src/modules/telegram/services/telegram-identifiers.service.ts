@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 
-const deterministicUuid = (kind: string, value: string): string => {
+export const deterministicTelegramUuid = (kind: string, value: string): string => {
   const bytes = createHash('sha256')
     .update(`corgi-crm:${kind}\0${value}`, 'utf8')
     .digest()
@@ -15,5 +15,11 @@ export const getTelegramActivityId = (updateId: number): string => {
   if (!Number.isSafeInteger(updateId) || updateId < 0) {
     throw new Error('Telegram update ID must be a non-negative safe integer');
   }
-  return deterministicUuid('telegram-update', String(updateId));
+  return deterministicTelegramUuid('telegram-update', String(updateId));
 };
+
+export const getTelegramDeliveryId = (deliveryKey: string): string =>
+  deterministicTelegramUuid('telegram-delivery', deliveryKey);
+
+export const getTelegramDeliveryAuditId = (requestId: string): string =>
+  deterministicTelegramUuid('telegram-delivery-audit', requestId);
