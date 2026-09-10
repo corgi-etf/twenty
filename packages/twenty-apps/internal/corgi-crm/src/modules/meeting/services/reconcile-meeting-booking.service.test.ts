@@ -104,6 +104,39 @@ describe('reconcileMeetingBooking', () => {
     ).rejects.toThrow(/changed while booking/i);
   });
 
+  it('re-reads the authoritative row and uses its new fence on a retry', async () => {
+    const changedMeeting = {
+      ...meeting,
+      updatedAt: '2026-09-10T13:15:01.000Z',
+    };
+    const repo = repository();
+    vi.mocked(repo.get)
+      .mockResolvedValueOnce(meeting)
+      .mockResolvedValueOnce(changedMeeting);
+    vi.mocked(repo.stampBooked)
+      .mockResolvedValueOnce(false)
+      .mockResolvedValueOnce(true);
+    const input = {
+      meetingId: meeting.id,
+      eventOccurredAt: '2026-09-10T13:15:00.000Z',
+      actorWorkspaceMemberId: null,
+      repository: repo,
+    };
+
+    await expect(reconcileMeetingBooking(input)).rejects.toThrow(
+      /changed while booking/i,
+    );
+    await expect(reconcileMeetingBooking(input)).resolves.toEqual({
+      status: 'booked',
+      meetingId: meeting.id,
+    });
+    expect(repo.get).toHaveBeenCalledTimes(2);
+    expect(repo.stampBooked).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ expectedUpdatedAt: changedMeeting.updatedAt }),
+    );
+  });
+
   it('does not persist a malformed booking actor', async () => {
     const repo = repository();
     await reconcileMeetingBooking({

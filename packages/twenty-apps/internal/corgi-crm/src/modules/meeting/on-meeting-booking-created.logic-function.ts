@@ -4,6 +4,7 @@ import {
   defineLogicFunction,
   type ObjectRecordCreateEvent,
 } from 'twenty-sdk/define';
+import { RetryableLogicFunctionError } from 'twenty-sdk/logic-function';
 
 import { CoreMeetingBookingRepository } from 'src/modules/meeting/graphql/core-meeting-booking.repository';
 import {
@@ -39,12 +40,21 @@ export const handler = async (
   ) {
     return { status: 'skipped', reason: 'missing_event_identity' } as const;
   }
-  return reconcileMeetingBooking({
-    meetingId,
-    eventOccurredAt: after.updatedAt,
-    actorWorkspaceMemberId: after.updatedBy?.workspaceMemberId ?? null,
-    repository: new CoreMeetingBookingRepository(new CoreApiClient()),
-  });
+  if (!Number.isFinite(new Date(after.updatedAt).getTime())) {
+    throw new Error('Meeting booking event has an invalid timestamp');
+  }
+  try {
+    return await reconcileMeetingBooking({
+      meetingId,
+      eventOccurredAt: after.updatedAt,
+      actorWorkspaceMemberId: after.updatedBy?.workspaceMemberId ?? null,
+      repository: new CoreMeetingBookingRepository(new CoreApiClient()),
+    });
+  } catch {
+    throw new RetryableLogicFunctionError(
+      'Meeting booking reconciliation did not complete',
+    );
+  }
 };
 
 export default defineLogicFunction({
