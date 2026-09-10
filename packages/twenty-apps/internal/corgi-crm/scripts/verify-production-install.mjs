@@ -909,6 +909,64 @@ const verifyReconciliation = ({ members, wholesalers }) => {
   return { members: usableMembers.length, wholesalers: wholesalers.length };
 };
 
+// Read-only evidence before publishing an immutable version. Exercise the same
+// filters as the generated app client and disclose counts, never owner data.
+const inspectReconciliationPreflight = async ({ graphql }) => {
+  const [members, wholesalers] = await Promise.all([
+    listAllRecords({ graphql, operationName: 'PreflightOwnerMembers',
+      root: 'workspaceMembers', selection: 'id userEmail name { firstName lastName }' }),
+    listAllRecords({ graphql, operationName: 'PreflightOwnerWholesalers',
+      root: 'wholesalers', selection: 'id name email wholesalerRole workspaceMemberId' }),
+  ]);
+  const result = {
+    members: members.length, wholesalers: wholesalers.length,
+    needsCreation: 0, existingIdentity: 0, missingMemberIdentity: 0,
+    ambiguousIdentity: 0, conflictingMemberLink: 0, filteredReadMismatch: 0,
+  };
+  const ids = (records) => [...new Set(records.map(({ id }) => id))].sort().join(',');
+  for (const member of members) {
+    if (!UUID_PATTERN.test(member.id ?? '') || !member.userEmail?.trim()) {
+      result.missingMemberIdentity += 1;
+      continue;
+    }
+    const email = normalizeEmail(member.userEmail);
+    const byMember = wholesalers.filter((row) => row.workspaceMemberId === member.id);
+    const byEmail = wholesalers.filter((row) => normalizeEmail(row.email ?? '') === email);
+    const matches = [...new Map([...byMember, ...byEmail].map((row) => [row.id, row])).values()];
+    if (matches.length === 0) result.needsCreation += 1;
+    else if (matches.length === 1) result.existingIdentity += 1;
+    else result.ambiguousIdentity += 1;
+    if (matches.some((row) => row.workspaceMemberId && row.workspaceMemberId !== member.id)) {
+      result.conflictingMemberLink += 1;
+    }
+    const data = await graphql({
+      endpoint: '/graphql', operationName: 'PreflightOwnerIdentityFilters',
+      query: `query PreflightOwnerIdentityFilters($memberId: UUID!, $emailPattern: String!) {
+        byMember: wholesalers(first: 3, filter: { workspaceMemberId: { eq: $memberId } }) {
+          edges { node { id } }
+        }
+        byEmail: wholesalers(first: 3, filter: { email: { ilike: $emailPattern } }) {
+          edges { node { id } }
+        }
+      }`,
+      variables: {
+        memberId: member.id,
+        emailPattern: email.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_'),
+      },
+    });
+    for (const root of ['byMember', 'byEmail']) {
+      if (!Array.isArray(data[root]?.edges) || data[root].edges.some((edge) => !edge?.node?.id)) {
+        throw new Error('Owner reconciliation preflight returned an invalid filtered connection');
+      }
+    }
+    if (ids(data.byMember.edges.map(({ node }) => node)) !== ids(byMember) ||
+        ids(data.byEmail.edges.map(({ node }) => node)) !== ids(byEmail)) {
+      result.filteredReadMismatch += 1;
+    }
+  }
+  return result;
+};
+
 const main = async () => {
   const mode = process.argv[2];
   if (
@@ -934,6 +992,12 @@ const main = async () => {
   await verifyTargetWorkspace({ graphql, expectedWorkspaceId: workspaceId });
   await verifyRequiredSchema({ graphql });
   if (mode === 'target') {
+    const preflight = await inspectReconciliationPreflight({ graphql });
+    console.log(JSON.stringify({ ownerReconciliationPreflight: preflight }));
+    if (preflight.missingMemberIdentity || preflight.ambiguousIdentity ||
+        preflight.conflictingMemberLink || preflight.filteredReadMismatch) {
+      throw new Error('Owner reconciliation preflight requires review before publication');
+    }
     console.log('Verified Corgi CRM production target workspace.');
     return;
   }
@@ -1009,6 +1073,7 @@ if (
 }
 
 export {
+  inspectReconciliationPreflight,
   resolveCorgiRoleObjectIdentifiers,
   verifyApplicationRoleContract,
   verifyMeetingApplicationContract,
