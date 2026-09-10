@@ -752,6 +752,7 @@ describe('installed meeting booking verification', () => {
       isUIEditable: false,
       writability: 'APPLICATION',
     }),
+    field('meeting-allocation', 'allocationRequested', 'CURRENCY'),
     field('meeting-notes', 'notes', 'RICH_TEXT'),
     field('meeting-validation', 'bookingValidationMessage', 'TEXT', {
       isUIEditable: false,
@@ -844,44 +845,46 @@ describe('installed meeting booking verification', () => {
     );
   });
 
-  it('requires the EW field to stay selectable by a booker', () => {
-    assert.throws(
-      () =>
-        verifyMeetingBookingSchema(
-          [
-            {
-              ...object,
-              fieldsList: fieldsList.map((candidate) =>
-                candidate.name === 'externalWholesaler'
-                  ? {
-                      ...candidate,
-                      isUIEditable: false,
-                      writability: 'APPLICATION',
-                    }
-                  : candidate,
-              ),
-            },
-          ],
-          experience,
-        ),
-      /externalWholesaler is not selectable/i,
-    );
-    assert.throws(
-      () =>
-        verifyMeetingBookingSchema(
-          [
-            {
-              ...object,
-              fieldsList: fieldsList.filter(
-                (candidate) => candidate.name !== 'externalWholesaler',
-              ),
-            },
-          ],
-          experience,
-        ),
-      /externalWholesaler field/i,
-    );
-  });
+  for (const name of ['externalWholesaler', 'allocationRequested']) {
+    it(`requires ${name} to stay enterable in the CRM`, () => {
+      assert.throws(
+        () =>
+          verifyMeetingBookingSchema(
+            [
+              {
+                ...object,
+                fieldsList: fieldsList.map((candidate) =>
+                  candidate.name === name
+                    ? {
+                        ...candidate,
+                        isUIEditable: false,
+                        writability: 'APPLICATION',
+                      }
+                    : candidate,
+                ),
+              },
+            ],
+            experience,
+          ),
+        new RegExp(`${name} is not enterable`, 'i'),
+      );
+      assert.throws(
+        () =>
+          verifyMeetingBookingSchema(
+            [
+              {
+                ...object,
+                fieldsList: fieldsList.filter(
+                  (candidate) => candidate.name !== name,
+                ),
+              },
+            ],
+            experience,
+          ),
+        new RegExp(`${name} field`, 'i'),
+      );
+    });
+  }
 
   it('requires server-valid exact status values', () => {
     assert.throws(

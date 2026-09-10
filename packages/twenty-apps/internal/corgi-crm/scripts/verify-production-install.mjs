@@ -385,6 +385,7 @@ const verifyMeetingBookingSchema = (objects, experience) => {
     scheduledAt: 'DATE_TIME',
     status: 'SELECT',
     bookedAt: 'DATE_TIME',
+    allocationRequested: 'CURRENCY',
     notes: 'RICH_TEXT',
     bookingValidationMessage: 'TEXT',
     company: 'RELATION',
@@ -410,14 +411,13 @@ const verifyMeetingBookingSchema = (objects, experience) => {
       throw new Error(`meetingBooking.${name} writability is not protected`);
     }
   }
-  // A booker picks the EW by hand, so protecting this field would make the
-  // rule that requires one on a BDR's meeting impossible to satisfy.
-  const externalWholesaler = fieldByName.get('externalWholesaler');
-  if (
-    externalWholesaler.writability === 'APPLICATION' ||
-    externalWholesaler.isUIEditable === false
-  ) {
-    throw new Error('meetingBooking.externalWholesaler is not selectable');
+  // A person fills both of these in by hand, so protecting either would make
+  // the rules that require them impossible to satisfy from the CRM.
+  for (const name of ['externalWholesaler', 'allocationRequested']) {
+    const field = fieldByName.get(name);
+    if (field.writability === 'APPLICATION' || field.isUIEditable === false) {
+      throw new Error(`meetingBooking.${name} is not enterable`);
+    }
   }
   const statusOptions = parseJsonValue(fieldByName.get('status').options);
   if (
