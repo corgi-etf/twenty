@@ -99,7 +99,7 @@ export const assertActivityImportManifest = (
     !['legacy-nash-outreach-v1', 'completed-actions-v2'].includes(
       manifest.sourceFormat,
     ) ||
-    !['Grace', 'Kelly', 'Nash'].includes(manifest.ownerLabel) ||
+    !['Grace', 'Nash'].includes(manifest.ownerLabel) ||
     (manifest.sourceFormat === 'legacy-nash-outreach-v1' &&
       (manifest.ownerLabel !== 'Nash' ||
         manifest.provenanceSha256 !== manifest.sourceSha256)) ||

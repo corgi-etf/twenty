@@ -15,9 +15,26 @@ import type { WholesalerTerritoryRecord } from './planner.ts';
 const WORKSPACE_MEMBER_ID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
-const TERRITORY_IDENTITY_LABELS = ['Grace', 'Kelly', 'Nash'] as const;
+const TERRITORY_IDENTITY_LABELS = ['Grace', 'Nash'] as const;
 
 type TerritoryIdentityLabel = (typeof TERRITORY_IDENTITY_LABELS)[number];
+
+const CANONICAL_IDENTITY_KEYS = [...TERRITORY_IDENTITY_LABELS].sort().join(',');
+
+// Shape checks derive from the label list so a future roster change cannot
+// leave a stale count or key set behind in one branch only.
+const pickIdentities = (
+  workspaceMemberIds:
+    | Partial<Record<TerritoryIdentityLabel, unknown>>
+    | null
+    | undefined,
+): TerritoryIdentityArtifact['workspaceMemberIds'] =>
+  Object.fromEntries(
+    TERRITORY_IDENTITY_LABELS.map((label) => [
+      label,
+      workspaceMemberIds?.[label],
+    ]),
+  ) as TerritoryIdentityArtifact['workspaceMemberIds'];
 
 const aggregateIdentityHash = (
   workspaceMemberIds: TerritoryIdentityArtifact['workspaceMemberIds'],
@@ -30,11 +47,7 @@ const aggregateIdentityHash = (
 };
 
 export type TerritoryIdentityArtifact = {
-  workspaceMemberIds: {
-    Grace: string;
-    Kelly: string;
-    Nash: string;
-  };
+  workspaceMemberIds: Record<TerritoryIdentityLabel, string>;
   aggregateIdentityHash: string;
 };
 
@@ -103,7 +116,10 @@ export const buildTerritoryIdentityArtifact = (
       return [label, labelMatches[0]];
     }),
   ) as TerritoryIdentityArtifact['workspaceMemberIds'];
-  if (new Set(Object.values(workspaceMemberIds)).size !== 3) {
+  if (
+    new Set(Object.values(workspaceMemberIds)).size !==
+    TERRITORY_IDENTITY_LABELS.length
+  ) {
     throw new Error('Discovered workspace member identities are not distinct');
   }
   return {
@@ -158,16 +174,13 @@ export const writeTerritoryIdentityArtifact = async (
   artifactPath: string,
   artifact: TerritoryIdentityArtifact,
 ): Promise<void> => {
-  const workspaceMemberIds = {
-    Grace: artifact.workspaceMemberIds?.Grace,
-    Kelly: artifact.workspaceMemberIds?.Kelly,
-    Nash: artifact.workspaceMemberIds?.Nash,
-  };
+  const workspaceMemberIds = pickIdentities(artifact.workspaceMemberIds);
   if (
     !Object.values(workspaceMemberIds).every((workspaceMemberId) =>
       WORKSPACE_MEMBER_ID_PATTERN.test(workspaceMemberId),
     ) ||
-    new Set(Object.values(workspaceMemberIds)).size !== 3 ||
+    new Set(Object.values(workspaceMemberIds)).size !==
+      TERRITORY_IDENTITY_LABELS.length ||
     artifact.aggregateIdentityHash !== aggregateIdentityHash(workspaceMemberIds)
   ) {
     throw new Error('Territory identity artifact is invalid');
@@ -204,22 +217,19 @@ export const assertCompletedTerritoryIdentityDiscovery = async ({
     throw new Error('Territory identity artifact is invalid JSON');
   }
   const artifact = value as TerritoryIdentityArtifact;
-  const workspaceMemberIds = {
-    Grace: artifact?.workspaceMemberIds?.Grace,
-    Kelly: artifact?.workspaceMemberIds?.Kelly,
-    Nash: artifact?.workspaceMemberIds?.Nash,
-  };
+  const workspaceMemberIds = pickIdentities(artifact?.workspaceMemberIds);
   if (
     Object.keys(artifact ?? {})
       .sort()
       .join(',') !== 'aggregateIdentityHash,workspaceMemberIds' ||
     Object.keys(artifact?.workspaceMemberIds ?? {})
       .sort()
-      .join(',') !== 'Grace,Kelly,Nash' ||
+      .join(',') !== CANONICAL_IDENTITY_KEYS ||
     !Object.values(workspaceMemberIds).every((workspaceMemberId) =>
       WORKSPACE_MEMBER_ID_PATTERN.test(workspaceMemberId),
     ) ||
-    new Set(Object.values(workspaceMemberIds)).size !== 3 ||
+    new Set(Object.values(workspaceMemberIds)).size !==
+      TERRITORY_IDENTITY_LABELS.length ||
     artifact.aggregateIdentityHash !==
       aggregateIdentityHash(workspaceMemberIds) ||
     TERRITORY_IDENTITY_LABELS.some(

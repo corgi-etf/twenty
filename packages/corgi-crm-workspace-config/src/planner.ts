@@ -238,7 +238,6 @@ export type WholesalerTerritoryAssignment = {
 
 export type ApprovedWholesalerTerritoryIdentityInput = {
   graceWorkspaceMemberId: string;
-  kellyWorkspaceMemberId: string;
   nashWorkspaceMemberId: string;
 };
 
@@ -454,10 +453,6 @@ export const buildApprovedWholesalerTerritoryAssignments = (
   const assignments = [
     {
       workspaceMemberId: input.graceWorkspaceMemberId,
-      territory: 'Chicago',
-    },
-    {
-      workspaceMemberId: input.kellyWorkspaceMemberId,
       territory: 'Chicago',
     },
     {
