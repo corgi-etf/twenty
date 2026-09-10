@@ -3,6 +3,14 @@ name: Manual CRM outreach activity import
 on:
   workflow_dispatch:
     inputs:
+      operation:
+        description: Import the activities, or only create the companies the CSV needs first
+        required: true
+        default: import-activities
+        type: choice
+        options:
+          - import-activities
+          - create-companies
       mode:
         description: Dry-run produces an approved manifest; apply creates the guarded activities
         required: true
@@ -100,6 +108,11 @@ on:
         required: false
         default: ''
         type: string
+      create_companies_confirmation:
+        description: For create-companies apply only, type CREATE_CRM_IMPORT_COMPANIES
+        required: false
+        default: ''
+        type: string
       resume_run_id:
         description: Prior failed apply run ID whose PII-free checkpoint should be restored
         required: false
@@ -147,6 +160,7 @@ jobs:
       - name: Validate immutable import inputs
         shell: bash
         env:
+          OPERATION: ${{ inputs.operation }}
           MODE: ${{ inputs.mode }}
           DEPLOYED_SHA: ${{ inputs.deployed_sha }}
           SOURCE_FORMAT: ${{ inputs.source_format }}
@@ -166,11 +180,13 @@ jobs:
           IDENTITY_ATTEMPT: ${{ inputs.identity_discovery_attempt }}
           EXPECTED_MANIFEST: ${{ inputs.expected_manifest }}
           CONFIRMATION: ${{ inputs.confirmation }}
+          CREATE_COMPANIES_CONFIRMATION: ${{ inputs.create_companies_confirmation }}
           RESUME_RUN_ID: ${{ inputs.resume_run_id }}
           RESUME_ATTEMPT: ${{ inputs.resume_attempt }}
         run: |
           set -euo pipefail
           [[ "${MODE}" == "dry-run" || "${MODE}" == "apply" ]]
+          [[ "${OPERATION}" == "import-activities" || "${OPERATION}" == "create-companies" ]]
           [[ "${DEPLOYED_SHA}" =~ ^[0-9a-f]{40}$ ]]
           git cat-file -e "${DEPLOYED_SHA}^{commit}"
           # Server equivalence only; exact-SHA identity/app-install provenance
@@ -204,7 +220,21 @@ jobs:
           [[ "${IDENTITY_RUN_ID}" =~ ^[1-9][0-9]*$ ]]
           [[ "${IDENTITY_ATTEMPT}" =~ ^[1-9][0-9]*$ ]]
 
-          if [[ "${MODE}" == "apply" ]]; then
+          if [[ "${OPERATION}" == "create-companies" ]]; then
+            # Company creation has no activity manifest to approve: no dry run
+            # can produce one while the companies are still missing. It carries
+            # its own confirmation string and never resumes a checkpoint.
+            [[ -z "${CONFIRMATION}" ]]
+            [[ -z "${EXPECTED_MANIFEST}" ]]
+            [[ -z "${RESUME_RUN_ID}" ]]
+            [[ -z "${RESUME_ATTEMPT}" ]]
+            if [[ "${MODE}" == "apply" ]]; then
+              [[ "${CREATE_COMPANIES_CONFIRMATION}" == "CREATE_CRM_IMPORT_COMPANIES" ]]
+            else
+              [[ -z "${CREATE_COMPANIES_CONFIRMATION}" ]]
+            fi
+          elif [[ "${MODE}" == "apply" ]]; then
+            [[ -z "${CREATE_COMPANIES_CONFIRMATION}" ]]
             [[ "${CONFIRMATION}" == "IMPORT_CRM_OUTREACH_ACTIVITIES" ]]
             jq -e '
               .schemaVersion == 2 and
@@ -240,6 +270,7 @@ jobs:
               end)
             ' <<< "${EXPECTED_MANIFEST}" >/dev/null
           else
+            [[ -z "${CREATE_COMPANIES_CONFIRMATION}" ]]
             [[ -z "${CONFIRMATION}" ]]
             [[ -z "${EXPECTED_MANIFEST}" ]]
             [[ -z "${RESUME_RUN_ID}" ]]
@@ -409,6 +440,7 @@ jobs:
           CRM_E2E_PASSWORD: ${{ secrets.CRM_E2E_PASSWORD }}
           CRM_E2E_WORKSPACE_NAME: ${{ secrets.CRM_E2E_WORKSPACE_NAME }}
           CRM_ACTIVITY_IMPORT_ENABLED: 'true'
+          CRM_ACTIVITY_IMPORT_OPERATION: ${{ inputs.operation }}
           CRM_ACTIVITY_IMPORT_MODE: ${{ inputs.mode }}
           CRM_ACTIVITY_IMPORT_SOURCE_FORMAT: ${{ inputs.source_format }}
           CRM_ACTIVITY_IMPORT_OWNER_LABEL: ${{ inputs.owner_label }}
@@ -428,6 +460,7 @@ jobs:
           CRM_ACTIVITY_IMPORT_TIME_ZONE: ${{ inputs.time_zone }}
           CRM_ACTIVITY_IMPORT_ID: ${{ inputs.import_id }}
           CRM_ACTIVITY_IMPORT_CONFIRMATION: ${{ inputs.confirmation }}
+          CRM_ACTIVITY_IMPORT_CREATE_COMPANIES_CONFIRMATION: ${{ inputs.create_companies_confirmation }}
           CRM_ACTIVITY_IMPORT_EXPECTED_MANIFEST: ${{ inputs.expected_manifest }}
         run: >-
           npx nx test:production twenty-e2e-testing --
