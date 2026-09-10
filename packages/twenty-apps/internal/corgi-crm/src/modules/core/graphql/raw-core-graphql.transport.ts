@@ -180,61 +180,72 @@ export class RawCoreGraphqlTransport {
 
     const abortController = new AbortController();
     const timeout = setTimeout(() => abortController.abort(), this.timeoutMs);
-    let response: Response;
     try {
-      response = await this.fetchImplementation(endpoint, {
-        method: 'POST',
-        redirect: 'error',
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ operationName, query: document, variables }),
-        signal: abortController.signal,
-      });
-    } catch (error) {
-      throw new RawCoreGraphqlError(
-        isAbortError(error) ? 'timeout' : 'transport',
-        operationName,
-      );
+      let response: Response;
+      try {
+        response = await this.fetchImplementation(endpoint, {
+          method: 'POST',
+          redirect: 'error',
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ operationName, query: document, variables }),
+          signal: abortController.signal,
+        });
+      } catch (error) {
+        throw new RawCoreGraphqlError(
+          isAbortError(error) ? 'timeout' : 'transport',
+          operationName,
+        );
+      }
+
+      if (!response.ok) {
+        const category =
+          response.status === 401 || response.status === 403
+            ? 'permission_denied'
+            : response.status === 409
+              ? 'constraint_conflict'
+              : 'http';
+        throw new RawCoreGraphqlError(category, operationName);
+      }
+
+      let rawBody: string;
+      try {
+        rawBody = await response.text();
+      } catch (error) {
+        throw new RawCoreGraphqlError(
+          isAbortError(error) ? 'timeout' : 'transport',
+          operationName,
+        );
+      }
+      let payload: GraphqlPayload;
+      try {
+        const parsed = JSON.parse(rawBody) as unknown;
+        if (!isRecord(parsed)) throw new Error('not an object');
+        payload = parsed;
+      } catch {
+        throw new RawCoreGraphqlError('malformed_response', operationName);
+      }
+      if (payload.errors !== undefined) {
+        if (!Array.isArray(payload.errors) || payload.errors.length === 0) {
+          throw new RawCoreGraphqlError('malformed_response', operationName);
+        }
+        const errors = payload.errors.filter(isRecord) as GraphqlError[];
+        if (errors.length !== payload.errors.length) {
+          throw new RawCoreGraphqlError('malformed_response', operationName);
+        }
+        throw new RawCoreGraphqlError(
+          categoryFromGraphqlErrors(errors),
+          operationName,
+        );
+      }
+      if (!isRecord(payload.data)) {
+        throw new RawCoreGraphqlError('malformed_response', operationName);
+      }
+      return payload.data as TData;
     } finally {
       clearTimeout(timeout);
     }
-
-    if (!response.ok) {
-      const category =
-        response.status === 401 || response.status === 403
-          ? 'permission_denied'
-          : response.status === 409
-            ? 'constraint_conflict'
-            : 'http';
-      throw new RawCoreGraphqlError(category, operationName);
-    }
-
-    let payload: GraphqlPayload;
-    try {
-      const parsed = JSON.parse(await response.text()) as unknown;
-      if (!isRecord(parsed)) throw new Error('not an object');
-      payload = parsed;
-    } catch {
-      throw new RawCoreGraphqlError('malformed_response', operationName);
-    }
-    if (payload.errors !== undefined) {
-      if (!Array.isArray(payload.errors) || payload.errors.length === 0) {
-        throw new RawCoreGraphqlError('malformed_response', operationName);
-      }
-      const errors = payload.errors.filter(isRecord) as GraphqlError[];
-      if (errors.length !== payload.errors.length) {
-        throw new RawCoreGraphqlError('malformed_response', operationName);
-      }
-      throw new RawCoreGraphqlError(
-        categoryFromGraphqlErrors(errors),
-        operationName,
-      );
-    }
-    if (!isRecord(payload.data)) {
-      throw new RawCoreGraphqlError('malformed_response', operationName);
-    }
-    return payload.data as TData;
   }
 }

@@ -22,8 +22,9 @@ const response = (body: unknown, status = 200) =>
 describe('RawCoreGraphqlTransport', () => {
   it('lazily uses the delegated app token and trusted runtime URL', async () => {
     const env: Record<string, string | undefined> = {};
-    const fetch = vi.fn(async () =>
-      response({ data: { wholesalers: { edges: [] } } }),
+    const fetch = vi.fn(
+      async (_input: string | URL | Request, _init?: RequestInit) =>
+        response({ data: { wholesalers: { edges: [] } } }),
     );
     const transport = new RawCoreGraphqlTransport({ env, fetch });
     env.TWENTY_API_URL = 'https://crm.example.test/base';
@@ -52,7 +53,10 @@ describe('RawCoreGraphqlTransport', () => {
   });
 
   it('falls back to the injected application API key without storing a token', async () => {
-    const fetch = vi.fn(async () => response({ data: { ok: true } }));
+    const fetch = vi.fn(
+      async (_input: string | URL | Request, _init?: RequestInit) =>
+        response({ data: { ok: true } }),
+    );
     const env = {
       TWENTY_API_URL: 'https://crm.example.test',
       TWENTY_API_KEY: 'application-token',
@@ -180,6 +184,39 @@ describe('RawCoreGraphqlTransport', () => {
     expect(error).toMatchObject({ category: 'timeout' });
     expect(fetch).toHaveBeenCalledOnce();
     expect((error as Error).message).not.toMatch(/private|detail|secret/i);
+  });
+
+  it('keeps the timeout active while reading the response body', async () => {
+    let requestSignal: AbortSignal | undefined;
+    const fetch = vi.fn(
+      async (_url: URL | RequestInfo, init?: RequestInit): Promise<Response> => {
+        requestSignal = init?.signal ?? undefined;
+        return {
+          ok: true,
+          status: 200,
+          text: async () =>
+            new Promise<string>((resolve, reject) => {
+              requestSignal?.addEventListener('abort', () =>
+                reject(new DOMException('private body detail', 'AbortError')),
+              );
+              setTimeout(() => resolve(JSON.stringify({ data: { tooLate: true } })), 50);
+            }),
+        } as Response;
+      },
+    );
+    const transport = new RawCoreGraphqlTransport({
+      env: {
+        TWENTY_API_URL: 'https://crm.example.test',
+        TWENTY_APP_ACCESS_TOKEN: 'secret',
+      },
+      fetch,
+      timeoutMs: 1,
+    });
+
+    const error = await transport.request(request).catch((value: unknown) => value);
+    expect(error).toMatchObject({ category: 'timeout' });
+    expect(fetch).toHaveBeenCalledOnce();
+    expect((error as Error).message).not.toMatch(/private|body detail|secret/i);
   });
 
   it('classifies an injected fetch rejection as transport without retrying', async () => {
