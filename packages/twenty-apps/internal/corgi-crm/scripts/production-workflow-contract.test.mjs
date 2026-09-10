@@ -29,6 +29,27 @@ const position = (needle) => {
   return index;
 };
 
+const STEP_SEPARATOR = '\n      - name: ';
+
+const stepBlocks = workflow
+  .split(STEP_SEPARATOR)
+  .slice(1)
+  .map((block) => `${STEP_SEPARATOR}${block}`);
+
+const stepsRunning = (needle) => {
+  const matches = stepBlocks.filter((block) => block.includes(needle));
+  assert.notEqual(matches.length, 0, `workflow must run ${needle}`);
+  return matches;
+};
+
+const stepBlock = (name) => {
+  const matches = stepBlocks.filter((block) =>
+    block.startsWith(`${STEP_SEPARATOR}${name}\n`),
+  );
+  assert.equal(matches.length, 1, `workflow must define one step ${name}`);
+  return matches[0];
+};
+
 const parseRunnerEnvironment = (contents) =>
   Object.fromEntries(
     contents
@@ -65,14 +86,23 @@ describe('Corgi CRM production app workflow contract', () => {
       workflow,
       /CORGI_CRM_TELEGRAM_PUBLIC_REPORTS_ENABLED: \$\{\{ vars\.CORGI_CRM_TELEGRAM_PUBLIC_REPORTS_ENABLED \|\| 'false' \}\}/,
     );
-    // The group-topic allowlist must reach both configuration writes, or the
+    // The group-topic allowlist must reach EVERY configuration write, or the
     // staged runtime silently keeps refusing the approved group.
-    assert.equal(
-      workflow.match(
-        /CORGI_CRM_TELEGRAM_GROUP_TOPICS: \$\{\{ secrets\.CORGI_CRM_TELEGRAM_GROUP_TOPICS \}\}/g,
-      )?.length,
-      2,
-    );
+    const configurationWrites = [
+      ...stepsRunning('configure-telegram.mjs" stage'),
+      ...stepsRunning('configure-telegram.mjs" enable'),
+    ];
+    assert.ok(configurationWrites.length >= 2);
+    for (const block of configurationWrites) {
+      assert.match(
+        block,
+        /CORGI_CRM_TELEGRAM_GROUP_TOPICS: \$\{\{ secrets\.CORGI_CRM_TELEGRAM_GROUP_TOPICS \}\}/,
+      );
+      assert.match(
+        block,
+        /CORGI_CRM_TELEGRAM_NOTIFICATION_ROUTES: \$\{\{ secrets\.CORGI_CRM_TELEGRAM_NOTIFICATION_ROUTES \}\}/,
+      );
+    }
     assert.doesNotMatch(workflow, /CORGI_CRM_TELEGRAM_GROUP_TOPICS:\s+['"]?-100/);
   });
 
