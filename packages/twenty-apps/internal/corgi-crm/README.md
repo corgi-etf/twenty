@@ -106,9 +106,10 @@ source:
   changes it to `true` only after trusted configuration and live provider
   verification complete.
 - `CORGI_CRM_TELEGRAM_PUBLIC_REPORTS_ENABLED`: defaults to `false`. When set
-  to exactly `true`, any Telegram user in a private chat can request `/daily`,
-  `/weekly`, or `/monthly`. It does not authorize `/log`, `/today`, `/summary`,
-  linking, or any other CRM read or write.
+  to exactly `true`, any Telegram user in a private chat, or in a group topic
+  listed in `CORGI_CRM_TELEGRAM_GROUP_TOPICS`, can request `/daily`, `/weekly`,
+  or `/monthly`. It does not authorize `/log`, `/today`, `/summary`, linking, or
+  any other CRM read or write.
 - `CORGI_CRM_TELEGRAM_BOT_TOKEN` (secret): token from BotFather.
 - `CORGI_CRM_TELEGRAM_WEBHOOK_SECRET` (secret): a new random Telegram webhook
   secret token.
@@ -148,6 +149,38 @@ source:
   ]
 }
 ```
+
+- `CORGI_CRM_TELEGRAM_GROUP_TOPICS` (secret): optional allowlist of the
+  supergroup forum topics allowed to run commands. An unset value or `{}` keeps
+  every group refused, which is the default. Each entry needs both a supergroup
+  chat ID and the forum topic's `messageThreadId`; a topic-less entry is
+  rejected because it would admit the whole supergroup, General topic included.
+  Each chat/topic pair must be unique:
+
+```json
+{
+  "version": 1,
+  "topics": [
+    {
+      "chatId": "-1002394851554",
+      "messageThreadId": 304311
+    }
+  ]
+}
+```
+
+Read both values off the topic's message link: `t.me/c/<chat>/<topic>/<message>`
+gives the topic in the middle segment, and the Bot API chat ID is
+`-(1000000000000 + <chat>)` — so `t.me/c/2394851554/304311/…` is chat
+`-1002394851554`, topic `304311`. An allowlisted topic serves `/daily`,
+`/weekly`, `/monthly`, and `/help` only. `/link`, `/log`, `/today`, `/summary`,
+and `/start CODE` are refused out loud with a pointer to a direct message: a
+link binds one chat to one WorkspaceMember, so a group — which has no single
+sender identity — must never write CRM data or reveal one person's activity.
+Replies always carry the topic's `message_thread_id`, so they land in the topic
+that asked rather than in General. The webhook checks the allowlist on
+admission and the worker checks it again before processing, so removing an entry
+stops in-flight commands too.
 
 The `meeting_booked` event sends `🎉 NEW MEETING BOOKED! 🎉` with the RIA,
 scheduled date, owner, booking timestamp, and the booking user when a human name
@@ -200,8 +233,8 @@ weekend events excluded), or 30 days. Owners come from the records themselves;
 there is no fixed people list. Meeting-only owners appear on the booking
 leaderboard. These three aggregate reports are available without a CRM link only
 when `CORGI_CRM_TELEGRAM_PUBLIC_REPORTS_ENABLED` is exactly `true`; Telegram's
-signed webhook, private-chat restriction, workspace fence, update deduplication,
-and durable reply delivery still apply. `/help` shows the syntax;
+signed webhook, private-chat-or-allowlisted-topic restriction, workspace fence,
+update deduplication, and durable reply delivery still apply. `/help` shows the syntax;
 there is no `/cancel` command because the bot does not hold mutable drafts. The
 cron sends the same whole-workspace rolling-24-hour report to each securely
 linked recipient. It runs every 15 minutes. From the configured local

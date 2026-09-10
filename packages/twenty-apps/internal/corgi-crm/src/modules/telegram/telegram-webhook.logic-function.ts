@@ -11,6 +11,7 @@ import {
   TELEGRAM_WEBHOOK_UNIVERSAL_IDENTIFIER,
 } from 'src/constants';
 import { enqueueTelegramUpdateOnce } from 'src/modules/telegram/services/telegram-delivery.service';
+import { readAllowedTelegramGroupTopics } from 'src/modules/telegram/services/telegram-group-topics.service';
 import {
   assertTelegramWebhookSecret,
   parseTelegramUpdate,
@@ -24,6 +25,7 @@ type WebhookDependencies = {
   expectedWorkspaceId: string;
   enabled: string | undefined;
   webhookSecret: string | undefined;
+  groupTopicsJson: string | undefined;
   store: KeyValueStore;
   enqueue(
     payload: ParsedTelegramUpdate,
@@ -56,7 +58,10 @@ export const handleTelegramWebhook = async (
 
   let update;
   try {
-    update = parseTelegramUpdate(payload.body);
+    update = parseTelegramUpdate(
+      payload.body,
+      readAllowedTelegramGroupTopics(dependencies.groupTopicsJson),
+    );
   } catch {
     // An update Telegram itself sent (a sticker, a group message, a bot
     // sender) but that this bot does not handle is not a delivery failure.
@@ -87,6 +92,7 @@ export const handler = async (
     expectedWorkspaceId: process.env.CORGI_CRM_WORKSPACE_ID?.trim() ?? '',
     enabled: process.env.CORGI_CRM_TELEGRAM_ENABLED,
     webhookSecret: process.env.CORGI_CRM_TELEGRAM_WEBHOOK_SECRET,
+    groupTopicsJson: process.env.CORGI_CRM_TELEGRAM_GROUP_TOPICS,
     store: kv,
     enqueue: (jobPayload, jobId) =>
       enqueueJob({

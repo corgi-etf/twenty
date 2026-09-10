@@ -63,6 +63,14 @@ const update = (text: string) => ({
   firstName: 'Nash',
   text,
   messageTimestamp: '2026-09-09T16:29:00.000Z',
+  chatScope: 'private' as const,
+});
+
+const groupUpdate = (text: string) => ({
+  ...update(text),
+  chatId: '-1002394851554',
+  chatScope: 'group_topic' as const,
+  messageThreadId: 304311,
 });
 
 describe('processTelegramCommand', () => {
@@ -531,6 +539,95 @@ describe('processTelegramCommand', () => {
       '101',
       'Nash — 2026-09-09\nTotal: 0\nNo outreach logged.',
     );
+  });
+
+  it.each([
+    ['/log call | Acme | connected'],
+    ['/log@CorgiCrmBot call | Acme | connected'],
+    ['/link ABC123'],
+    ['/start ABC123'],
+    ['/today'],
+    ['/summary'],
+    ['today'],
+  ])(
+    'refuses %s in a group topic without writing or revealing CRM identity',
+    async (text) => {
+      const dependencies = base();
+
+      await expect(
+        processTelegramCommand(groupUpdate(text!), dependencies),
+      ).resolves.toEqual({ status: 'group_command_refused' });
+      expect(dependencies.send).toHaveBeenCalledOnce();
+      expect(dependencies.send.mock.calls[0]?.[0]).toBe('-1002394851554');
+      expect(dependencies.send.mock.calls[0]?.[1]).toMatch(
+        /direct message with the bot/i,
+      );
+      expect(dependencies.repository.createActivity).not.toHaveBeenCalled();
+      expect(dependencies.repository.listActivities).not.toHaveBeenCalled();
+      expect(dependencies.store.set).not.toHaveBeenCalled();
+      expect(dependencies.onCrmCommitted).not.toHaveBeenCalled();
+    },
+  );
+
+  it('keeps a group refusal from naming any linked identity', async () => {
+    const dependencies = base();
+
+    await processTelegramCommand(groupUpdate('/today'), dependencies);
+    expect(dependencies.send.mock.calls[0]?.[1]).not.toMatch(/Nash/);
+    expect(dependencies.identity.findWholesalers).not.toHaveBeenCalled();
+    expect(dependencies.identity.findWorkspaceMember).not.toHaveBeenCalled();
+  });
+
+  it.each([['/daily'], ['/weekly'], ['/monthly']])(
+    'serves the public workspace report %s in a group topic',
+    async (command) => {
+      const dependencies = base();
+      dependencies.publicReportsEnabled = 'true';
+
+      await expect(
+        processTelegramCommand(groupUpdate(command!), dependencies),
+      ).resolves.toMatchObject({ status: 'report' });
+      expect(dependencies.send.mock.calls[0]?.[0]).toBe('-1002394851554');
+      expect(dependencies.identity.findWholesalers).not.toHaveBeenCalled();
+    },
+  );
+
+  it('refuses a group report instead of asking a group to link', async () => {
+    const dependencies = base();
+    dependencies.publicReportsEnabled = 'false';
+
+    await expect(
+      processTelegramCommand(groupUpdate('/daily'), dependencies),
+    ).resolves.toEqual({ status: 'group_reports_disabled' });
+    expect(dependencies.send.mock.calls[0]?.[1]).toMatch(/not enabled/i);
+    expect(dependencies.send.mock.calls[0]?.[1]).not.toMatch(/\/link CODE/);
+    expect(dependencies.identity.findWholesalers).not.toHaveBeenCalled();
+  });
+
+  it('answers group help without advertising identity commands', async () => {
+    const dependencies = base();
+
+    await expect(
+      processTelegramCommand(groupUpdate('/help'), dependencies),
+    ).resolves.toEqual({ status: 'help' });
+    const reply = dependencies.send.mock.calls[0]?.[1] as string;
+    expect(reply).toContain('/daily');
+    expect(reply).toContain('/weekly');
+    expect(reply).toContain('/monthly');
+    expect(reply).not.toContain('/link CODE —');
+    expect(reply).not.toContain('/log call |');
+  });
+
+  it('leaves the private-chat guide and link flow untouched', async () => {
+    const dependencies = base();
+
+    await expect(
+      processTelegramCommand(update('/help'), dependencies),
+    ).resolves.toEqual({ status: 'help' });
+    const reply = dependencies.send.mock.calls[0]?.[1] as string;
+    expect(reply).toContain('/link CODE');
+    expect(reply).toContain('/today');
+    expect(dependencies.send.mock.calls[0]?.[0]).toBe('101');
   });
 
   it('does not advertise or pretend to cancel nonexistent drafts', async () => {

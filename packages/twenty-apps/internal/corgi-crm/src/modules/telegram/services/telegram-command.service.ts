@@ -44,6 +44,29 @@ const HELP = [
   '/help — show this guide',
 ].join('\n');
 
+// A group topic has no single sender identity: a link binds one chat to one
+// WorkspaceMember, so linking here would rebind that member to the whole
+// group, and /log or /today would write or reveal one person's CRM identity in
+// front of everyone. Only whole-workspace reports are group-safe.
+const GROUP_TOPIC_COMMANDS = ['/help', '/daily', '/weekly', '/monthly'];
+
+const GROUP_HELP = [
+  'Corgi CRM outreach bot — group topic',
+  '/daily — all owners, last 24 hours',
+  '/weekly — all owners, last 7 days excluding Saturday/Sunday',
+  '/monthly — all owners, last 30 days',
+  '/help — show this guide',
+  'Send /link, /log and /today in a direct message to the bot: they write or reveal one person’s CRM identity, which a group cannot establish.',
+].join('\n');
+
+const GROUP_COMMAND_REFUSED = [
+  'That command needs a direct message with the bot.',
+  'This topic serves /daily, /weekly, /monthly and /help only — /link, /log and /today write or reveal one person’s CRM identity, and a group has no single sender identity.',
+].join('\n');
+
+const GROUP_REPORTS_DISABLED =
+  'Workspace reports are not enabled for group topics. Ask an administrator to turn on public reports, or request /daily, /weekly or /monthly in a direct message with the bot.';
+
 type CommandDependencies = {
   repository: OutreachRepository;
   meetingRepository: MeetingBookingReportRepository;
@@ -118,8 +141,17 @@ export const processTelegramCommand = async (
     .trim()
     .replace(/^\S+\s*/, '')
     .trim();
+  const isGroupTopic = update.chatScope === 'group_topic';
+  if (isGroupTopic && !GROUP_TOPIC_COMMANDS.includes(command)) {
+    await sendParts(dependencies.send, update.chatId, GROUP_COMMAND_REFUSED);
+    return { status: 'group_command_refused' } as const;
+  }
   if (command === '/help' || (command === '/start' && !payload)) {
-    await sendParts(dependencies.send, update.chatId, HELP);
+    await sendParts(
+      dependencies.send,
+      update.chatId,
+      isGroupTopic ? GROUP_HELP : HELP,
+    );
     return { status: 'help' } as const;
   }
   if (command === '/link' || command === '/start') {
@@ -164,6 +196,17 @@ export const processTelegramCommand = async (
       update,
       dependencies,
     });
+  }
+
+  if (reportPeriod && isGroupTopic) {
+    // The linked fallback below is per-person identity, so the public-report
+    // policy is the only group-safe path to a report.
+    await sendParts(
+      dependencies.send,
+      update.chatId,
+      GROUP_REPORTS_DISABLED,
+    );
+    return { status: 'group_reports_disabled' } as const;
   }
 
   const link = await getValidatedTelegramLink({

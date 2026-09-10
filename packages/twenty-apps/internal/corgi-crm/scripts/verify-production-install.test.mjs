@@ -117,6 +117,7 @@ describe('production Telegram application verification', () => {
       { key: 'CORGI_CRM_TELEGRAM_TIME_ZONE', value: 'America/Chicago' },
       { key: 'CORGI_CRM_TELEGRAM_DAILY_SUMMARY_TIME', value: '17:00' },
       { key: 'CORGI_CRM_TELEGRAM_NOTIFICATION_ROUTES', value: '********' },
+      { key: 'CORGI_CRM_TELEGRAM_GROUP_TOPICS', value: '********' },
     ],
     logicFunctions: [
       {
@@ -327,7 +328,7 @@ describe('application release contract', () => {
     const packageJson = JSON.parse(
       await fs.readFile(new URL('../package.json', import.meta.url), 'utf8'),
     );
-    assert.equal(packageJson.version, '1.2.6');
+    assert.equal(packageJson.version, '1.2.7');
   });
 
   it('resolves exact custom object universal identifiers from live metadata', () => {

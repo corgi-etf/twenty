@@ -68,6 +68,7 @@ const queuedUpdate = {
   firstName: 'Nash',
   text: '/log call | Acme | connected',
   messageTimestamp: '2026-09-10T04:59:00.000Z',
+  chatScope: 'private' as const,
 };
 
 describe('enqueueTelegramUpdateOnce', () => {

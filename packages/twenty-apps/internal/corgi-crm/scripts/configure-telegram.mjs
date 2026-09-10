@@ -138,6 +138,70 @@ const validateNotificationRoutes = (raw) => {
   return JSON.stringify({ version: 1, routes });
 };
 
+// Mirrors parseTelegramGroupTopics: only an explicit supergroup chat and forum
+// topic pair may run group commands, so a bad entry must fail the deploy rather
+// than reach the runtime.
+const validateGroupTopics = (raw) => {
+  if (!raw?.trim()) return '{}';
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new Error('Telegram group topic configuration must be valid JSON');
+  }
+  if (
+    parsed &&
+    typeof parsed === 'object' &&
+    !Array.isArray(parsed) &&
+    Object.keys(parsed).length === 0
+  ) {
+    return '{}';
+  }
+  if (
+    !parsed ||
+    typeof parsed !== 'object' ||
+    Array.isArray(parsed) ||
+    Object.keys(parsed).sort().join(',') !== 'topics,version' ||
+    parsed.version !== 1 ||
+    !Array.isArray(parsed.topics) ||
+    parsed.topics.length > 25
+  ) {
+    throw new Error('Telegram group topic configuration is invalid');
+  }
+  const topics = parsed.topics.map((topic) => {
+    if (!topic || typeof topic !== 'object' || Array.isArray(topic)) {
+      throw new Error('Telegram group topic is invalid');
+    }
+    if (Object.keys(topic).sort().join(',') !== 'chatId,messageThreadId') {
+      throw new Error('Telegram group topic is invalid');
+    }
+    const chatId = typeof topic.chatId === 'string' ? topic.chatId.trim() : '';
+    const numericChatId = Number(chatId);
+    if (
+      !/^-[1-9][0-9]*$/.test(chatId) ||
+      !Number.isSafeInteger(numericChatId) ||
+      numericChatId < -1997852516352 ||
+      numericChatId > -1000000000001
+    ) {
+      throw new Error('Telegram group topic needs a supergroup chat ID');
+    }
+    if (
+      !Number.isSafeInteger(topic.messageThreadId) ||
+      topic.messageThreadId <= 0
+    ) {
+      throw new Error('Telegram group topic needs a forum topic ID');
+    }
+    return { chatId, messageThreadId: topic.messageThreadId };
+  });
+  const destinations = topics.map(
+    ({ chatId, messageThreadId }) => `${chatId}:${messageThreadId}`,
+  );
+  if (new Set(destinations).size !== destinations.length) {
+    throw new Error('Duplicate Telegram group topic');
+  }
+  return JSON.stringify({ version: 1, topics });
+};
+
 const validateTimeZone = (timeZone) => {
   const normalized = required(timeZone, 'Telegram time zone');
   try {
@@ -155,6 +219,7 @@ const validateTrustedTelegramConfiguration = ({
   operatorSecret,
   linkCodesJson,
   notificationRoutesJson,
+  groupTopicsJson,
   timeZone,
   dailySummaryTime,
   publicReportsEnabled = 'false',
@@ -189,6 +254,7 @@ const validateTrustedTelegramConfiguration = ({
     CORGI_CRM_TELEGRAM_NOTIFICATION_ROUTES: validateNotificationRoutes(
       notificationRoutesJson,
     ),
+    CORGI_CRM_TELEGRAM_GROUP_TOPICS: validateGroupTopics(groupTopicsJson),
     CORGI_CRM_TELEGRAM_TIME_ZONE: normalizedTimeZone,
     CORGI_CRM_TELEGRAM_DAILY_SUMMARY_TIME: normalizedTime,
     CORGI_CRM_TELEGRAM_PUBLIC_REPORTS_ENABLED: publicReportsEnabled,
@@ -334,6 +400,7 @@ const main = async () => {
     operatorSecret: process.env.CORGI_CRM_TELEGRAM_OPERATOR_SECRET,
     linkCodesJson: process.env.CORGI_CRM_TELEGRAM_LINK_CODES,
     notificationRoutesJson: process.env.CORGI_CRM_TELEGRAM_NOTIFICATION_ROUTES,
+    groupTopicsJson: process.env.CORGI_CRM_TELEGRAM_GROUP_TOPICS,
     timeZone: process.env.CORGI_CRM_TELEGRAM_TIME_ZONE,
     dailySummaryTime: process.env.CORGI_CRM_TELEGRAM_DAILY_SUMMARY_TIME,
     publicReportsEnabled:

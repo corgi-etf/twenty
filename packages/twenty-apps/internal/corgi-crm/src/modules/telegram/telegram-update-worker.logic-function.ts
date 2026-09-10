@@ -12,6 +12,10 @@ import {
   buildTelegramDeliveryKey,
   deliverTelegramOperation,
 } from 'src/modules/telegram/services/telegram-delivery.service';
+import {
+  isAllowedTelegramGroupTopic,
+  readAllowedTelegramGroupTopics,
+} from 'src/modules/telegram/services/telegram-group-topics.service';
 import { parseQueuedTelegramUpdate } from 'src/modules/telegram/services/telegram-security.service';
 import { type KeyValueStore } from 'src/modules/telegram/types';
 import { CoreWholesalerRepository } from 'src/modules/wholesaler/onboarding/graphql/core-wholesaler.repository';
@@ -34,6 +38,7 @@ type UpdateWorkerDependencies = {
   timeZone: string;
   publicReportsEnabled: string | undefined;
   linkCodesJson: string | undefined;
+  groupTopicsJson: string | undefined;
 };
 
 export const handleTelegramUpdateJob = async (
@@ -46,6 +51,21 @@ export const handleTelegramUpdateJob = async (
   }
   if (dependencies.enabled !== 'true') return { status: 'disabled' } as const;
   const update = parseQueuedTelegramUpdate(payload);
+  // The allowlist can change between webhook admission and execution, so the
+  // destination is revalidated here the same way notification delivery
+  // revalidates its route before sending.
+  if (
+    update.chatScope === 'group_topic' &&
+    !isAllowedTelegramGroupTopic(
+      {
+        chatId: update.chatId,
+        messageThreadId: update.messageThreadId,
+      },
+      readAllowedTelegramGroupTopics(dependencies.groupTopicsJson),
+    )
+  ) {
+    return { status: 'untrusted-group-topic' } as const;
+  }
   const key = `telegram:update:${update.updateId}`;
   const existing = (await dependencies.store.get(key)) as {
     status?: string;
@@ -98,12 +118,25 @@ export const handleTelegramUpdateJob = async (
         messageIndex += 1;
         await deliverTelegramOperation({
           deliveryKey,
-          retryEnvelope: { kind: 'message', chatId, text },
+          retryEnvelope: {
+            kind: 'message',
+            chatId,
+            text,
+            // A forum reply without the thread lands in the supergroup's
+            // General topic instead of the topic that asked for it.
+            ...(update.chatScope === 'group_topic'
+              ? { messageThreadId: update.messageThreadId }
+              : {}),
+          },
           store: dependencies.store,
           repository: deliveryRepository,
           perform: (envelope) =>
             envelope.kind === 'message'
-              ? telegram.sendMessage(envelope.chatId, envelope.text)
+              ? telegram.sendMessage(
+                  envelope.chatId,
+                  envelope.text,
+                  envelope.messageThreadId,
+                )
               : Promise.reject(new Error('Invalid Telegram message envelope')),
           now: () => new Date(),
         });
@@ -165,6 +198,7 @@ export const handler = async (
     publicReportsEnabled:
       process.env.CORGI_CRM_TELEGRAM_PUBLIC_REPORTS_ENABLED,
     linkCodesJson: process.env.CORGI_CRM_TELEGRAM_LINK_CODES,
+    groupTopicsJson: process.env.CORGI_CRM_TELEGRAM_GROUP_TOPICS,
   });
 
 export default defineLogicFunction({

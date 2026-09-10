@@ -1,5 +1,9 @@
 import { timingSafeEqual } from 'node:crypto';
 
+import {
+  isAllowedTelegramGroupTopic,
+  type TelegramGroupTopic,
+} from 'src/modules/telegram/services/telegram-group-topics.service';
 import { type ParsedTelegramUpdate } from 'src/modules/telegram/types';
 
 const safeEqual = (provided: string, expected: string): boolean => {
@@ -31,7 +35,36 @@ const object = (value: unknown): Record<string, unknown> | undefined =>
     ? (value as Record<string, unknown>)
     : undefined;
 
-export const parseTelegramUpdate = (value: unknown): ParsedTelegramUpdate => {
+const GROUP_TOPIC_REFUSAL =
+  'Telegram commands must use a private chat or an allowed group topic';
+
+// Telegram sends no message_thread_id for a forum's General topic
+// (https://core.telegram.org/api/forum), so an allowlisted thread is the only
+// group scope that can be pinned — and the only one this bot admits.
+const parseGroupTopicScope = (
+  chatId: string,
+  chatType: unknown,
+  messageThreadId: unknown,
+  allowedGroupTopics: readonly TelegramGroupTopic[],
+): { chatScope: 'group_topic'; messageThreadId: number } => {
+  if (
+    chatType !== 'supergroup' ||
+    !Number.isSafeInteger(messageThreadId) ||
+    (messageThreadId as number) <= 0
+  ) {
+    throw new Error(GROUP_TOPIC_REFUSAL);
+  }
+  const topic = { chatId, messageThreadId: messageThreadId as number };
+  if (!isAllowedTelegramGroupTopic(topic, allowedGroupTopics)) {
+    throw new Error(GROUP_TOPIC_REFUSAL);
+  }
+  return { chatScope: 'group_topic', messageThreadId: topic.messageThreadId };
+};
+
+export const parseTelegramUpdate = (
+  value: unknown,
+  allowedGroupTopics: readonly TelegramGroupTopic[] = [],
+): ParsedTelegramUpdate => {
   const envelope = object(value) as TelegramEnvelope | undefined;
   const updateId = envelope?.update_id;
   if (!Number.isSafeInteger(updateId)) {
@@ -57,14 +90,22 @@ export const parseTelegramUpdate = (value: unknown): ParsedTelegramUpdate => {
   ) {
     throw new Error('Invalid Telegram command update');
   }
-  if (chat.type !== 'private') {
-    throw new Error('Telegram commands must use a private chat');
-  }
+  const chatId = String(chat.id);
+  const scope =
+    chat.type === 'private'
+      ? ({ chatScope: 'private' } as const)
+      : parseGroupTopicScope(
+          chatId,
+          chat.type,
+          message.message_thread_id,
+          allowedGroupTopics,
+        );
 
   return {
+    ...scope,
     updateId: updateId as number,
     userId: String(from.id),
-    chatId: String(chat.id),
+    chatId,
     firstName:
       typeof from.first_name === 'string' && from.first_name.trim()
         ? from.first_name.trim()
@@ -97,7 +138,30 @@ export const parseQueuedTelegramUpdate = (
   ) {
     throw new Error('Invalid queued Telegram update');
   }
+  // Every update queued before group topics existed was a private chat, so an
+  // absent scope stays private instead of failing an in-flight job.
+  const queuedScope = update.chatScope ?? 'private';
+  const messageThreadId = update.messageThreadId;
+  if (queuedScope !== 'private' && queuedScope !== 'group_topic') {
+    throw new Error('Invalid queued Telegram update');
+  }
+  if (
+    queuedScope === 'private'
+      ? messageThreadId !== undefined
+      : !Number.isSafeInteger(messageThreadId) ||
+        (messageThreadId as number) <= 0
+  ) {
+    throw new Error('Invalid queued Telegram update');
+  }
+  const scope =
+    queuedScope === 'group_topic'
+      ? ({
+          chatScope: 'group_topic',
+          messageThreadId: messageThreadId as number,
+        } as const)
+      : ({ chatScope: 'private' } as const);
   return {
+    ...scope,
     updateId: update.updateId as number,
     userId: update.userId,
     chatId: update.chatId,

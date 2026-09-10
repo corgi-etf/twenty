@@ -16,8 +16,16 @@ const baseDependencies = () => ({
   expectedWorkspaceId: WORKSPACE_ID,
   enabled: 'true',
   webhookSecret: 'secret',
+  groupTopicsJson: undefined as string | undefined,
   store: { get: vi.fn().mockResolvedValue(null), set: vi.fn(), delete: vi.fn() },
   enqueue: vi.fn().mockResolvedValue(undefined),
+});
+
+const GROUP_CHAT_ID = '-1002394851554';
+const GROUP_THREAD_ID = 304311;
+const GROUP_TOPICS_JSON = JSON.stringify({
+  version: 1,
+  topics: [{ chatId: GROUP_CHAT_ID, messageThreadId: GROUP_THREAD_ID }],
 });
 
 const request = (body: unknown) =>
@@ -41,6 +49,18 @@ const validPrivateMessage = (
   },
   ...overrides,
 });
+
+const groupTopicMessage = (messageOverrides: Record<string, unknown> = {}) =>
+  validPrivateMessage(
+    {},
+    {
+      text: '/daily',
+      chat: { id: Number(GROUP_CHAT_ID), type: 'supergroup', is_forum: true },
+      message_thread_id: GROUP_THREAD_ID,
+      is_topic_message: true,
+      ...messageOverrides,
+    },
+  );
 
 describe('handleTelegramWebhook', () => {
   it('enqueues a valid private-chat update and answers 202', async () => {
@@ -113,5 +133,78 @@ describe('handleTelegramWebhook', () => {
     expect(dependencies.enqueue).not.toHaveBeenCalled();
     expect(dependencies.store.get).not.toHaveBeenCalled();
     expect(dependencies.store.set).not.toHaveBeenCalled();
+  });
+
+  it('enqueues an allowlisted supergroup topic update with its thread', async () => {
+    const dependencies = baseDependencies();
+    dependencies.groupTopicsJson = GROUP_TOPICS_JSON;
+    const response = await handleTelegramWebhook(
+      request(groupTopicMessage()),
+      context,
+      dependencies,
+    );
+    expect(response.status).toBe(202);
+    expect(dependencies.enqueue).toHaveBeenCalledOnce();
+    expect(dependencies.enqueue.mock.calls[0]?.[0]).toMatchObject({
+      chatId: GROUP_CHAT_ID,
+      chatScope: 'group_topic',
+      messageThreadId: GROUP_THREAD_ID,
+    });
+  });
+
+  it.each([
+    ['a group that is not allowlisted', undefined, groupTopicMessage()],
+    [
+      'an allowlisted group but a different topic',
+      GROUP_TOPICS_JSON,
+      groupTopicMessage({ message_thread_id: GROUP_THREAD_ID + 1 }),
+    ],
+    [
+      'an allowlisted topic in a different supergroup',
+      GROUP_TOPICS_JSON,
+      groupTopicMessage({
+        chat: { id: -1002394851555, type: 'supergroup', is_forum: true },
+      }),
+    ],
+    [
+      'an allowlisted supergroup with no topic',
+      GROUP_TOPICS_JSON,
+      groupTopicMessage({ message_thread_id: undefined }),
+    ],
+  ])('acknowledges and drops %s', async (_label, groupTopicsJson, body) => {
+    const dependencies = baseDependencies();
+    dependencies.groupTopicsJson = groupTopicsJson;
+    const response = await handleTelegramWebhook(
+      request(body),
+      context,
+      dependencies,
+    );
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual({
+      ok: true,
+      accepted: false,
+      status: 'ignored',
+    });
+    expect(dependencies.enqueue).not.toHaveBeenCalled();
+  });
+
+  it('keeps private chats working when the group allowlist is malformed', async () => {
+    const dependencies = baseDependencies();
+    dependencies.groupTopicsJson = '{ not json';
+    const groupResponse = await handleTelegramWebhook(
+      request(groupTopicMessage()),
+      context,
+      dependencies,
+    );
+    expect(groupResponse.status).toBe(200);
+    expect(dependencies.enqueue).not.toHaveBeenCalled();
+
+    const privateResponse = await handleTelegramWebhook(
+      request(validPrivateMessage()),
+      context,
+      dependencies,
+    );
+    expect(privateResponse.status).toBe(202);
+    expect(dependencies.enqueue).toHaveBeenCalledOnce();
   });
 });
