@@ -28,7 +28,7 @@ export default defineApplicationRole({
   universalIdentifier: DEFAULT_ROLE_UNIVERSAL_IDENTIFIER,
   label: 'Corgi CRM function role',
   description:
-    'Reads CRM identities and outreach context; writes only Wholesaler identities and Outreach Activities.',
+    'Reads CRM identities and outreach context; writes Wholesaler identities, Outreach Activities, and app-owned Telegram delivery records.',
   canReadAllObjectRecords: false,
   canUpdateAllObjectRecords: false,
   canSoftDeleteAllObjectRecords: false,

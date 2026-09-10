@@ -39,8 +39,10 @@ That mode fails unless it finds exactly one active `wholesaler` and one active
 `CORGI_CRM_OUTREACH_ACTIVITY_OBJECT_UNIVERSAL_IDENTIFIER`; the least-privilege
 role requires both at build time. The installed verifier then checks the actual
 role has read-only access to WorkspaceMember, Company, and Person; read/write
-access to Wholesaler and OutreachActivity; and no other object, delete, global,
-or settings permission.
+access to Wholesaler, OutreachActivity, and the app-owned TelegramDelivery and
+TelegramDeliveryAudit objects; and no other object, delete, global, or settings
+permission. It also verifies both app-owned object schemas and the three unique
+indexes that fence delivery claims, reset generations, and request replays.
 
 The post-install function reconciles all existing WorkspaceMembers. The
 `workspaceMember.created` trigger keeps future members synchronized. Both paths
@@ -92,6 +94,7 @@ source:
   ]
 }
 ```
+
 - `CORGI_CRM_TELEGRAM_TIME_ZONE`: an IANA zone such as `America/Chicago`.
 - `CORGI_CRM_TELEGRAM_DAILY_SUMMARY_TIME`: `HH:MM` on a 15-minute boundary.
 
@@ -152,3 +155,42 @@ requires the exact `unknownAt` version, a unique request UUID, explicit
 `RESET_UNKNOWN_TELEGRAM_DELIVERY` confirmation, and an audit reason. The audit
 is written before one deterministic retry job; stale or completed-state replay
 is rejected.
+
+### Unknown-delivery operations
+
+Use an authenticated Twenty session to `POST /telegram/delivery-control` and
+load `x-corgi-telegram-operator-secret` from the secret store. Never place the
+operator secret in a URL, command argument, source file, or ticket. Inspection
+accepts only the opaque key and returns no message or recipient content:
+
+```json
+{
+  "action": "inspect",
+  "deliveryKey": "telegram:delivery:<64 lowercase hex characters>"
+}
+```
+
+Unknown `Telegram delivery` records are searchable in CRM. Before recovery,
+inspect the exact record and independently verify that Telegram has no receipt
+for the original operation. If a resend is safe, submit one reset using the
+returned `unknownAt`, a new UUID request ID, the exact confirmation string, and
+a reason of at least 10 characters:
+
+```json
+{
+  "action": "reset",
+  "deliveryKey": "telegram:delivery:<64 lowercase hex characters>",
+  "expectedUnknownAt": "2026-09-09T22:00:00.000Z",
+  "requestId": "11111111-1111-4111-8111-111111111111",
+  "confirmation": "RESET_UNKNOWN_TELEGRAM_DELIVERY",
+  "reason": "Provider confirmed that no message was accepted"
+}
+```
+
+The route returns `202` only after the immutable database audit exists and the
+deterministic retry is admitted. `Telegram delivery audit` records are
+searchable in CRM and retain only the reason SHA-256 digest, actor member ID,
+opaque delivery key, request ID, generation timestamp, and request time. They
+are retained indefinitely: the app role has no delete permission and there is
+no automatic purge. Treat any future retention change as a reviewed migration,
+not an operator cleanup action.

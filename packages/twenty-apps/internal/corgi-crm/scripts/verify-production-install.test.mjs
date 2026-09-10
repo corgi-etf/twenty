@@ -8,6 +8,7 @@ import {
   verifyReconciliation,
   verifyTelegramApplicationContract,
   verifyTelegramDisabled,
+  verifyTelegramPersistenceSchema,
 } from './verify-production-install.mjs';
 
 const member = {
@@ -293,11 +294,18 @@ describe('installed application role verification', () => {
     'person',
     'wholesaler',
     'outreachActivity',
+    'telegramDelivery',
+    'telegramDeliveryAudit',
   ].map((nameSingular, index) => ({
     id: `00000000-0000-4000-8000-00000000000${index}`,
     nameSingular,
   }));
-  const writable = new Set(['wholesaler', 'outreachActivity']);
+  const writable = new Set([
+    'wholesaler',
+    'outreachActivity',
+    'telegramDelivery',
+    'telegramDeliveryAudit',
+  ]);
   const role = {
     canAccessAllTools: false,
     canBeAssignedToUsers: false,
@@ -324,7 +332,7 @@ describe('installed application role verification', () => {
     })),
   };
 
-  it('accepts only the exact five-object least-privilege role', () => {
+  it('accepts only the exact seven-object least-privilege role', () => {
     assert.doesNotThrow(() => verifyApplicationRoleContract(role, objects));
   });
 
@@ -362,14 +370,14 @@ describe('installed application role verification', () => {
     }
   });
 
-  it('rejects duplicate object permissions even when the count remains five', () => {
+  it('rejects duplicate object permissions even when the count remains seven', () => {
     assert.throws(
       () =>
         verifyApplicationRoleContract(
           {
             ...role,
             objectPermissions: role.objectPermissions.map((permission, index) =>
-              index === 4
+              index === 6
                 ? {
                     ...permission,
                     objectMetadataId: role.objectPermissions[0].objectMetadataId,
@@ -410,7 +418,7 @@ describe('installed application role verification', () => {
           },
           objects,
         ),
-      /exactly five/i,
+      /exactly seven/i,
     );
     assert.throws(
       () =>
@@ -449,5 +457,90 @@ describe('installed application role verification', () => {
     ]) {
       assert.match(source, new RegExp(field.replace(/[{}]/g, '\\$&')));
     }
+  });
+});
+
+describe('installed Telegram persistence schema verification', () => {
+  const objectFixture = (nameSingular, fieldDefinitions, indexDefinitions) => {
+    const fieldsList = fieldDefinitions.map(([name, type], index) => ({
+      id: `${nameSingular}-field-${index}`,
+      name,
+      type,
+      isActive: true,
+    }));
+    return {
+      nameSingular,
+      isActive: true,
+      fieldsList,
+      indexMetadataList: indexDefinitions.map((fieldNames, index) => ({
+        universalIdentifier: `${nameSingular}-index-${index}`,
+        isUnique: true,
+        indexFieldMetadataList: fieldNames.map((fieldName, order) => ({
+          fieldMetadataId: fieldsList.find((field) => field.name === fieldName)
+            .id,
+          order,
+        })),
+      })),
+    };
+  };
+  const delivery = objectFixture(
+    'telegramDelivery',
+    [
+      ['name', 'TEXT'],
+      ['deliveryKey', 'TEXT'],
+      ['operationDigest', 'TEXT'],
+      ['status', 'SELECT'],
+      ['stateToken', 'TEXT'],
+      ['attempts', 'NUMBER'],
+      ['resetCount', 'NUMBER'],
+      ['unknownAt', 'DATE_TIME'],
+      ['lastReasonCode', 'SELECT'],
+      ['retryRequestId', 'TEXT'],
+      ['approvedUnknownAt', 'DATE_TIME'],
+    ],
+    [['deliveryKey']],
+  );
+  const audit = objectFixture(
+    'telegramDeliveryAudit',
+    [
+      ['name', 'TEXT'],
+      ['requestId', 'TEXT'],
+      ['deliveryKey', 'TEXT'],
+      ['expectedUnknownAt', 'DATE_TIME'],
+      ['actorWorkspaceMemberId', 'TEXT'],
+      ['reasonDigest', 'TEXT'],
+      ['requestedAt', 'DATE_TIME'],
+    ],
+    [['requestId'], ['deliveryKey', 'expectedUnknownAt']],
+  );
+
+  it('requires both durable objects, their field types, and all three unique indexes', () => {
+    assert.doesNotThrow(() =>
+      verifyTelegramPersistenceSchema([delivery, audit]),
+    );
+  });
+
+  it('rejects a missing generation index or incorrect field type', () => {
+    assert.throws(
+      () =>
+        verifyTelegramPersistenceSchema([
+          delivery,
+          { ...audit, indexMetadataList: audit.indexMetadataList.slice(0, 1) },
+        ]),
+      /unique indexes/i,
+    );
+    assert.throws(
+      () =>
+        verifyTelegramPersistenceSchema([
+          {
+            ...delivery,
+            fieldsList: delivery.fieldsList.map((field) =>
+              field.name === 'status' ? { ...field, type: 'TEXT' } : field,
+            ),
+          },
+          audit,
+        ]),
+      /invalid type/i,
+    );
   });
 });
