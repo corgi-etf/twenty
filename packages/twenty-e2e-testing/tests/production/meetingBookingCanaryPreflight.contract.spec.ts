@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { buildSchema, parse, validate } from 'graphql';
+import { buildSchema, parse, validate, visit } from 'graphql';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -68,6 +68,91 @@ test('validates the existing installed-application disabled gate against the act
 
   expect(query).toBeDefined();
   expect(validate(metadataSchema, parse(query!))).toEqual([]);
+});
+
+test('never selects unloaded nested relations from the application-list resolver', () => {
+  const applicationServiceSource = readFileSync(
+    join(
+      repositoryRoot,
+      'packages/twenty-server/src/engine/core-modules/application/application.service.ts',
+    ),
+    'utf8',
+  );
+  const listMethod = applicationServiceSource.match(
+    /async findManyApplications\([\s\S]*?(?=\n  async findManyInstalledFlatApplications)/,
+  )?.[0];
+  const loadedRelations = Array.from(
+    listMethod?.match(/relations: \[([^\]]+)\]/)?.[1].matchAll(/'([^']+)'/g) ??
+      [],
+    ([, relation]) => relation,
+  );
+  expect(loadedRelations).toEqual(['applicationRegistration']);
+  const canarySource = readFileSync(
+    join(__dirname, 'meetingBooking.maintenance.spec.ts'),
+    'utf8',
+  );
+  const query = canarySource.match(
+    /`(\s*query MeetingCanaryDeliveryGate[\s\S]+?)`/,
+  )?.[1];
+  expect(query).toBeDefined();
+
+  visit(parse(query!), {
+    Field(node) {
+      if (node.name.value !== 'findManyApplications') return;
+      for (const selection of node.selectionSet?.selections ?? []) {
+        if (selection.kind === 'Field' && selection.selectionSet) {
+          expect(loadedRelations).toContain(selection.name.value);
+        }
+      }
+    },
+  });
+});
+
+test('reads installed variables through the tenant-scoped single-application loader', () => {
+  const applicationServiceSource = readFileSync(
+    join(
+      repositoryRoot,
+      'packages/twenty-server/src/engine/core-modules/application/application.service.ts',
+    ),
+    'utf8',
+  );
+  const singleMethod = applicationServiceSource.match(
+    /async findOneApplication\([\s\S]*?(?=\n  async findOneApplicationOrThrow)/,
+  )?.[0];
+  expect(singleMethod).toContain(
+    'application.applicationVariables = applicationVariables',
+  );
+  expect(singleMethod).toContain(
+    'where: { applicationId: application.id, workspaceId }',
+  );
+  const canarySource = readFileSync(
+    join(__dirname, 'meetingBooking.maintenance.spec.ts'),
+    'utf8',
+  );
+  const query = canarySource.match(
+    /`(\s*query MeetingCanaryDeliveryGate[\s\S]+?)`/,
+  )?.[1];
+  expect(query).toBeDefined();
+  const applicationFields: string[] = [];
+  visit(parse(query!), {
+    Field(node) {
+      if (node.name.value !== 'findOneApplication') return;
+      applicationFields.push(node.name.value);
+      expect(node.arguments).toEqual([
+        expect.objectContaining({
+          name: expect.objectContaining({ value: 'universalIdentifier' }),
+          value: expect.objectContaining({
+            kind: 'Variable',
+            name: expect.objectContaining({ value: 'universalIdentifier' }),
+          }),
+        }),
+      ]);
+    },
+  });
+  expect(applicationFields).toEqual(['findOneApplication']);
+  expect(canarySource).toContain(
+    '{ universalIdentifier: APPLICATION_IDENTIFIER }',
+  );
 });
 
 const workspaceId = '11111111-1111-4111-8111-111111111111';

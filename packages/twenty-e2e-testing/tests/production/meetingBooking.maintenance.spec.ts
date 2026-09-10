@@ -157,21 +157,21 @@ test('books and reschedules a native CRM meeting while Telegram is disabled', as
   const assertDisabled = async () => {
     const result = await graphql<{
       currentWorkspace: { id: string };
-      findManyApplications: Array<{
+      findOneApplication: {
         id: string;
         universalIdentifier: string;
         version: string;
         applicationVariables: Array<{ key: string; value: string }>;
-      }>;
+      } | null;
     }>(
       '/metadata',
       'MeetingCanaryDeliveryGate',
       `
-        query MeetingCanaryDeliveryGate {
+        query MeetingCanaryDeliveryGate($universalIdentifier: UUID!) {
           currentWorkspace {
             id
           }
-          findManyApplications {
+          findOneApplication(universalIdentifier: $universalIdentifier) {
             id
             universalIdentifier
             version
@@ -182,17 +182,19 @@ test('books and reschedules a native CRM meeting while Telegram is disabled', as
           }
         }
       `,
+      { universalIdentifier: APPLICATION_IDENTIFIER },
     );
     const expectedWorkspaceId = requiredEnvironment(
       'CORGI_CRM_EXPECTED_WORKSPACE_ID',
     );
     expect(result.currentWorkspace.id === expectedWorkspaceId).toBe(true);
-    const applications = result.findManyApplications.filter(
-      ({ universalIdentifier }) =>
-        universalIdentifier === APPLICATION_IDENTIFIER,
+    const application = result.findOneApplication;
+    if (!application) {
+      throw new Error('Installed meeting application was not found');
+    }
+    expect(application.universalIdentifier === APPLICATION_IDENTIFIER).toBe(
+      true,
     );
-    expect(applications.length).toBe(1);
-    const application = applications[0]!;
     expect(UUID_PATTERN.test(application.id)).toBe(true);
     expect(
       application.version === requiredEnvironment('CORGI_CRM_EXPECTED_VERSION'),
