@@ -12,15 +12,21 @@ export const APPLY_ACTIVITY_TYPE_BACKFILL_CONFIRMATION =
 
 const APPROVED_ORIGIN = 'https://crm.corgiinvest.com';
 
-export type ActivityTypeBackfillApi = {
+// A dry run is handed an api with no write method at all, so it cannot write
+// even if a future edit forgets a guard. Only the execute path asks for the
+// wider type, and only the write adapter can satisfy it.
+export type ActivityTypeBackfillReadApi = {
   listOutreachActivities(): Promise<OutreachActivityRow[]>;
+  readCheckpoint(): Promise<unknown>;
+  writeCheckpoint(value: ActivityTypeBackfillCheckpoint): Promise<void>;
+};
+
+export type ActivityTypeBackfillApi = ActivityTypeBackfillReadApi & {
   conditionalPatchOutreachActivity(
     id: string,
     expectedUpdatedAt: string,
     data: { activityTypeOption: string },
   ): Promise<void>;
-  readCheckpoint(): Promise<unknown>;
-  writeCheckpoint(value: ActivityTypeBackfillCheckpoint): Promise<void>;
 };
 
 export type ActivityTypeBackfillCheckpoint = {
@@ -97,7 +103,7 @@ const assertOrigin = (options: ActivityTypeBackfillOptions): void => {
 // records ids already written, which this run cannot re-derive safely, so the
 // run aborts for a human rather than guessing where it left off.
 const assertNoPriorCheckpoint = async (
-  api: ActivityTypeBackfillApi,
+  api: ActivityTypeBackfillReadApi,
 ): Promise<void> => {
   const existing = await api.readCheckpoint();
   if (existing !== undefined && existing !== null) {
@@ -107,26 +113,49 @@ const assertNoPriorCheckpoint = async (
   }
 };
 
+export const runActivityTypeBackfillDryRun = async (
+  api: ActivityTypeBackfillReadApi,
+  options: Omit<
+    ActivityTypeBackfillOptions,
+    'execute' | 'confirmation' | 'expectedPlanHash'
+  >,
+): Promise<ActivityTypeBackfillResult> => {
+  assertOrigin(options);
+
+  const rows = await api.listOutreachActivities();
+  const plan = buildActivityTypeBackfillPlan({
+    rows,
+    approvedMapping: options.approvedMapping,
+  });
+
+  return {
+    mode: 'dry-run',
+    planHash: activityTypeBackfillPlanHash(plan),
+    inventory: plan.inventory,
+    unresolved: plan.unresolved,
+    summary: plan.summary,
+    appliedMutations: 0,
+  };
+};
+
 export const runActivityTypeBackfill = async (
   api: ActivityTypeBackfillApi,
   options: ActivityTypeBackfillOptions,
 ): Promise<ActivityTypeBackfillResult> => {
   assertOrigin(options);
 
-  const execute = options.execute === true;
-  if (execute) {
-    if (options.confirmation !== APPLY_ACTIVITY_TYPE_BACKFILL_CONFIRMATION) {
-      throw new Error(
-        'Activity type backfill apply requires the exact confirmation',
-      );
-    }
-    if (!options.expectedPlanHash) {
-      throw new Error(
-        'Activity type backfill apply requires the trusted dry-run plan hash',
-      );
-    }
-    await assertNoPriorCheckpoint(api);
+  if (options.execute !== true) return runActivityTypeBackfillDryRun(api, options);
+  if (options.confirmation !== APPLY_ACTIVITY_TYPE_BACKFILL_CONFIRMATION) {
+    throw new Error(
+      'Activity type backfill apply requires the exact confirmation',
+    );
   }
+  if (!options.expectedPlanHash) {
+    throw new Error(
+      'Activity type backfill apply requires the trusted dry-run plan hash',
+    );
+  }
+  await assertNoPriorCheckpoint(api);
 
   const rows = await api.listOutreachActivities();
   const plan = buildActivityTypeBackfillPlan({
@@ -134,17 +163,6 @@ export const runActivityTypeBackfill = async (
     approvedMapping: options.approvedMapping,
   });
   const planHash = activityTypeBackfillPlanHash(plan);
-
-  if (!execute) {
-    return {
-      mode: 'dry-run',
-      planHash,
-      inventory: plan.inventory,
-      unresolved: plan.unresolved,
-      summary: plan.summary,
-      appliedMutations: 0,
-    };
-  }
 
   if (planHash !== options.expectedPlanHash) {
     throw new Error(
