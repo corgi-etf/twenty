@@ -251,7 +251,7 @@ describe('application release contract', () => {
     const packageJson = JSON.parse(
       await fs.readFile(new URL('../package.json', import.meta.url), 'utf8'),
     );
-    assert.equal(packageJson.version, '1.1.0');
+    assert.equal(packageJson.version, '1.1.1');
   });
 
   it('resolves exact custom object universal identifiers from live metadata', () => {
