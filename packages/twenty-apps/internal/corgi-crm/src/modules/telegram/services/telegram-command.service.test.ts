@@ -303,6 +303,20 @@ describe('processTelegramCommand', () => {
     expect(dependencies.identity.findWorkspaceMember).not.toHaveBeenCalled();
   });
 
+  it('tells a bare /link to include a code instead of a generic invalid-code message', async () => {
+    const dependencies = base();
+    dependencies.values.delete('telegram:user:101');
+
+    await expect(
+      processTelegramCommand(update('/link'), dependencies),
+    ).resolves.toEqual({ status: 'link_failed' });
+    expect(dependencies.send).toHaveBeenCalledWith(
+      '101',
+      'Add your one-time code after /link — for example: /link ABC123. Ask an administrator if you do not have one.',
+    );
+    expect(dependencies.identity.findWorkspaceMember).not.toHaveBeenCalled();
+  });
+
   it('keeps a plain start as help and advertises the report commands', async () => {
     const dependencies = base();
     await expect(
@@ -369,6 +383,22 @@ describe('processTelegramCommand', () => {
       processTelegramCommand(update('/today'), readDependencies),
     ).resolves.toEqual({ status: 'not_linked' });
     expect(readDependencies.repository.listActivities).not.toHaveBeenCalled();
+  });
+
+  it('explains why a /log entry was rejected instead of dumping the full command guide', async () => {
+    const dependencies = base();
+
+    await expect(
+      processTelegramCommand(
+        update('/log sms | Acme | connected'),
+        dependencies,
+      ),
+    ).resolves.toEqual({ status: 'invalid_log' });
+    expect(dependencies.send).toHaveBeenCalledWith(
+      '101',
+      'Unsupported activity type: sms\n/log call | Company | outcome | notes\n/log type=meeting; company=Company; contact=Name; outcome=follow_up_scheduled; notes=Next step; followup=YYYY-MM-DD',
+    );
+    expect(dependencies.repository.findCompanies).not.toHaveBeenCalled();
   });
 
   it('logs the fast syntax and confirms the company', async () => {

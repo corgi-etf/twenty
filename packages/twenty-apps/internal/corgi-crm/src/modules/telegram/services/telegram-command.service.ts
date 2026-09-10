@@ -26,11 +26,17 @@ import { splitTelegramMessage } from 'src/modules/telegram/services/split-telegr
 import { getTelegramActivityId } from 'src/modules/telegram/services/telegram-identifiers.service';
 import { readTelegramReportSnapshot } from 'src/modules/telegram/services/telegram-report-snapshot.service';
 
+// Shared with the /log parse-failure reply so a rejected entry points at the
+// two supported syntaxes without repeating the entire command guide.
+const LOG_USAGE = [
+  '/log call | Company | outcome | notes',
+  '/log type=meeting; company=Company; contact=Name; outcome=follow_up_scheduled; notes=Next step; followup=YYYY-MM-DD',
+].join('\n');
+
 const HELP = [
   'Corgi CRM outreach bot',
   '/link CODE — securely link your CRM identity',
-  '/log call | Company | outcome | notes',
-  '/log type=meeting; company=Company; contact=Name; outcome=follow_up_scheduled; notes=Next step; followup=YYYY-MM-DD',
+  LOG_USAGE,
   '/today — your activity breakdown for the current local day',
   '/daily — all owners, last 24 hours',
   '/weekly — all owners, last 7 days excluding Saturday/Sunday',
@@ -118,6 +124,13 @@ export const processTelegramCommand = async (
   }
   if (command === '/link' || command === '/start') {
     const code = payload;
+    if (!code) {
+      await dependencies.send(
+        update.chatId,
+        'Add your one-time code after /link — for example: /link ABC123. Ask an administrator if you do not have one.',
+      );
+      return { status: 'link_failed' } as const;
+    }
     try {
       const link = await linkTelegramAccount({
         code,
@@ -182,11 +195,16 @@ export const processTelegramCommand = async (
         update.text,
         getTelegramActivityId(update.updateId),
       );
-    } catch {
-      await dependencies.send(
-        update.chatId,
-        `Could not parse that entry.\n${HELP}`,
-      );
+    } catch (error) {
+      // Surface the parser's own reason (e.g. "Unsupported activity type:
+      // sms") instead of a generic message plus the full command guide —
+      // the reason is always derived from the user's own input, never CRM
+      // data, so it is safe to echo back.
+      const reason =
+        error instanceof Error && error.message
+          ? error.message
+          : 'Could not parse that entry.';
+      await dependencies.send(update.chatId, `${reason}\n${LOG_USAGE}`);
       return { status: 'invalid_log' } as const;
     }
     if (resume?.status === 'crm_committed') {
