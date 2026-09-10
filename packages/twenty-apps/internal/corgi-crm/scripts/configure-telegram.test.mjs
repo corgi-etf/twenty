@@ -39,6 +39,7 @@ describe('trusted Telegram application configuration', () => {
         return { updateOneApplicationVariable: true };
       },
       workspaceId: '11111111-1111-4111-8111-111111111111',
+      timeZone: 'America/Chicago',
       enabled: false,
     });
     assert.deepEqual(writes, [
@@ -52,7 +53,50 @@ describe('trusted Telegram application configuration', () => {
         key: 'CORGI_CRM_WORKSPACE_ID',
         value: '11111111-1111-4111-8111-111111111111',
       },
+      {
+        applicationId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+        key: 'CORGI_CRM_TELEGRAM_TIME_ZONE',
+        value: 'America/Chicago',
+      },
     ]);
+  });
+
+  it('remains disabled and tenant-bound when an optional disabled-mode zone is invalid', async () => {
+    const writes = [];
+    await assert.rejects(
+      () =>
+        configurationModule.configureTelegramApplication({
+          graphql: async ({ operationName, variables }) => {
+            if (operationName === 'FindCorgiCrmApplication') {
+              return {
+                findManyApplications: [
+                  {
+                    id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+                    universalIdentifier:
+                      'ca87ad48-b62a-41be-a790-7c17707ff1b4',
+                  },
+                ],
+              };
+            }
+            writes.push(variables);
+            return { updateOneApplicationVariable: true };
+          },
+          workspaceId: '11111111-1111-4111-8111-111111111111',
+          timeZone: 'not-a-time-zone',
+          enabled: false,
+        }),
+      /IANA zone/i,
+    );
+    assert.deepEqual(
+      writes.map(({ key, value }) => ({ key, value })),
+      [
+        { key: 'CORGI_CRM_TELEGRAM_ENABLED', value: 'false' },
+        {
+          key: 'CORGI_CRM_WORKSPACE_ID',
+          value: '11111111-1111-4111-8111-111111111111',
+        },
+      ],
+    );
   });
 
   it('treats a proven absent app as already disabled without hiding invalid results', async () => {

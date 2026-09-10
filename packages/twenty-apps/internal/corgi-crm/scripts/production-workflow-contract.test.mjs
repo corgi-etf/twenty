@@ -182,6 +182,15 @@ describe('Corgi CRM production app workflow contract', () => {
 
   it('always disables and unregisters on opt-out, with idempotent failure cleanup', () => {
     assert.match(workflow, /Configure Telegram disabled[\s\S]*if:[^\n]*always\(\)/);
+    const disabledBlock = workflow.slice(
+      position('Configure Telegram disabled'),
+      position('Unregister Telegram provider'),
+    );
+    assert.match(
+      disabledBlock,
+      /CORGI_CRM_TELEGRAM_TIME_ZONE:\s*\$\{\{ vars\./,
+    );
+    assert.doesNotMatch(disabledBlock, /CORGI_CRM_TELEGRAM_BOT_TOKEN/);
     assert.match(workflow, /Unregister Telegram provider[\s\S]*if:[^\n]*!inputs\.telegram_enable/);
     assert.match(workflow, /verify-telegram-live\.mjs" disabled/);
     assert.match(workflow, /Fail closed after Telegram setup failure[\s\S]*if:[^\n]*failure\(\)/);

@@ -355,6 +355,7 @@ jobs:
         if: ${{ always() && steps.credential.outputs.token != '' }}
         env:
           CORGI_CRM_API_KEY: ${{ steps.credential.outputs.token }}
+          CORGI_CRM_TELEGRAM_TIME_ZONE: ${{ vars.CORGI_CRM_TELEGRAM_TIME_ZONE }}
         run: node "${APP_PATH}/scripts/configure-telegram.mjs" disabled
 
       - name: Unregister Telegram provider

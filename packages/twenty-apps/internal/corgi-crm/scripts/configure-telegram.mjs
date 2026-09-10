@@ -135,6 +135,16 @@ const validateNotificationRoutes = (raw) => {
   return JSON.stringify({ version: 1, routes });
 };
 
+const validateTimeZone = (timeZone) => {
+  const normalized = required(timeZone, 'Telegram time zone');
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: normalized }).format();
+  } catch {
+    throw new Error('Telegram time zone must be a valid IANA zone');
+  }
+  return normalized;
+};
+
 const validateTrustedTelegramConfiguration = ({
   workspaceId,
   token,
@@ -149,12 +159,7 @@ const validateTrustedTelegramConfiguration = ({
   if (!UUID_PATTERN.test(normalizedWorkspaceId)) {
     throw new Error('Workspace ID must be a UUID');
   }
-  const normalizedTimeZone = required(timeZone, 'Telegram time zone');
-  try {
-    new Intl.DateTimeFormat('en-US', { timeZone: normalizedTimeZone }).format();
-  } catch {
-    throw new Error('Telegram time zone must be a valid IANA zone');
-  }
+  const normalizedTimeZone = validateTimeZone(timeZone);
   const normalizedTime = required(dailySummaryTime, 'Telegram summary time');
   const match = /^(?:[01][0-9]|2[0-3]):([0-5][0-9])$/.exec(normalizedTime);
   if (!match || Number(match[1]) % 15 !== 0) {
@@ -253,6 +258,12 @@ const configureTelegramApplication = async ({
   await write('CORGI_CRM_TELEGRAM_ENABLED', 'false');
   if (!variables) {
     await write('CORGI_CRM_WORKSPACE_ID', validateWorkspaceId(input.workspaceId));
+    if (input.timeZone?.trim()) {
+      await write(
+        'CORGI_CRM_TELEGRAM_TIME_ZONE',
+        validateTimeZone(input.timeZone),
+      );
+    }
     return { status: 'disabled' };
   }
   for (const [key, value] of Object.entries(variables)) await write(key, value);
