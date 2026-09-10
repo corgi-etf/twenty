@@ -49,6 +49,20 @@ const GRAPHQL_ERROR_CODES = new Set([
   'APPLICATION_INSTALLATION_FAILED', 'RATE_LIMITED', 'QUOTA_EXHAUSTED',
 ]);
 
+// Selected machine enums from the server query-runner and TwentyOrm exceptions.
+// Arbitrary extension subcodes must not become another route for PII into logs.
+const GRAPHQL_ERROR_SUBCODES = new Set([
+  'INVALID_QUERY_INPUT', 'INVALID_ARGS_FILTER', 'FIELD_NOT_FOUND',
+  'OBJECT_METADATA_NOT_FOUND', 'RELATION_SETTINGS_NOT_FOUND',
+  'RELATION_TARGET_OBJECT_METADATA_NOT_FOUND', 'UNSUPPORTED_OPERATOR',
+  'MALFORMED_METADATA', 'INVALID_INPUT', 'UNKNOWN_COLUMN', 'UNKNOWN_RELATION',
+  'UNKNOWN_OBJECT', 'MALFORMED_SQL', 'INVALID_QUERY', 'INVALID_PARAMETER',
+  'MISSING_PARAMETER', 'WORKSPACE_SCHEMA_NOT_FOUND', 'RLS_VALIDATION_FAILED',
+  'NO_ROLE_FOUND_FOR_USER_WORKSPACE', 'ROLES_PERMISSIONS_VERSION_NOT_FOUND',
+  'API_KEY_ROLE_MAP_VERSION_NOT_FOUND', 'UNKNOWN_METHOD', 'INVALID_RESULT_TYPE',
+  'NOT_IMPLEMENTED', 'QUERY_READ_TIMEOUT', 'TRANSIENT_DATABASE_ERROR',
+]);
+
 const classifyGraphqlError = (error) => {
   const message = typeof error?.message === 'string' ? error.message : '';
   if (/Variable .* of type .* used in position expecting type/i.test(message)) {
@@ -87,7 +101,9 @@ const summarizeGraphqlErrors = (errors) => {
   for (const error of errors) {
     const code = GRAPHQL_ERROR_CODES.has(error?.extensions?.code)
       ? error.extensions.code : 'UNKNOWN';
-    const key = `${code}/${classifyGraphqlError(error)}`;
+    const subCode = GRAPHQL_ERROR_SUBCODES.has(error?.extensions?.subCode)
+      ? `/${error.extensions.subCode}` : '';
+    const key = `${code}${subCode}/${classifyGraphqlError(error)}`;
     counts.set(key, (counts.get(key) ?? 0) + 1);
   }
   return [...counts].sort(([left], [right]) => left.localeCompare(right))

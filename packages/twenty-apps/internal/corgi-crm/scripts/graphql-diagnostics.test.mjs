@@ -32,6 +32,25 @@ describe('privacy-safe GraphQL verification diagnostics', () => {
     });
   });
 
+  it('preserves only known server exception subcodes', async () => {
+    await assert.rejects(parseResponse(response({ errors: [{
+      message: 'Private Owner owner@example.invalid',
+      extensions: { code: 'BAD_USER_INPUT', subCode: 'UNSUPPORTED_OPERATOR' },
+    }] }), 'OwnerPreflight'), (error) => {
+      assert.match(error.message, /BAD_USER_INPUT\/UNSUPPORTED_OPERATOR\/unexpected=1/);
+      assert.doesNotMatch(error.message, /Private|owner@/);
+      return true;
+    });
+    await assert.rejects(parseResponse(response({ errors: [{
+      message: 'Private Owner owner@example.invalid',
+      extensions: { code: 'BAD_USER_INPUT', subCode: 'PRIVATE_OWNER_SECRET' },
+    }] }), 'OwnerPreflight'), (error) => {
+      assert.match(error.message, /BAD_USER_INPUT\/unexpected=1/);
+      assert.doesNotMatch(error.message, /PRIVATE_OWNER_SECRET|Private|owner@/);
+      return true;
+    });
+  });
+
   it('classifies known server failures with a bounded static vocabulary', async () => {
     for (const [message, category] of [
       ['Cannot query field "privateField" on type "PrivateType".', 'schema_unknown_field'],
