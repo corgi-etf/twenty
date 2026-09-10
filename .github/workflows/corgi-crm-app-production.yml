@@ -3,8 +3,16 @@ name: Publish and install Corgi CRM app in production
 on:
   workflow_dispatch:
     inputs:
+      operation:
+        description: Publish the app, or configure an already verified installed release
+        required: true
+        default: publish-and-install
+        type: choice
+        options:
+          - publish-and-install
+          - configure-telegram
       confirmation:
-        description: Type PUBLISH_AND_INSTALL_CORGI_CRM_APP
+        description: Type PUBLISH_AND_INSTALL_CORGI_CRM_APP or CONFIGURE_CORGI_CRM_TELEGRAM for the selected operation
         required: true
         type: string
       deployed_sha:
@@ -18,6 +26,20 @@ on:
       metadata_bootstrap_run_attempt:
         description: Successful metadata-bootstrap workflow attempt number
         required: true
+        type: string
+      telegram_enable:
+        description: Configure and enable Telegram only after live verification
+        required: false
+        default: false
+        type: boolean
+      telegram_test_delivery_enabled:
+        description: Opt in to one real Telegram verification message
+        required: false
+        default: false
+        type: boolean
+      telegram_test_delivery_confirmation:
+        description: Type SEND_TELEGRAM_TEST to confirm the opt-in real message
+        required: false
         type: string
 
 permissions:
@@ -41,7 +63,6 @@ env:
   WORKER_SERVICE: crm-production-worker
   WORKER_CONTAINER: worker
   CORGI_CRM_API_URL: https://crm.corgiinvest.com
-  CORGI_CRM_EXPECTED_WORKSPACE_ID: eabf5d9d-fc99-4acb-b160-710ecb1db996
 
 jobs:
   publish-and-install:
@@ -59,13 +80,19 @@ jobs:
       - name: Validate explicit production approval and revision
         shell: bash
         env:
+          OPERATION: ${{ inputs.operation }}
           CONFIRMATION: ${{ inputs.confirmation }}
           DEPLOYED_SHA: ${{ inputs.deployed_sha }}
           BOOTSTRAP_RUN_ID: ${{ inputs.metadata_bootstrap_run_id }}
           BOOTSTRAP_RUN_ATTEMPT: ${{ inputs.metadata_bootstrap_run_attempt }}
         run: |
           set -euo pipefail
-          [[ "${CONFIRMATION}" == "PUBLISH_AND_INSTALL_CORGI_CRM_APP" ]]
+          if [[ "${OPERATION}" == "configure-telegram" ]]; then
+            [[ "${CONFIRMATION}" == "CONFIGURE_CORGI_CRM_TELEGRAM" ]]
+          else
+            [[ "${OPERATION}" == "publish-and-install" ]]
+            [[ "${CONFIRMATION}" == "PUBLISH_AND_INSTALL_CORGI_CRM_APP" ]]
+          fi
           [[ "${DEPLOYED_SHA}" =~ ^[0-9a-f]{40}$ ]]
           [[ "${DEPLOYED_SHA}" == "${GITHUB_SHA}" ]]
           [[ "${BOOTSTRAP_RUN_ID}" =~ ^[1-9][0-9]*$ ]]
@@ -241,6 +268,7 @@ jobs:
           CRM_WORKSPACE_METADATA_PREREQUISITE_ENABLED: 'true'
           CRM_DEPLOYED_SHA: ${{ inputs.deployed_sha }}
           CRM_WORKSPACE_METADATA_BOOTSTRAP_ARTIFACT_PATH: ${{ runner.temp }}/crm-workspace-metadata-bootstrap/bootstrap.json
+          CRM_WORKSPACE_ENV_PATH: ${{ github.env }}
         run: >-
           npx nx test:production twenty-e2e-testing --
           tests/production/workspaceMetadataBootstrapPrerequisite.production.spec.ts
@@ -274,7 +302,21 @@ jobs:
           CORGI_CRM_API_KEY: ${{ steps.credential.outputs.token }}
         run: node "${APP_PATH}/scripts/verify-production-install.mjs" target
 
+      - name: Resolve least-privilege role object identifiers
+        env:
+          CORGI_CRM_API_KEY: ${{ steps.credential.outputs.token }}
+          CORGI_CRM_ROLE_ENV_PATH: ${{ github.env }}
+        run: node "${APP_PATH}/scripts/verify-production-install.mjs" role-env
+
+      - name: Verify the installed release before configuration-only changes
+        if: inputs.operation == 'configure-telegram'
+        env:
+          CORGI_CRM_API_KEY: ${{ steps.credential.outputs.token }}
+          CORGI_CRM_EXPECTED_VERSION: ${{ steps.app.outputs.version }}
+        run: node "${APP_PATH}/scripts/verify-production-install.mjs" installed
+
       - name: Publish the private Corgi CRM app
+        if: inputs.operation != 'configure-telegram'
         uses: ./.github/actions/deploy-twenty-app
         with:
           api-url: ${{ env.CORGI_CRM_API_URL }}
@@ -282,17 +324,107 @@ jobs:
           app-path: ${{ env.APP_PATH }}
 
       - name: Install or upgrade the Corgi CRM app
+        if: inputs.operation != 'configure-telegram'
         uses: ./.github/actions/install-twenty-app
         with:
           api-url: ${{ env.CORGI_CRM_API_URL }}
           api-key: ${{ steps.credential.outputs.token }}
           app-path: ${{ env.APP_PATH }}
 
+      - name: Configure Telegram disabled
+        if: ${{ always() && steps.credential.outputs.token != '' }}
+        env:
+          CORGI_CRM_API_KEY: ${{ steps.credential.outputs.token }}
+        run: node "${APP_PATH}/scripts/configure-telegram.mjs" disabled
+
+      - name: Unregister Telegram provider
+        if: ${{ always() && !inputs.telegram_enable && steps.credential.outputs.token != '' }}
+        env:
+          CORGI_CRM_TELEGRAM_BOT_TOKEN: ${{ secrets.CORGI_CRM_TELEGRAM_BOT_TOKEN }}
+          CORGI_CRM_TELEGRAM_LIVE_VERIFICATION_CONFIRM: VERIFY_TELEGRAM_LIVE
+        run: node "${APP_PATH}/scripts/verify-telegram-live.mjs" disabled
+
+      - name: Stage Telegram configuration while disabled
+        if: inputs.telegram_enable
+        env:
+          CORGI_CRM_API_KEY: ${{ steps.credential.outputs.token }}
+          CORGI_CRM_TELEGRAM_BOT_TOKEN: ${{ secrets.CORGI_CRM_TELEGRAM_BOT_TOKEN }}
+          CORGI_CRM_TELEGRAM_WEBHOOK_SECRET: ${{ secrets.CORGI_CRM_TELEGRAM_WEBHOOK_SECRET }}
+          CORGI_CRM_TELEGRAM_OPERATOR_SECRET: ${{ secrets.CORGI_CRM_TELEGRAM_OPERATOR_SECRET }}
+          CORGI_CRM_TELEGRAM_LINK_CODES: ${{ secrets.CORGI_CRM_TELEGRAM_LINK_CODES }}
+          CORGI_CRM_TELEGRAM_TIME_ZONE: ${{ vars.CORGI_CRM_TELEGRAM_TIME_ZONE }}
+          CORGI_CRM_TELEGRAM_DAILY_SUMMARY_TIME: ${{ vars.CORGI_CRM_TELEGRAM_DAILY_SUMMARY_TIME }}
+        run: node "${APP_PATH}/scripts/configure-telegram.mjs" stage
+
+      - name: Register and verify the live Telegram provider
+        if: inputs.telegram_enable
+        env:
+          CORGI_CRM_API_KEY: ${{ steps.credential.outputs.token }}
+          CORGI_CRM_TELEGRAM_BOT_TOKEN: ${{ secrets.CORGI_CRM_TELEGRAM_BOT_TOKEN }}
+          CORGI_CRM_TELEGRAM_WEBHOOK_SECRET: ${{ secrets.CORGI_CRM_TELEGRAM_WEBHOOK_SECRET }}
+          CORGI_CRM_TELEGRAM_OPERATOR_SECRET: ${{ secrets.CORGI_CRM_TELEGRAM_OPERATOR_SECRET }}
+          CORGI_CRM_TELEGRAM_LINK_CODES: ${{ secrets.CORGI_CRM_TELEGRAM_LINK_CODES }}
+          CORGI_CRM_TELEGRAM_TIME_ZONE: ${{ vars.CORGI_CRM_TELEGRAM_TIME_ZONE }}
+          CORGI_CRM_TELEGRAM_DAILY_SUMMARY_TIME: ${{ vars.CORGI_CRM_TELEGRAM_DAILY_SUMMARY_TIME }}
+          CORGI_CRM_TELEGRAM_WEBHOOK_URL: ${{ env.CORGI_CRM_API_URL }}/s/telegram/webhook
+          CORGI_CRM_TELEGRAM_LIVE_VERIFICATION_CONFIRM: VERIFY_TELEGRAM_LIVE
+          CORGI_CRM_TELEGRAM_SIGNED_CANARY_CONFIRM: RUN_SIGNED_CANARY
+          CORGI_CRM_TELEGRAM_TEST_DELIVERY_ENABLED: ${{ inputs.telegram_test_delivery_enabled }}
+          CORGI_CRM_TELEGRAM_TEST_DELIVERY_CONFIRM: ${{ inputs.telegram_test_delivery_confirmation }}
+          CORGI_CRM_TELEGRAM_TEST_CHAT_ID: ${{ secrets.CORGI_CRM_TELEGRAM_TEST_CHAT_ID }}
+        run: node "${APP_PATH}/scripts/verify-telegram-live.mjs" enabled
+
+      - name: Enable verified Telegram configuration
+        if: inputs.telegram_enable
+        env:
+          CORGI_CRM_API_KEY: ${{ steps.credential.outputs.token }}
+          CORGI_CRM_TELEGRAM_BOT_TOKEN: ${{ secrets.CORGI_CRM_TELEGRAM_BOT_TOKEN }}
+          CORGI_CRM_TELEGRAM_WEBHOOK_SECRET: ${{ secrets.CORGI_CRM_TELEGRAM_WEBHOOK_SECRET }}
+          CORGI_CRM_TELEGRAM_OPERATOR_SECRET: ${{ secrets.CORGI_CRM_TELEGRAM_OPERATOR_SECRET }}
+          CORGI_CRM_TELEGRAM_LINK_CODES: ${{ secrets.CORGI_CRM_TELEGRAM_LINK_CODES }}
+          CORGI_CRM_TELEGRAM_TIME_ZONE: ${{ vars.CORGI_CRM_TELEGRAM_TIME_ZONE }}
+          CORGI_CRM_TELEGRAM_DAILY_SUMMARY_TIME: ${{ vars.CORGI_CRM_TELEGRAM_DAILY_SUMMARY_TIME }}
+        run: node "${APP_PATH}/scripts/configure-telegram.mjs" enable
+
       - name: Verify installed application, trigger, and reconciliation
         env:
           CORGI_CRM_API_KEY: ${{ steps.credential.outputs.token }}
           CORGI_CRM_EXPECTED_VERSION: ${{ steps.app.outputs.version }}
         run: node "${APP_PATH}/scripts/verify-production-install.mjs" installed
+
+      - name: Verify installed Telegram contract
+        if: inputs.telegram_enable
+        env:
+          CORGI_CRM_API_KEY: ${{ steps.credential.outputs.token }}
+          CORGI_CRM_EXPECTED_VERSION: ${{ steps.app.outputs.version }}
+        run: node "${APP_PATH}/scripts/verify-production-install.mjs" telegram
+
+      - name: Verify Telegram is disabled
+        if: ${{ !inputs.telegram_enable }}
+        env:
+          CORGI_CRM_API_KEY: ${{ steps.credential.outputs.token }}
+          CORGI_CRM_EXPECTED_VERSION: ${{ steps.app.outputs.version }}
+        run: node "${APP_PATH}/scripts/verify-production-install.mjs" telegram-disabled
+
+      - name: Fail closed after Telegram setup failure
+        if: ${{ failure() && inputs.telegram_enable && steps.credential.outputs.token != '' }}
+        env:
+          CORGI_CRM_API_KEY: ${{ steps.credential.outputs.token }}
+          CORGI_CRM_TELEGRAM_BOT_TOKEN: ${{ secrets.CORGI_CRM_TELEGRAM_BOT_TOKEN }}
+          CORGI_CRM_TELEGRAM_LIVE_VERIFICATION_CONFIRM: VERIFY_TELEGRAM_LIVE
+        run: |
+          set +e
+          node "${APP_PATH}/scripts/configure-telegram.mjs" disabled
+          app_cleanup_status=$?
+          provider_cleanup_status=0
+          if [[ -n "${CORGI_CRM_TELEGRAM_BOT_TOKEN:-}" ]]; then
+            node "${APP_PATH}/scripts/verify-telegram-live.mjs" disabled
+            provider_cleanup_status=$?
+          fi
+          if (( app_cleanup_status != 0 || provider_cleanup_status != 0 )); then
+            echo "Telegram fail-closed cleanup did not complete" >&2
+            exit 1
+          fi
 
       - name: Revoke the short-lived deployment API key
         if: always()

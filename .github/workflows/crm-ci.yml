@@ -143,3 +143,12 @@ jobs:
           CRM_E2E_LOGIN: playwright-discovery@example.invalid
           CRM_E2E_PASSWORD: playwright-discovery-only
         run: npx nx test:production twenty-e2e-testing -- --list
+
+      - name: Validate Corgi CRM application and Telegram deployment contracts
+        working-directory: packages/twenty-apps/internal/corgi-crm
+        run: |
+          yarn install --immutable
+          yarn typecheck
+          yarn lint
+          yarn test:unit
+          yarn test:verification
