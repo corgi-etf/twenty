@@ -40,13 +40,95 @@ const requiredEnvironment = (name) => {
   return value;
 };
 
+// Only this fixed vocabulary may reach CI logs. Server messages, paths,
+// extensions, query variables, and partial response data may contain CRM PII.
+const GRAPHQL_ERROR_CODES = new Set([
+  'GRAPHQL_PARSE_FAILED', 'GRAPHQL_VALIDATION_FAILED', 'UNAUTHENTICATED',
+  'FORBIDDEN', 'BAD_USER_INPUT', 'NOT_FOUND', 'METHOD_NOT_ALLOWED', 'CONFLICT',
+  'TIMEOUT', 'INTERNAL_SERVER_ERROR', 'METADATA_VALIDATION_FAILED',
+  'APPLICATION_INSTALLATION_FAILED', 'RATE_LIMITED', 'QUOTA_EXHAUSTED',
+]);
+
+// Selected machine enums from the server query-runner and TwentyOrm exceptions.
+// Arbitrary extension subcodes must not become another route for PII into logs.
+const GRAPHQL_ERROR_SUBCODES = new Set([
+  'INVALID_QUERY_INPUT', 'INVALID_ARGS_FILTER', 'FIELD_NOT_FOUND',
+  'OBJECT_METADATA_NOT_FOUND', 'RELATION_SETTINGS_NOT_FOUND',
+  'RELATION_TARGET_OBJECT_METADATA_NOT_FOUND', 'UNSUPPORTED_OPERATOR',
+  'MALFORMED_METADATA', 'INVALID_INPUT', 'UNKNOWN_COLUMN', 'UNKNOWN_RELATION',
+  'UNKNOWN_OBJECT', 'MALFORMED_SQL', 'INVALID_QUERY', 'INVALID_PARAMETER',
+  'MISSING_PARAMETER', 'WORKSPACE_SCHEMA_NOT_FOUND', 'RLS_VALIDATION_FAILED',
+  'NO_ROLE_FOUND_FOR_USER_WORKSPACE', 'ROLES_PERMISSIONS_VERSION_NOT_FOUND',
+  'API_KEY_ROLE_MAP_VERSION_NOT_FOUND', 'UNKNOWN_METHOD', 'INVALID_RESULT_TYPE',
+  'NOT_IMPLEMENTED', 'QUERY_READ_TIMEOUT', 'TRANSIENT_DATABASE_ERROR',
+]);
+
+const classifyGraphqlError = (error) => {
+  const message = typeof error?.message === 'string' ? error.message : '';
+  if (/Variable .* of type .* used in position expecting type/i.test(message)) {
+    return 'schema_variable_type_mismatch';
+  }
+  if (/Cannot query field|Field .* is not defined by type/i.test(message)) {
+    return 'schema_unknown_field';
+  }
+  if (/Unknown type/i.test(message)) return 'schema_unknown_type';
+  if (/permission denied|not authorized|unauthenticated|forbidden/i.test(message)) {
+    return 'permission_denied';
+  }
+  if (/duplicate key|unique constraint|foreign key constraint/i.test(message)) {
+    return 'constraint_conflict';
+  }
+  if (/\bcolumn\b.*\bdoes not exist\b/i.test(message)) {
+    return 'database_missing_column';
+  }
+  if (/\brelation\b.*\bdoes not exist\b/i.test(message)) {
+    return 'database_missing_relation';
+  }
+  if (/operator does not exist/i.test(message)) {
+    return 'database_operator_type_mismatch';
+  }
+  if (/invalid input syntax for type/i.test(message)) {
+    return 'database_value_type_mismatch';
+  }
+  if (/invalid filter|filter .* invalid|invalid argument: "filter"/i.test(message)) {
+    return 'invalid_filter';
+  }
+  return 'unexpected';
+};
+
+const summarizeGraphqlErrors = (errors) => {
+  const counts = new Map();
+  for (const error of errors) {
+    const code = GRAPHQL_ERROR_CODES.has(error?.extensions?.code)
+      ? error.extensions.code : 'UNKNOWN';
+    const subCode = GRAPHQL_ERROR_SUBCODES.has(error?.extensions?.subCode)
+      ? `/${error.extensions.subCode}` : '';
+    const key = `${code}${subCode}/${classifyGraphqlError(error)}`;
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  return [...counts].sort(([left], [right]) => left.localeCompare(right))
+    .map(([key, count]) => `${key}=${count}`).join(', ');
+};
+
+class VerificationGraphqlError extends Error {
+  constructor(operationName, rawErrors) {
+    const safeDiagnostics = summarizeGraphqlErrors(
+      Array.isArray(rawErrors) && rawErrors.length > 0 ? rawErrors : [null],
+    );
+    super(`${operationName} returned GraphQL errors: ${safeDiagnostics}`);
+    this.name = 'VerificationGraphqlError';
+    this.operationName = operationName;
+    this.safeDiagnostics = safeDiagnostics;
+  }
+}
+
 const parseResponse = async (response, operationName) => {
   if (!response.ok) {
     throw new Error(`${operationName} failed with HTTP ${response.status}`);
   }
   const body = await response.json();
   if (Array.isArray(body.errors) && body.errors.length > 0) {
-    throw new Error(`${operationName} returned GraphQL errors`);
+    throw new VerificationGraphqlError(operationName, body.errors);
   }
   if (!body.data) throw new Error(`${operationName} returned no data`);
   return body.data;
@@ -960,30 +1042,76 @@ const inspectReconciliationPreflight = async ({ graphql }) => {
     if (matches.some((row) => row.workspaceMemberId && row.workspaceMemberId !== member.id)) {
       result.conflictingMemberLink += 1;
     }
-    const data = await graphql({
-      endpoint: '/graphql', operationName: 'PreflightOwnerIdentityFilters',
-      query: `query PreflightOwnerIdentityFilters($memberId: UUID!, $emailPattern: String!) {
-        byMember: wholesalers(first: 3, filter: { workspaceMemberId: { eq: $memberId } }) {
-          edges { node { id } }
-        }
-        byEmail: wholesalers(first: 3, filter: { email: { ilike: $emailPattern } }) {
+    const filteredReads = [
+      {
+        operationName: 'PreflightOwnerByMember',
+        query: `query PreflightOwnerByMember($memberId: UUID!) {
+        wholesalers(first: 3, filter: { workspaceMemberId: { eq: $memberId } }) {
           edges { node { id } }
         }
       }`,
-      variables: {
-        memberId: member.id,
-        emailPattern: email.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_'),
+        variables: { memberId: member.id },
+        baseline: byMember,
       },
-    });
-    for (const root of ['byMember', 'byEmail']) {
-      if (!Array.isArray(data[root]?.edges) || data[root].edges.some((edge) => !edge?.node?.id)) {
-        throw new Error('Owner reconciliation preflight returned an invalid filtered connection');
+      {
+        operationName: 'PreflightOwnerByEmail',
+        query: `query PreflightOwnerByEmail($emailPattern: String!) {
+        wholesalers(first: 3, filter: { email: { ilike: $emailPattern } }) {
+          edges { node { id } }
+        }
+      }`,
+        variables: {
+          emailPattern: email.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_'),
+        },
+        baseline: byEmail,
+      },
+    ];
+    const settledReads = await Promise.allSettled(
+      filteredReads.map(({ operationName, query, variables }) =>
+        graphql({
+          endpoint: '/graphql',
+          operationName,
+          query,
+          variables,
+        }),
+      ),
+    );
+    const failures = [];
+    let filteredReadMismatch = false;
+    for (const [index, settled] of settledReads.entries()) {
+      if (settled.status === 'fulfilled') continue;
+      const operationName = filteredReads[index].operationName;
+      const safeDiagnostics =
+        settled.reason instanceof VerificationGraphqlError &&
+        settled.reason.operationName === operationName
+          ? settled.reason.safeDiagnostics
+          : 'UNKNOWN/unexpected=1';
+      failures.push(`${operationName}=${safeDiagnostics}`);
+    }
+    if (failures.length > 0) {
+      throw new Error(
+        `Owner reconciliation filtered reads failed: ${failures.join(', ')}`,
+      );
+    }
+    for (const [index, settled] of settledReads.entries()) {
+      const operationName = filteredReads[index].operationName;
+      const connection = settled.value.wholesalers;
+      if (
+        !Array.isArray(connection?.edges) ||
+        connection.edges.some((edge) => !edge?.node?.id)
+      ) {
+        throw new Error(
+          `Owner reconciliation ${operationName} returned an invalid filtered connection`,
+        );
+      }
+      if (
+        ids(connection.edges.map(({ node }) => node)) !==
+        ids(filteredReads[index].baseline)
+      ) {
+        filteredReadMismatch = true;
       }
     }
-    if (ids(data.byMember.edges.map(({ node }) => node)) !== ids(byMember) ||
-        ids(data.byEmail.edges.map(({ node }) => node)) !== ids(byEmail)) {
-      result.filteredReadMismatch += 1;
-    }
+    if (filteredReadMismatch) result.filteredReadMismatch += 1;
   }
   return result;
 };
@@ -1095,6 +1223,7 @@ if (
 
 export {
   inspectReconciliationPreflight,
+  parseResponse,
   resolveCorgiRoleObjectIdentifiers,
   verifyApplicationRoleContract,
   verifyMeetingApplicationContract,
@@ -1103,4 +1232,5 @@ export {
   verifyTelegramApplicationContract,
   verifyTelegramDisabled,
   verifyTelegramPersistenceSchema,
+  VerificationGraphqlError,
 };
