@@ -25,7 +25,6 @@ const repository = (
       (record) => record.email?.trim().toLowerCase() === email.toLowerCase(),
     ),
   ),
-  listWholesalers: vi.fn(async () => []),
   create: vi.fn(async (id, data) => ({ id, ...data })),
   update: vi.fn(async (id, data) => ({
     ...records.find((record) => record.id === id),

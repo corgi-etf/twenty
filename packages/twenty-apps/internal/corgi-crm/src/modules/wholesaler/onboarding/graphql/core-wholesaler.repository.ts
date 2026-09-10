@@ -2,10 +2,8 @@ import { type CoreApiClient } from 'twenty-client-sdk/core';
 
 import { type RawCoreGraphqlTransport } from 'src/modules/core/graphql/raw-core-graphql.transport';
 import {
-  findWholesalerById,
   findWholesalersByEmail,
   findWholesalersByWorkspaceMemberId,
-  listWholesalersPage,
 } from 'src/modules/wholesaler/onboarding/graphql/queries/find-wholesalers';
 import { findWorkspaceMemberById } from 'src/modules/wholesaler/onboarding/graphql/queries/find-workspace-member';
 import { listWorkspaceMembers } from 'src/modules/wholesaler/onboarding/graphql/queries/list-workspace-members';
@@ -23,9 +21,6 @@ import { normalizeEmail } from 'src/modules/wholesaler/onboarding/utils/normaliz
 
 type GeneratedCoreClient = Pick<CoreApiClient, 'query'>;
 type RawCoreRequester = Pick<RawCoreGraphqlTransport, 'request'>;
-
-const ROSTER_PAGE_SIZE = 100;
-const ROSTER_MAX_PAGES = 100;
 
 const isNullableString = (value: unknown): value is string | null | undefined =>
   value === null || value === undefined || typeof value === 'string';
@@ -65,26 +60,6 @@ const nodes = (result: unknown): WholesalerRecord[] => {
   });
 };
 
-const connectionPageInfo = (
-  result: unknown,
-): { hasNextPage: boolean; endCursor?: string } => {
-  const connection = (result as { wholesalers?: unknown }).wholesalers as
-    | { pageInfo?: unknown }
-    | undefined;
-  const pageInfo = connection?.pageInfo;
-  if (!pageInfo || typeof pageInfo !== 'object' || Array.isArray(pageInfo)) {
-    throw new Error('Wholesaler query returned a malformed connection');
-  }
-  const { hasNextPage, endCursor } = pageInfo as {
-    hasNextPage?: unknown;
-    endCursor?: unknown;
-  };
-  if (typeof hasNextPage !== 'boolean' || !isNullableString(endCursor)) {
-    throw new Error('Wholesaler query returned a malformed connection');
-  }
-  return { hasNextPage, endCursor: endCursor?.trim() || undefined };
-};
-
 export class CoreWholesalerRepository implements WholesalerRepository {
   public constructor(
     private readonly generatedClient: GeneratedCoreClient,
@@ -109,49 +84,10 @@ export class CoreWholesalerRepository implements WholesalerRepository {
     );
   }
 
-  public async findById(id: string): Promise<WholesalerRecord | null> {
-    const records = nodes(await findWholesalerById(this.rawClient, id));
-    if (records.length > 1) throw new Error('Wholesaler ID is not unique');
-    const record = records[0];
-    if (!record) return null;
-    if (record.id !== id) {
-      throw new Error('Wholesaler query returned a different record');
-    }
-    return record;
-  }
-
   public async findByEmail(email: string): Promise<WholesalerRecord[]> {
     return nodes(await findWholesalersByEmail(this.rawClient, email)).filter(
       (record) => normalizeEmail(record.email ?? '') === email,
     );
-  }
-
-  public async listWholesalers(): Promise<WholesalerRecord[]> {
-    const output: WholesalerRecord[] = [];
-    const seenIds = new Set<string>();
-    const seenCursors = new Set<string>();
-    let cursor: string | null = null;
-    for (let page = 0; page < ROSTER_MAX_PAGES; page += 1) {
-      const result = await listWholesalersPage(this.rawClient, {
-        first: ROSTER_PAGE_SIZE,
-        after: cursor,
-      });
-      for (const record of nodes(result)) {
-        if (seenIds.has(record.id)) continue;
-        seenIds.add(record.id);
-        output.push(record);
-      }
-      const pageInfo = connectionPageInfo(result);
-      if (!pageInfo.hasNextPage) return output;
-      if (!pageInfo.endCursor || seenCursors.has(pageInfo.endCursor)) {
-        throw new Error(
-          'Wholesaler pagination has a missing or repeated cursor',
-        );
-      }
-      seenCursors.add(pageInfo.endCursor);
-      cursor = pageInfo.endCursor;
-    }
-    throw new Error(`Wholesaler pagination exceeded ${ROSTER_MAX_PAGES} pages`);
   }
 
   public async create(

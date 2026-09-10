@@ -1,4 +1,3 @@
-import { EXTERNAL_WHOLESALER_ROLE } from 'src/constants';
 import {
   type MeetingBookingReportRepository,
   type ReportMeetingBooking,
@@ -7,10 +6,6 @@ import {
   type OutreachActivity,
   type OutreachRepository,
 } from 'src/modules/outreach/types';
-import {
-  type WholesalerRecord,
-  type WholesalerRepository,
-} from 'src/modules/wholesaler/onboarding/types';
 
 export type ReportPeriod = 'daily' | 'weekly' | 'monthly';
 
@@ -22,13 +17,6 @@ export type ReportSummary = {
   total: number;
   totalMeetingsSet: number;
   leaderboard: OwnerCount[];
-  externalWholesalerRevenue: ExternalWholesalerRevenue[];
-};
-
-export type ExternalWholesalerRevenue = {
-  wholesalerId: string;
-  name: string;
-  attributedAnnualRecurringRevenue: number;
 };
 
 type OwnerCount = {
@@ -87,42 +75,6 @@ const addOwnerCount = (
   }
 };
 
-// The only ARR placeholder in the report: no system attributes revenue to a
-// wholesaler yet, so swapping this single reader for a real lookup is all a
-// future ARR source needs.
-export const PLACEHOLDER_ATTRIBUTED_ANNUAL_RECURRING_REVENUE = 0;
-
-// wholesalerRole is human-entered, so casing and stray spacing decide nothing.
-const normalizeRole = (value: string | null | undefined) =>
-  (value ?? '')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .toLowerCase();
-
-const NORMALIZED_EXTERNAL_WHOLESALER_ROLE = normalizeRole(
-  EXTERNAL_WHOLESALER_ROLE,
-);
-
-const isExternalWholesalerRole = (value: string | null | undefined) =>
-  normalizeRole(value) === NORMALIZED_EXTERNAL_WHOLESALER_ROLE;
-
-const buildExternalWholesalerRevenue = (
-  wholesalers: WholesalerRecord[],
-): ExternalWholesalerRevenue[] =>
-  wholesalers
-    .filter(({ wholesalerRole }) => isExternalWholesalerRole(wholesalerRole))
-    .map(({ id, name }) => ({
-      wholesalerId: id,
-      name: cleanLabel(name ?? '', 'Unnamed external wholesaler'),
-      attributedAnnualRecurringRevenue:
-        PLACEHOLDER_ATTRIBUTED_ANNUAL_RECURRING_REVENUE,
-    }))
-    .sort(
-      (left, right) =>
-        left.name.localeCompare(right.name, 'en') ||
-        left.wholesalerId.localeCompare(right.wholesalerId, 'en'),
-    );
-
 const compareOwners = (left: OwnerCount, right: OwnerCount) =>
   right.count - left.count ||
   right.meetingsSet - left.meetingsSet ||
@@ -132,24 +84,18 @@ const compareOwners = (left: OwnerCount, right: OwnerCount) =>
 export const buildReportSummary = ({
   activities,
   meetingBookings,
-  wholesalers,
   period,
   now,
   timeZone,
 }: {
   activities: OutreachActivity[];
   meetingBookings: ReportMeetingBooking[];
-  wholesalers: WholesalerRecord[];
   period: ReportPeriod;
   now: Date;
   timeZone: string;
 }): ReportSummary => {
   if (!Array.isArray(meetingBookings)) {
     throw new Error('Meeting booking report data is unavailable');
-  }
-  // A failed roster read must not be reported as "no EW yet".
-  if (!Array.isArray(wholesalers)) {
-    throw new Error('Wholesaler role data is unavailable');
   }
   const { start, end } = getReportWindow({ period, now });
   const weekday = new Intl.DateTimeFormat('en-US', {
@@ -189,7 +135,6 @@ export const buildReportSummary = ({
     total: seenIds.size,
     totalMeetingsSet: seenBookingIds.size,
     leaderboard: [...owners.values()].sort(compareOwners),
-    externalWholesalerRevenue: buildExternalWholesalerRevenue(wholesalers),
   };
 };
 
@@ -207,12 +152,6 @@ export const formatReportSummary = (summary: ReportSummary): string => {
     ['🥇', '🥈', '🥉'][index] ?? `${index + 1}.`;
   const formatMeetings = (count: number) =>
     `${count} ${count === 1 ? 'meeting' : 'meetings'} set`;
-  const money = new Intl.NumberFormat('en-US', {
-    style: 'currency',
-    currency: 'USD',
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 0,
-  });
 
   return [
     `🎉 ${REPORT_TITLES[summary.period]}`,
@@ -232,35 +171,18 @@ export const formatReportSummary = (summary: ReportSummary): string => {
     ...(summary.totalMeetingsSet === 0
       ? ['No meetings booked in this period.']
       : []),
-    '',
-    // Kept visible with an explanation when nobody is marked EW: the role is
-    // still being populated, and a silently missing section reads as a bug.
-    '💰 ARR attributed per EW',
-    ...(summary.externalWholesalerRevenue.length
-      ? [
-          'No ARR source is connected yet, so every figure reads $0.',
-          ...summary.externalWholesalerRevenue.map(
-            ({ name, attributedAnnualRecurringRevenue }) =>
-              `• ${name}: ${money.format(attributedAnnualRecurringRevenue)}`,
-          ),
-        ]
-      : [
-          'No wholesaler has the EW role yet, so there is nothing to attribute.',
-        ]),
   ].join('\n');
 };
 
 export const readReportSummary = async ({
   repository,
   meetingRepository,
-  wholesalerRepository,
   period,
   now,
   timeZone,
 }: {
   repository: Pick<OutreachRepository, 'listActivities'>;
   meetingRepository: MeetingBookingReportRepository;
-  wholesalerRepository: Pick<WholesalerRepository, 'listWholesalers'>;
   period: ReportPeriod;
   now: Date;
   timeZone: string;
@@ -270,19 +192,11 @@ export const readReportSummary = async ({
     start: window.start.toISOString(),
     end: window.end.toISOString(),
   };
-  const [activities, meetingBookings, wholesalers] = await Promise.all([
+  const [activities, meetingBookings] = await Promise.all([
     repository.listActivities(input),
     meetingRepository.listMeetingBookings(input),
-    wholesalerRepository.listWholesalers(),
   ]);
   return formatReportSummary(
-    buildReportSummary({
-      activities,
-      meetingBookings,
-      wholesalers,
-      period,
-      now,
-      timeZone,
-    }),
+    buildReportSummary({ activities, meetingBookings, period, now, timeZone }),
   );
 };

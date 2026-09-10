@@ -34,7 +34,6 @@ const base = () => {
     store,
     repository,
     meetingRepository: { listMeetingBookings: vi.fn().mockResolvedValue([]) },
-    wholesalerRepository: { listWholesalers: vi.fn().mockResolvedValue([]) },
     timeZone: 'America/Chicago',
     publicReportsEnabled: 'false',
     linkCodesJson: '{}',
@@ -159,41 +158,6 @@ describe('processTelegramCommand', () => {
       expect(message).not.toContain('Private');
     },
   );
-
-  it.each(['/daily', '/weekly', '/monthly'])(
-    'sends the ARR-per-EW section with %s, derived from the wholesaler roles',
-    async (command) => {
-      const dependencies = base();
-      dependencies.wholesalerRepository.listWholesalers.mockResolvedValue([
-        { id: 'ew-1', name: 'Alex', wholesalerRole: ' ew ' },
-        { id: 'bdr-1', name: 'Sam', wholesalerRole: 'BDR' },
-      ]);
-
-      await processTelegramCommand(update(command), dependencies);
-
-      const message = dependencies.send.mock.calls
-        .map(([, text]) => text)
-        .join('\n');
-      expect(dependencies.wholesalerRepository.listWholesalers).toHaveBeenCalledOnce();
-      expect(message).toContain('💰 ARR attributed per EW');
-      expect(message).toContain('• Alex: $0');
-      expect(message).not.toContain('Sam');
-    },
-  );
-
-  it('reports the empty ARR section when no wholesaler carries the EW role', async () => {
-    const dependencies = base();
-
-    await processTelegramCommand(update('/daily'), dependencies);
-
-    const message = dependencies.send.mock.calls
-      .map(([, text]) => text)
-      .join('\n');
-    expect(message).toContain('💰 ARR attributed per EW');
-    expect(message).toContain(
-      'No wholesaler has the EW role yet, so there is nothing to attribute.',
-    );
-  });
 
   it.each([undefined, 'false', 'TRUE', '1'])(
     'keeps public reports closed for an unlinked sender when the gate is %s',
