@@ -154,7 +154,7 @@ describe('processTelegramCommand', () => {
       expect(message).toContain('Total activities: 1');
       expect(message).toContain('🥇 Jordan: 1');
       expect(message).toContain('Meetings set: 1');
-      expect(message).toContain('🥇 Casey: 1 meeting set');
+      expect(message).toContain('🥈 Casey: 0 activities · 1 meeting set');
       expect(message).not.toContain('Private');
     },
   );
@@ -255,10 +255,10 @@ describe('processTelegramCommand', () => {
     for (let index = 0; index < 400; index += 1) {
       const rank = ['🥇', '🥈', '🥉'][index] ?? `${index + 1}.`;
       expect(text).toContain(
-        `${rank} Owner ${String(index).padStart(3, '0')}: 1`,
+        `${rank} Owner ${String(index).padStart(3, '0')}: 1 activity · 0 meetings set`,
       );
       expect(text).toContain(
-        `${rank} Booker ${String(index).padStart(3, '0')}: 1 meeting set`,
+        `${index + 401}. Booker ${String(index).padStart(3, '0')}: 0 activities · 1 meeting set`,
       );
     }
   });
