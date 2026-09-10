@@ -6,6 +6,10 @@ import {
   type ActivityTypeBackfillPlan,
   type OutreachActivityRow,
 } from './activity-type-backfill.ts';
+import {
+  summarizeOutreachRowShape,
+  type OutreachRowShape,
+} from './outreach-row-shape.ts';
 
 export const APPLY_ACTIVITY_TYPE_BACKFILL_CONFIRMATION =
   'BACKFILL_CRM_ACTIVITY_TYPE';
@@ -51,6 +55,7 @@ export type ActivityTypeBackfillResult = {
   inventory: ActivityTypeBackfillPlan['inventory'];
   unresolved: ActivityTypeBackfillPlan['unresolved'];
   summary: ActivityTypeBackfillPlan['summary'];
+  rowShape: OutreachRowShape;
   appliedMutations: number;
 };
 
@@ -134,6 +139,7 @@ export const runActivityTypeBackfillDryRun = async (
     inventory: plan.inventory,
     unresolved: plan.unresolved,
     summary: plan.summary,
+    rowShape: summarizeOutreachRowShape(rows),
     appliedMutations: 0,
   };
 };
@@ -193,6 +199,7 @@ export const runActivityTypeBackfill = async (
     inventory: plan.inventory,
     unresolved: plan.unresolved,
     summary: plan.summary,
+    rowShape: summarizeOutreachRowShape(rows),
     appliedMutations: appliedIds.length,
   };
 };

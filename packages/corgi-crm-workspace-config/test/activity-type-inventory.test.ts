@@ -91,3 +91,33 @@ test('uses singular wording for a single unresolved row', () => {
 
   assert.match(report, /NEEDS A DECISION: 1 value, 1 row$/m);
 });
+
+test('reports the row shape that decides backfill versus fresh load', () => {
+  const report = formatInventoryReport({
+    ...result([]),
+    rowShape: {
+      total: 986,
+      missingOccurredAt: 63,
+      missingWholesaler: 0,
+      bySource: [
+        { source: 'IMPORT', count: 900 },
+        { source: 'MANUAL', count: 86 },
+      ],
+    },
+  });
+
+  assert.match(report, /986 rows total/);
+  assert.match(report, /63 have no occurredAt/);
+  assert.match(report, /0 have no wholesaler/);
+  assert.match(report, /IMPORT/);
+});
+
+test('caps a free-typed value before it reaches a CI log', () => {
+  const long = 'a'.repeat(200);
+  const report = formatInventoryReport(
+    result([{ normalizedValue: long, count: 1, disposition: 'unresolved' }]),
+  );
+
+  assert.doesNotMatch(report, new RegExp('a{100}'));
+  assert.match(report, /\.\.\. \(truncated\)/);
+});

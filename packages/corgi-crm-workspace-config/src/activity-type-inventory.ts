@@ -3,6 +3,7 @@ import {
   type BackfillReadRequest,
 } from './activity-type-backfill-api.ts';
 import { runActivityTypeBackfillDryRun } from './activity-type-backfill-execution.ts';
+import { type OutreachRowShape } from './outreach-row-shape.ts';
 
 const ORIGIN = 'https://crm.corgiinvest.com';
 
@@ -32,6 +33,16 @@ const fetchRequest: BackfillReadRequest = {
 const pad = (value: string | number, width: number) =>
   String(value).padStart(width);
 
+// A free-typed value is whatever somebody once put in a text box, so it is
+// capped before it reaches a CI log. Long enough to stay a useful label, short
+// enough that a pasted sentence cannot travel wholesale.
+const MAX_PRINTED_VALUE_LENGTH = 64;
+
+const printableValue = (value: string): string =>
+  value.length > MAX_PRINTED_VALUE_LENGTH
+    ? `${value.slice(0, MAX_PRINTED_VALUE_LENGTH)}... (truncated)`
+    : value;
+
 export const formatInventoryReport = (result: {
   planHash: string;
   inventory: Array<{
@@ -46,6 +57,7 @@ export const formatInventoryReport = (result: {
     mutations: number;
     distinctValues: number;
   };
+  rowShape?: OutreachRowShape;
 }): string => {
   const { summary, inventory } = result;
   const unresolved = inventory.filter(
@@ -75,8 +87,26 @@ export const formatInventoryReport = (result: {
 
   for (const entry of inventory) {
     lines.push(
-      `  ${pad(entry.count, countWidth)}  ${entry.disposition.padEnd(10)}  ${entry.normalizedValue}`,
+      `  ${pad(entry.count, countWidth)}  ${entry.disposition.padEnd(10)}  ${printableValue(entry.normalizedValue)}`,
     );
+  }
+
+  if (result.rowShape) {
+    const { rowShape } = result;
+    lines.push(
+      '',
+      'Row shape',
+      '',
+      `${pad(rowShape.total, 6)} rows total`,
+      `${pad(rowShape.missingOccurredAt, 6)} have no occurredAt`,
+      `${pad(rowShape.missingWholesaler, 6)} have no wholesaler`,
+      '',
+      'By createdBy.source',
+      '',
+    );
+    for (const entry of rowShape.bySource) {
+      lines.push(`  ${pad(entry.count, countWidth)}  ${entry.source}`);
+    }
   }
 
   lines.push('');
@@ -96,7 +126,9 @@ export const formatInventoryReport = (result: {
       '',
     );
     for (const entry of unresolved) {
-      lines.push(`  ${pad(entry.count, countWidth)}  ${entry.normalizedValue}`);
+      lines.push(
+        `  ${pad(entry.count, countWidth)}  ${printableValue(entry.normalizedValue)}`,
+      );
     }
     lines.push('');
   }

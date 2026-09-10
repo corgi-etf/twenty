@@ -67,17 +67,35 @@ Two limits worth knowing before choosing this rung:
 - The managed Follow-ups view already excludes `activityType`
   (`FOLLOW_UP_VIEW_FIELD_NAMES`), so it needs no change.
 
+Open question before choosing this rung: does anyone actually have a
+user-created outreach view? If nobody does, hiding covers everything and rung 2
+is unnecessary. The inventory workflow could answer it by counting views on
+`outreachActivity` with a non-null `createdByUserWorkspaceId`. Not added yet.
+
 ## Reading the inventory
 
 ```bash
 TWENTY_API_KEY=... npx nx run corgi-crm-workspace-config:activity-type-inventory
 ```
 
+In production this runs through `.github/workflows/crm-activity-type-inventory.yml`,
+which mints a short-lived key, reads, revokes in an `always()` step, and prints
+the report to the run summary. It has no mode input and no write step; a
+contract test asserts it never mentions Telegram, so it cannot inherit the
+`always()`-guarded Unregister step that tears down the live webhook.
+
 Reads production and writes nothing: it builds the read adapter, which owns no
 mutation method, and there is no execute path in the runner. It prints every
 distinct `activityType` value with a count and a disposition, and calls out the
 values that need a human decision before any backfill can run. It also prints
-the plan hash, which binds an approved plan to the exact dry run it came from.
+the plan hash, which binds an approved plan to the exact dry run it came from,
+and a row-shape summary: total rows, how many lack `occurredAt`, how many lack
+a wholesaler, and a breakdown by `createdBy.source`.
+
+Output is written for a CI log that is not private. Only `createdBy.source` is
+read from that composite, never the actor name or id, and a free-typed activity
+value is truncated at 64 characters before printing, since an unrecognised
+value is whatever somebody once typed into a text box.
 
 `CORGI_CRM_API_KEY` is accepted as a fallback, since that is where the
 production workflows already place a minted short-lived token.

@@ -5,6 +5,9 @@ export type OutreachActivityRow = {
   activityType?: string | null;
   activityTypeOption?: string | null;
   updatedAt: string;
+  occurredAt?: string | null;
+  wholesalerId?: string | null;
+  createdBy?: { source?: string | null } | null;
 };
 
 export type ActivityTypeBackfillMutation = {

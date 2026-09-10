@@ -1,0 +1,219 @@
+name: Inspect Corgi CRM outreach activity types in production
+
+# Read-only by construction. There is no mode input and no write step: the
+# runner it invokes builds the read adapter, which owns no mutation method.
+# Writing the backfill is a separate workflow and a separate decision.
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: Type INSPECT_CRM_ACTIVITY_TYPES
+        required: true
+        type: string
+      deployed_sha:
+        description: Exact 40-character SHA deployed to both CRM services
+        required: true
+        type: string
+      metadata_bootstrap_run_id:
+        description: Successful metadata-bootstrap workflow run ID for the deployed SHA
+        required: true
+        type: string
+      metadata_bootstrap_run_attempt:
+        description: Successful metadata-bootstrap workflow attempt number
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+  id-token: write
+
+concurrency:
+  group: crm-production-deploy
+  cancel-in-progress: false
+
+env:
+  APP_PATH: packages/twenty-apps/internal/corgi-crm
+  AWS_ACCOUNT_ID: '182018075072'
+  AWS_REGION: us-east-2
+  AWS_ROLE_ARN: arn:aws:iam::182018075072:role/crm-production-github-deploy
+  ECS_CLUSTER: crm-production
+  ECR_REPOSITORY: crm-production-twenty
+  SERVER_SERVICE: crm-production-server
+  SERVER_CONTAINER: server
+  WORKER_SERVICE: crm-production-worker
+  WORKER_CONTAINER: worker
+  CORGI_CRM_API_URL: https://crm.corgiinvest.com
+
+jobs:
+  inspect-activity-types:
+    name: Read the outreach activity type inventory
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: production
+    steps:
+      - name: Check out the exact workflow revision
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          fetch-depth: 0
+
+      - name: Validate explicit production approval and deployed ancestry
+        shell: bash
+        env:
+          CONFIRMATION: ${{ inputs.confirmation }}
+          DEPLOYED_SHA: ${{ inputs.deployed_sha }}
+          BOOTSTRAP_RUN_ID: ${{ inputs.metadata_bootstrap_run_id }}
+          BOOTSTRAP_RUN_ATTEMPT: ${{ inputs.metadata_bootstrap_run_attempt }}
+        run: |
+          set -euo pipefail
+          [[ "${CONFIRMATION}" == "INSPECT_CRM_ACTIVITY_TYPES" ]]
+          [[ "${DEPLOYED_SHA}" =~ ^[0-9a-f]{40}$ ]]
+          [[ "${BOOTSTRAP_RUN_ID}" =~ ^[1-9][0-9]*$ ]]
+          [[ "${BOOTSTRAP_RUN_ATTEMPT}" =~ ^[1-9][0-9]*$ ]]
+          git cat-file -e "${DEPLOYED_SHA}^{commit}"
+          git merge-base --is-ancestor "${DEPLOYED_SHA}" "${GITHUB_SHA}"
+
+      - name: Verify deployed-SHA metadata bootstrap lineage
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BOOTSTRAP_RUN_ID: ${{ inputs.metadata_bootstrap_run_id }}
+          BOOTSTRAP_RUN_ATTEMPT: ${{ inputs.metadata_bootstrap_run_attempt }}
+          DEPLOYED_SHA: ${{ inputs.deployed_sha }}
+        run: |
+          set -euo pipefail
+          workflow_json="${RUNNER_TEMP}/metadata-bootstrap-workflow.json"
+          run_json="${RUNNER_TEMP}/metadata-bootstrap-run.json"
+          gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/crm-workspace-metadata-bootstrap.yml" > "${workflow_json}"
+          gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${BOOTSTRAP_RUN_ID}/attempts/${BOOTSTRAP_RUN_ATTEMPT}" > "${run_json}"
+          workflow_id="$(jq -r '.id' "${workflow_json}")"
+          jq -e '
+            .name == "Manual CRM workspace metadata bootstrap" and
+            .path == ".github/workflows/crm-workspace-metadata-bootstrap.yml" and
+            .state == "active" and (.id | type == "number")
+          ' "${workflow_json}" >/dev/null
+          jq -e \
+            --arg repository "${GITHUB_REPOSITORY}" \
+            --arg run_id "${BOOTSTRAP_RUN_ID}" \
+            --argjson run_attempt "${BOOTSTRAP_RUN_ATTEMPT}" \
+            --arg workflow_id "${workflow_id}" \
+            --arg deployed_sha "${DEPLOYED_SHA}" '
+              (.id | tostring) == $run_id and .run_attempt == $run_attempt and
+              (.workflow_id | tostring) == $workflow_id and
+              .name == "Manual CRM workspace metadata bootstrap" and
+              .event == "workflow_dispatch" and .head_branch == "main" and
+              .head_repository.full_name == $repository and
+              .head_sha == $deployed_sha and
+              .status == "completed" and .conclusion == "success"
+            ' "${run_json}" >/dev/null
+
+      - name: Install repository dependencies
+        uses: ./.github/actions/crm-yarn-install
+
+      - name: Install the Chromium authentication browser
+        run: npx playwright install --with-deps chromium
+
+      - name: Configure immediate AWS deployment inspection
+        uses: aws-actions/configure-aws-credentials@61815dcd50bd041e203e49132bacad1fd04d2708 # v5.1.1
+        with:
+          role-to-assume: ${{ env.AWS_ROLE_ARN }}
+          role-duration-seconds: 1800
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Prove every live task uses the approved deployed SHA
+        shell: bash
+        env:
+          DEPLOYED_SHA: ${{ inputs.deployed_sha }}
+        run: |
+          set -euo pipefail
+          caller_account="$(aws sts get-caller-identity --query Account --output text)"
+          [[ "${caller_account}" == "${AWS_ACCOUNT_ID}" ]]
+          expected_digest="$(aws ecr describe-images \
+            --repository-name "${ECR_REPOSITORY}" \
+            --image-ids "imageTag=git-${DEPLOYED_SHA}" \
+            --query 'imageDetails[0].imageDigest' \
+            --output text)"
+          [[ "${expected_digest}" =~ ^sha256:[0-9a-f]{64}$ ]]
+          for pair in "${SERVER_SERVICE}:${SERVER_CONTAINER}" "${WORKER_SERVICE}:${WORKER_CONTAINER}"; do
+            service="${pair%%:*}"
+            container="${pair##*:}"
+            task_definition="$(aws ecs describe-services \
+              --cluster "${ECS_CLUSTER}" --services "${service}" \
+              --query 'services[0].taskDefinition' --output text)"
+            live_image="$(aws ecs describe-task-definition \
+              --task-definition "${task_definition}" \
+              --query "taskDefinition.containerDefinitions[?name=='${container}'].image | [0]" \
+              --output text)"
+            [[ "${live_image}" == *"@${expected_digest}" || "${live_image}" == *":git-${DEPLOYED_SHA}" ]]
+          done
+
+      - name: Acquire a short-lived diagnostic API key
+        env:
+          FRONTEND_BASE_URL: ${{ env.CORGI_CRM_API_URL }}
+          BACKEND_BASE_URL: ${{ env.CORGI_CRM_API_URL }}
+          CRM_E2E_LOGIN: ${{ secrets.CRM_E2E_LOGIN }}
+          CRM_E2E_PASSWORD: ${{ secrets.CRM_E2E_PASSWORD }}
+          CRM_E2E_WORKSPACE_NAME: ${{ secrets.CRM_E2E_WORKSPACE_NAME }}
+          CORGI_CRM_DEPLOYMENT_KEY_OPERATION: acquire
+          CORGI_CRM_DEPLOYMENT_KEY_PATH: ${{ runner.temp }}/corgi-crm-deployment-key.json
+        run: >-
+          npx nx test:production twenty-e2e-testing --
+          tests/production/corgiCrmAppDeploymentKey.production.spec.ts
+          --project=production-chromium
+
+      - name: Mask the diagnostic token for subsequent steps
+        id: credential
+        shell: bash
+        run: |
+          set -euo pipefail
+          token="$(jq -er '.token | select(type == "string" and length > 0)' "${RUNNER_TEMP}/corgi-crm-deployment-key.json")"
+          echo "::add-mask::${token}"
+          echo "token=${token}" >> "${GITHUB_OUTPUT}"
+
+      - name: Read the outreach activity type inventory
+        env:
+          TWENTY_API_KEY: ${{ steps.credential.outputs.token }}
+        run: |
+          set -euo pipefail
+          npx nx run corgi-crm-workspace-config:activity-type-inventory \
+            | tee "${RUNNER_TEMP}/activity-type-inventory.txt"
+
+      - name: Publish the inventory to the run summary
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          report="${RUNNER_TEMP}/activity-type-inventory.txt"
+          [[ -s "${report}" ]] || exit 0
+          {
+            echo '## Outreach activity type inventory'
+            echo
+            echo '```text'
+            cat "${report}"
+            echo '```'
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Revoke the short-lived diagnostic API key
+        if: always()
+        env:
+          FRONTEND_BASE_URL: ${{ env.CORGI_CRM_API_URL }}
+          BACKEND_BASE_URL: ${{ env.CORGI_CRM_API_URL }}
+          CRM_E2E_LOGIN: ${{ secrets.CRM_E2E_LOGIN }}
+          CRM_E2E_PASSWORD: ${{ secrets.CRM_E2E_PASSWORD }}
+          CRM_E2E_WORKSPACE_NAME: ${{ secrets.CRM_E2E_WORKSPACE_NAME }}
+          CORGI_CRM_DEPLOYMENT_KEY_OPERATION: revoke
+          CORGI_CRM_DEPLOYMENT_KEY_PATH: ${{ runner.temp }}/corgi-crm-deployment-key.json
+        run: >-
+          npx nx test:production twenty-e2e-testing --
+          tests/production/corgiCrmAppDeploymentKey.production.spec.ts
+          --project=production-chromium
+
+      - name: Remove local authentication artifacts
+        if: always()
+        shell: bash
+        run: |
+          rm -f "${RUNNER_TEMP}/corgi-crm-deployment-key.json"
+          rm -f /home/runner/.twenty/config.json
+          rm -f packages/twenty-e2e-testing/.auth/production-user.json
