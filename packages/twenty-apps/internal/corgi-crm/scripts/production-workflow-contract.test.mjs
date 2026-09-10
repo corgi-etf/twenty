@@ -422,6 +422,124 @@ describe('Corgi CRM production app workflow contract', () => {
     );
   });
 
+  it('restores a previously verified Telegram state instead of tearing it down after an unrelated failure', () => {
+    // Every Telegram-owned step needs a stable identifier, because the failure
+    // policy tells a genuinely unverified configuration apart from an
+    // unrelated failure by reading these outcomes and nothing else.
+    const telegramStepIds = {
+      'Configure Telegram disabled': 'telegram_disable',
+      'Stage Telegram configuration while disabled': 'telegram_stage',
+      'Register and verify the live Telegram provider': 'telegram_register',
+      'Enable verified Telegram configuration': 'telegram_enable_configuration',
+      'Verify installed Telegram contract': 'telegram_contract',
+    };
+    for (const [name, id] of Object.entries(telegramStepIds)) {
+      assert.match(stepBlock(name), new RegExp(`\\n        id: ${id}\\n`));
+    }
+
+    const baseline = stepBlock('Capture the Telegram baseline before any change');
+    assert.match(baseline, /\n        id: telegram_baseline\n/);
+    assert.match(baseline, /CORGI_CRM_TELEGRAM_ENABLED/);
+    assert.match(baseline, /verified=\$\{verified\}" >> "\$\{GITHUB_OUTPUT\}"/);
+    // The baseline is a read-only probe. It must never mutate Telegram, and a
+    // probe that cannot answer must report an unverified baseline so the
+    // policy below falls back to tearing Telegram down.
+    assert.doesNotMatch(baseline, /configure-telegram\.mjs/);
+    assert.doesNotMatch(baseline, /verify-telegram-live\.mjs/);
+    assert.match(baseline, /verified=false/);
+    assert.ok(
+      position('Capture the Telegram baseline before any change') <
+        position('Configure Telegram disabled'),
+    );
+
+    const policy = stepBlock('Decide the Telegram failure policy');
+    assert.match(policy, /\n        id: telegram_policy\n/);
+    assert.match(policy, /if:[^\n]*failure\(\)/);
+    assert.match(policy, /if:[^\n]*inputs\.telegram_enable/);
+    assert.match(policy, /if:[^\n]*steps\.credential\.outputs\.token != ''/);
+    assert.match(policy, /set -euo pipefail/);
+    assert.match(
+      policy,
+      /BASELINE_VERIFIED: \$\{\{ steps\.telegram_baseline\.outputs\.verified \}\}/,
+    );
+    assert.match(
+      policy,
+      /RESTORE_REQUESTED: \$\{\{ inputs\.telegram_restore_verified_state \}\}/,
+    );
+    // Restoring is permitted only when Telegram was already verified before
+    // this run touched anything and no Telegram step failed. A failed Telegram
+    // step means the configuration is genuinely unverified, which is the one
+    // case unconditional fail-closed exists to prevent.
+    assert.match(policy, /"\$\{BASELINE_VERIFIED\}" == "true"/);
+    assert.match(policy, /"\$\{RESTORE_REQUESTED\}" == "true"/);
+    for (const id of Object.values(telegramStepIds)) {
+      const variable = `${id.replace(/^telegram_/, '').replace(/_configuration$/, '').toUpperCase()}_OUTCOME`;
+      assert.match(
+        policy,
+        new RegExp(`${variable}: \\$\\{\\{ steps\\.${id}\\.outcome \\}\\}`),
+      );
+      assert.match(policy, new RegExp(`"\\$\\{${variable}\\}" != "failure"`));
+    }
+    assert.match(policy, /restore=\$\{restore\}" >> "\$\{GITHUB_OUTPUT\}"/);
+
+    // The restore chain is the happy path's own verification, re-run. It ends
+    // enabled only if the live provider registered, the trusted configuration
+    // was written, and the installed topology verified.
+    const chain = [
+      ['Restore the verified Telegram gate to a known disabled state', 'telegram_restore_disable', /configure-telegram\.mjs" disabled/],
+      ['Restore the verified Telegram provider registration', 'telegram_restore_register', /verify-telegram-live\.mjs" enabled/],
+      ['Restore the verified Telegram runtime configuration', 'telegram_restore_enable', /configure-telegram\.mjs" enable/],
+      ['Prove the restored Telegram topology before leaving it enabled', 'telegram_restore_verify', /verify-production-install\.mjs" telegram/],
+    ];
+    const gates = [
+      /if:[^\n]*steps\.telegram_policy\.outputs\.restore == 'true'/,
+      /if:[^\n]*steps\.telegram_restore_disable\.outcome == 'success'/,
+      /if:[^\n]*steps\.telegram_restore_register\.outcome == 'success'/,
+      /if:[^\n]*steps\.telegram_restore_enable\.outcome == 'success'/,
+    ];
+    chain.forEach(([name, id, command], index) => {
+      const block = stepBlock(name);
+      assert.match(block, new RegExp(`\\n        id: ${id}\\n`));
+      assert.match(block, /if:[^\n]*failure\(\)/);
+      assert.match(block, gates[index]);
+      assert.match(block, command);
+      // A half-completed restore must stay a failure so fail-closed still runs.
+      assert.doesNotMatch(block, /continue-on-error/);
+      assert.doesNotMatch(block, /set \+e/);
+      // No opt-in real message may be delivered from a failure path.
+      assert.doesNotMatch(block, /CORGI_CRM_TELEGRAM_TEST_DELIVERY/);
+    });
+    chain.slice(0, -1).forEach(([name], index) => {
+      assert.ok(position(name) < position(chain[index + 1][0]));
+    });
+    assert.ok(
+      position('Verify Telegram is disabled') < position(chain[0][0]) &&
+        position(chain.at(-1)[0]) <
+          position('Fail closed after Telegram setup failure'),
+    );
+
+    // Least privilege is preserved on the restored provider registration: the
+    // routing and topic allowlists reach the configuration write only.
+    const restoreRegister = stepBlock(
+      'Restore the verified Telegram provider registration',
+    );
+    assert.doesNotMatch(
+      restoreRegister,
+      /CORGI_CRM_TELEGRAM_NOTIFICATION_ROUTES:/,
+    );
+    assert.doesNotMatch(restoreRegister, /CORGI_CRM_TELEGRAM_GROUP_TOPICS:/);
+
+    // Telegram is never left enabled-but-unverified: on any failure either the
+    // full restore chain verified it, or fail-closed tore it down.
+    const failClosed = stepBlock('Fail closed after Telegram setup failure');
+    assert.match(
+      failClosed,
+      /if:[^\n]*steps\.telegram_restore_verify\.outcome != 'success'/,
+    );
+    assert.match(failClosed, /if:[^\n]*inputs\.telegram_enable/);
+    assert.match(failClosed, /if:[^\n]*steps\.credential\.outputs\.token != ''/);
+  });
+
   it('keeps real test delivery opt-in behind two independent workflow gates', () => {
     assert.match(workflow, /telegram_test_delivery_enabled/);
     assert.match(workflow, /CORGI_CRM_TELEGRAM_TEST_DELIVERY_ENABLED/);

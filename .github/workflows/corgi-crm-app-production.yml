@@ -44,6 +44,11 @@ on:
         required: false
         default: false
         type: boolean
+      telegram_restore_verified_state:
+        description: On an unrelated failure, restore Telegram to the verified state it started in instead of tearing it down
+        required: false
+        default: true
+        type: boolean
       telegram_test_delivery_enabled:
         description: Opt in to one real Telegram verification message
         required: false
@@ -426,6 +431,39 @@ jobs:
           [[ "${CORGI_CRM_WHOLESALER_OBJECT_UNIVERSAL_IDENTIFIER:-}" =~ ${uuid_pattern} ]]
           [[ "${CORGI_CRM_OUTREACH_ACTIVITY_OBJECT_UNIVERSAL_IDENTIFIER:-}" =~ ${uuid_pattern} ]]
 
+      - name: Capture the Telegram baseline before any change
+        id: telegram_baseline
+        shell: bash
+        env:
+          CORGI_CRM_API_KEY: ${{ steps.credential.outputs.token }}
+        run: |
+          set -uo pipefail
+          # Read-only probe. A failure here must never fail the run and must
+          # never report a verified baseline, so the failure policy below
+          # falls back to tearing Telegram down rather than restoring it.
+          verified=false
+          body="${RUNNER_TEMP}/telegram-baseline.json"
+          trap 'rm -f "${body}"' EXIT
+          if curl --silent --show-error --fail --max-time 30 \
+            --request POST "${CORGI_CRM_API_URL}/metadata" \
+            --header "Authorization: Bearer ${CORGI_CRM_API_KEY}" \
+            --header 'Content-Type: application/json' \
+            --header "Origin: ${CORGI_CRM_API_URL}" \
+            --data '{"operationName":"ReadCorgiCrmTelegramBaseline","query":"query ReadCorgiCrmTelegramBaseline { findManyApplications { applicationVariables { key value } } }","variables":{}}' \
+            --output "${body}"; then
+            if jq -e '
+              (.errors | not) and
+              ([.data.findManyApplications[].applicationVariables[]
+                | select(.key == "CORGI_CRM_TELEGRAM_ENABLED")] | length) == 1 and
+              ([.data.findManyApplications[].applicationVariables[]
+                | select(.key == "CORGI_CRM_TELEGRAM_ENABLED")][0].value) == "true"
+            ' "${body}" >/dev/null 2>&1; then
+              verified=true
+            fi
+          fi
+          echo "verified=${verified}" >> "${GITHUB_OUTPUT}"
+          echo "Telegram baseline verified: ${verified}"
+
       - name: Verify the installed release before configuration-only changes
         if: inputs.operation == 'configure-telegram'
         env:
@@ -450,6 +488,7 @@ jobs:
           app-path: ${{ env.APP_PATH }}
 
       - name: Configure Telegram disabled
+        id: telegram_disable
         if: ${{ always() && steps.credential.outputs.token != '' }}
         env:
           CORGI_CRM_API_KEY: ${{ steps.credential.outputs.token }}
@@ -464,6 +503,7 @@ jobs:
         run: node "${APP_PATH}/scripts/verify-telegram-live.mjs" disabled
 
       - name: Stage Telegram configuration while disabled
+        id: telegram_stage
         if: inputs.telegram_enable
         env:
           CORGI_CRM_API_KEY: ${{ steps.credential.outputs.token }}
@@ -501,6 +541,7 @@ jobs:
           --project=production-chromium --no-deps --retries=0 --reporter=line
 
       - name: Register and verify the live Telegram provider
+        id: telegram_register
         if: inputs.telegram_enable
         env:
           CORGI_CRM_API_KEY: ${{ steps.credential.outputs.token }}
@@ -519,6 +560,7 @@ jobs:
         run: node "${APP_PATH}/scripts/verify-telegram-live.mjs" enabled
 
       - name: Enable verified Telegram configuration
+        id: telegram_enable_configuration
         if: inputs.telegram_enable
         env:
           CORGI_CRM_API_KEY: ${{ steps.credential.outputs.token }}
@@ -539,6 +581,7 @@ jobs:
         run: node "${APP_PATH}/scripts/verify-production-install.mjs" installed
 
       - name: Verify installed Telegram contract
+        id: telegram_contract
         if: inputs.telegram_enable
         env:
           CORGI_CRM_API_KEY: ${{ steps.credential.outputs.token }}
@@ -552,8 +595,80 @@ jobs:
           CORGI_CRM_EXPECTED_VERSION: ${{ steps.app.outputs.version }}
         run: node "${APP_PATH}/scripts/verify-production-install.mjs" telegram-disabled
 
-      - name: Fail closed after Telegram setup failure
+      - name: Decide the Telegram failure policy
+        id: telegram_policy
         if: ${{ failure() && inputs.telegram_enable && steps.credential.outputs.token != '' }}
+        shell: bash
+        env:
+          BASELINE_VERIFIED: ${{ steps.telegram_baseline.outputs.verified }}
+          RESTORE_REQUESTED: ${{ inputs.telegram_restore_verified_state }}
+          DISABLE_OUTCOME: ${{ steps.telegram_disable.outcome }}
+          STAGE_OUTCOME: ${{ steps.telegram_stage.outcome }}
+          REGISTER_OUTCOME: ${{ steps.telegram_register.outcome }}
+          ENABLE_OUTCOME: ${{ steps.telegram_enable_configuration.outcome }}
+          CONTRACT_OUTCOME: ${{ steps.telegram_contract.outcome }}
+        run: |
+          set -euo pipefail
+          # Restore only what was already proven: Telegram must have been
+          # enabled before this run touched anything, and no Telegram step may
+          # have failed. A failed Telegram step means the configuration is
+          # genuinely unverified, which is the case fail-closed exists for.
+          restore=false
+          if [[ "${BASELINE_VERIFIED}" == "true" && "${RESTORE_REQUESTED}" == "true" &&
+                "${DISABLE_OUTCOME}" != "failure" &&
+                "${STAGE_OUTCOME}" != "failure" &&
+                "${REGISTER_OUTCOME}" != "failure" &&
+                "${ENABLE_OUTCOME}" != "failure" &&
+                "${CONTRACT_OUTCOME}" != "failure" ]]; then
+            restore=true
+          fi
+          echo "restore=${restore}" >> "${GITHUB_OUTPUT}"
+          echo "Telegram restore policy: ${restore}"
+
+      - name: Restore the verified Telegram gate to a known disabled state
+        id: telegram_restore_disable
+        if: ${{ failure() && steps.telegram_policy.outputs.restore == 'true' }}
+        env:
+          CORGI_CRM_API_KEY: ${{ steps.credential.outputs.token }}
+          CORGI_CRM_TELEGRAM_TIME_ZONE: ${{ vars.CORGI_CRM_TELEGRAM_TIME_ZONE }}
+        run: node "${APP_PATH}/scripts/configure-telegram.mjs" disabled
+
+      - name: Restore the verified Telegram provider registration
+        id: telegram_restore_register
+        if: ${{ failure() && steps.telegram_restore_disable.outcome == 'success' }}
+        env:
+          CORGI_CRM_TELEGRAM_BOT_TOKEN: ${{ secrets.CORGI_CRM_TELEGRAM_BOT_TOKEN }}
+          CORGI_CRM_TELEGRAM_WEBHOOK_SECRET: ${{ secrets.CORGI_CRM_TELEGRAM_WEBHOOK_SECRET }}
+          CORGI_CRM_TELEGRAM_WEBHOOK_URL: ${{ env.CORGI_CRM_API_URL }}/s/telegram/webhook
+          CORGI_CRM_TELEGRAM_LIVE_VERIFICATION_CONFIRM: VERIFY_TELEGRAM_LIVE
+          CORGI_CRM_TELEGRAM_SIGNED_CANARY_CONFIRM: RUN_SIGNED_CANARY
+        run: node "${APP_PATH}/scripts/verify-telegram-live.mjs" enabled
+
+      - name: Restore the verified Telegram runtime configuration
+        id: telegram_restore_enable
+        if: ${{ failure() && steps.telegram_restore_register.outcome == 'success' }}
+        env:
+          CORGI_CRM_API_KEY: ${{ steps.credential.outputs.token }}
+          CORGI_CRM_TELEGRAM_BOT_TOKEN: ${{ secrets.CORGI_CRM_TELEGRAM_BOT_TOKEN }}
+          CORGI_CRM_TELEGRAM_WEBHOOK_SECRET: ${{ secrets.CORGI_CRM_TELEGRAM_WEBHOOK_SECRET }}
+          CORGI_CRM_TELEGRAM_OPERATOR_SECRET: ${{ secrets.CORGI_CRM_TELEGRAM_OPERATOR_SECRET }}
+          CORGI_CRM_TELEGRAM_LINK_CODES: ${{ secrets.CORGI_CRM_TELEGRAM_LINK_CODES }}
+          CORGI_CRM_TELEGRAM_NOTIFICATION_ROUTES: ${{ secrets.CORGI_CRM_TELEGRAM_NOTIFICATION_ROUTES }}
+          CORGI_CRM_TELEGRAM_GROUP_TOPICS: ${{ secrets.CORGI_CRM_TELEGRAM_GROUP_TOPICS }}
+          CORGI_CRM_TELEGRAM_TIME_ZONE: ${{ vars.CORGI_CRM_TELEGRAM_TIME_ZONE }}
+          CORGI_CRM_TELEGRAM_DAILY_SUMMARY_TIME: ${{ vars.CORGI_CRM_TELEGRAM_DAILY_SUMMARY_TIME }}
+        run: node "${APP_PATH}/scripts/configure-telegram.mjs" enable
+
+      - name: Prove the restored Telegram topology before leaving it enabled
+        id: telegram_restore_verify
+        if: ${{ failure() && steps.telegram_restore_enable.outcome == 'success' }}
+        env:
+          CORGI_CRM_API_KEY: ${{ steps.credential.outputs.token }}
+          CORGI_CRM_EXPECTED_VERSION: ${{ steps.app.outputs.version }}
+        run: node "${APP_PATH}/scripts/verify-production-install.mjs" telegram
+
+      - name: Fail closed after Telegram setup failure
+        if: ${{ failure() && inputs.telegram_enable && steps.credential.outputs.token != '' && steps.telegram_restore_verify.outcome != 'success' }}
         env:
           CORGI_CRM_API_KEY: ${{ steps.credential.outputs.token }}
           CORGI_CRM_TELEGRAM_BOT_TOKEN: ${{ secrets.CORGI_CRM_TELEGRAM_BOT_TOKEN }}
