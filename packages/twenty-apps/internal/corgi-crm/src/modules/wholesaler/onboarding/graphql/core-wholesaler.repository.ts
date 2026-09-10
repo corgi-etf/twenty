@@ -1,5 +1,6 @@
 import { type CoreApiClient } from 'twenty-client-sdk/core';
 
+import { type RawCoreGraphqlTransport } from 'src/modules/core/graphql/raw-core-graphql.transport';
 import {
   findWholesalersByEmail,
   findWholesalersByWorkspaceMemberId,
@@ -18,18 +19,58 @@ import {
 } from 'src/modules/wholesaler/onboarding/types';
 import { normalizeEmail } from 'src/modules/wholesaler/onboarding/utils/normalize-member-identity';
 
-const nodes = (result: {
-  wholesalers?: { edges?: Array<{ node?: WholesalerRecord | null } | null> };
-}): WholesalerRecord[] =>
-  (result.wholesalers?.edges ?? [])
-    .map((edge) => edge?.node)
-    .filter((node): node is WholesalerRecord => Boolean(node?.id));
+type GeneratedCoreClient = Pick<CoreApiClient, 'query'>;
+type RawCoreRequester = Pick<RawCoreGraphqlTransport, 'request'>;
+
+const isNullableString = (value: unknown): value is string | null | undefined =>
+  value === null || value === undefined || typeof value === 'string';
+
+const nodes = (result: unknown): WholesalerRecord[] => {
+  if (!result || typeof result !== 'object' || Array.isArray(result)) {
+    throw new Error('Wholesaler query returned malformed data');
+  }
+  const connection = (result as { wholesalers?: unknown }).wholesalers;
+  if (!connection || typeof connection !== 'object' || Array.isArray(connection)) {
+    throw new Error('Wholesaler query returned a malformed connection');
+  }
+  const edges = (connection as { edges?: unknown }).edges;
+  if (!Array.isArray(edges)) {
+    throw new Error('Wholesaler query returned a malformed connection');
+  }
+  return edges.map((edge) => {
+    if (!edge || typeof edge !== 'object' || Array.isArray(edge)) {
+      throw new Error('Wholesaler query returned a malformed record');
+    }
+    const node = (edge as { node?: unknown }).node;
+    if (!node || typeof node !== 'object' || Array.isArray(node)) {
+      throw new Error('Wholesaler query returned a malformed record');
+    }
+    const record = node as Record<string, unknown>;
+    if (
+      typeof record.id !== 'string' ||
+      !record.id.trim() ||
+      !isNullableString(record.name) ||
+      !isNullableString(record.email) ||
+      !isNullableString(record.wholesalerRole) ||
+      !isNullableString(record.workspaceMemberId)
+    ) {
+      throw new Error('Wholesaler query returned a malformed record');
+    }
+    return record as WholesalerRecord;
+  });
+};
 
 export class CoreWholesalerRepository implements WholesalerRepository {
-  public constructor(private readonly client: CoreApiClient) {}
+  public constructor(
+    private readonly generatedClient: GeneratedCoreClient,
+    private readonly rawClient: RawCoreRequester,
+  ) {}
 
   public async findWorkspaceMemberById(memberId: string) {
-    const result = await findWorkspaceMemberById(this.client, memberId);
+    const result = await findWorkspaceMemberById(
+      this.generatedClient as CoreApiClient,
+      memberId,
+    );
     const node = result.workspaceMembers?.edges?.[0]?.node;
     if (!node?.id) return null;
     return { id: node.id, active: Boolean(node.userWorkspaceId) };
@@ -38,11 +79,13 @@ export class CoreWholesalerRepository implements WholesalerRepository {
   public async findByWorkspaceMemberId(
     memberId: string,
   ): Promise<WholesalerRecord[]> {
-    return nodes(await findWholesalersByWorkspaceMemberId(this.client, memberId));
+    return nodes(
+      await findWholesalersByWorkspaceMemberId(this.rawClient, memberId),
+    );
   }
 
   public async findByEmail(email: string): Promise<WholesalerRecord[]> {
-    return nodes(await findWholesalersByEmail(this.client, email)).filter(
+    return nodes(await findWholesalersByEmail(this.rawClient, email)).filter(
       (record) => normalizeEmail(record.email ?? '') === email,
     );
   }
@@ -51,9 +94,11 @@ export class CoreWholesalerRepository implements WholesalerRepository {
     id: string,
     data: Required<WholesalerWrite>,
   ): Promise<WholesalerRecord> {
-    const result = await createWholesaler(this.client, id, data);
+    const result = await createWholesaler(this.rawClient, id, data);
     const createdId = result.createWholesaler?.id;
-    if (!createdId) throw new Error('createWholesaler did not return an id');
+    if (createdId !== id) {
+      throw new Error('createWholesaler did not return the requested id');
+    }
     return { id: createdId, ...data };
   }
 
@@ -61,14 +106,19 @@ export class CoreWholesalerRepository implements WholesalerRepository {
     id: string,
     data: WholesalerWrite,
   ): Promise<WholesalerRecord> {
-    const result = await updateWholesaler(this.client, id, data);
+    const result = await updateWholesaler(this.rawClient, id, data);
     const updatedId = result.updateWholesaler?.id;
-    if (!updatedId) throw new Error('updateWholesaler did not return an id');
+    if (updatedId !== id) {
+      throw new Error('updateWholesaler did not return the requested id');
+    }
     return { id: updatedId, ...data };
   }
 
   public async listWorkspaceMembers(cursor?: string) {
-    const result = await listWorkspaceMembers(this.client, cursor);
+    const result = await listWorkspaceMembers(
+      this.generatedClient as CoreApiClient,
+      cursor,
+    );
     const connection = result.workspaceMembers;
     const members = (connection?.edges ?? [])
       .map((edge: {
