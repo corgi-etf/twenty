@@ -33,6 +33,7 @@ const base = () => {
     values,
     store,
     repository,
+    meetingRepository: { listMeetingBookings: vi.fn().mockResolvedValue([]) },
     timeZone: 'America/Chicago',
     linkCodesJson: '{}',
     identity: {
@@ -76,11 +77,13 @@ describe('processTelegramCommand', () => {
     dependencies.repository.listActivities = vi
       .fn()
       .mockRejectedValue(new Error('must not requery'));
+    dependencies.meetingRepository.listMeetingBookings.mockRejectedValue(new Error('must not requery bookings'));
     await expect(
       processTelegramCommand(update('/daily'), dependencies),
     ).resolves.toMatchObject({ status: 'report' });
     expect(dependencies.send.mock.calls[1]?.[1]).toBe(original);
     expect(dependencies.repository.listActivities).not.toHaveBeenCalled();
+    expect(dependencies.meetingRepository.listMeetingBookings).toHaveBeenCalledOnce();
   });
 
   it.each([
@@ -114,6 +117,13 @@ describe('processTelegramCommand', () => {
           occurredAt: '2026-09-09T15:30:00.000Z',
         },
       ]);
+      dependencies.meetingRepository.listMeetingBookings.mockResolvedValue([{
+        id: 'booking-1',
+        bookedAt: '2026-09-09T15:30:00.000Z',
+        scheduledAt: '2026-10-01T15:00:00.000Z',
+        wholesalerId: 'owner-booker',
+        wholesalerName: 'Casey',
+      }]);
 
       await expect(
         processTelegramCommand(update(command!), dependencies),
@@ -122,12 +132,18 @@ describe('processTelegramCommand', () => {
         start,
         end: '2026-09-09T16:30:00.000Z',
       });
+      expect(dependencies.meetingRepository.listMeetingBookings).toHaveBeenCalledWith({
+        start,
+        end: '2026-09-09T16:30:00.000Z',
+      });
       const message = dependencies.send.mock.calls
         .map(([, text]) => text)
         .join('\n');
       expect(message).toContain(title);
       expect(message).toContain('Total activities: 1');
-      expect(message).toContain('1. Jordan: 1');
+      expect(message).toContain('🥇 Jordan: 1');
+      expect(message).toContain('Meetings set: 1');
+      expect(message).toContain('🥇 Casey: 1 meeting set');
       expect(message).not.toContain('Private');
     },
   );
@@ -141,8 +157,17 @@ describe('processTelegramCommand', () => {
         processTelegramCommand(update(command), dependencies),
       ).resolves.toEqual({ status: 'not_linked' });
       expect(dependencies.repository.listActivities).not.toHaveBeenCalled();
+      expect(dependencies.meetingRepository.listMeetingBookings).not.toHaveBeenCalled();
     },
   );
+
+  it('does not send or persist a misleading zero when the meeting report read fails', async () => {
+    const dependencies = base();
+    dependencies.meetingRepository.listMeetingBookings.mockRejectedValue(new Error('Meeting read unavailable'));
+    await expect(processTelegramCommand(update('/daily'), dependencies)).rejects.toThrow('Meeting read unavailable');
+    expect(dependencies.send).not.toHaveBeenCalled();
+    expect(dependencies.values.has('telegram:report:interactive:42:/daily')).toBe(false);
+  });
 
   it('splits a large leaderboard into Telegram-safe messages without dropping owners', async () => {
     const dependencies = base();
@@ -157,6 +182,14 @@ describe('processTelegramCommand', () => {
         occurredAt: '2026-09-09T15:30:00.000Z',
       })),
     );
+    dependencies.meetingRepository.listMeetingBookings.mockResolvedValue(
+      Array.from({ length: 400 }, (_, index) => ({
+        id: `booking-${index}`,
+        bookedAt: '2026-09-09T15:30:00.000Z',
+        wholesalerId: `booker-${index}`,
+        wholesalerName: `Booker ${String(index).padStart(3, '0')}`,
+      })),
+    );
     await processTelegramCommand(update('/daily'), dependencies);
     const parts = dependencies.send.mock.calls.map(
       ([, text]) => text as string,
@@ -165,9 +198,14 @@ describe('processTelegramCommand', () => {
     expect(parts.every((part) => part.length <= 4096)).toBe(true);
     const text = parts.join('\n');
     expect(text).toContain('Total activities: 400');
+    expect(text).toContain('Meetings set: 400');
     for (let index = 0; index < 400; index += 1) {
+      const rank = ['🥇', '🥈', '🥉'][index] ?? `${index + 1}.`;
       expect(text).toContain(
-        `${index + 1}. Owner ${String(index).padStart(3, '0')}: 1`,
+        `${rank} Owner ${String(index).padStart(3, '0')}: 1`,
+      );
+      expect(text).toContain(
+        `${rank} Booker ${String(index).padStart(3, '0')}: 1 meeting set`,
       );
     }
   });

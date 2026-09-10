@@ -74,8 +74,18 @@ export class TelegramClient {
     );
   }
 
-  public sendMessage(chatId: string, text: string): Promise<void> {
-    return this.call('sendMessage', { chat_id: chatId, text });
+  public sendMessage(
+    chatId: string,
+    text: string,
+    messageThreadId?: number,
+  ): Promise<void> {
+    return this.call('sendMessage', {
+      chat_id: chatId,
+      text,
+      ...(messageThreadId === undefined
+        ? {}
+        : { message_thread_id: messageThreadId }),
+    });
   }
 
   public answerCallbackQuery(callbackQueryId: string): Promise<void> {

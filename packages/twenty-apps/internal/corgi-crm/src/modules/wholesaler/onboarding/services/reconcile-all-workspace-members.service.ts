@@ -1,4 +1,9 @@
 import { reconcileWorkspaceMember } from 'src/modules/wholesaler/onboarding/services/reconcile-workspace-member.service';
+import {
+  asWholesalerReconciliationError,
+  type WholesalerReconciliationCode,
+  type WholesalerReconciliationStage,
+} from 'src/modules/wholesaler/onboarding/services/wholesaler-reconciliation.error';
 import { type WholesalerRepository } from 'src/modules/wholesaler/onboarding/types';
 
 const MAX_MEMBER_PAGES = 100;
@@ -7,7 +12,10 @@ export type ReconcileAllResult = {
   created: number;
   updated: number;
   unchanged: number;
-  failures: Array<{ memberId: string; message: string }>;
+  failures: Array<{
+    stage: WholesalerReconciliationStage;
+    code: WholesalerReconciliationCode;
+  }>;
 };
 
 export const reconcileAllWorkspaceMembers = async ({
@@ -40,9 +48,13 @@ export const reconcileAllWorkspaceMembers = async ({
         if (memberResult.status === 'updated') result.updated += 1;
         if (memberResult.status === 'unchanged') result.unchanged += 1;
       } catch (error) {
+        const diagnostic = asWholesalerReconciliationError(
+          'lookup_member_relation',
+          error,
+        );
         result.failures.push({
-          memberId: member.id,
-          message: error instanceof Error ? error.message : 'Unknown error',
+          stage: diagnostic.stage,
+          code: diagnostic.code,
         });
       }
     }

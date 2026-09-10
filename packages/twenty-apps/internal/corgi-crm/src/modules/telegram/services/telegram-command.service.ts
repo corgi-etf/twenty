@@ -7,6 +7,7 @@ import { getZonedDayWindow } from 'src/modules/outreach/services/day-window.serv
 import { logOutreach } from 'src/modules/outreach/services/log-outreach.service';
 import { readReportSummary } from 'src/modules/outreach/services/report-summary.service';
 import { type OutreachRepository } from 'src/modules/outreach/types';
+import { type MeetingBookingReportRepository } from 'src/modules/outreach/report-meeting-booking.types';
 import {
   getValidatedTelegramLink,
   linkTelegramAccount,
@@ -36,6 +37,7 @@ const HELP = [
 
 type CommandDependencies = {
   repository: OutreachRepository;
+  meetingRepository: MeetingBookingReportRepository;
   store: KeyValueStore;
   timeZone: string;
   linkCodesJson: string | undefined;
@@ -127,6 +129,7 @@ export const processTelegramCommand = async (
       read: () =>
         readReportSummary({
           repository: dependencies.repository,
+          meetingRepository: dependencies.meetingRepository,
           period,
           now: dependencies.now(),
           timeZone: dependencies.timeZone,

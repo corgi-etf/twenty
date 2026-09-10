@@ -1,5 +1,15 @@
 import { type SummaryCount } from 'src/modules/outreach/services/daily-summary.service';
 import {
+  type MeetingBookingReportRepository,
+  type ReportMeetingBooking,
+} from 'src/modules/outreach/report-meeting-booking.types';
+import {
+  isQuickLogActivityType,
+  isQuickLogOutcome,
+  QUICK_LOG_ACTIVITY_LABELS,
+  QUICK_LOG_OUTCOME_LABELS,
+} from 'src/modules/outreach/quick-log-taxonomy';
+import {
   type OutreachActivity,
   type OutreachRepository,
 } from 'src/modules/outreach/types';
@@ -12,10 +22,14 @@ export type ReportSummary = {
   start: Date;
   end: Date;
   total: number;
+  totalMeetingsSet: number;
   activityCounts: SummaryCount[];
   outcomeCounts: SummaryCount[];
-  leaderboard: Array<{ ownerId: string; name: string; count: number }>;
+  leaderboard: Array<OwnerCount & { meetingsSet: number }>;
+  meetingLeaderboard: OwnerCount[];
 };
+
+type OwnerCount = { ownerId: string; name: string; count: number };
 
 const REPORT_DAYS: Record<ReportPeriod, number> = {
   daily: 1,
@@ -50,17 +64,43 @@ const sortedCounts = (counts: Map<string, number>): SummaryCount[] =>
     .map(([label, count]) => ({ label, count }))
     .sort((left, right) => left.label.localeCompare(right.label, 'en'));
 
+const addOwnerCount = (
+  owners: Map<string, OwnerCount>,
+  record: { wholesalerId: string; wholesalerName: string },
+) => {
+  const ownerId = record.wholesalerId.trim() || 'unassigned';
+  const name = cleanLabel(record.wholesalerName, 'Unassigned');
+  const owner = owners.get(ownerId);
+  if (owner) {
+    owner.count += 1;
+    // Owner labels can differ between query pages; retain a stable choice.
+    if (name.localeCompare(owner.name, 'en') < 0) owner.name = name;
+  } else {
+    owners.set(ownerId, { ownerId, name, count: 1 });
+  }
+};
+
+const compareOwners = (left: OwnerCount, right: OwnerCount) =>
+  right.count - left.count ||
+  left.name.localeCompare(right.name, 'en') ||
+  left.ownerId.localeCompare(right.ownerId, 'en');
+
 export const buildReportSummary = ({
   activities,
+  meetingBookings,
   period,
   now,
   timeZone,
 }: {
   activities: OutreachActivity[];
+  meetingBookings: ReportMeetingBooking[];
   period: ReportPeriod;
   now: Date;
   timeZone: string;
 }): ReportSummary => {
+  if (!Array.isArray(meetingBookings)) {
+    throw new Error('Meeting booking report data is unavailable');
+  }
   const { start, end } = getReportWindow({ period, now });
   const weekday = new Intl.DateTimeFormat('en-US', {
     timeZone,
@@ -68,20 +108,21 @@ export const buildReportSummary = ({
   });
   const activityCounts = new Map<string, number>();
   const outcomeCounts = new Map<string, number>();
-  const owners = new Map<
-    string,
-    { ownerId: string; name: string; count: number }
-  >();
+  const owners = new Map<string, OwnerCount>();
+  const meetingOwners = new Map<string, OwnerCount>();
   const seenIds = new Set<string>();
+  const seenBookingIds = new Set<string>();
+  const isIncluded = (value: string) => {
+    const instant = new Date(value);
+    return (
+      instant >= start &&
+      instant < end &&
+      (period !== 'weekly' || !['Sat', 'Sun'].includes(weekday.format(instant)))
+    );
+  };
 
   for (const activity of activities) {
-    const occurredAt = new Date(activity.occurredAt);
-    if (!(occurredAt >= start && occurredAt < end) || seenIds.has(activity.id))
-      continue;
-    if (
-      period === 'weekly' &&
-      ['Sat', 'Sun'].includes(weekday.format(occurredAt))
-    )
+    if (!isIncluded(activity.occurredAt) || seenIds.has(activity.id))
       continue;
     seenIds.add(activity.id);
 
@@ -93,16 +134,13 @@ export const buildReportSummary = ({
     );
     outcomeCounts.set(outcome, (outcomeCounts.get(outcome) ?? 0) + 1);
 
-    const ownerId = activity.wholesalerId.trim() || 'unassigned';
-    const name = cleanLabel(activity.wholesalerName, 'Unassigned');
-    const owner = owners.get(ownerId);
-    if (owner) {
-      owner.count += 1;
-      // The same owner can appear with an older label on another query page.
-      if (name.localeCompare(owner.name, 'en') < 0) owner.name = name;
-    } else {
-      owners.set(ownerId, { ownerId, name, count: 1 });
-    }
+    addOwnerCount(owners, activity);
+  }
+
+  for (const booking of meetingBookings) {
+    if (!isIncluded(booking.bookedAt) || seenBookingIds.has(booking.id)) continue;
+    seenBookingIds.add(booking.id);
+    addOwnerCount(meetingOwners, booking);
   }
 
   return {
@@ -111,14 +149,14 @@ export const buildReportSummary = ({
     start,
     end,
     total: seenIds.size,
+    totalMeetingsSet: seenBookingIds.size,
     activityCounts: sortedCounts(activityCounts),
     outcomeCounts: sortedCounts(outcomeCounts),
-    leaderboard: [...owners.values()].sort(
-      (left, right) =>
-        right.count - left.count ||
-        left.name.localeCompare(right.name, 'en') ||
-        left.ownerId.localeCompare(right.ownerId, 'en'),
-    ),
+    leaderboard: [...owners.values()].sort(compareOwners).map((owner) => ({
+      ...owner,
+      meetingsSet: meetingOwners.get(owner.ownerId)?.count ?? 0,
+    })),
+    meetingLeaderboard: [...meetingOwners.values()].sort(compareOwners),
   };
 };
 
@@ -132,41 +170,71 @@ export const formatReportSummary = (summary: ReportSummary): string => {
     minute: '2-digit',
     timeZoneName: 'short',
   });
-  const formatCounts = (counts: SummaryCount[]) =>
-    counts.map(({ label, count }) => `${label}: ${count}`).join(', ') || 'None';
+  const formatCounts = (
+    counts: SummaryCount[],
+    labelFor: (label: string) => string,
+  ) =>
+    counts.map(({ label, count }) => `${labelFor(label)}: ${count}`).join(', ') || 'None';
+  const formatRank = (index: number) =>
+    ['🥇', '🥈', '🥉'][index] ?? `${index + 1}.`;
+  const formatMeetings = (count: number) =>
+    `${count} ${count === 1 ? 'meeting' : 'meetings'} set`;
 
   return [
-    REPORT_TITLES[summary.period],
+    `🎉 ${REPORT_TITLES[summary.period]}`,
     `${timestamp.format(summary.start)} → ${timestamp.format(summary.end)} (${summary.timeZone})`,
     'All CRM owners',
-    `Total activities: ${summary.total}`,
-    `By activity: ${formatCounts(summary.activityCounts)}`,
-    `By outcome: ${formatCounts(summary.outcomeCounts)}`,
-    'Leaderboard:',
+    '',
+    `📊 Total activities: ${summary.total}`,
+    `📅 Meetings set: ${summary.totalMeetingsSet}`,
+    'Meetings counted when booked, not when scheduled.',
+    '',
+    `📋 By activity: ${formatCounts(summary.activityCounts, (label) =>
+      isQuickLogActivityType(label) ? QUICK_LOG_ACTIVITY_LABELS[label] : label,
+    )}`,
+    `🎯 By outcome: ${formatCounts(summary.outcomeCounts, (label) =>
+      isQuickLogOutcome(label) ? QUICK_LOG_OUTCOME_LABELS[label] : label,
+    )}`,
+    '',
+    '🏆 Activity leaderboard',
     ...summary.leaderboard.map(
-      ({ name, count }, index) => `${index + 1}. ${name}: ${count}`,
+      ({ name, count, meetingsSet }, index) =>
+        `${formatRank(index)} ${name}: ${count} ${count === 1 ? 'activity' : 'activities'} · ${formatMeetings(meetingsSet)}`,
     ),
     ...(summary.total === 0 ? ['No outreach logged in this period.'] : []),
+    '',
+    '🤝 Meeting-booking leaderboard',
+    ...summary.meetingLeaderboard.map(
+      ({ name, count }, index) =>
+        `${formatRank(index)} ${name}: ${formatMeetings(count)}`,
+    ),
+    ...(summary.totalMeetingsSet === 0 ? ['No meetings booked in this period.'] : []),
   ].join('\n');
 };
 
 export const readReportSummary = async ({
   repository,
+  meetingRepository,
   period,
   now,
   timeZone,
 }: {
-  repository: OutreachRepository;
+  repository: Pick<OutreachRepository, 'listActivities'>;
+  meetingRepository: MeetingBookingReportRepository;
   period: ReportPeriod;
   now: Date;
   timeZone: string;
 }): Promise<string> => {
   const window = getReportWindow({ period, now });
-  const activities = await repository.listActivities({
+  const input = {
     start: window.start.toISOString(),
     end: window.end.toISOString(),
-  });
+  };
+  const [activities, meetingBookings] = await Promise.all([
+    repository.listActivities(input),
+    meetingRepository.listMeetingBookings(input),
+  ]);
   return formatReportSummary(
-    buildReportSummary({ activities, period, now, timeZone }),
+    buildReportSummary({ activities, meetingBookings, period, now, timeZone }),
   );
 };

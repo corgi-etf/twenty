@@ -9,6 +9,20 @@ import { POST_INSTALL_UNIVERSAL_IDENTIFIER } from 'src/constants';
 import { CoreWholesalerRepository } from 'src/modules/wholesaler/onboarding/graphql/core-wholesaler.repository';
 import { reconcileAllWorkspaceMembers } from 'src/modules/wholesaler/onboarding/services/reconcile-all-workspace-members.service';
 
+const summarizeFailures = (
+  failures: Awaited<ReturnType<typeof reconcileAllWorkspaceMembers>>['failures'],
+): string => {
+  const counts = new Map<string, number>();
+  for (const { stage, code } of failures) {
+    const key = `${stage}/${code}`;
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  return [...counts.entries()]
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([key, count]) => `${key}=${count}`)
+    .join(', ');
+};
+
 export const handler = async (
   _payload: InstallPayload,
   context?: LogicFunctionExecutionContext,
@@ -36,9 +50,7 @@ export const handler = async (
   });
   if (result.failures.length > 0) {
     throw new Error(
-      `Wholesaler reconciliation failed closed for ${result.failures.length} workspace member(s): ${result.failures
-        .map(({ memberId }) => memberId)
-        .join(', ')}`,
+      `Wholesaler reconciliation failed closed for ${result.failures.length} workspace member(s): ${summarizeFailures(result.failures)}`,
     );
   }
   return result;

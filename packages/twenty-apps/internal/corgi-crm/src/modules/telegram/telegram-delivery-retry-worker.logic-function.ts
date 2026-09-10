@@ -54,7 +54,11 @@ const performWithClient = async (
   envelope: TelegramRetryEnvelope,
 ) => {
   if (envelope.kind === 'message') {
-    await client.sendMessage(envelope.chatId, envelope.text);
+    await client.sendMessage(
+      envelope.chatId,
+      envelope.text,
+      envelope.messageThreadId,
+    );
   } else {
     await client.answerCallbackQuery(envelope.callbackQueryId);
   }

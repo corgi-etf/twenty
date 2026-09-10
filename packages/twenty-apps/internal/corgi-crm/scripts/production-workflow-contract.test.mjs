@@ -158,11 +158,39 @@ describe('Corgi CRM production app workflow contract', () => {
     assert.ok(configureDisabled < stage && stage < liveVerify && liveVerify < enable);
     assert.ok(enable < installVerify);
     assert.match(workflow, /CORGI_CRM_TELEGRAM_LINK_CODES:\s*\$\{\{ secrets\./);
+    assert.match(
+      workflow,
+      /CORGI_CRM_TELEGRAM_NOTIFICATION_ROUTES:\s*\$\{\{ secrets\./,
+    );
+    const stageBlock = workflow.slice(
+      position('Stage Telegram configuration while disabled'),
+      position('Register and verify the live Telegram provider'),
+    );
+    const providerBlock = workflow.slice(
+      position('Register and verify the live Telegram provider'),
+      position('Enable verified Telegram configuration'),
+    );
+    const enableBlock = workflow.slice(
+      position('Enable verified Telegram configuration'),
+      position('Verify installed application, trigger, and reconciliation'),
+    );
+    assert.match(stageBlock, /CORGI_CRM_TELEGRAM_NOTIFICATION_ROUTES:/);
+    assert.doesNotMatch(providerBlock, /CORGI_CRM_TELEGRAM_NOTIFICATION_ROUTES:/);
+    assert.match(enableBlock, /CORGI_CRM_TELEGRAM_NOTIFICATION_ROUTES:/);
     assert.match(workflow, /CORGI_CRM_TELEGRAM_SIGNED_CANARY_CONFIRM:\s*RUN_SIGNED_CANARY/);
   });
 
   it('always disables and unregisters on opt-out, with idempotent failure cleanup', () => {
     assert.match(workflow, /Configure Telegram disabled[\s\S]*if:[^\n]*always\(\)/);
+    const disabledBlock = workflow.slice(
+      position('Configure Telegram disabled'),
+      position('Unregister Telegram provider'),
+    );
+    assert.match(
+      disabledBlock,
+      /CORGI_CRM_TELEGRAM_TIME_ZONE:\s*\$\{\{ vars\./,
+    );
+    assert.doesNotMatch(disabledBlock, /CORGI_CRM_TELEGRAM_BOT_TOKEN/);
     assert.match(workflow, /Unregister Telegram provider[\s\S]*if:[^\n]*!inputs\.telegram_enable/);
     assert.match(workflow, /verify-telegram-live\.mjs" disabled/);
     assert.match(workflow, /Fail closed after Telegram setup failure[\s\S]*if:[^\n]*failure\(\)/);
@@ -177,6 +205,21 @@ describe('Corgi CRM production app workflow contract', () => {
     assert.match(cleanup, /configure-telegram\.mjs" disabled/);
     assert.match(cleanup, /verify-telegram-live\.mjs" disabled/);
     assert.match(cleanup, /exit 1/);
+  });
+
+  it('gates app installation on native meeting verification before provider activation', () => {
+    const stage = position('configure-telegram.mjs" stage');
+    const canary = position('Verify native CRM meeting booking while Telegram is disabled');
+    const register = position('Register and verify the live Telegram provider');
+    assert.ok(stage < canary && canary < register);
+    const canaryBlock = workflow.slice(canary, register);
+    assert.match(canaryBlock, /if: inputs\.operation == 'publish-and-install'/);
+    assert.doesNotMatch(canaryBlock, /if: inputs\.telegram_enable/);
+    assert.match(canaryBlock, /CRM_MEETING_CANARY_ENABLED: 'true'/);
+    assert.match(canaryBlock, /VERIFY_NATIVE_CRM_MEETING_WITH_TELEGRAM_DISABLED/);
+    assert.match(canaryBlock, /meetingBooking\.maintenance\.spec\.ts/);
+    assert.match(canaryBlock, /--project=production-chromium --no-deps --retries=0/);
+    assert.doesNotMatch(canaryBlock, /continue-on-error/);
   });
 
   it('keeps real test delivery opt-in behind two independent workflow gates', () => {

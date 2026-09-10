@@ -41,6 +41,12 @@ export default defineApplication({
         'Secret JSON bindings of one-time /link codes to unique WorkspaceMember UUIDs and Telegram user IDs. Codes are read at runtime and never persisted or logged.',
       isSecret: true,
     },
+    CORGI_CRM_TELEGRAM_NOTIFICATION_ROUTES: {
+      universalIdentifier: '37f44e2b-3e0b-4343-8876-87a1263a913d',
+      description:
+        'Secret JSON routing allowlist for CRM event notifications. Empty configuration sends no event alerts.',
+      isSecret: true,
+    },
     CORGI_CRM_TELEGRAM_OPERATOR_SECRET: {
       universalIdentifier: 'bfc9cb27-1021-416b-a0d7-d34bb60df113',
       description:

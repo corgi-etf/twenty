@@ -10,6 +10,24 @@ const TELEGRAM_DAILY_WORKER_ID = 'a518c1f8-d80c-4260-8ef6-bd51a86b4eda';
 const TELEGRAM_DELIVERY_CONTROL_ID = 'c77df778-3268-4d34-a3d8-84e7478cb567';
 const TELEGRAM_DELIVERY_RETRY_WORKER_ID =
   '70e86a19-fbdd-4d17-aa36-f0b2ab62305b';
+const MEETING_BOOKING_OBJECT_ID = '0b252d63-b1de-464d-930e-1c1fb6a7eaee';
+const MEETING_BOOKING_ALL_VIEW_ID = '1b8237a7-2e7a-454e-925a-68390abb2992';
+const MEETING_BOOKING_CALENDAR_VIEW_ID =
+  '64fbb44e-e7cf-4fd3-a3b3-44af2beb9ac9';
+const MEETING_BOOKING_FIELDS_VIEW_ID =
+  '66755b49-ef0f-4f93-811e-d15a50bf0206';
+const MEETING_BOOKING_RECORD_PAGE_ID =
+  'f3af6625-cb1a-41f0-94da-4b11b6ff2ac1';
+const MEETING_BOOKING_CREATED_FUNCTION_ID =
+  'a0b07c49-e3d1-48fa-9827-9ab9f564b1d1';
+const MEETING_BOOKING_STATUS_FUNCTION_ID =
+  '3d425836-d5e6-4c37-9609-d9580b700c6c';
+const MEETING_BOOKED_ALERT_FUNCTION_ID =
+  '4d407d33-c0b2-4f8e-8300-be86c2e3dc7d';
+const MEETING_NOTIFICATION_WORKER_ID =
+  'fb84094f-d44a-4180-9f50-ff7971f670e6';
+const REPORT_RUNTIME_VERIFICATION_ID =
+  '8d6ea72a-aa6f-4a1c-83a7-ad539819bd47';
 const APPROVED_ORIGIN = 'https://crm.corgiinvest.com';
 const PAGE_SIZE = 100;
 const MAX_PAGES = 100;
@@ -100,6 +118,7 @@ const TELEGRAM_VARIABLE_KEYS = [
   'CORGI_CRM_TELEGRAM_LINK_CODES',
   'CORGI_CRM_TELEGRAM_TIME_ZONE',
   'CORGI_CRM_TELEGRAM_DAILY_SUMMARY_TIME',
+  'CORGI_CRM_TELEGRAM_NOTIFICATION_ROUTES',
 ];
 
 const exactlyOne = (values, predicate, label) => {
@@ -185,9 +204,9 @@ const verifyApplicationRoleContract = (role, objects) => {
     }
   }
   const permissions = role.objectPermissions ?? [];
-  if (permissions.length !== 7) {
+  if (permissions.length !== 8) {
     throw new Error(
-      'Installed application role must have exactly seven object permissions',
+      'Installed application role must have exactly eight object permissions',
     );
   }
   const expected = new Map(
@@ -199,6 +218,7 @@ const verifyApplicationRoleContract = (role, objects) => {
       ['outreachActivity', true],
       ['telegramDelivery', true],
       ['telegramDeliveryAudit', true],
+      ['meetingBooking', true],
     ].map(([nameSingular, writable]) => {
       const object = exactlyOne(
         objects,
@@ -225,6 +245,210 @@ const verifyApplicationRoleContract = (role, objects) => {
         `Installed application role has excessive ${contract.nameSingular} permission`,
       );
     }
+  }
+};
+
+const parseJsonValue = (value) => {
+  if (typeof value !== 'string') return value;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return null;
+  }
+};
+
+const verifyMeetingBookingSchema = (objects, experience) => {
+  const object = exactlyOne(
+    objects,
+    (candidate) =>
+      candidate?.nameSingular === 'meetingBooking' &&
+      candidate.isActive === true &&
+      candidate.universalIdentifier === MEETING_BOOKING_OBJECT_ID,
+    'meetingBooking metadata object',
+  );
+  const fields = object.fieldsList ?? [];
+  const requiredFields = {
+    name: 'TEXT',
+    scheduledAt: 'DATE_TIME',
+    status: 'SELECT',
+    bookedAt: 'DATE_TIME',
+    notes: 'RICH_TEXT',
+    bookingValidationMessage: 'TEXT',
+    company: 'RELATION',
+    wholesaler: 'RELATION',
+    bookedBy: 'RELATION',
+  };
+  const fieldByName = new Map();
+  for (const [name, type] of Object.entries(requiredFields)) {
+    const field = exactlyOne(
+      fields,
+      (candidate) => candidate?.name === name && candidate.isActive !== false,
+      `meetingBooking.${name} field`,
+    );
+    if (field.type !== type) {
+      throw new Error(`meetingBooking.${name} field has an invalid type`);
+    }
+    fieldByName.set(name, field);
+  }
+  for (const name of ['bookedAt', 'bookedBy', 'bookingValidationMessage']) {
+    const field = fieldByName.get(name);
+    if (
+      field.writability !== 'APPLICATION' ||
+      field.isUIEditable !== false
+    ) {
+      throw new Error(`meetingBooking.${name} writability is not protected`);
+    }
+  }
+  const statusOptions = parseJsonValue(fieldByName.get('status').options);
+  if (
+    !Array.isArray(statusOptions) ||
+    statusOptions.map((option) => option?.value).join(',') !==
+      'DRAFT,BOOKED,COMPLETED,CANCELLED,NO_SHOW'
+  ) {
+    throw new Error('meetingBooking status options are invalid');
+  }
+  for (const [fieldName, targetName] of [
+    ['company', 'company'],
+    ['wholesaler', 'wholesaler'],
+    ['bookedBy', 'workspaceMember'],
+  ]) {
+    if (
+      fieldByName.get(fieldName).relation?.targetObjectMetadata
+        ?.nameSingular !== targetName
+    ) {
+      throw new Error(`meetingBooking.${fieldName} relation is invalid`);
+    }
+  }
+
+  const view = (universalIdentifier, label) =>
+    exactlyOne(
+      experience.views ?? [],
+      (candidate) =>
+        candidate?.universalIdentifier === universalIdentifier &&
+        candidate.objectMetadataId === object.id &&
+        candidate.isActive === true,
+      label,
+    );
+  if (view(MEETING_BOOKING_ALL_VIEW_ID, 'meeting table view').type !== 'TABLE') {
+    throw new Error('Meeting table view is invalid');
+  }
+  const calendar = view(
+    MEETING_BOOKING_CALENDAR_VIEW_ID,
+    'meeting calendar view',
+  );
+  if (
+    calendar.type !== 'CALENDAR' ||
+    calendar.calendarLayout !== 'MONTH' ||
+    calendar.calendarFieldMetadataId !== fieldByName.get('scheduledAt').id
+  ) {
+    throw new Error('Meeting calendar view is invalid');
+  }
+  const fieldsView = view(
+    MEETING_BOOKING_FIELDS_VIEW_ID,
+    'meeting fields view',
+  );
+  if (
+    fieldsView.type !== 'FIELDS_WIDGET' ||
+    !(fieldsView.viewFields ?? []).some(
+      (candidate) =>
+        candidate?.fieldMetadataId ===
+          fieldByName.get('bookingValidationMessage').id &&
+        candidate.isActive !== false,
+    )
+  ) {
+    throw new Error('Meeting fields view does not expose booking feedback');
+  }
+  const pageLayout = exactlyOne(
+    experience.pageLayouts ?? [],
+    (candidate) =>
+      candidate?.universalIdentifier === MEETING_BOOKING_RECORD_PAGE_ID &&
+      candidate.objectMetadataId === object.id,
+    'meeting record page',
+  );
+  if (
+    pageLayout.type !== 'RECORD_PAGE' ||
+    !(pageLayout.tabs ?? []).some((tab) =>
+      (tab.widgets ?? []).some(
+        (widget) => widget?.type === 'FIELDS' && widget.isActive !== false,
+      ),
+    )
+  ) {
+    throw new Error('Meeting record page is invalid');
+  }
+};
+
+const exactDatabaseTrigger = ({ application, id, name, settings, label }) => {
+  const logicFunction = exactlyOne(
+    application.logicFunctions ?? [],
+    (candidate) => candidate?.universalIdentifier === id,
+    label,
+  );
+  if (
+    logicFunction.name !== name ||
+    JSON.stringify(parseTriggerSettings(logicFunction.databaseEventTriggerSettings)) !==
+      JSON.stringify(settings)
+  ) {
+    throw new Error(`${label} database trigger is invalid`);
+  }
+};
+
+const verifyMeetingApplicationContract = (application) => {
+  exactDatabaseTrigger({
+    application,
+    id: MEETING_BOOKING_CREATED_FUNCTION_ID,
+    name: 'on-meeting-booking-created',
+    settings: { eventName: 'meetingBooking.created' },
+    label: 'Meeting create reconciliation',
+  });
+  exactDatabaseTrigger({
+    application,
+    id: MEETING_BOOKING_STATUS_FUNCTION_ID,
+    name: 'on-meeting-booking-status-updated',
+    settings: {
+      eventName: 'meetingBooking.updated',
+      updatedFields: ['status'],
+    },
+    label: 'Meeting status reconciliation',
+  });
+  exactDatabaseTrigger({
+    application,
+    id: MEETING_BOOKED_ALERT_FUNCTION_ID,
+    name: 'telegram-meeting-booked-alert',
+    settings: {
+      eventName: 'meetingBooking.updated',
+      updatedFields: ['bookedAt'],
+    },
+    label: 'Meeting booked alert',
+  });
+  const worker = exactlyOne(
+    application.logicFunctions ?? [],
+    (candidate) => candidate?.universalIdentifier === MEETING_NOTIFICATION_WORKER_ID,
+    'Meeting notification worker',
+  );
+  if (
+    worker.name !== 'telegram-notification-delivery-worker' ||
+    worker.databaseEventTriggerSettings != null ||
+    worker.httpRouteTriggerSettings != null ||
+    worker.cronTriggerSettings != null
+  ) {
+    throw new Error('Meeting notification worker must be untriggered');
+  }
+  const reportVerifier = exactlyOne(
+    application.logicFunctions ?? [],
+    (candidate) => candidate?.universalIdentifier === REPORT_RUNTIME_VERIFICATION_ID,
+    'Report runtime verification function',
+  );
+  if (
+    reportVerifier.name !== 'verify-report-runtime' ||
+    [
+      'databaseEventTriggerSettings',
+      'httpRouteTriggerSettings',
+      'cronTriggerSettings',
+      'toolTriggerSettings',
+      'workflowActionTriggerSettings',
+    ].some((key) => reportVerifier[key] != null)
+  ) {
+    throw new Error('Report runtime verification function must be untriggered');
   }
 };
 
@@ -487,9 +711,12 @@ const verifyInstalledApplication = async ({
         }
         logicFunctions {
           universalIdentifier
+          name
           databaseEventTriggerSettings
           httpRouteTriggerSettings
           cronTriggerSettings
+          toolTriggerSettings
+          workflowActionTriggerSettings
         }
       }
     }`,
@@ -548,7 +775,18 @@ const listAllMetadataObjects = async ({ graphql }) => {
               nameSingular
               universalIdentifier
               isActive
-              fieldsList { id name type isActive universalIdentifier }
+              applicationId
+              fieldsList {
+                id
+                name
+                type
+                isActive
+                isUIEditable
+                writability
+                options
+                universalIdentifier
+                relation { targetObjectMetadata { nameSingular } }
+              }
               indexMetadataList {
                 isUnique
                 indexFieldMetadataList { fieldMetadataId order }
@@ -573,6 +811,38 @@ const listAllMetadataObjects = async ({ graphql }) => {
     seenCursors.add(cursor);
   }
   throw new Error(`Metadata object verification exceeded ${MAX_PAGES} pages`);
+};
+
+const loadMeetingExperience = async ({ graphql, objectMetadataId }) => {
+  const data = await graphql({
+    endpoint: '/metadata',
+    operationName: 'VerifyCorgiCrmMeetingExperience',
+    query: `query VerifyCorgiCrmMeetingExperience($objectMetadataId: String!) {
+      getViews(objectMetadataId: $objectMetadataId) {
+        universalIdentifier
+        objectMetadataId
+        type
+        calendarFieldMetadataId
+        calendarLayout
+        isActive
+        viewFields { fieldMetadataId isActive }
+      }
+      getPageLayouts(
+        objectMetadataId: $objectMetadataId
+        pageLayoutType: RECORD_PAGE
+      ) {
+        universalIdentifier
+        objectMetadataId
+        type
+        tabs { widgets { type isActive } }
+      }
+    }`,
+    variables: { objectMetadataId },
+  });
+  return {
+    views: data.getViews,
+    pageLayouts: data.getPageLayouts,
+  };
 };
 
 const listAllRecords = async ({ graphql, operationName, root, selection }) => {
@@ -660,6 +930,64 @@ const verifyReconciliation = ({ members, wholesalers }) => {
   return { members: usableMembers.length, wholesalers: wholesalers.length };
 };
 
+// Read-only evidence before publishing an immutable version. Exercise the same
+// filters as the generated app client and disclose counts, never owner data.
+const inspectReconciliationPreflight = async ({ graphql }) => {
+  const [members, wholesalers] = await Promise.all([
+    listAllRecords({ graphql, operationName: 'PreflightOwnerMembers',
+      root: 'workspaceMembers', selection: 'id userEmail name { firstName lastName }' }),
+    listAllRecords({ graphql, operationName: 'PreflightOwnerWholesalers',
+      root: 'wholesalers', selection: 'id name email wholesalerRole workspaceMemberId' }),
+  ]);
+  const result = {
+    members: members.length, wholesalers: wholesalers.length,
+    needsCreation: 0, existingIdentity: 0, missingMemberIdentity: 0,
+    ambiguousIdentity: 0, conflictingMemberLink: 0, filteredReadMismatch: 0,
+  };
+  const ids = (records) => [...new Set(records.map(({ id }) => id))].sort().join(',');
+  for (const member of members) {
+    if (!UUID_PATTERN.test(member.id ?? '') || !member.userEmail?.trim()) {
+      result.missingMemberIdentity += 1;
+      continue;
+    }
+    const email = normalizeEmail(member.userEmail);
+    const byMember = wholesalers.filter((row) => row.workspaceMemberId === member.id);
+    const byEmail = wholesalers.filter((row) => normalizeEmail(row.email ?? '') === email);
+    const matches = [...new Map([...byMember, ...byEmail].map((row) => [row.id, row])).values()];
+    if (matches.length === 0) result.needsCreation += 1;
+    else if (matches.length === 1) result.existingIdentity += 1;
+    else result.ambiguousIdentity += 1;
+    if (matches.some((row) => row.workspaceMemberId && row.workspaceMemberId !== member.id)) {
+      result.conflictingMemberLink += 1;
+    }
+    const data = await graphql({
+      endpoint: '/graphql', operationName: 'PreflightOwnerIdentityFilters',
+      query: `query PreflightOwnerIdentityFilters($memberId: UUID!, $emailPattern: String!) {
+        byMember: wholesalers(first: 3, filter: { workspaceMemberId: { eq: $memberId } }) {
+          edges { node { id } }
+        }
+        byEmail: wholesalers(first: 3, filter: { email: { ilike: $emailPattern } }) {
+          edges { node { id } }
+        }
+      }`,
+      variables: {
+        memberId: member.id,
+        emailPattern: email.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_'),
+      },
+    });
+    for (const root of ['byMember', 'byEmail']) {
+      if (!Array.isArray(data[root]?.edges) || data[root].edges.some((edge) => !edge?.node?.id)) {
+        throw new Error('Owner reconciliation preflight returned an invalid filtered connection');
+      }
+    }
+    if (ids(data.byMember.edges.map(({ node }) => node)) !== ids(byMember) ||
+        ids(data.byEmail.edges.map(({ node }) => node)) !== ids(byEmail)) {
+      result.filteredReadMismatch += 1;
+    }
+  }
+  return result;
+};
+
 const main = async () => {
   const mode = process.argv[2];
   if (
@@ -685,6 +1013,12 @@ const main = async () => {
   await verifyTargetWorkspace({ graphql, expectedWorkspaceId: workspaceId });
   await verifyRequiredSchema({ graphql });
   if (mode === 'target') {
+    const preflight = await inspectReconciliationPreflight({ graphql });
+    console.log(JSON.stringify({ ownerReconciliationPreflight: preflight }));
+    if (preflight.missingMemberIdentity || preflight.ambiguousIdentity ||
+        preflight.conflictingMemberLink || preflight.filteredReadMismatch) {
+      throw new Error('Owner reconciliation preflight requires review before publication');
+    }
     console.log('Verified Corgi CRM production target workspace.');
     return;
   }
@@ -710,6 +1044,19 @@ const main = async () => {
     workspaceId,
   });
   verifyTelegramPersistenceSchema(metadataObjects);
+  const meetingObject = exactlyOne(
+    metadataObjects,
+    (candidate) =>
+      candidate?.nameSingular === 'meetingBooking' &&
+      candidate.isActive === true,
+    'meetingBooking metadata object',
+  );
+  const meetingExperience = await loadMeetingExperience({
+    graphql,
+    objectMetadataId: meetingObject.id,
+  });
+  verifyMeetingBookingSchema(metadataObjects, meetingExperience);
+  verifyMeetingApplicationContract(application);
   verifyApplicationRoleContract(
     application.defaultLogicFunctionRole,
     metadataObjects,
@@ -747,8 +1094,11 @@ if (
 }
 
 export {
+  inspectReconciliationPreflight,
   resolveCorgiRoleObjectIdentifiers,
   verifyApplicationRoleContract,
+  verifyMeetingApplicationContract,
+  verifyMeetingBookingSchema,
   verifyReconciliation,
   verifyTelegramApplicationContract,
   verifyTelegramDisabled,

@@ -7,10 +7,12 @@ import {
 
 import { TELEGRAM_DAILY_SUMMARY_WORKER_UNIVERSAL_IDENTIFIER } from 'src/constants';
 import { CoreOutreachRepository } from 'src/modules/outreach/graphql/core-outreach.repository';
+import { CoreMeetingBookingReportRepository } from 'src/modules/outreach/graphql/core-meeting-booking-report.repository';
 import { readReportSummary } from 'src/modules/outreach/services/report-summary.service';
 import { readTelegramReportSnapshot } from 'src/modules/telegram/services/telegram-report-snapshot.service';
 import { type KeyValueStore } from 'src/modules/telegram/types';
 import { type OutreachRepository } from 'src/modules/outreach/types';
+import { type MeetingBookingReportRepository } from 'src/modules/outreach/report-meeting-booking.types';
 import { type DailySummaryJobPayload } from 'src/modules/telegram/services/daily-summary-cron.service';
 import { TelegramClient } from 'src/modules/telegram/services/telegram-client.service';
 import { deliverDailySummary } from 'src/modules/telegram/services/telegram-delivery.service';
@@ -71,12 +73,14 @@ type DailySummaryWorkerDependencies = {
 
 export const readScheduledDailyReport = ({
   repository,
+  meetingRepository,
   scheduledInstant,
   timeZone,
   store,
   workspaceMemberId,
 }: {
   repository: OutreachRepository;
+  meetingRepository: MeetingBookingReportRepository;
   scheduledInstant: string;
   timeZone: string;
   store: KeyValueStore;
@@ -88,6 +92,7 @@ export const readScheduledDailyReport = ({
     read: () =>
       readReportSummary({
         repository,
+        meetingRepository,
         period: 'daily',
         now: new Date(scheduledInstant),
         timeZone,
@@ -143,6 +148,7 @@ const processDailySummaryJob = async (rawPayload: unknown) => {
   const repository = new CoreOutreachRepository(coreClient);
   const text = await readScheduledDailyReport({
     repository,
+    meetingRepository: new CoreMeetingBookingReportRepository(coreClient),
     scheduledInstant: payload.scheduledInstant,
     store: kv,
     workspaceMemberId: payload.workspaceMemberId,

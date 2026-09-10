@@ -62,12 +62,96 @@ const validateLinkBindings = (raw) => {
   return JSON.stringify({ bindings });
 };
 
+const validateNotificationRoutes = (raw) => {
+  if (!raw?.trim()) return '{}';
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new Error('Telegram notification route configuration must be valid JSON');
+  }
+  if (
+    parsed &&
+    typeof parsed === 'object' &&
+    !Array.isArray(parsed) &&
+    Object.keys(parsed).length === 0
+  ) {
+    return '{}';
+  }
+  if (
+    !parsed ||
+    typeof parsed !== 'object' ||
+    Array.isArray(parsed) ||
+    Object.keys(parsed).sort().join(',') !== 'routes,version' ||
+    parsed.version !== 1 ||
+    !Array.isArray(parsed.routes) ||
+    parsed.routes.length > 25
+  ) {
+    throw new Error('Telegram notification route configuration is invalid');
+  }
+  const routes = parsed.routes.map((route) => {
+    if (!route || typeof route !== 'object' || Array.isArray(route)) {
+      throw new Error('Telegram notification route is invalid');
+    }
+    const keys = Object.keys(route).sort().join(',');
+    if (keys !== 'chatId,event' && keys !== 'chatId,event,messageThreadId') {
+      throw new Error('Telegram notification route is invalid');
+    }
+    const chatId = typeof route.chatId === 'string' ? route.chatId.trim() : '';
+    if (route.event !== 'meeting_booked' || !/^-?[1-9][0-9]*$/.test(chatId)) {
+      throw new Error('Telegram notification route is invalid');
+    }
+    const chatIdDigits = chatId.startsWith('-') ? chatId.slice(1) : chatId;
+    const maxChatId = chatId.startsWith('-')
+      ? '9223372036854775808'
+      : '9223372036854775807';
+    if (
+      chatIdDigits.length > 19 ||
+      (chatIdDigits.length === 19 && chatIdDigits > maxChatId)
+    ) {
+      throw new Error('Telegram notification route is invalid');
+    }
+    if (
+      route.messageThreadId !== undefined &&
+      (!Number.isSafeInteger(route.messageThreadId) || route.messageThreadId <= 0)
+    ) {
+      throw new Error('Telegram notification route is invalid');
+    }
+    return {
+      event: route.event,
+      chatId,
+      ...(route.messageThreadId === undefined
+        ? {}
+        : { messageThreadId: route.messageThreadId }),
+    };
+  });
+  const destinations = routes.map(
+    ({ event, chatId, messageThreadId }) =>
+      `${event}:${chatId}:${messageThreadId ?? 'main'}`,
+  );
+  if (new Set(destinations).size !== destinations.length) {
+    throw new Error('Duplicate Telegram notification route destination');
+  }
+  return JSON.stringify({ version: 1, routes });
+};
+
+const validateTimeZone = (timeZone) => {
+  const normalized = required(timeZone, 'Telegram time zone');
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: normalized }).format();
+  } catch {
+    throw new Error('Telegram time zone must be a valid IANA zone');
+  }
+  return normalized;
+};
+
 const validateTrustedTelegramConfiguration = ({
   workspaceId,
   token,
   webhookSecret,
   operatorSecret,
   linkCodesJson,
+  notificationRoutesJson,
   timeZone,
   dailySummaryTime,
 }) => {
@@ -75,12 +159,7 @@ const validateTrustedTelegramConfiguration = ({
   if (!UUID_PATTERN.test(normalizedWorkspaceId)) {
     throw new Error('Workspace ID must be a UUID');
   }
-  const normalizedTimeZone = required(timeZone, 'Telegram time zone');
-  try {
-    new Intl.DateTimeFormat('en-US', { timeZone: normalizedTimeZone }).format();
-  } catch {
-    throw new Error('Telegram time zone must be a valid IANA zone');
-  }
+  const normalizedTimeZone = validateTimeZone(timeZone);
   const normalizedTime = required(dailySummaryTime, 'Telegram summary time');
   const match = /^(?:[01][0-9]|2[0-3]):([0-5][0-9])$/.exec(normalizedTime);
   if (!match || Number(match[1]) % 15 !== 0) {
@@ -99,6 +178,9 @@ const validateTrustedTelegramConfiguration = ({
     ),
     CORGI_CRM_TELEGRAM_LINK_CODES: validateLinkBindings(
       required(linkCodesJson, 'Telegram link configuration'),
+    ),
+    CORGI_CRM_TELEGRAM_NOTIFICATION_ROUTES: validateNotificationRoutes(
+      notificationRoutesJson,
     ),
     CORGI_CRM_TELEGRAM_TIME_ZONE: normalizedTimeZone,
     CORGI_CRM_TELEGRAM_DAILY_SUMMARY_TIME: normalizedTime,
@@ -174,7 +256,16 @@ const configureTelegramApplication = async ({
   };
 
   await write('CORGI_CRM_TELEGRAM_ENABLED', 'false');
-  if (!variables) return { status: 'disabled' };
+  if (!variables) {
+    await write('CORGI_CRM_WORKSPACE_ID', validateWorkspaceId(input.workspaceId));
+    if (input.timeZone?.trim()) {
+      await write(
+        'CORGI_CRM_TELEGRAM_TIME_ZONE',
+        validateTimeZone(input.timeZone),
+      );
+    }
+    return { status: 'disabled' };
+  }
   for (const [key, value] of Object.entries(variables)) await write(key, value);
   if (enabled === true) await write('CORGI_CRM_TELEGRAM_ENABLED', 'true');
   return {
@@ -231,6 +322,8 @@ const main = async () => {
     webhookSecret: process.env.CORGI_CRM_TELEGRAM_WEBHOOK_SECRET,
     operatorSecret: process.env.CORGI_CRM_TELEGRAM_OPERATOR_SECRET,
     linkCodesJson: process.env.CORGI_CRM_TELEGRAM_LINK_CODES,
+    notificationRoutesJson:
+      process.env.CORGI_CRM_TELEGRAM_NOTIFICATION_ROUTES,
     timeZone: process.env.CORGI_CRM_TELEGRAM_TIME_ZONE,
     dailySummaryTime: process.env.CORGI_CRM_TELEGRAM_DAILY_SUMMARY_TIME,
     enabled: mode === 'enable',

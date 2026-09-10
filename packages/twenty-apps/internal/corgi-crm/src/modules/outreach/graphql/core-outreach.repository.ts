@@ -23,6 +23,41 @@ type ActivityNode = {
   wholesaler?: { id?: string | null; name?: string | null } | null;
 };
 
+type ActivityConnection = {
+  edges: Array<{ node?: ActivityNode | null } | null>;
+  pageInfo:
+    | { hasNextPage: false; endCursor?: unknown }
+    | { hasNextPage: true; endCursor: string };
+};
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  value !== null && typeof value === 'object' && !Array.isArray(value);
+
+const parseActivityConnection = (value: unknown): ActivityConnection => {
+  if (
+    !isRecord(value) ||
+    !Array.isArray(value.edges) ||
+    !isRecord(value.pageInfo) ||
+    typeof value.pageInfo.hasNextPage !== 'boolean'
+  ) {
+    throw new Error('Outreach activity connection response was malformed');
+  }
+  if (value.pageInfo.hasNextPage) {
+    const endCursor = value.pageInfo.endCursor;
+    if (typeof endCursor !== 'string' || !endCursor.trim()) {
+      throw new Error('Outreach activity pagination omitted its next cursor');
+    }
+    return {
+      edges: value.edges as ActivityConnection['edges'],
+      pageInfo: { hasNextPage: true, endCursor },
+    };
+  }
+  return {
+    edges: value.edges as ActivityConnection['edges'],
+    pageInfo: { hasNextPage: false, endCursor: value.pageInfo.endCursor },
+  };
+};
+
 const fullName = (name: { firstName?: string | null; lastName?: string | null } | null | undefined) =>
   [name?.firstName, name?.lastName]
     .map((part) => part?.trim())
@@ -209,9 +244,9 @@ export class CoreOutreachRepository implements OutreachRepository {
           pageInfo: { hasNextPage: true, endCursor: true },
         },
       });
-      const connection = result.outreachActivities;
-      for (const edge of connection?.edges ?? []) {
-        const node = edge?.node as ActivityNode | null | undefined;
+      const connection = parseActivityConnection(result.outreachActivities);
+      for (const edge of connection.edges) {
+        const node = edge?.node;
         const occurredAt = Date.parse(node?.occurredAt ?? '');
         if (
           !node?.id ||
@@ -239,10 +274,10 @@ export class CoreOutreachRepository implements OutreachRepository {
           occurredAt: node.occurredAt,
         });
       }
-      if (!connection?.pageInfo?.hasNextPage) return output;
+      if (!connection.pageInfo.hasNextPage) return output;
       const nextCursor = connection.pageInfo.endCursor;
-      if (!nextCursor || seenCursors.has(nextCursor)) {
-        throw new Error('Outreach activity pagination has a missing or repeated cursor');
+      if (seenCursors.has(nextCursor)) {
+        throw new Error('Outreach activity pagination has a repeated cursor');
       }
       seenCursors.add(nextCursor);
       cursor = nextCursor;

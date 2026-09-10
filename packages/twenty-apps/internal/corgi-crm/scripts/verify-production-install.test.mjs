@@ -7,6 +7,8 @@ import { buildSchema, parse, validate } from 'graphql';
 import {
   resolveCorgiRoleObjectIdentifiers,
   verifyApplicationRoleContract,
+  verifyMeetingApplicationContract,
+  verifyMeetingBookingSchema,
   verifyReconciliation,
   verifyTelegramApplicationContract,
   verifyTelegramDisabled,
@@ -86,6 +88,7 @@ describe('production Telegram application verification', () => {
       { key: 'CORGI_CRM_TELEGRAM_LINK_CODES', value: '********' },
       { key: 'CORGI_CRM_TELEGRAM_TIME_ZONE', value: 'America/Chicago' },
       { key: 'CORGI_CRM_TELEGRAM_DAILY_SUMMARY_TIME', value: '17:00' },
+      { key: 'CORGI_CRM_TELEGRAM_NOTIFICATION_ROUTES', value: '********' },
     ],
     logicFunctions: [
       {
@@ -247,11 +250,11 @@ describe('production Telegram application verification', () => {
 });
 
 describe('application release contract', () => {
-  it('uses a new immutable app version for Telegram capability', async () => {
+  it('uses a new immutable app version for meeting and Telegram capability', async () => {
     const packageJson = JSON.parse(
       await fs.readFile(new URL('../package.json', import.meta.url), 'utf8'),
     );
-    assert.equal(packageJson.version, '1.1.1');
+    assert.equal(packageJson.version, '1.2.0');
   });
 
   it('resolves exact custom object universal identifiers from live metadata', () => {
@@ -298,6 +301,7 @@ describe('installed application role verification', () => {
     'outreachActivity',
     'telegramDelivery',
     'telegramDeliveryAudit',
+    'meetingBooking',
   ].map((nameSingular, index) => ({
     id: `00000000-0000-4000-8000-00000000000${index}`,
     nameSingular,
@@ -307,6 +311,7 @@ describe('installed application role verification', () => {
     'outreachActivity',
     'telegramDelivery',
     'telegramDeliveryAudit',
+    'meetingBooking',
   ]);
   const role = {
     canAccessAllTools: false,
@@ -334,7 +339,7 @@ describe('installed application role verification', () => {
     })),
   };
 
-  it('accepts only the exact seven-object least-privilege role', () => {
+  it('accepts only the exact eight-object least-privilege role', () => {
     assert.doesNotThrow(() => verifyApplicationRoleContract(role, objects));
   });
 
@@ -372,14 +377,14 @@ describe('installed application role verification', () => {
     }
   });
 
-  it('rejects duplicate object permissions even when the count remains seven', () => {
+  it('rejects duplicate object permissions even when the count remains eight', () => {
     assert.throws(
       () =>
         verifyApplicationRoleContract(
           {
             ...role,
             objectPermissions: role.objectPermissions.map((permission, index) =>
-              index === 6
+              index === 7
                 ? {
                     ...permission,
                     objectMetadataId: role.objectPermissions[0].objectMetadataId,
@@ -420,7 +425,7 @@ describe('installed application role verification', () => {
           },
           objects,
         ),
-      /exactly seven/i,
+      /exactly eight/i,
     );
     assert.throws(
       () =>
@@ -458,6 +463,225 @@ describe('installed application role verification', () => {
       'apiKeys { id }',
     ]) {
       assert.match(source, new RegExp(field.replace(/[{}]/g, '\\$&')));
+    }
+  });
+});
+
+describe('installed meeting booking verification', () => {
+  const field = (id, name, type, extra = {}) => ({
+    id,
+    name,
+    type,
+    isActive: true,
+    ...extra,
+  });
+  const fieldsList = [
+    field('meeting-name', 'name', 'TEXT'),
+    field('meeting-time', 'scheduledAt', 'DATE_TIME'),
+    field('meeting-status', 'status', 'SELECT', {
+      options: [
+        { value: 'DRAFT' },
+        { value: 'BOOKED' },
+        { value: 'COMPLETED' },
+        { value: 'CANCELLED' },
+        { value: 'NO_SHOW' },
+      ],
+    }),
+    field('meeting-booked-at', 'bookedAt', 'DATE_TIME', {
+      isUIEditable: false,
+      writability: 'APPLICATION',
+    }),
+    field('meeting-notes', 'notes', 'RICH_TEXT'),
+    field('meeting-validation', 'bookingValidationMessage', 'TEXT', {
+      isUIEditable: false,
+      writability: 'APPLICATION',
+    }),
+    field('meeting-company', 'company', 'RELATION', {
+      relation: { targetObjectMetadata: { nameSingular: 'company' } },
+    }),
+    field('meeting-owner', 'wholesaler', 'RELATION', {
+      relation: { targetObjectMetadata: { nameSingular: 'wholesaler' } },
+    }),
+    field('meeting-booker', 'bookedBy', 'RELATION', {
+      isUIEditable: false,
+      writability: 'APPLICATION',
+      relation: { targetObjectMetadata: { nameSingular: 'workspaceMember' } },
+    }),
+  ];
+  const object = {
+    id: 'meeting-object-id',
+    universalIdentifier: '0b252d63-b1de-464d-930e-1c1fb6a7eaee',
+    nameSingular: 'meetingBooking',
+    isActive: true,
+    fieldsList,
+  };
+  const experience = {
+    views: [
+      {
+        universalIdentifier: '1b8237a7-2e7a-454e-925a-68390abb2992',
+        type: 'TABLE',
+        objectMetadataId: object.id,
+        isActive: true,
+        viewFields: [],
+      },
+      {
+        universalIdentifier: '64fbb44e-e7cf-4fd3-a3b3-44af2beb9ac9',
+        type: 'CALENDAR',
+        objectMetadataId: object.id,
+        isActive: true,
+        calendarLayout: 'MONTH',
+        calendarFieldMetadataId: 'meeting-time',
+        viewFields: [],
+      },
+      {
+        universalIdentifier: '66755b49-ef0f-4f93-811e-d15a50bf0206',
+        type: 'FIELDS_WIDGET',
+        objectMetadataId: object.id,
+        isActive: true,
+        viewFields: [{ fieldMetadataId: 'meeting-validation', isActive: true }],
+      },
+    ],
+    pageLayouts: [
+      {
+        universalIdentifier: 'f3af6625-cb1a-41f0-94da-4b11b6ff2ac1',
+        type: 'RECORD_PAGE',
+        objectMetadataId: object.id,
+        tabs: [{ widgets: [{ type: 'FIELDS', isActive: true }] }],
+      },
+    ],
+  };
+
+  it('requires exact fields, protected evidence, relations, and native views', () => {
+    assert.doesNotThrow(() =>
+      verifyMeetingBookingSchema([object], experience),
+    );
+    assert.throws(
+      () =>
+        verifyMeetingBookingSchema(
+          [
+            {
+              ...object,
+              fieldsList: fieldsList.map((candidate) =>
+                candidate.name === 'bookedAt'
+                  ? { ...candidate, writability: 'OPEN' }
+                  : candidate,
+              ),
+            },
+          ],
+          experience,
+        ),
+      /bookedAt.*writability/i,
+    );
+    assert.throws(
+      () =>
+        verifyMeetingBookingSchema([object], {
+          ...experience,
+          views: experience.views.filter((view) => view.type !== 'CALENDAR'),
+        }),
+      /calendar/i,
+    );
+  });
+
+  it('requires server-valid exact status values', () => {
+    assert.throws(
+      () =>
+        verifyMeetingBookingSchema(
+          [
+            {
+              ...object,
+              fieldsList: fieldsList.map((candidate) =>
+                candidate.name === 'status'
+                  ? { ...candidate, options: [{ value: 'draft' }] }
+                  : candidate,
+              ),
+            },
+          ],
+          experience,
+        ),
+      /status options/i,
+    );
+  });
+
+  it('requires booking reconciliation and alert trigger topology', () => {
+    const application = {
+      logicFunctions: [
+        {
+          universalIdentifier: 'a0b07c49-e3d1-48fa-9827-9ab9f564b1d1',
+          name: 'on-meeting-booking-created',
+          databaseEventTriggerSettings: { eventName: 'meetingBooking.created' },
+        },
+        {
+          universalIdentifier: '3d425836-d5e6-4c37-9609-d9580b700c6c',
+          name: 'on-meeting-booking-status-updated',
+          databaseEventTriggerSettings: {
+            eventName: 'meetingBooking.updated',
+            updatedFields: ['status'],
+          },
+        },
+        {
+          universalIdentifier: '4d407d33-c0b2-4f8e-8300-be86c2e3dc7d',
+          name: 'telegram-meeting-booked-alert',
+          databaseEventTriggerSettings: {
+            eventName: 'meetingBooking.updated',
+            updatedFields: ['bookedAt'],
+          },
+        },
+        {
+          universalIdentifier: 'fb84094f-d44a-4180-9f50-ff7971f670e6',
+          name: 'telegram-notification-delivery-worker',
+          databaseEventTriggerSettings: null,
+          httpRouteTriggerSettings: null,
+          cronTriggerSettings: null,
+        },
+        {
+          universalIdentifier: '8d6ea72a-aa6f-4a1c-83a7-ad539819bd47',
+          name: 'verify-report-runtime',
+          databaseEventTriggerSettings: null,
+          httpRouteTriggerSettings: null,
+          cronTriggerSettings: null,
+          toolTriggerSettings: null,
+          workflowActionTriggerSettings: null,
+        },
+      ],
+    };
+    assert.doesNotThrow(() => verifyMeetingApplicationContract(application));
+    assert.throws(
+      () =>
+        verifyMeetingApplicationContract({
+          logicFunctions: application.logicFunctions.filter(
+            (logicFunction) =>
+              logicFunction.universalIdentifier !==
+              '4d407d33-c0b2-4f8e-8300-be86c2e3dc7d',
+          ),
+        }),
+      /alert/i,
+    );
+    const runtimeId = '8d6ea72a-aa6f-4a1c-83a7-ad539819bd47';
+    assert.throws(
+      () => verifyMeetingApplicationContract({
+        logicFunctions: application.logicFunctions.filter(
+          (logicFunction) => logicFunction.universalIdentifier !== runtimeId,
+        ),
+      }),
+      /report runtime/i,
+    );
+    for (const field of [
+      'databaseEventTriggerSettings',
+      'httpRouteTriggerSettings',
+      'cronTriggerSettings',
+      'toolTriggerSettings',
+      'workflowActionTriggerSettings',
+    ]) {
+      assert.throws(
+        () => verifyMeetingApplicationContract({
+          logicFunctions: application.logicFunctions.map((logicFunction) =>
+            logicFunction.universalIdentifier === runtimeId
+              ? { ...logicFunction, [field]: {} }
+              : logicFunction,
+          ),
+        }),
+        /report runtime.*untriggered/i,
+      );
     }
   });
 });
@@ -583,7 +807,7 @@ describe('production metadata query compatibility', () => {
     const documents = [...endpointDocuments, ...deploymentKeyDocuments];
     assert.equal(
       documents.length,
-      14,
+      15,
       'all static deployment metadata documents are covered',
     );
     const schema = buildSchema(schemaSource);
