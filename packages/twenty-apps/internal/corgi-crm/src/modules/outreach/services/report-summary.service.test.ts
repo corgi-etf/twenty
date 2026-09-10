@@ -1,15 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { DEFAULT_WHOLESALER_ROLE } from 'src/constants';
 import {
   buildReportSummary,
   formatReportSummary,
   getReportWindow,
-  PLACEHOLDER_ATTRIBUTED_ANNUAL_RECURRING_REVENUE,
   readReportSummary,
 } from 'src/modules/outreach/services/report-summary.service';
 import { type OutreachActivity } from 'src/modules/outreach/types';
-import { type WholesalerRecord } from 'src/modules/wholesaler/onboarding/types';
 
 const activity = (
   id: string,
@@ -27,24 +24,11 @@ const activity = (
   ...overrides,
 });
 
-const wholesaler = (
-  id: string,
-  wholesalerRole: string | null,
-  name = id,
-): WholesalerRecord => ({
-  id,
-  name,
-  email: `${id}@example.test`,
-  wholesalerRole,
-  workspaceMemberId: `member-${id}`,
-});
-
 const defaults = {
   period: 'daily' as const,
   now: new Date('2026-09-09T16:30:00.000Z'),
   timeZone: 'America/Chicago',
   meetingBookings: [],
-  wholesalers: [],
 };
 
 describe('outreach report summaries', () => {
@@ -58,15 +42,7 @@ describe('outreach report summaries', () => {
         wholesalerName: 'Casey',
       }]),
     };
-    const wholesalerRepository = {
-      listWholesalers: vi.fn().mockResolvedValue([]),
-    };
-    const input = {
-      ...defaults,
-      repository,
-      meetingRepository,
-      wholesalerRepository,
-    };
+    const input = { ...defaults, repository, meetingRepository };
     const text = await readReportSummary(input);
     const window = {
       start: '2026-09-08T16:30:00.000Z',
@@ -192,11 +168,7 @@ describe('outreach report summaries', () => {
     expect(text).not.toMatch(/By activity|By outcome|Meeting-booking/);
     expect(text).not.toMatch(/[🥇🥈🥉] [123]\./u);
     expect(text).toContain('Meetings counted when booked, not when scheduled.');
-    // The per-person ranking stays counts-only; ARR belongs to its own section.
-    expect(
-      text.split('\n').filter((line) => /^[🥇🥈🥉]|^\d+\./u.test(line)),
-    ).toEqual(['🥇 Jordan: 1 activity · 1 meeting set']);
-    expect(text).not.toMatch(/Private/);
+    expect(text).not.toMatch(/ARR|revenue|Private/);
   });
 
   it.each(['daily', 'weekly', 'monthly'] as const)(
@@ -376,176 +348,5 @@ describe('outreach report summaries', () => {
       ],
     });
     expect(formatReportSummary(summary)).toContain('🥇 Jordan Example: 1');
-  });
-
-  it('lists every EW with the zero ARR placeholder and leaves BDRs out', () => {
-    const summary = buildReportSummary({
-      ...defaults,
-      activities: [activity('1')],
-      wholesalers: [
-        wholesaler('id-bdr', 'BDR', 'Sam'),
-        wholesaler('id-ew-2', 'EW', 'Casey'),
-        wholesaler('id-ew-1', 'EW', 'Alex'),
-        wholesaler('id-unset', null, 'Robin'),
-        wholesaler('id-default', DEFAULT_WHOLESALER_ROLE, 'Kim'),
-      ],
-    });
-
-    expect(PLACEHOLDER_ATTRIBUTED_ANNUAL_RECURRING_REVENUE).toBe(0);
-    expect(summary.externalWholesalerRevenue).toEqual([
-      {
-        wholesalerId: 'id-ew-1',
-        name: 'Alex',
-        attributedAnnualRecurringRevenue: 0,
-      },
-      {
-        wholesalerId: 'id-ew-2',
-        name: 'Casey',
-        attributedAnnualRecurringRevenue: 0,
-      },
-    ]);
-    const text = formatReportSummary(summary);
-    expect(text).toContain('💰 ARR attributed per EW');
-    expect(text).toContain('No ARR source is connected yet, so every figure reads $0.');
-    expect(text).toContain('• Alex: $0');
-    expect(text).toContain('• Casey: $0');
-    for (const excluded of ['Sam', 'Robin', 'Kim'])
-      expect(text).not.toContain(excluded);
-  });
-
-  it.each([' ew ', 'EW', 'eW', ' Ew  ', '\tew\n'])(
-    'reads the human-entered role %j as EW',
-    (wholesalerRole) => {
-      expect(
-        buildReportSummary({
-          ...defaults,
-          activities: [],
-          wholesalers: [wholesaler('id-ew', wholesalerRole, 'Alex')],
-        }).externalWholesalerRevenue,
-      ).toEqual([
-        {
-          wholesalerId: 'id-ew',
-          name: 'Alex',
-          attributedAnnualRecurringRevenue: 0,
-        },
-      ]);
-    },
-  );
-
-  it.each(['BDR', 'bdr', ' Bdr ', DEFAULT_WHOLESALER_ROLE, 'EWW', 'new', '', '   ', null])(
-    'keeps the role %j out of the ARR section',
-    (wholesalerRole) => {
-      expect(
-        buildReportSummary({
-          ...defaults,
-          activities: [],
-          wholesalers: [wholesaler('id-other', wholesalerRole, 'Sam')],
-        }).externalWholesalerRevenue,
-      ).toEqual([]);
-    },
-  );
-
-  it('explains the empty ARR section rather than dropping or half-rendering it', () => {
-    const text = formatReportSummary(
-      buildReportSummary({
-        ...defaults,
-        activities: [],
-        wholesalers: [wholesaler('id-bdr', 'BDR', 'Sam')],
-      }),
-    );
-    expect(text).toContain('💰 ARR attributed per EW');
-    expect(text).toContain(
-      'No wholesaler has the EW role yet, so there is nothing to attribute.',
-    );
-    expect(text).not.toContain('$0');
-  });
-
-  it('keeps per-person activity and meeting counts identical whether or not EWs exist', () => {
-    const shared = {
-      ...defaults,
-      activities: [
-        activity('1'),
-        activity('2', { wholesalerId: 'owner-alex', wholesalerName: 'Alex' }),
-      ],
-      meetingBookings: [
-        {
-          id: 'booking-1',
-          bookedAt: '2026-09-09T15:00:00.000Z',
-          wholesalerId: 'owner-alex',
-          wholesalerName: 'Alex',
-        },
-      ],
-    };
-    const withoutRoles = buildReportSummary({ ...shared, wholesalers: [] });
-    const withRoles = buildReportSummary({
-      ...shared,
-      wholesalers: [
-        wholesaler('owner-alex', 'EW', 'Alex'),
-        wholesaler('owner-jordan', 'BDR', 'Jordan'),
-      ],
-    });
-
-    expect(withRoles.total).toBe(withoutRoles.total);
-    expect(withRoles.totalMeetingsSet).toBe(withoutRoles.totalMeetingsSet);
-    expect(withRoles.leaderboard).toEqual(withoutRoles.leaderboard);
-    const leaderboardLines = (summary: typeof withRoles) =>
-      formatReportSummary(summary)
-        .split('\n')
-        .filter((line) => /^[🥇🥈🥉]|^\d+\./u.test(line));
-    expect(leaderboardLines(withRoles)).toEqual(leaderboardLines(withoutRoles));
-    expect(leaderboardLines(withRoles)).toEqual([
-      '🥇 Alex: 1 activity · 1 meeting set',
-      '🥈 Jordan: 1 activity · 0 meetings set',
-    ]);
-  });
-
-  it('keeps an EW label on one line and labels an unnamed record', () => {
-    expect(
-      buildReportSummary({
-        ...defaults,
-        activities: [],
-        wholesalers: [
-          wholesaler('id-1', 'EW', ' Alex\nExample '),
-          wholesaler('id-2', 'EW', '   '),
-        ],
-      }).externalWholesalerRevenue.map(({ name }) => name),
-    ).toEqual(['Alex Example', 'Unnamed external wholesaler']);
-  });
-
-  it('derives the EW set from the roster read and never masks a failed roster read', async () => {
-    const repository = { listActivities: vi.fn().mockResolvedValue([]) };
-    const meetingRepository = {
-      listMeetingBookings: vi.fn().mockResolvedValue([]),
-    };
-    const wholesalerRepository = {
-      listWholesalers: vi
-        .fn()
-        .mockResolvedValue([
-          wholesaler('id-ew', 'EW', 'Alex'),
-          wholesaler('id-bdr', 'BDR', 'Sam'),
-        ]),
-    };
-    const input = {
-      ...defaults,
-      repository,
-      meetingRepository,
-      wholesalerRepository,
-    };
-
-    const text = await readReportSummary(input);
-    expect(wholesalerRepository.listWholesalers).toHaveBeenCalledOnce();
-    expect(text).toContain('• Alex: $0');
-    expect(text).not.toContain('Sam');
-
-    wholesalerRepository.listWholesalers.mockRejectedValue(
-      new Error('Roster read unavailable'),
-    );
-    await expect(readReportSummary(input)).rejects.toThrow(
-      'Roster read unavailable',
-    );
-    wholesalerRepository.listWholesalers.mockResolvedValue(undefined);
-    await expect(readReportSummary(input)).rejects.toThrow(
-      'Wholesaler role data is unavailable',
-    );
   });
 });

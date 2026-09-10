@@ -79,33 +79,6 @@ const fixtures = () => {
           },
         };
       }
-      if (selection.document.includes('wholesalers(')) {
-        return {
-          wholesalers: {
-            edges: [
-              {
-                node: {
-                  id: 'wholesaler-ew',
-                  name: 'Private external wholesaler',
-                  email: 'ew@example.test',
-                  wholesalerRole: ' ew ',
-                  workspaceMemberId: 'member-ew',
-                },
-              },
-              {
-                node: {
-                  id: 'wholesaler-bdr',
-                  name: 'Private BDR',
-                  email: 'bdr@example.test',
-                  wholesalerRole: 'BDR',
-                  workspaceMemberId: 'member-bdr',
-                },
-              },
-            ],
-            pageInfo: { hasNextPage: false, endCursor: null },
-          },
-        };
-      }
       throw new Error('Unexpected runtime verification query');
     },
   );
@@ -180,7 +153,6 @@ describe('internal read-only production report verification', () => {
           windowHours: 24,
           allOwners: true,
           activityLeaderboard: true,
-          externalWholesalerRevenue: true,
           weeklyExcludesWeekends: false,
         },
         {
@@ -190,7 +162,6 @@ describe('internal read-only production report verification', () => {
           windowHours: 168,
           allOwners: true,
           activityLeaderboard: true,
-          externalWholesalerRevenue: true,
           weeklyExcludesWeekends: true,
         },
         {
@@ -200,7 +171,6 @@ describe('internal read-only production report verification', () => {
           windowHours: 720,
           allOwners: true,
           activityLeaderboard: true,
-          externalWholesalerRevenue: true,
           weeklyExcludesWeekends: false,
         },
       ],
@@ -208,7 +178,7 @@ describe('internal read-only production report verification', () => {
     expect(createCrmClient).toHaveBeenCalledTimes(1);
     expect(createRawCrmTransport).toHaveBeenCalledTimes(1);
     expect(query).not.toHaveBeenCalled();
-    expect(request).toHaveBeenCalledTimes(9);
+    expect(request).toHaveBeenCalledTimes(6);
     for (const [index, start] of [
       '2026-09-08T16:30:00.000Z',
       '2026-09-02T16:30:00.000Z',
@@ -218,7 +188,7 @@ describe('internal read-only production report verification', () => {
         [0, 'outreachActivities', 'occurredAt'],
         [1, 'meetingBookings', 'bookedAt'],
       ] as const) {
-        const selection = request.mock.calls[index * 3 + offset]![0];
+        const selection = request.mock.calls[index * 2 + offset]![0];
         expect(selection.document).toContain(`${field}(`);
         expect(selection.variables).toEqual(
           offset === 0
@@ -336,10 +306,6 @@ describe('internal read-only production report verification', () => {
         edges: [],
         pageInfo: { hasNextPage: false, endCursor: null },
       },
-      wholesalers: {
-        edges: [],
-        pageInfo: { hasNextPage: false, endCursor: null },
-      },
     }));
     const result = await handleReportRuntimeVerification(
       payload,
@@ -357,7 +323,7 @@ describe('internal read-only production report verification', () => {
       [0, 0],
       [0, 0],
     ]);
-    expect(request).toHaveBeenCalledTimes(9);
+    expect(request).toHaveBeenCalledTimes(6);
     expect(query).not.toHaveBeenCalled();
     expect(mutation).not.toHaveBeenCalled();
   });
@@ -384,7 +350,7 @@ describe('internal read-only production report verification', () => {
       let call = 0;
       request.mockImplementation(async (selection) => {
         const currentCall = call++;
-        if (currentCall === period * 3 + 1)
+        if (currentCall === period * 2 + 1)
           throw new Error('Private schema payload must not escape');
         return implementation(selection);
       });
@@ -393,7 +359,7 @@ describe('internal read-only production report verification', () => {
       ).rejects.toThrow(
         `Report runtime verification failed for ${['daily', 'weekly', 'monthly'][period]}`,
       );
-      expect(request).toHaveBeenCalledTimes((period + 1) * 3);
+      expect(request).toHaveBeenCalledTimes((period + 1) * 2);
       expect(query).not.toHaveBeenCalled();
       expect(mutation).not.toHaveBeenCalled();
     },

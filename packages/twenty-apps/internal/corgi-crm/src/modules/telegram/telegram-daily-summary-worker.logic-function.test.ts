@@ -24,7 +24,6 @@ describe('scheduled Telegram team report', () => {
         await readScheduledDailyReport({
           repository: { listActivities } as never,
           meetingRepository: { listMeetingBookings },
-          wholesalerRepository: { listWholesalers: vi.fn().mockResolvedValue([]) },
           scheduledInstant: '2026-09-10T17:00:00.000Z',
           timeZone: 'America/Chicago',
           store,
@@ -71,7 +70,6 @@ describe('scheduled Telegram team report', () => {
     const text = await readScheduledDailyReport({
       repository: { listActivities } as never,
       meetingRepository: { listMeetingBookings },
-          wholesalerRepository: { listWholesalers: vi.fn().mockResolvedValue([]) },
       scheduledInstant: '2026-09-10T17:00:00.000Z',
       timeZone: 'America/Chicago',
       workspaceMemberId: 'member-1',
@@ -124,7 +122,6 @@ describe('scheduled Telegram team report', () => {
       readScheduledDailyReport({
         repository: { listActivities } as never,
         meetingRepository: { listMeetingBookings: vi.fn().mockResolvedValue([]) },
-        wholesalerRepository: { listWholesalers: vi.fn().mockResolvedValue([]) },
         store,
         workspaceMemberId,
         scheduledInstant: '2026-09-10T17:00:00.000Z',

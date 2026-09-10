@@ -92,7 +92,6 @@ export const handleTelegramUpdateJob = async (
     const result = await dependencies.processCommand(update, {
       repository: new CoreOutreachRepository(coreClient, rawTransport),
       meetingRepository: new CoreMeetingBookingReportRepository(rawTransport),
-      wholesalerRepository,
       store: dependencies.store,
       timeZone: dependencies.timeZone,
       publicReportsEnabled: dependencies.publicReportsEnabled,

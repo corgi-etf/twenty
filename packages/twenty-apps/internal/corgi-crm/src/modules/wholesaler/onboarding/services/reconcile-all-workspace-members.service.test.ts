@@ -27,7 +27,6 @@ describe('reconcileAllWorkspaceMembers', () => {
             ]
           : [],
       ),
-      listWholesalers: vi.fn(async () => []),
       create: vi.fn(async (id, data) => ({ id, ...data })),
       update: vi.fn(),
     };
@@ -61,7 +60,6 @@ describe('reconcileAllWorkspaceMembers', () => {
         secret: 'provider detail',
       }),
       findByEmail: vi.fn().mockResolvedValue([]),
-      listWholesalers: vi.fn(async () => []),
       create: vi.fn(),
       update: vi.fn(),
     };
