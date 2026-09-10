@@ -46,21 +46,32 @@ export class TelegramClient {
         true,
       );
     }
-    if (!response.ok) {
-      // Provider bodies may echo request data. Do not include any provider body,
-      // URL, token, chat ID, or message text in the surfaced error.
+    let result: { ok?: boolean; error_code?: number } | null;
+    try {
+      result = await response.json();
+    } catch {
       throw new TelegramDeliveryError(
-        `Telegram ${method} failed with HTTP ${response.status}`,
-        false,
+        `Telegram ${method} returned an unconfirmed response`,
+        true,
       );
     }
-    const result = (await response.json()) as { ok?: boolean };
-    if (result.ok !== true) {
-      throw new TelegramDeliveryError(
-        `Telegram ${method} was rejected`,
-        false,
-      );
-    }
+    if (response.ok && result?.ok === true) return;
+
+    // A gateway/server failure can follow an accepted send. Only a parsed
+    // Telegram rejection can authorize another automatic attempt.
+    const errorCode = result?.error_code ?? response.status;
+    const definitelyRejected =
+      result?.ok === false &&
+      response.status < 500 &&
+      errorCode >= 400 &&
+      errorCode < 500;
+    // Provider bodies may echo request data; keep all error details redacted.
+    throw new TelegramDeliveryError(
+      response.ok
+        ? `Telegram ${method} was rejected`
+        : `Telegram ${method} failed with HTTP ${response.status}`,
+      !definitelyRejected,
+    );
   }
 
   public sendMessage(chatId: string, text: string): Promise<void> {
@@ -68,6 +79,8 @@ export class TelegramClient {
   }
 
   public answerCallbackQuery(callbackQueryId: string): Promise<void> {
-    return this.call('answerCallbackQuery', { callback_query_id: callbackQueryId });
+    return this.call('answerCallbackQuery', {
+      callback_query_id: callbackQueryId,
+    });
   }
 }

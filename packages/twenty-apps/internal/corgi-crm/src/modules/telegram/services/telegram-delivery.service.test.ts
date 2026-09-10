@@ -5,7 +5,10 @@ import {
   enqueueTelegramUpdateOnce,
 } from 'src/modules/telegram/services/telegram-delivery.service';
 import * as deliveryModule from 'src/modules/telegram/services/telegram-delivery.service';
-import { TelegramDeliveryError } from 'src/modules/telegram/services/telegram-client.service';
+import {
+  TelegramClient,
+  TelegramDeliveryError,
+} from 'src/modules/telegram/services/telegram-client.service';
 import { type TelegramDeliveryRecord } from 'src/modules/telegram/graphql/core-telegram-delivery.repository';
 
 class AtomicDeliveryRepository {
@@ -79,10 +82,7 @@ describe('enqueueTelegramUpdateOnce', () => {
     await expect(
       enqueueTelegramUpdateOnce({ update: queuedUpdate, store, enqueue }),
     ).resolves.toEqual({ status: 'enqueued' });
-    expect(enqueue).toHaveBeenCalledWith(
-      queuedUpdate,
-      'telegram-update-42',
-    );
+    expect(enqueue).toHaveBeenCalledWith(queuedUpdate, 'telegram-update-42');
     expect(store.set).not.toHaveBeenCalled();
 
     store.get.mockResolvedValue({ status: 'complete' });
@@ -205,9 +205,11 @@ describe('deliverDailySummary', () => {
       }),
       delete: vi.fn().mockResolvedValue(true),
     };
-    const send = vi.fn().mockRejectedValue(
-      new TelegramDeliveryError('Telegram request outcome is unknown', true),
-    );
+    const send = vi
+      .fn()
+      .mockRejectedValue(
+        new TelegramDeliveryError('Telegram request outcome is unknown', true),
+      );
 
     await expect(
       deliverDailySummary({
@@ -268,7 +270,9 @@ describe('deliverDailySummary', () => {
 describe('durable interactive Telegram delivery', () => {
   const api = deliveryModule as unknown as {
     buildTelegramDeliveryKey?: (scope: string) => string;
-    deliverTelegramOperation?: (input: Record<string, unknown>) => Promise<unknown>;
+    deliverTelegramOperation?: (
+      input: Record<string, unknown>,
+    ) => Promise<unknown>;
   };
 
   const setup = () => {
@@ -363,7 +367,9 @@ describe('durable interactive Telegram delivery', () => {
     const checkpointValues = new Map<string, unknown>();
     let writes = 0;
     const checkpointStore = {
-      get: vi.fn(async (stateKey: string) => checkpointValues.get(stateKey) ?? null),
+      get: vi.fn(
+        async (stateKey: string) => checkpointValues.get(stateKey) ?? null,
+      ),
       set: vi.fn(async (stateKey: string, value: unknown) => {
         writes += 1;
         if (writes === 2) throw new Error('crash after accepted send');
@@ -376,7 +382,9 @@ describe('durable interactive Telegram delivery', () => {
     await expect(api.deliverTelegramOperation(checkpointInput)).rejects.toThrow(
       /crash after accepted send/,
     );
-    await expect(api.deliverTelegramOperation(checkpointInput)).resolves.toEqual({
+    await expect(
+      api.deliverTelegramOperation(checkpointInput),
+    ).resolves.toEqual({
       status: 'unknown',
     });
     expect(send).toHaveBeenCalledOnce();
@@ -399,7 +407,9 @@ describe('durable interactive Telegram delivery', () => {
       perform,
       now: () => new Date(),
     };
-    await expect(api.deliverTelegramOperation(input)).rejects.toThrow(/rejected/);
+    await expect(api.deliverTelegramOperation(input)).rejects.toThrow(
+      /rejected/,
+    );
     await expect(api.deliverTelegramOperation(input)).resolves.toEqual({
       status: 'complete',
     });
@@ -416,7 +426,8 @@ describe('durable interactive Telegram delivery', () => {
       set: vi.fn(async (key: string, value: unknown) => {
         if ((value as { status?: string }).status === 'ready') {
           readyWrites += 1;
-          if (readyWrites === 1) throw new Error('transient ready write failure');
+          if (readyWrites === 1)
+            throw new Error('transient ready write failure');
         }
         values.set(key, value);
       }),
@@ -457,6 +468,39 @@ describe('database-authoritative Telegram delivery', () => {
     };
   };
 
+  it('keeps an unconfirmed HTTP 503 unknown and never sends it again automatically', async () => {
+    const { repository, store } = setup();
+    const provider = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(new Response('{}', { status: 503 }));
+    try {
+      const client = new TelegramClient({ token: 'test-token' });
+      const input = {
+        deliveryKey: key,
+        retryEnvelope: {
+          kind: 'message' as const,
+          chatId: '101',
+          text: 'report',
+        },
+        repository: repository as never,
+        store,
+        perform: () => client.sendMessage('101', 'report'),
+        now: () => new Date('2026-09-09T22:00:00.000Z'),
+        onUnknown: vi.fn(),
+      };
+      await expect(
+        deliveryModule.deliverTelegramOperation(input),
+      ).resolves.toEqual({ status: 'unknown' });
+      await expect(
+        deliveryModule.deliverTelegramOperation(input),
+      ).resolves.toEqual({ status: 'unknown' });
+      expect(repository.records.get(key)?.status).toBe('unknown');
+      expect(provider).toHaveBeenCalledOnce();
+    } finally {
+      provider.mockRestore();
+    }
+  });
+
   it('allows one sender under concurrent admission and conservatively marks the race unknown', async () => {
     const { repository, store } = setup();
     let release!: () => void;
@@ -494,10 +538,12 @@ describe('database-authoritative Telegram delivery', () => {
       perform,
       now: () => new Date('2026-09-09T22:00:00.000Z'),
     };
-    await expect(deliveryModule.deliverTelegramOperation(input)).rejects.toThrow(
-      /response lost/i,
-    );
-    await expect(deliveryModule.deliverTelegramOperation(input)).resolves.toEqual({
+    await expect(
+      deliveryModule.deliverTelegramOperation(input),
+    ).rejects.toThrow(/response lost/i);
+    await expect(
+      deliveryModule.deliverTelegramOperation(input),
+    ).resolves.toEqual({
       status: 'unknown',
     });
     expect(perform).not.toHaveBeenCalled();

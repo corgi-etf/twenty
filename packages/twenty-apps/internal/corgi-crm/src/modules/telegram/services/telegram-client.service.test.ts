@@ -12,7 +12,10 @@ describe('TelegramClient', () => {
         headers: { 'Content-Type': 'application/json' },
       }),
     );
-    const client = new TelegramClient({ token: 'bot-secret', timeoutMs: 1_000 });
+    const client = new TelegramClient({
+      token: 'bot-secret',
+      timeoutMs: 1_000,
+    });
 
     await client.sendMessage('101', 'Daily report');
 
@@ -32,7 +35,10 @@ describe('TelegramClient', () => {
         { status: 401, headers: { 'Content-Type': 'application/json' } },
       ),
     );
-    const client = new TelegramClient({ token: 'bot-secret', timeoutMs: 1_000 });
+    const client = new TelegramClient({
+      token: 'bot-secret',
+      timeoutMs: 1_000,
+    });
 
     await expect(client.sendMessage('101', 'Daily report')).rejects.toThrow(
       'Telegram sendMessage failed with HTTP 401',
@@ -42,19 +48,52 @@ describe('TelegramClient', () => {
     );
   });
 
-  it('classifies network failures as ambiguous and explicit HTTP rejection as retryable', async () => {
+  it('classifies network and unconfirmed server failures as ambiguous', async () => {
     const fetchSpy = vi
       .spyOn(globalThis, 'fetch')
       .mockRejectedValueOnce(new Error('socket closed after write'))
       .mockResolvedValueOnce(new Response('{}', { status: 503 }));
-    const client = new TelegramClient({ token: 'bot-secret', timeoutMs: 1_000 });
+    const client = new TelegramClient({
+      token: 'bot-secret',
+      timeoutMs: 1_000,
+    });
 
-    await expect(client.sendMessage('101', 'Daily report')).rejects.toMatchObject({
+    await expect(
+      client.sendMessage('101', 'Daily report'),
+    ).rejects.toMatchObject({
       mayHaveSucceeded: true,
     });
-    await expect(client.sendMessage('101', 'Daily report')).rejects.toMatchObject({
-      mayHaveSucceeded: false,
+    await expect(
+      client.sendMessage('101', 'Daily report'),
+    ).rejects.toMatchObject({
+      mayHaveSucceeded: true,
     });
     expect(fetchSpy).toHaveBeenCalledTimes(2);
   });
+
+  it('permits retries only after a parsed provider rejection', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify({ ok: false, error_code: 429 }), {
+        status: 429,
+      }),
+    );
+    await expect(
+      new TelegramClient({ token: 'test-token' }).sendMessage('101', 'report'),
+    ).rejects.toMatchObject({ mayHaveSucceeded: false });
+  });
+
+  it.each([200, 502, 503])(
+    'treats an unreadable HTTP %s response as ambiguous',
+    async (status) => {
+      vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+        new Response('unreadable gateway response', { status }),
+      );
+      await expect(
+        new TelegramClient({ token: 'test-token' }).sendMessage(
+          '101',
+          'report',
+        ),
+      ).rejects.toMatchObject({ mayHaveSucceeded: true });
+    },
+  );
 });
