@@ -2,6 +2,16 @@ import { pathToFileURL } from 'node:url';
 
 const TELEGRAM_API_ORIGIN = 'https://api.telegram.org';
 
+const TELEGRAM_COMMANDS = [
+  { command: 'help', description: 'Show bot commands' },
+  { command: 'link', description: 'Securely link your CRM account' },
+  { command: 'log', description: 'Log an outreach activity' },
+  { command: 'today', description: 'Show your activity today' },
+  { command: 'daily', description: 'Show CRM activity for the last 24 hours' },
+  { command: 'weekly', description: 'Show CRM activity for the last 7 days' },
+  { command: 'monthly', description: 'Show CRM activity for the last 30 days' },
+];
+
 const required = (value, label) => {
   const normalized = value?.trim();
   if (!normalized) throw new Error(`${label} is required`);
@@ -101,6 +111,28 @@ const unregisterTelegramWebhook = async ({ fetchImpl, token }) => {
     body: { drop_pending_updates: true },
   });
   return { status: 'unregistered' };
+};
+
+const registerTelegramCommands = async ({ fetchImpl, token }) => {
+  await telegramCall({
+    fetchImpl,
+    token,
+    method: 'setMyCommands',
+    body: { commands: TELEGRAM_COMMANDS },
+  });
+  return { status: 'registered' };
+};
+
+const verifyTelegramCommands = async ({ fetchImpl, token }) => {
+  const commands = await telegramCall({
+    fetchImpl,
+    token,
+    method: 'getMyCommands',
+  });
+  if (JSON.stringify(commands) !== JSON.stringify(TELEGRAM_COMMANDS)) {
+    throw new Error('Telegram bot commands do not match the release contract');
+  }
+  return { status: 'verified' };
 };
 
 const verifyTelegramProviderDisabled = async ({ fetchImpl, token }) => {
@@ -204,6 +236,7 @@ const main = async () => {
     process.env.CORGI_CRM_TELEGRAM_WEBHOOK_URL,
     'Webhook URL',
   );
+  await registerTelegramCommands({ fetchImpl: fetch, token });
   await registerTelegramWebhook({
     fetchImpl: fetch,
     token,
@@ -215,6 +248,7 @@ const main = async () => {
     token,
     expectedWebhookUrl: webhookUrl,
   });
+  await verifyTelegramCommands({ fetchImpl: fetch, token });
   if (
     process.env.CORGI_CRM_TELEGRAM_SIGNED_CANARY_CONFIRM !==
     'RUN_SIGNED_CANARY'
@@ -249,8 +283,10 @@ if (
 export {
   deliverGatedTestMessage,
   registerTelegramWebhook,
+  registerTelegramCommands,
   unregisterTelegramWebhook,
   verifySignedWebhookCanary,
   verifyTelegramProvider,
   verifyTelegramProviderDisabled,
+  verifyTelegramCommands,
 };

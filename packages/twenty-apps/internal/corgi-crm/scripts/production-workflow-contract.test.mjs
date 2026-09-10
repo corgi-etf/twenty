@@ -62,8 +62,17 @@ describe('Corgi CRM production app workflow contract', () => {
     assert.match(workflow, /Unregister Telegram provider[\s\S]*if:[^\n]*!inputs\.telegram_enable/);
     assert.match(workflow, /verify-telegram-live\.mjs" disabled/);
     assert.match(workflow, /Fail closed after Telegram setup failure[\s\S]*if:[^\n]*failure\(\)/);
-    assert.match(workflow, /continue-on-error:\s*true/);
-    assert.match(workflow, /configure-telegram\.mjs" disabled/);
+    const cleanup = workflow.slice(
+      position('Fail closed after Telegram setup failure'),
+      position('Revoke the short-lived deployment API key'),
+    );
+    assert.doesNotMatch(cleanup, /continue-on-error:\s*true/);
+    assert.match(cleanup, /set \+e/);
+    assert.match(cleanup, /app_cleanup_status=\$\?/);
+    assert.match(cleanup, /provider_cleanup_status=\$\?/);
+    assert.match(cleanup, /configure-telegram\.mjs" disabled/);
+    assert.match(cleanup, /verify-telegram-live\.mjs" disabled/);
+    assert.match(cleanup, /exit 1/);
   });
 
   it('keeps real test delivery opt-in behind two independent workflow gates', () => {

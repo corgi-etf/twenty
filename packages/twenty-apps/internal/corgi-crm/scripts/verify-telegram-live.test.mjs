@@ -4,7 +4,9 @@ import { describe, it } from 'node:test';
 import {
   deliverGatedTestMessage,
   unregisterTelegramWebhook,
+  registerTelegramCommands,
   verifyTelegramProviderDisabled,
+  verifyTelegramCommands,
   verifySignedWebhookCanary,
   verifyTelegramProvider,
 } from './verify-telegram-live.mjs';
@@ -18,6 +20,42 @@ const okJson = (result) =>
   });
 
 describe('live Telegram provider verification hooks', () => {
+  it('registers and verifies the exact supported bot command menu', async () => {
+    const calls = [];
+    const commands = [
+      { command: 'help', description: 'Show bot commands' },
+      { command: 'link', description: 'Securely link your CRM account' },
+      { command: 'log', description: 'Log an outreach activity' },
+      { command: 'today', description: 'Show your activity today' },
+      { command: 'daily', description: 'Show CRM activity for the last 24 hours' },
+      { command: 'weekly', description: 'Show CRM activity for the last 7 days' },
+      { command: 'monthly', description: 'Show CRM activity for the last 30 days' },
+    ];
+    const fetchImpl = async (url, init) => {
+      calls.push({ url: String(url), body: JSON.parse(init.body) });
+      return String(url).endsWith('/getMyCommands')
+        ? okJson(commands)
+        : okJson(true);
+    };
+
+    await registerTelegramCommands({ fetchImpl, token: 'bot-secret' });
+    await verifyTelegramCommands({ fetchImpl, token: 'bot-secret' });
+
+    assert.match(calls[0].url, /\/setMyCommands$/);
+    assert.deepEqual(calls[0].body, { commands });
+    assert.match(calls[1].url, /\/getMyCommands$/);
+  });
+
+  it('fails closed when the installed provider command menu drifts', async () => {
+    const fetchImpl = async () => okJson([
+      { command: 'help', description: 'Show bot commands' },
+    ]);
+    await assert.rejects(
+      () => verifyTelegramCommands({ fetchImpl, token: 'bot-secret' }),
+      /commands/i,
+    );
+  });
+
   it('unregisters the webhook, drops pending updates, and verifies disabled provider state', async () => {
     const calls = [];
     const fetchImpl = async (url, init) => {

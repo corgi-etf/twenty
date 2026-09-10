@@ -345,14 +345,23 @@ jobs:
 
       - name: Fail closed after Telegram setup failure
         if: ${{ failure() && inputs.telegram_enable && steps.credential.outputs.token != '' }}
-        continue-on-error: true
         env:
           CORGI_CRM_API_KEY: ${{ steps.credential.outputs.token }}
           CORGI_CRM_TELEGRAM_BOT_TOKEN: ${{ secrets.CORGI_CRM_TELEGRAM_BOT_TOKEN }}
           CORGI_CRM_TELEGRAM_LIVE_VERIFICATION_CONFIRM: VERIFY_TELEGRAM_LIVE
         run: |
+          set +e
           node "${APP_PATH}/scripts/configure-telegram.mjs" disabled
-          node "${APP_PATH}/scripts/verify-telegram-live.mjs" disabled
+          app_cleanup_status=$?
+          provider_cleanup_status=0
+          if [[ -n "${CORGI_CRM_TELEGRAM_BOT_TOKEN:-}" ]]; then
+            node "${APP_PATH}/scripts/verify-telegram-live.mjs" disabled
+            provider_cleanup_status=$?
+          fi
+          if (( app_cleanup_status != 0 || provider_cleanup_status != 0 )); then
+            echo "Telegram fail-closed cleanup did not complete" >&2
+            exit 1
+          fi
 
       - name: Revoke the short-lived deployment API key
         if: always()
