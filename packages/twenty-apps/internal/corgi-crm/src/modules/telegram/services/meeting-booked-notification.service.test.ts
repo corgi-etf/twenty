@@ -154,3 +154,57 @@ describe('release canary suppression', () => {
     ).toBe(false);
   });
 });
+
+// The workflow arms the token and the app runtime reads it. A format drift
+// between the two sides would silently stop suppressing and fire a bogus
+// booking alert on every release, so pin them against each other.
+describe('canary suppression token compatibility with the release workflow', () => {
+  const NOW = Date.parse('2026-09-10T05:30:00.000Z');
+  const NONCE = '55555555-5555-4555-8555-555555555555';
+
+  it('accepts the token the arming step actually writes, for that run only', async () => {
+    // The release workflow arms the token from this script, so importing the
+    // real builder is what stops it drifting from the checker below. It is
+    // plain .mjs with no declarations, hence the explicit shape.
+    const { buildMeetingCanarySuppression } = (await import(
+      // @ts-expect-error -- plain .mjs with no declarations, imported on purpose
+      // so the real arming builder is pinned against the checker below.
+      '../../../../scripts/verify-production-install.mjs'
+    )) as unknown as {
+      buildMeetingCanarySuppression: (input: {
+        runId: string;
+        runAttempt: string;
+        now: number;
+      }) => string;
+    };
+    const suppressionJson = buildMeetingCanarySuppression({
+      runId: '34500629643',
+      runAttempt: '2',
+      now: NOW,
+    });
+    const suppresses = (name: string, now = NOW) =>
+      isSuppressedMeetingCanaryBooking({ name, suppressionJson, now });
+
+    expect(suppresses(`CRM meeting canary 34500629643-2-${NONCE}`)).toBe(true);
+    expect(suppresses(`CRM meeting canary 34500629644-2-${NONCE}`)).toBe(false);
+    expect(suppresses(`CRM meeting canary 34500629643-1-${NONCE}`)).toBe(false);
+    expect(suppresses('Quarterly review with Acme')).toBe(false);
+    // The armed window must outlive a slow canary and still expire on its own.
+    expect(
+      suppresses(`CRM meeting canary 34500629643-2-${NONCE}`, NOW + 19 * 60_000),
+    ).toBe(true);
+    expect(
+      suppresses(`CRM meeting canary 34500629643-2-${NONCE}`, NOW + 21 * 60_000),
+    ).toBe(false);
+  });
+
+  it('disarms to a value the runtime treats as unarmed', () => {
+    expect(
+      isSuppressedMeetingCanaryBooking({
+        name: `CRM meeting canary 34500629643-2-${NONCE}`,
+        suppressionJson: '',
+        now: NOW,
+      }),
+    ).toBe(false);
+  });
+});

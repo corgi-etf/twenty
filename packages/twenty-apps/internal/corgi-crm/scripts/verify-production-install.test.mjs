@@ -5,6 +5,7 @@ import { describe, it } from 'node:test';
 import { buildSchema, parse, validate } from 'graphql';
 
 import {
+  buildMeetingCanarySuppression,
   resolveCorgiRoleObjectIdentifiers,
   verifyApplicationRoleContract,
   verifyInstalledApplication,
@@ -1068,7 +1069,7 @@ describe('production metadata query compatibility', () => {
     const documents = [...endpointDocuments, ...deploymentKeyDocuments];
     assert.equal(
       documents.length,
-      16,
+      18,
       'all static deployment metadata documents are covered',
     );
     const schema = buildSchema(schemaSource);
@@ -1078,6 +1079,41 @@ describe('production metadata query compatibility', () => {
       assert.deepEqual(
         errors.map((error) => error.message),
         [],
+      );
+    }
+  });
+});
+
+describe('meeting canary alert suppression token', () => {
+  const now = Date.parse('2026-09-10T05:30:00.000Z');
+
+  it('binds the token to the exact run and a bounded window', () => {
+    const token = JSON.parse(
+      buildMeetingCanarySuppression({
+        runId: '34500629643',
+        runAttempt: '2',
+        now,
+      }),
+    );
+    assert.deepEqual(token, {
+      version: 1,
+      namePrefix: 'CRM meeting canary 34500629643-2-',
+      notAfter: '2026-09-10T05:50:00.000Z',
+    });
+  });
+
+  it('refuses a run identity it cannot bind the token to', () => {
+    for (const [runId, runAttempt] of [
+      [undefined, '1'],
+      ['34500629643', undefined],
+      ['', '1'],
+      ['0', '1'],
+      ['34500629643', '0'],
+      ['not-a-run', '1'],
+      ['34500629643', '1 OR 1'],
+    ]) {
+      assert.throws(() =>
+        buildMeetingCanarySuppression({ runId, runAttempt, now }),
       );
     }
   });
