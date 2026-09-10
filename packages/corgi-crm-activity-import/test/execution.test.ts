@@ -19,6 +19,8 @@ import {
 
 const uuid = (digit: string): string =>
   `${digit.repeat(8)}-${digit.repeat(4)}-4${digit.repeat(3)}-8${digit.repeat(3)}-${digit.repeat(12)}`;
+const OLDER_COMPANY = '2026-01-04T10:00:00.000Z';
+const NEWER_COMPANY = '2026-09-10T18:30:00.000Z';
 const identities = { Grace: uuid('1'), Nash: uuid('3') };
 const identityArtifact = {
   workspaceMemberIds: identities,
@@ -52,6 +54,9 @@ class FakeApi implements ActivityImportApi {
   ];
   companyLinks = new Map<string, Record<string, unknown>>();
   companyDeletes: string[] = [];
+  softDeletedCompanies: ActivityImportCompany[] = [];
+  companyListReads = 0;
+  companyCreateSequence = 0;
   wholesalers = [{ id: uuid('6'), workspaceMemberId: identities.Nash }];
   people = [];
   activities: OutreachActivityRecord[] = [];
@@ -61,7 +66,12 @@ class FakeApi implements ActivityImportApi {
   failOnCreateNumber: number | undefined;
 
   async listCompanies() {
+    this.companyListReads += 1;
+
     return this.companies;
+  }
+  async listSoftDeletedCompanies() {
+    return this.softDeletedCompanies;
   }
   async listWholesalers() {
     return this.wholesalers;
@@ -81,7 +91,14 @@ class FakeApi implements ActivityImportApi {
   }
   async createCompany(company: { name: string }) {
     this.companyCreates.push(company);
-    this.companies.push({ id: uuid('7'), name: company.name });
+    this.companyCreateSequence += 1;
+    // A distinct ID per write, as the CRM issues. Reusing one made the fake
+    // listing repeat a record, which the listing stability check rejects.
+    this.companies.push({
+      id: `77777777-7777-4777-8777-${String(this.companyCreateSequence).padStart(12, '0')}`,
+      name: company.name,
+      createdAt: NEWER_COMPANY,
+    });
   }
   async readCompanyLinks(companyId: string) {
     return {
@@ -438,9 +455,6 @@ test('company creation fails closed when a write did not land', async () => {
   );
 });
 
-const OLDER_COMPANY = '2026-01-04T10:00:00.000Z';
-const NEWER_COMPANY = '2026-09-10T18:30:00.000Z';
-
 const resolveDuplicates = (
   api: ActivityImportApi,
   mode: 'dry-run' | 'apply',
@@ -675,4 +689,112 @@ test('duplicate resolution writes no CRM record and leaks no source text', async
   assert.equal(api.companyCreates.length, 0);
   assert.equal(api.checkpoints.length, 0);
   assert.doesNotMatch(JSON.stringify(result), /Reached them/);
+});
+
+test('company creation reads the listing twice before trusting it', async () => {
+  const api = new FakeApi();
+  api.companies = [{ id: uuid('4'), name: 'Acme', createdAt: OLDER_COMPANY }];
+
+  await createCompanies(api, 'dry-run');
+
+  // One walk cannot detect its own skip, so the plan never rests on one.
+  assert.equal(api.companyListReads, 2);
+});
+
+test('company creation refuses when the two listing walks disagree', async () => {
+  const api = new FakeApi();
+  const full = [
+    { id: uuid('4'), name: 'Acme', createdAt: OLDER_COMPANY },
+    { id: uuid('5'), name: 'Beta', createdAt: OLDER_COMPANY },
+  ];
+  // The pagination-skip hypothesis made concrete: the second walk drops Beta.
+  api.listCompanies = async () => {
+    api.companyListReads += 1;
+
+    return api.companyListReads === 1 ? full : [full[0]!];
+  };
+
+  await assert.rejects(
+    createCompanies(api, 'apply'),
+    /listing was not stable across two reads/,
+  );
+  assert.equal(api.companyCreates.length, 0);
+});
+
+test('company creation refuses to create over a soft-deleted namesake', async () => {
+  const api = new FakeApi();
+  api.companies = [{ id: uuid('4'), name: 'Acme', createdAt: OLDER_COMPANY }];
+  // Invisible to the zero-match check, a duplicate the moment it is restored.
+  api.softDeletedCompanies = [
+    { id: uuid('9'), name: 'Beta', createdAt: OLDER_COMPANY },
+  ];
+
+  await assert.rejects(
+    createCompanies(api, 'apply'),
+    /refused "Beta"[\s\S]*soft-deleted company already carries that name/,
+  );
+  assert.equal(api.companyCreates.length, 0);
+});
+
+test('a soft-deleted namesake behind an existing company does not block creation', async () => {
+  const api = new FakeApi();
+  api.companies = [
+    { id: uuid('4'), name: 'Acme', createdAt: OLDER_COMPANY },
+    { id: uuid('5'), name: 'Beta', createdAt: OLDER_COMPANY },
+  ];
+  // Nothing is created for Acme, so its namesake is latent, not a blocker.
+  api.softDeletedCompanies = [
+    { id: uuid('9'), name: 'Acme', createdAt: OLDER_COMPANY },
+  ];
+
+  const result = await createCompanies(api, 'apply');
+
+  assert.equal(result.createdCount, 0);
+  assert.deepEqual(result.softDeletedNamesakes, []);
+});
+
+test('a company creation dry-run reports a soft-deleted namesake without failing', async () => {
+  const api = new FakeApi();
+  api.companies = [{ id: uuid('4'), name: 'Acme', createdAt: OLDER_COMPANY }];
+  api.softDeletedCompanies = [
+    { id: uuid('9'), name: 'Beta', createdAt: OLDER_COMPANY },
+  ];
+
+  const result = await createCompanies(api, 'dry-run');
+
+  // The dry run is the pre-flight, so it has to surface the trap, not hit it.
+  assert.deepEqual(result.softDeletedNamesakes, [
+    { name: 'Beta', companyIds: [uuid('9')] },
+  ]);
+  assert.deepEqual(result.plannedNames, ['Beta']);
+  assert.equal(api.companyCreates.length, 0);
+});
+
+test('company creation fails closed when it cannot see soft-deleted companies', async () => {
+  const api = new FakeApi();
+  api.companies = [];
+  const { listSoftDeletedCompanies: _omitted, ...blind } = {
+    listCompanies: () => api.listCompanies(),
+    listSoftDeletedCompanies: () => api.listSoftDeletedCompanies(),
+    listWholesalers: () => api.listWholesalers(),
+    listPeople: () => api.listPeople(),
+    listOutreachActivities: () => api.listOutreachActivities(),
+    createOutreachActivity: (record: OutreachActivityRecord) =>
+      api.createOutreachActivity(record),
+    createCompany: (company: { name: string }) => api.createCompany(company),
+    readCheckpoint: () => api.readCheckpoint(),
+    writeCheckpoint: (checkpoint: ActivityImportCheckpoint) =>
+      api.writeCheckpoint(checkpoint),
+  };
+
+  await assert.rejects(
+    runActivityImportCompanyCreation(blind, {
+      source,
+      csvOptions,
+      mode: 'apply',
+      confirmation: 'CREATE_CRM_IMPORT_COMPANIES',
+    }),
+    /cannot see soft-deleted companies/,
+  );
+  assert.equal(api.companyCreates.length, 0);
 });

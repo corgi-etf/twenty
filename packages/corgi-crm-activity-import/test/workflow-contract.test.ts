@@ -260,6 +260,14 @@ test('company creation is opt-in, separately confirmed, and default off', async 
   assert.match(execution, /resolve the duplicate before creating companies/);
   assert.match(execution, /post-write verification failed/);
   assert.match(execution, /createCompany\({ name: creation\.name }\)/);
+
+  // The zero-match decision never rests on a single paginated walk, and never
+  // creates over a namesake the default listing cannot show it.
+  assert.match(execution, /assertStableCompanyListing\(/);
+  assert.match(execution, /cannot see soft-deleted companies/);
+  assert.match(execution, /soft-deleted company already carries that name/);
+  assert.match(maintenanceSpec, /listSoftDeletedCompanies/);
+  assert.match(maintenanceSpec, /deletedAt\[is\]:NOT_NULL/);
   assert.doesNotMatch(
     execution,
     /toLocaleLowerCase|toUpperCase|replace\(\/\\s/,
