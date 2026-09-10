@@ -10,6 +10,10 @@ import { parseActivityCsv } from '../src/importer.ts';
 
 const document = Buffer.from('synthetic completed-action document');
 const documentSha256 = createHash('sha256').update(document).digest('hex');
+const voicemailRows = new Set([
+  2, 5, 10, 11, 14, 15, 16, 17, 18, 20, 21, 22, 23,
+]);
+const emailRows = new Set([2, 5]);
 
 const worksheetRows = Array.from({ length: 36 }, (_, index) => {
   const sourceRowNumber = index + 1;
@@ -18,13 +22,14 @@ const worksheetRows = Array.from({ length: 36 }, (_, index) => {
     sourceRowNumber,
     companyName: `Synthetic Company ${sourceRowNumber}`,
     phoneCallCompleted: sourceRowNumber <= 23,
-    voicemail: sourceRowNumber <= 13,
+    voicemail: voicemailRows.has(sourceRowNumber),
+    spokeWith: false,
     emailFound: sourceRowNumber >= 24,
-    emailSent: sourceRowNumber === 24 || sourceRowNumber === 25,
+    emailSent: emailRows.has(sourceRowNumber),
     notes:
-      sourceRowNumber === 23
+      sourceRowNumber === 2
         ? 'Shared contact details'
-        : sourceRowNumber === 24
+        : sourceRowNumber === 5
           ? 'Sent a message; social follow noted'
           : null,
   } satisfies CompletedActionWorksheetRow;
@@ -60,6 +65,7 @@ test('normalizes only checked completed actions in deterministic order', () => {
     activityDate: '2026-09-09',
     timeZone: 'America/Chicago',
     importId: 'completed-actions-synthetic',
+    normalizationReceipt: normalized.receipt,
   });
 
   assert.equal(activities.length, 25);
@@ -73,47 +79,83 @@ test('normalizes only checked completed actions in deterministic order', () => {
     13,
   );
   assert.equal(
+    activities.filter(({ outcome }) => outcome === 'no_response').length,
+    10,
+  );
+  assert.equal(
     activities.filter(({ activityType }) => activityType === 'email').length,
     2,
   );
   assert.deepEqual(
     activities
-      .slice(22, 25)
-      .map(
-        ({ sourceRowNumber, actionOrdinal, activityType, outcome, notes }) => ({
+      .filter(({ activityType }) => activityType === 'phone_call')
+      .map(({ sourceRowNumber }) => sourceRowNumber),
+    Array.from({ length: 23 }, (_, index) => index + 1),
+  );
+  assert.deepEqual(
+    activities
+      .filter(({ outcome }) => outcome === 'left_voicemail')
+      .map(({ sourceRowNumber }) => sourceRowNumber),
+    [...voicemailRows],
+  );
+  assert.deepEqual(
+    activities
+      .filter(({ activityType }) => activityType === 'email')
+      .map(({ sourceRowNumber }) => sourceRowNumber),
+    [...emailRows],
+  );
+  assert.ok(worksheetRows.every(({ spokeWith }) => spokeWith === false));
+  for (const sourceRowNumber of [2, 5]) {
+    assert.deepEqual(
+      activities
+        .filter((activity) => activity.sourceRowNumber === sourceRowNumber)
+        .map(
+          ({
+            sourceRowNumber,
+            actionOrdinal,
+            activityType,
+            outcome,
+            notes,
+          }) => ({
+            sourceRowNumber,
+            actionOrdinal,
+            activityType,
+            outcome,
+            notes,
+          }),
+        ),
+      [
+        {
           sourceRowNumber,
-          actionOrdinal,
-          activityType,
-          outcome,
-          notes,
-        }),
-      ),
-    [
-      {
-        sourceRowNumber: 23,
-        actionOrdinal: 1,
-        activityType: 'phone_call',
-        outcome: 'connected',
-        notes: 'Shared contact details',
-      },
-      {
-        sourceRowNumber: 24,
-        actionOrdinal: 1,
-        activityType: 'email',
-        outcome: 'no_response',
-        notes: 'Sent a message; social follow noted',
-      },
-      {
-        sourceRowNumber: 25,
-        actionOrdinal: 1,
-        activityType: 'email',
-        outcome: 'no_response',
-        notes: null,
-      },
-    ],
+          actionOrdinal: 1,
+          activityType: 'phone_call',
+          outcome: 'left_voicemail',
+          notes:
+            sourceRowNumber === 2
+              ? 'Shared contact details'
+              : 'Sent a message; social follow noted',
+        },
+        {
+          sourceRowNumber,
+          actionOrdinal: 2,
+          activityType: 'email',
+          outcome: 'other',
+          notes:
+            sourceRowNumber === 2
+              ? 'Shared contact details'
+              : 'Sent a message; social follow noted',
+        },
+      ],
+    );
+  }
+  assert.ok(
+    worksheetRows
+      .filter(({ emailSent }) => emailSent)
+      .every(({ emailFound }) => emailFound === false),
+    'Email Sent must stay independent from Email Found',
   );
   assert.ok(
-    activities.every(({ sourceRowNumber }) => sourceRowNumber < 26),
+    activities.every(({ sourceRowNumber }) => sourceRowNumber <= 23),
     'Email Found without a checked completed action must emit nothing',
   );
 });
@@ -141,6 +183,24 @@ test('emits exact PII-free hashes and aggregate counts', () => {
   );
 });
 
+test('emits connected only when spoke-with evidence is checked', () => {
+  const { normalizedCsv } = normalize(
+    [{ ...worksheetRows[0]!, spokeWith: true }],
+    {
+      sourceRowCount: 1,
+      activityCount: 1,
+      phoneCallCount: 1,
+      voicemailCount: 0,
+      emailCount: 0,
+    },
+  );
+
+  assert.equal(
+    new TextDecoder().decode(normalizedCsv),
+    '1,1,Synthetic Company 1,phone_call,connected,\n',
+  );
+});
+
 test('fails closed on changed provenance, invalid checkbox state, and count drift', () => {
   assert.throws(
     () => normalize(worksheetRows, { sourceDocumentSha256: '0'.repeat(64) }),
@@ -149,11 +209,29 @@ test('fails closed on changed provenance, invalid checkbox state, and count drif
   assert.throws(
     () =>
       normalize([
-        ...worksheetRows.slice(0, 25),
-        { ...worksheetRows[25]!, voicemail: true },
-        ...worksheetRows.slice(26),
+        ...worksheetRows.slice(0, 23),
+        { ...worksheetRows[23]!, voicemail: true },
+        ...worksheetRows.slice(24),
       ]),
     /voicemail without a completed phone call/,
+  );
+  assert.throws(
+    () =>
+      normalize([
+        ...worksheetRows.slice(0, 1),
+        { ...worksheetRows[1]!, spokeWith: true },
+        ...worksheetRows.slice(2),
+      ]),
+    /cannot both be voicemail and spoke with/,
+  );
+  assert.throws(
+    () =>
+      normalize([
+        ...worksheetRows.slice(0, 23),
+        { ...worksheetRows[23]!, spokeWith: true },
+        ...worksheetRows.slice(24),
+      ]),
+    /spoke with without a completed phone call/,
   );
   assert.throws(
     () => normalize(worksheetRows, { activityCount: 24 }),
@@ -165,7 +243,7 @@ test('fails closed on changed provenance, invalid checkbox state, and count drif
         sourceRowCount: 1,
         activityCount: 1,
         phoneCallCount: 1,
-        voicemailCount: 1,
+        voicemailCount: 0,
         emailCount: 0,
       }),
     /source row 1 is invalid/,

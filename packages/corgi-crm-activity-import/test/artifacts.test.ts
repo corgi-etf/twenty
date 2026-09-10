@@ -93,6 +93,18 @@ test('atomically writes only the PII-free result contract', async (t) => {
       distinctCompanyCount: 1,
       activityIdSetHash: '5'.repeat(64),
       planHash: '6'.repeat(64),
+      normalizationReceipt: {
+        schemaVersion: 1,
+        sourceFormat: 'completed-actions-v2',
+        sourceDocumentSha256: '2'.repeat(64),
+        normalizedCsvSha256: '1'.repeat(64),
+        rowSequenceSha256: '3'.repeat(64),
+        sourceRowCount: 1,
+        activityCount: 1,
+        phoneCallCount: 1,
+        voicemailCount: 0,
+        emailCount: 0,
+      },
     },
     plannedCount: 1,
     createdCount: 0,
@@ -100,5 +112,50 @@ test('atomically writes only the PII-free result contract', async (t) => {
   });
   const serialized = await readFile(resultPath, 'utf8');
   assert.match(serialized, /"sourceSha256"/);
-  assert.doesNotMatch(serialized, /companyName|notes|phone|email/);
+  assert.doesNotMatch(serialized, /companyName|"notes"|"phone"|"email"/);
+});
+
+test('rejects v2 result manifests with mismatched normalization receipts', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'activity-import-receipt-'));
+  t.after(() => rm(root, { recursive: true }));
+  await assert.rejects(
+    writeActivityImportResult(join(root, 'result.json'), {
+      schemaVersion: 1,
+      mode: 'dry-run',
+      status: 'planned',
+      manifest: {
+        schemaVersion: 2,
+        sourceFormat: 'completed-actions-v2',
+        ownerLabel: 'Kelly',
+        sourceSha256: '1'.repeat(64),
+        provenanceSha256: '2'.repeat(64),
+        rowSequenceSha256: '3'.repeat(64),
+        importIdHash: '4'.repeat(64),
+        expectedRows: 1,
+        activityDate: '2026-09-09',
+        timeZone: 'America/Chicago',
+        rowCount: 1,
+        blankNoteCount: 0,
+        distinctCompanyCount: 1,
+        activityIdSetHash: '5'.repeat(64),
+        planHash: '6'.repeat(64),
+        normalizationReceipt: {
+          schemaVersion: 1,
+          sourceFormat: 'completed-actions-v2',
+          sourceDocumentSha256: '2'.repeat(64),
+          normalizedCsvSha256: '0'.repeat(64),
+          rowSequenceSha256: '3'.repeat(64),
+          sourceRowCount: 1,
+          activityCount: 2,
+          phoneCallCount: 1,
+          voicemailCount: 0,
+          emailCount: 0,
+        },
+      },
+      plannedCount: 1,
+      createdCount: 0,
+      alreadyPresentCount: 0,
+    }),
+    /manifest is invalid/,
+  );
 });

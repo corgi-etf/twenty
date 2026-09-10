@@ -13,6 +13,19 @@ export type CanonicalActivityOutcome =
   | 'not_interested'
   | 'other';
 
+export type ActivityImportNormalizationReceipt = {
+  schemaVersion: 1;
+  sourceFormat: 'completed-actions-v2';
+  sourceDocumentSha256: string;
+  normalizedCsvSha256: string;
+  rowSequenceSha256: string;
+  sourceRowCount: number;
+  activityCount: number;
+  phoneCallCount: number;
+  voicemailCount: number;
+  emailCount: number;
+};
+
 export type ActivityImportCsvOptions = {
   sourceFormat: ActivityImportSourceFormat;
   ownerLabel: ActivityOwnerLabel;
@@ -23,6 +36,7 @@ export type ActivityImportCsvOptions = {
   activityDate: string;
   timeZone: string;
   importId: string;
+  normalizationReceipt?: ActivityImportNormalizationReceipt;
 };
 
 export type SourceActivity = {
@@ -81,6 +95,7 @@ export type ActivityImportManifest = {
   distinctCompanyCount: number;
   activityIdSetHash: string;
   planHash: string;
+  normalizationReceipt: ActivityImportNormalizationReceipt | null;
 };
 
 export type PlannedActivity = {
@@ -114,6 +129,70 @@ const CANONICAL_ACTIVITY_OUTCOMES = [
   'other',
 ] as const;
 const ACTIVITY_IMPORT_UUID_NAMESPACE = 'c0671000-75d5-5df7-a950-50da7105b2dd';
+
+const isCompatibleActivityTypeAndOutcome = (
+  activityType: CompletedActivityType,
+  outcome: CanonicalActivityOutcome,
+): boolean =>
+  activityType === 'phone_call' ||
+  (outcome !== 'left_voicemail' && outcome !== 'connected');
+
+const assertNormalizationReceipt = (
+  receipt: ActivityImportNormalizationReceipt | undefined,
+  options: ActivityImportCsvOptions,
+): void => {
+  if (options.sourceFormat === 'legacy-nash-outreach-v1') {
+    if (receipt !== undefined) {
+      throw new Error(
+        'Activity import legacy source cannot include a normalization receipt',
+      );
+    }
+    return;
+  }
+  if (
+    Object.keys((receipt as unknown as Record<string, unknown>) ?? {})
+      .sort()
+      .join(',') !==
+      [
+        'schemaVersion',
+        'sourceFormat',
+        'sourceDocumentSha256',
+        'normalizedCsvSha256',
+        'rowSequenceSha256',
+        'sourceRowCount',
+        'activityCount',
+        'phoneCallCount',
+        'voicemailCount',
+        'emailCount',
+      ]
+        .sort()
+        .join(',') ||
+    receipt?.schemaVersion !== 1 ||
+    receipt.sourceFormat !== 'completed-actions-v2' ||
+    ![
+      receipt.sourceDocumentSha256,
+      receipt.normalizedCsvSha256,
+      receipt.rowSequenceSha256,
+    ].every((hash) => typeof hash === 'string' && HASH_PATTERN.test(hash)) ||
+    receipt.sourceDocumentSha256 !== options.provenanceSha256 ||
+    receipt.normalizedCsvSha256 !== options.sourceSha256 ||
+    receipt.rowSequenceSha256 !== options.expectedRowSequenceSha256 ||
+    receipt.activityCount !== options.expectedRows ||
+    ![
+      receipt.sourceRowCount,
+      receipt.activityCount,
+      receipt.phoneCallCount,
+      receipt.voicemailCount,
+      receipt.emailCount,
+    ].every((count) => Number.isSafeInteger(count) && count >= 0) ||
+    receipt.sourceRowCount < 1 ||
+    receipt.activityCount < 1 ||
+    receipt.phoneCallCount + receipt.emailCount !== receipt.activityCount ||
+    receipt.voicemailCount > receipt.phoneCallCount
+  ) {
+    throw new Error('Activity import normalization receipt is invalid');
+  }
+};
 
 const stableStringify = (value: unknown): string => {
   if (Array.isArray(value)) return `[${value.map(stableStringify).join(',')}]`;
@@ -167,6 +246,7 @@ const assertCsvOptions = (options: ActivityImportCsvOptions): void => {
   ) {
     throw new Error('Activity import completed actions require a row hash');
   }
+  assertNormalizationReceipt(options.normalizationReceipt, options);
   if (
     !Number.isSafeInteger(options.expectedRows) ||
     options.expectedRows < 1 ||
@@ -378,7 +458,7 @@ export const parseActivityCsv = (
     let previousSourceRow = 0;
     let previousActionOrdinal = 0;
 
-    return rows.map((columns, rowIndex) => {
+    const completedRows = rows.map((columns, rowIndex) => {
       if (columns.length !== 6) {
         throw new Error(
           `Activity import row ${rowIndex + 1} must have exactly 6 columns`,
@@ -425,6 +505,11 @@ export const parseActivityCsv = (
           `Activity import row ${rowIndex + 1} has an invalid outcome`,
         );
       }
+      if (!isCompatibleActivityTypeAndOutcome(activityType, outcome)) {
+        throw new Error(
+          `Activity import row ${rowIndex + 1} has an incompatible activity type and outcome`,
+        );
+      }
       const notes = columns[5]!.trim().normalize('NFKC') || null;
 
       return {
@@ -438,6 +523,28 @@ export const parseActivityCsv = (
         occurredAt,
       };
     });
+    const receipt = options.normalizationReceipt!;
+    const phoneCallCount = completedRows.filter(
+      ({ activityType }) => activityType === 'phone_call',
+    ).length;
+    const emailCount = completedRows.filter(
+      ({ activityType }) => activityType === 'email',
+    ).length;
+    const voicemailCount = completedRows.filter(
+      ({ activityType, outcome }) =>
+        activityType === 'phone_call' && outcome === 'left_voicemail',
+    ).length;
+    if (
+      receipt.sourceRowCount < previousSourceRow ||
+      receipt.activityCount !== completedRows.length ||
+      receipt.phoneCallCount !== phoneCallCount ||
+      receipt.voicemailCount !== voicemailCount ||
+      receipt.emailCount !== emailCount
+    ) {
+      throw new Error('Activity import normalization receipt count mismatch');
+    }
+
+    return completedRows;
   }
 
   return rows.map((columns, rowIndex) => {
@@ -530,6 +637,18 @@ const formatUuid = (bytes: Buffer): string => {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}`;
 };
 
+const deterministicUuid = (seed: string): string => {
+  const digest = createHash('sha1')
+    .update(uuidBytes(ACTIVITY_IMPORT_UUID_NAMESPACE))
+    .update(seed, 'utf8')
+    .digest()
+    .subarray(0, 16);
+  digest[6] = (digest[6]! & 0x0f) | 0x50;
+  digest[8] = (digest[8]! & 0x3f) | 0x80;
+
+  return formatUuid(digest);
+};
+
 export const deterministicActivityId = (
   importId: string,
   activityKey: number | string,
@@ -546,15 +665,44 @@ export const deterministicActivityId = (
   ) {
     throw new Error('Deterministic activity identity input is invalid');
   }
-  const digest = createHash('sha1')
-    .update(uuidBytes(ACTIVITY_IMPORT_UUID_NAMESPACE))
-    .update(`${importId}:${activityKey}`, 'utf8')
-    .digest()
-    .subarray(0, 16);
-  digest[6] = (digest[6]! & 0x0f) | 0x50;
-  digest[8] = (digest[8]! & 0x3f) | 0x80;
+  return deterministicUuid(`${importId}:${activityKey}`);
+};
 
-  return formatUuid(digest);
+export const deterministicCompletedActivityId = (input: {
+  provenanceSha256: string;
+  ownerWorkspaceMemberId: string;
+  sourceRowNumber: number;
+  actionOrdinal: number;
+  activityType: CompletedActivityType;
+  outcome: CanonicalActivityOutcome;
+}): string => {
+  if (
+    !HASH_PATTERN.test(input.provenanceSha256) ||
+    !UUID_PATTERN.test(input.ownerWorkspaceMemberId) ||
+    !Number.isSafeInteger(input.sourceRowNumber) ||
+    input.sourceRowNumber < 1 ||
+    !Number.isSafeInteger(input.actionOrdinal) ||
+    input.actionOrdinal < 1 ||
+    !COMPLETED_ACTIVITY_TYPES.includes(input.activityType) ||
+    !CANONICAL_ACTIVITY_OUTCOMES.includes(input.outcome) ||
+    !isCompatibleActivityTypeAndOutcome(input.activityType, input.outcome)
+  ) {
+    throw new Error(
+      'Deterministic completed activity identity input is invalid',
+    );
+  }
+
+  return deterministicUuid(
+    [
+      'completed-actions-v2',
+      input.provenanceSha256,
+      input.ownerWorkspaceMemberId,
+      input.sourceRowNumber,
+      input.actionOrdinal,
+      input.activityType,
+      input.outcome,
+    ].join(':'),
+  );
 };
 
 const relationWorkspaceMemberId = (
@@ -674,10 +822,11 @@ export const buildActivityImportPlan = (input: {
   const identityArtifact = assertTerritoryIdentityArtifact(
     input.identityArtifact,
   );
+  const ownerWorkspaceMemberId =
+    identityArtifact.workspaceMemberIds[input.csvOptions.ownerLabel];
   const matchingWholesalers = input.wholesalers.filter(
     (wholesaler) =>
-      relationWorkspaceMemberId(wholesaler) ===
-      identityArtifact.workspaceMemberIds[input.csvOptions.ownerLabel],
+      relationWorkspaceMemberId(wholesaler) === ownerWorkspaceMemberId,
   );
   if (matchingWholesalers.length !== 1) {
     throw new Error(
@@ -721,7 +870,14 @@ export const buildActivityImportPlan = (input: {
       : row.rowNumber;
     const record: OutreachActivityRecord = completedActivity
       ? {
-          id: deterministicActivityId(input.csvOptions.importId, activityKey),
+          id: deterministicCompletedActivityId({
+            provenanceSha256: input.csvOptions.provenanceSha256,
+            ownerWorkspaceMemberId,
+            sourceRowNumber: row.sourceRowNumber!,
+            actionOrdinal: row.actionOrdinal!,
+            activityType: row.activityType!,
+            outcome: row.outcome!,
+          }),
           name: `${ACTIVITY_TYPE_LABELS[row.activityType!]} · ${ACTIVITY_OUTCOME_LABELS[row.outcome!]}`,
           companyId,
           wholesalerId,
@@ -786,6 +942,9 @@ export const buildActivityImportPlan = (input: {
     planHash: sha256(
       stableStringify(activities.map(({ operationHash }) => operationHash)),
     ),
+    normalizationReceipt: input.csvOptions.normalizationReceipt
+      ? { ...input.csvOptions.normalizationReceipt }
+      : null,
   };
 
   return { manifest, activities };

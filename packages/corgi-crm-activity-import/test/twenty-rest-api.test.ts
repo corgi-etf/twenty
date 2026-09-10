@@ -135,6 +135,18 @@ test('writes and integrity-checks a PII-free checkpoint envelope', async (t) => 
       distinctCompanyCount: 1,
       activityIdSetHash: '5'.repeat(64),
       planHash: '6'.repeat(64),
+      normalizationReceipt: {
+        schemaVersion: 1,
+        sourceFormat: 'completed-actions-v2',
+        sourceDocumentSha256: '2'.repeat(64),
+        normalizedCsvSha256: '1'.repeat(64),
+        rowSequenceSha256: '3'.repeat(64),
+        sourceRowCount: 1,
+        activityCount: 1,
+        phoneCallCount: 1,
+        voicemailCount: 0,
+        emailCount: 0,
+      },
     },
     status: 'planned',
     completedOperationHashes: [],
@@ -145,7 +157,7 @@ test('writes and integrity-checks a PII-free checkpoint envelope', async (t) => 
   assert.deepEqual(await api.readCheckpoint(), checkpoint);
   const serialized = await readFile(checkpointPath, 'utf8');
   assert.match(serialized, /"sha256":/);
-  assert.doesNotMatch(serialized, /companyName|notes|phone|email/);
+  assert.doesNotMatch(serialized, /companyName|"notes"|"phone"|"email"/);
 });
 
 test('rejects non-production origins and HTTP failures with redacted errors', async () => {

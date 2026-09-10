@@ -6,6 +6,7 @@ import {
   assertTerritoryIdentityArtifact,
   buildActivityImportPlan,
   deterministicActivityId,
+  deterministicCompletedActivityId,
   parseActivityCsv,
   type ActivityImportCsvOptions,
   type OutreachActivityRecord,
@@ -50,21 +51,39 @@ const options = (overrides: Partial<ActivityImportCsvOptions> = {}) => ({
 
 const completedColumns = [
   ['7', '1', 'Acme, Inc.', 'phone_call', 'left_voicemail', 'Try again'],
-  ['7', '2', 'Acme, Inc.', 'email', 'no_response', 'Sent recap'],
+  ['7', '2', 'Acme, Inc.', 'email', 'other', 'Sent recap'],
 ] as const;
 const completedSource = Buffer.from(
   '7,1,"Acme, Inc.",phone_call,left_voicemail,Try again\n' +
-    '7,2,"Acme, Inc.",email,no_response,Sent recap\n',
+    '7,2,"Acme, Inc.",email,other,Sent recap\n',
 );
-const completedRowSequenceSha256 = createHash('sha256')
-  .update(
-    completedColumns
-      .map((columns) =>
-        createHash('sha256').update(JSON.stringify(columns)).digest('hex'),
-      )
-      .join('\n'),
-  )
-  .digest('hex');
+const rowSequenceSha256For = (
+  columns: readonly (readonly string[])[],
+): string =>
+  createHash('sha256')
+    .update(
+      columns
+        .map((row) =>
+          createHash('sha256').update(JSON.stringify(row)).digest('hex'),
+        )
+        .join('\n'),
+    )
+    .digest('hex');
+const completedRowSequenceSha256 = rowSequenceSha256For(completedColumns);
+const completedNormalizationReceipt = {
+  schemaVersion: 1 as const,
+  sourceFormat: 'completed-actions-v2' as const,
+  sourceDocumentSha256: 'a'.repeat(64),
+  normalizedCsvSha256: createHash('sha256')
+    .update(completedSource)
+    .digest('hex'),
+  rowSequenceSha256: completedRowSequenceSha256,
+  sourceRowCount: 7,
+  activityCount: 2,
+  phoneCallCount: 1,
+  voicemailCount: 1,
+  emailCount: 1,
+};
 const completedOptions = (overrides = {}) => ({
   sourceFormat: 'completed-actions-v2' as const,
   ownerLabel: 'Grace' as const,
@@ -75,6 +94,7 @@ const completedOptions = (overrides = {}) => ({
   activityDate: '2026-09-09',
   timeZone: 'America/Chicago',
   importId: 'completed-actions-2026-09-09',
+  normalizationReceipt: completedNormalizationReceipt,
   ...overrides,
 });
 
@@ -133,7 +153,7 @@ test('parses completed action rows with exact provenance and row hashes', () => 
       actionOrdinal: 2,
       companyName: 'Acme, Inc.',
       activityType: 'email',
-      outcome: 'no_response',
+      outcome: 'other',
       notes: 'Sent recap',
       occurredAt: '2026-09-09T17:00:00.000Z',
     },
@@ -143,7 +163,13 @@ test('parses completed action rows with exact provenance and row hashes', () => 
     () =>
       parseActivityCsv(
         completedSource,
-        completedOptions({ expectedRowSequenceSha256: '0'.repeat(64) }),
+        completedOptions({
+          expectedRowSequenceSha256: '0'.repeat(64),
+          normalizationReceipt: {
+            ...completedNormalizationReceipt,
+            rowSequenceSha256: '0'.repeat(64),
+          },
+        }),
       ),
     /row sequence SHA-256 mismatch/,
   );
@@ -154,6 +180,38 @@ test('parses completed action rows with exact provenance and row hashes', () => 
         completedOptions({ provenanceSha256: 'invalid' }),
       ),
     /provenance SHA-256 is invalid/,
+  );
+});
+
+test('rejects activity type and outcome pairs that are nonsensical', () => {
+  const invalidColumns = [
+    ['7', '1', 'Acme, Inc.', 'email', 'left_voicemail', 'Impossible'],
+  ] as const;
+  const invalidSource = Buffer.from(
+    '7,1,"Acme, Inc.",email,left_voicemail,Impossible\n',
+  );
+  const invalidRowSequenceSha256 = rowSequenceSha256For(invalidColumns);
+
+  assert.throws(
+    () =>
+      parseActivityCsv(invalidSource, {
+        ...completedOptions(),
+        sourceSha256: createHash('sha256').update(invalidSource).digest('hex'),
+        expectedRowSequenceSha256: invalidRowSequenceSha256,
+        expectedRows: 1,
+        normalizationReceipt: {
+          ...completedNormalizationReceipt,
+          normalizedCsvSha256: createHash('sha256')
+            .update(invalidSource)
+            .digest('hex'),
+          rowSequenceSha256: invalidRowSequenceSha256,
+          activityCount: 1,
+          phoneCallCount: 0,
+          voicemailCount: 0,
+          emailCount: 1,
+        },
+      }),
+    /incompatible activity type and outcome/,
   );
 });
 
@@ -283,10 +341,14 @@ test('plans canonical completed actions for one explicitly selected owner', () =
     plan.activities.map(({ record }) => record),
     [
       {
-        id: deterministicActivityId(
-          completedOptions().importId,
-          'source-row:7:action:1',
-        ),
+        id: deterministicCompletedActivityId({
+          provenanceSha256: 'a'.repeat(64),
+          ownerWorkspaceMemberId: identities.Grace,
+          sourceRowNumber: 7,
+          actionOrdinal: 1,
+          activityType: 'phone_call',
+          outcome: 'left_voicemail',
+        }),
         name: 'Phone call · Left voicemail',
         companyId: uuid('4'),
         wholesalerId: uuid('7'),
@@ -297,15 +359,19 @@ test('plans canonical completed actions for one explicitly selected owner', () =
         contactId: null,
       },
       {
-        id: deterministicActivityId(
-          completedOptions().importId,
-          'source-row:7:action:2',
-        ),
-        name: 'Email · No response',
+        id: deterministicCompletedActivityId({
+          provenanceSha256: 'a'.repeat(64),
+          ownerWorkspaceMemberId: identities.Grace,
+          sourceRowNumber: 7,
+          actionOrdinal: 2,
+          activityType: 'email',
+          outcome: 'other',
+        }),
+        name: 'Email · Other',
         companyId: uuid('4'),
         wholesalerId: uuid('7'),
         activityType: 'email',
-        outcome: 'no_response',
+        outcome: 'other',
         occurredAt: '2026-09-09T17:00:00.000Z',
         notes: 'Sent recap',
         contactId: null,
@@ -315,6 +381,68 @@ test('plans canonical completed actions for one explicitly selected owner', () =
   assert.equal(plan.manifest.ownerLabel, 'Grace');
   assert.equal(plan.manifest.provenanceSha256, 'a'.repeat(64));
   assert.equal(plan.manifest.rowSequenceSha256, completedRowSequenceSha256);
+  assert.deepEqual(
+    plan.manifest.normalizationReceipt,
+    completedNormalizationReceipt,
+  );
+});
+
+test('v2 IDs ignore operator import ID but bind provenance and authenticated owner', () => {
+  const buildCompletedPlan = (
+    csvOptions = completedOptions(),
+    existingActivities: OutreachActivityRecord[] = [],
+  ) =>
+    buildActivityImportPlan({
+      rows: parseActivityCsv(completedSource, csvOptions),
+      csvOptions,
+      identityArtifact,
+      companies: [{ id: uuid('4'), name: 'Acme, Inc.' }],
+      wholesalers: [
+        { id: uuid('7'), workspaceMemberId: identities.Grace },
+        { id: uuid('8'), workspaceMemberId: identities.Kelly },
+      ],
+      people: [],
+      existingActivities,
+    });
+  const first = buildCompletedPlan();
+  const renamedImport = completedOptions({
+    importId: 'operator-renamed-import',
+  });
+  const second = buildCompletedPlan(
+    renamedImport,
+    first.activities.map(({ record }) => record),
+  );
+  assert.deepEqual(
+    second.activities.map(({ record }) => record.id),
+    first.activities.map(({ record }) => record.id),
+  );
+  assert.deepEqual(
+    second.activities.map(({ state }) => state),
+    ['existing', 'existing'],
+  );
+
+  const changedOwner = buildCompletedPlan(
+    completedOptions({ ownerLabel: 'Kelly' as const }),
+  );
+  assert.notDeepEqual(
+    changedOwner.activities.map(({ record }) => record.id),
+    first.activities.map(({ record }) => record.id),
+  );
+
+  const changedProvenance = 'b'.repeat(64);
+  const changedSourceDocument = buildCompletedPlan(
+    completedOptions({
+      provenanceSha256: changedProvenance,
+      normalizationReceipt: {
+        ...completedNormalizationReceipt,
+        sourceDocumentSha256: changedProvenance,
+      },
+    }),
+  );
+  assert.notDeepEqual(
+    changedSourceDocument.activities.map(({ record }) => record.id),
+    first.activities.map(({ record }) => record.id),
+  );
 });
 
 test('legacy source remains Nash-only and every owner must resolve uniquely', () => {

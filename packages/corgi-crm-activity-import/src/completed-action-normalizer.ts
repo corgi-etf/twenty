@@ -1,29 +1,23 @@
 import { createHash } from 'node:crypto';
 
-import { activityCsvRowSequenceSha256 } from './importer.ts';
+import {
+  activityCsvRowSequenceSha256,
+  type ActivityImportNormalizationReceipt,
+} from './importer.ts';
 
 export type CompletedActionWorksheetRow = {
   sourceRowNumber: number;
   companyName: string;
   phoneCallCompleted: boolean;
   voicemail: boolean;
+  spokeWith: boolean;
   emailFound: boolean;
   emailSent: boolean;
   notes: string | null;
 };
 
-export type CompletedActionNormalizationReceipt = {
-  schemaVersion: 1;
-  sourceFormat: 'completed-actions-v2';
-  sourceDocumentSha256: string;
-  normalizedCsvSha256: string;
-  rowSequenceSha256: string;
-  sourceRowCount: number;
-  activityCount: number;
-  phoneCallCount: number;
-  voicemailCount: number;
-  emailCount: number;
-};
+export type CompletedActionNormalizationReceipt =
+  ActivityImportNormalizationReceipt;
 
 export type CompletedActionNormalizationExpectations = {
   sourceDocumentSha256: string;
@@ -89,6 +83,7 @@ export const normalizeCompletedActionRows = (input: {
       ![
         row.phoneCallCompleted,
         row.voicemail,
+        row.spokeWith,
         row.emailFound,
         row.emailSent,
       ].every((value) => typeof value === 'boolean') ||
@@ -107,6 +102,16 @@ export const normalizeCompletedActionRows = (input: {
         `Completed action source row ${index + 1} has voicemail without a completed phone call`,
       );
     }
+    if (row.spokeWith && !row.phoneCallCompleted) {
+      throw new Error(
+        `Completed action source row ${index + 1} has spoke with without a completed phone call`,
+      );
+    }
+    if (row.voicemail && row.spokeWith) {
+      throw new Error(
+        `Completed action source row ${index + 1} cannot both be voicemail and spoke with`,
+      );
+    }
     const notes = row.notes?.trim().normalize('NFKC') ?? '';
     let actionOrdinal = 0;
     if (row.phoneCallCompleted) {
@@ -118,7 +123,11 @@ export const normalizeCompletedActionRows = (input: {
         String(actionOrdinal),
         companyName,
         'phone_call',
-        row.voicemail ? 'left_voicemail' : 'connected',
+        row.voicemail
+          ? 'left_voicemail'
+          : row.spokeWith
+            ? 'connected'
+            : 'no_response',
         notes,
       ]);
     }
@@ -130,7 +139,7 @@ export const normalizeCompletedActionRows = (input: {
         String(actionOrdinal),
         companyName,
         'email',
-        'no_response',
+        'other',
         notes,
       ]);
     }
