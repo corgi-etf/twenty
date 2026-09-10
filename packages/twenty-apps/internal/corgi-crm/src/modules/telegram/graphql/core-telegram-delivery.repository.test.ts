@@ -176,6 +176,34 @@ describe('CoreTelegramDeliveryRepository', () => {
     ).resolves.toBe(false);
   });
 
+  it('fails a transition closed when readback returns a wrong row with the target fence', async () => {
+    const repository = new CoreTelegramDeliveryRepository({
+      mutation: vi.fn().mockResolvedValue({ updateTelegramDeliveries: null }),
+      query: vi.fn().mockResolvedValue({
+        telegramDeliveries: {
+          edges: [
+            {
+              node: {
+                ...delivery,
+                id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+                status: 'complete',
+                stateToken: 'token-2',
+              },
+            },
+          ],
+        },
+      }),
+    } as never);
+    await expect(
+      repository.transition({
+        id: delivery.id,
+        expectedStatus: 'intent',
+        expectedStateToken: 'token-1',
+        patch: { status: 'complete', stateToken: 'token-2' },
+      }),
+    ).resolves.toBe(false);
+  });
+
   it('atomically rejects a second reset grant for the same unknown generation', async () => {
     const audit = {
       id: '38d0e91a-0f05-558f-a3ba-8f83e61d822c',

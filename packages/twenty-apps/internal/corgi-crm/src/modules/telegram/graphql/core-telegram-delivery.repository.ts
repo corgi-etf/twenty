@@ -225,7 +225,8 @@ export class CoreTelegramDeliveryRepository {
     }
     const persisted = await this.getById(id);
     return (
-      persisted?.status === patch.status &&
+      persisted?.id === id &&
+      persisted.status === patch.status &&
       persisted.stateToken === patch.stateToken
     );
   }
