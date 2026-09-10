@@ -389,6 +389,7 @@ const verifyMeetingBookingSchema = (objects, experience) => {
     bookingValidationMessage: 'TEXT',
     company: 'RELATION',
     wholesaler: 'RELATION',
+    externalWholesaler: 'RELATION',
     bookedBy: 'RELATION',
   };
   const fieldByName = new Map();
@@ -409,6 +410,15 @@ const verifyMeetingBookingSchema = (objects, experience) => {
       throw new Error(`meetingBooking.${name} writability is not protected`);
     }
   }
+  // A booker picks the EW by hand, so protecting this field would make the
+  // rule that requires one on a BDR's meeting impossible to satisfy.
+  const externalWholesaler = fieldByName.get('externalWholesaler');
+  if (
+    externalWholesaler.writability === 'APPLICATION' ||
+    externalWholesaler.isUIEditable === false
+  ) {
+    throw new Error('meetingBooking.externalWholesaler is not selectable');
+  }
   const statusOptions = parseJsonValue(fieldByName.get('status').options);
   if (
     !Array.isArray(statusOptions) ||
@@ -420,6 +430,7 @@ const verifyMeetingBookingSchema = (objects, experience) => {
   for (const [fieldName, targetName] of [
     ['company', 'company'],
     ['wholesaler', 'wholesaler'],
+    ['externalWholesaler', 'wholesaler'],
     ['bookedBy', 'workspaceMember'],
   ]) {
     if (

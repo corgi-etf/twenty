@@ -763,6 +763,9 @@ describe('installed meeting booking verification', () => {
     field('meeting-owner', 'wholesaler', 'RELATION', {
       relation: { targetObjectMetadata: { nameSingular: 'wholesaler' } },
     }),
+    field('meeting-external-wholesaler', 'externalWholesaler', 'RELATION', {
+      relation: { targetObjectMetadata: { nameSingular: 'wholesaler' } },
+    }),
     field('meeting-booker', 'bookedBy', 'RELATION', {
       isUIEditable: false,
       writability: 'APPLICATION',
@@ -838,6 +841,45 @@ describe('installed meeting booking verification', () => {
           views: experience.views.filter((view) => view.type !== 'CALENDAR'),
         }),
       /calendar/i,
+    );
+  });
+
+  it('requires the EW field to stay selectable by a booker', () => {
+    assert.throws(
+      () =>
+        verifyMeetingBookingSchema(
+          [
+            {
+              ...object,
+              fieldsList: fieldsList.map((candidate) =>
+                candidate.name === 'externalWholesaler'
+                  ? {
+                      ...candidate,
+                      isUIEditable: false,
+                      writability: 'APPLICATION',
+                    }
+                  : candidate,
+              ),
+            },
+          ],
+          experience,
+        ),
+      /externalWholesaler is not selectable/i,
+    );
+    assert.throws(
+      () =>
+        verifyMeetingBookingSchema(
+          [
+            {
+              ...object,
+              fieldsList: fieldsList.filter(
+                (candidate) => candidate.name !== 'externalWholesaler',
+              ),
+            },
+          ],
+          experience,
+        ),
+      /externalWholesaler field/i,
     );
   });
 
