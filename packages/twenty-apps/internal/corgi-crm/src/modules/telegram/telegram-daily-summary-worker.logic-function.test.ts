@@ -26,7 +26,7 @@ describe('scheduled Telegram team report', () => {
     ]);
     const text = await readScheduledDailyReport({
       repository: { listActivities } as never,
-      end: '2026-09-10T17:00:00.000Z',
+      scheduledInstant: '2026-09-10T17:00:00.000Z',
       timeZone: 'America/Chicago',
     });
 

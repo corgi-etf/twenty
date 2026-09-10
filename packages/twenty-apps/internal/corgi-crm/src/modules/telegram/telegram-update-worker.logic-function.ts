@@ -115,7 +115,9 @@ export const handleTelegramUpdateJob = async (
           now: () => new Date(),
         });
       },
-      now: () => new Date(),
+      // Retried commands must retain the original reporting window and reply
+      // digest, including retries that cross a minute or local-day boundary.
+      now: () => new Date(update.messageTimestamp),
       onCrmCommitted: async (activityId) => {
         phase = 'crm_committed';
         await dependencies.store.set(key, { status: phase, activityId });

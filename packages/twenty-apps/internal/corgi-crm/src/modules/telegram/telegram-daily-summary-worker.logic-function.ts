@@ -66,17 +66,17 @@ type DailySummaryWorkerDependencies = {
 
 export const readScheduledDailyReport = ({
   repository,
-  end,
+  scheduledInstant,
   timeZone,
 }: {
   repository: OutreachRepository;
-  end: string;
+  scheduledInstant: string;
   timeZone: string;
 }) =>
   readReportSummary({
     repository,
     period: 'daily',
-    now: new Date(end),
+    now: new Date(scheduledInstant),
     timeZone,
   });
 
@@ -130,7 +130,7 @@ const processDailySummaryJob = async (rawPayload: unknown) => {
   const repository = new CoreOutreachRepository(coreClient);
   const text = await readScheduledDailyReport({
     repository,
-    end: payload.end,
+    scheduledInstant: payload.scheduledInstant,
     timeZone: requiredEnvironment('CORGI_CRM_TELEGRAM_TIME_ZONE'),
   });
   const telegram = new TelegramClient({

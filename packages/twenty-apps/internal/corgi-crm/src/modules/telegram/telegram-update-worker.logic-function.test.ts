@@ -119,6 +119,9 @@ describe('Telegram update worker durable replies', () => {
       ),
     ).resolves.toEqual({ status: 'help' });
     expect(sendMessage).toHaveBeenCalledTimes(2);
+    expect(processCommand.mock.calls[0]?.[1].now().toISOString()).toBe(
+      '2026-09-09T22:00:00.000Z',
+    );
     expect(answerCallbackQuery).toHaveBeenCalledOnce();
     expect(deliveryRecords).toHaveLength(3);
     expect([...deliveryRecords.values()].every((value) =>
