@@ -204,7 +204,7 @@ test('company creation is opt-in, separately confirmed, and default off', async 
   );
   assert.match(
     workflow,
-    /\[\[ "\$\{OPERATION\}" == "import-activities" \|\| "\$\{OPERATION\}" == "create-companies" \]\]/,
+    /\[\[ "\$\{OPERATION\}" == "import-activities" \|\| "\$\{OPERATION\}" == "create-companies" \|\| "\$\{OPERATION\}" == "resolve-duplicate-companies" \]\]/,
   );
 
   // Its own confirmation string, distinct from the activity import's.
@@ -222,7 +222,9 @@ test('company creation is opt-in, separately confirmed, and default off', async 
   // Creation never rides along with an activity apply, and never resumes.
   const createBranch = workflow.slice(
     workflow.indexOf('if [[ "${OPERATION}" == "create-companies" ]]; then'),
-    workflow.indexOf('elif [[ "${MODE}" == "apply" ]]; then'),
+    workflow.indexOf(
+      'elif [[ "${OPERATION}" == "resolve-duplicate-companies" ]]; then',
+    ),
   );
   assert.ok(createBranch.length > 0);
   for (const guard of [
@@ -262,4 +264,87 @@ test('company creation is opt-in, separately confirmed, and default off', async 
     execution,
     /toLocaleLowerCase|toUpperCase|replace\(\/\\s/,
   );
+});
+
+test('duplicate resolution is opt-in, separately confirmed, and default off', async () => {
+  const [workflow, maintenanceSpec, execution, importer] = await Promise.all([
+    readFile(workflowPath, 'utf8'),
+    readFile(maintenanceSpecPath, 'utf8'),
+    readFile(new URL('../src/execution.ts', import.meta.url), 'utf8'),
+    readFile(importerPath, 'utf8'),
+  ]);
+
+  // Default off: a dispatch that leaves the selector alone must still import.
+  assert.match(
+    workflow,
+    /operation:[\s\S]*?default: import-activities[\s\S]*?options:[\s\S]*?- import-activities[\s\S]*?- create-companies[\s\S]*?- resolve-duplicate-companies/,
+  );
+
+  // Its own confirmation string, distinct from the other two operations'.
+  assert.match(workflow, /resolve_duplicates_confirmation:/);
+  assert.match(workflow, /RESOLVE_CRM_DUPLICATE_COMPANIES/);
+  for (const other of [
+    'CREATE_CRM_IMPORT_COMPANIES',
+    'IMPORT_CRM_OUTREACH_ACTIVITIES',
+  ]) {
+    assert.notEqual('RESOLVE_CRM_DUPLICATE_COMPANIES', other);
+  }
+  assert.match(
+    workflow,
+    /\[\[ "\$\{RESOLVE_DUPLICATES_CONFIRMATION\}" == "RESOLVE_CRM_DUPLICATE_COMPANIES" \]\]/,
+  );
+
+  // Removal never rides along with an import or a creation, and never resumes.
+  const resolveBranch = workflow.slice(
+    workflow.indexOf(
+      'elif [[ "${OPERATION}" == "resolve-duplicate-companies" ]]; then',
+    ),
+    workflow.indexOf('elif [[ "${MODE}" == "apply" ]]; then'),
+  );
+  assert.ok(resolveBranch.length > 0);
+  for (const guard of [
+    'CONFIRMATION',
+    'EXPECTED_MANIFEST',
+    'RESUME_RUN_ID',
+    'RESUME_ATTEMPT',
+    'CREATE_COMPANIES_CONFIRMATION',
+  ]) {
+    assert.match(
+      resolveBranch,
+      new RegExp(`\\[\\[ -z "\\$\\{${guard}\\}" \\]\\]`),
+    );
+  }
+  // And every other branch refuses a stray removal approval.
+  for (const branchStart of [
+    'if [[ "${OPERATION}" == "create-companies" ]]; then',
+    'elif [[ "${MODE}" == "apply" ]]; then',
+  ]) {
+    const branch = workflow.slice(workflow.indexOf(branchStart));
+    assert.match(
+      branch.slice(0, branch.indexOf('\n          fi')),
+      /\[\[ -z "\$\{RESOLVE_DUPLICATES_CONFIRMATION\}" \]\]/,
+    );
+  }
+
+  assert.match(
+    workflow,
+    /CRM_ACTIVITY_IMPORT_RESOLVE_DUPLICATES_CONFIRMATION: \$\{\{ inputs\.resolve_duplicates_confirmation \}\}/,
+  );
+
+  // The runtime honours the selector and reports every record it touched.
+  assert.match(maintenanceSpec, /runActivityImportDuplicateCompanyResolution/);
+  assert.match(
+    workflow,
+    /duplicateGroupCount, plannedRemovalCount, removedCount, blockedGroupCount, groups/,
+  );
+
+  // Emptiness is the safety property and the removal is a soft delete.
+  assert.match(execution, /soft_delete|soft delete/);
+  assert.match(maintenanceSpec, /soft_delete=true/);
+  assert.doesNotMatch(
+    maintenanceSpec,
+    /\/rest\/companies\/\$\{companyId\}(\?depth=0)?['"`]/,
+  );
+  assert.match(importer, /duplicates carry linked records/);
+  assert.match(importer, /unstable company snapshot/);
 });
