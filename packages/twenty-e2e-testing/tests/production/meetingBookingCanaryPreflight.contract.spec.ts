@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { buildSchema, parse, validate } from 'graphql';
+import { buildSchema, parse, validate, visit } from 'graphql';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -68,6 +68,91 @@ test('validates the existing installed-application disabled gate against the act
 
   expect(query).toBeDefined();
   expect(validate(metadataSchema, parse(query!))).toEqual([]);
+});
+
+test('never selects unloaded nested relations from the application-list resolver', () => {
+  const applicationServiceSource = readFileSync(
+    join(
+      repositoryRoot,
+      'packages/twenty-server/src/engine/core-modules/application/application.service.ts',
+    ),
+    'utf8',
+  );
+  const listMethod = applicationServiceSource.match(
+    /async findManyApplications\([\s\S]*?(?=\n  async findManyInstalledFlatApplications)/,
+  )?.[0];
+  const loadedRelations = Array.from(
+    listMethod?.match(/relations: \[([^\]]+)\]/)?.[1].matchAll(/'([^']+)'/g) ??
+      [],
+    ([, relation]) => relation,
+  );
+  expect(loadedRelations).toEqual(['applicationRegistration']);
+  const canarySource = readFileSync(
+    join(__dirname, 'meetingBooking.maintenance.spec.ts'),
+    'utf8',
+  );
+  const query = canarySource.match(
+    /`(\s*query MeetingCanaryDeliveryGate[\s\S]+?)`/,
+  )?.[1];
+  expect(query).toBeDefined();
+
+  visit(parse(query!), {
+    Field(node) {
+      if (node.name.value !== 'findManyApplications') return;
+      for (const selection of node.selectionSet?.selections ?? []) {
+        if (selection.kind === 'Field' && selection.selectionSet) {
+          expect(loadedRelations).toContain(selection.name.value);
+        }
+      }
+    },
+  });
+});
+
+test('reads installed variables through the tenant-scoped single-application loader', () => {
+  const applicationServiceSource = readFileSync(
+    join(
+      repositoryRoot,
+      'packages/twenty-server/src/engine/core-modules/application/application.service.ts',
+    ),
+    'utf8',
+  );
+  const singleMethod = applicationServiceSource.match(
+    /async findOneApplication\([\s\S]*?(?=\n  async findOneApplicationOrThrow)/,
+  )?.[0];
+  expect(singleMethod).toContain(
+    'application.applicationVariables = applicationVariables',
+  );
+  expect(singleMethod).toContain(
+    'where: { applicationId: application.id, workspaceId }',
+  );
+  const canarySource = readFileSync(
+    join(__dirname, 'meetingBooking.maintenance.spec.ts'),
+    'utf8',
+  );
+  const query = canarySource.match(
+    /`(\s*query MeetingCanaryDeliveryGate[\s\S]+?)`/,
+  )?.[1];
+  expect(query).toBeDefined();
+  const applicationFields: string[] = [];
+  visit(parse(query!), {
+    Field(node) {
+      if (node.name.value !== 'findOneApplication') return;
+      applicationFields.push(node.name.value);
+      expect(node.arguments).toEqual([
+        expect.objectContaining({
+          name: expect.objectContaining({ value: 'universalIdentifier' }),
+          value: expect.objectContaining({
+            kind: 'Variable',
+            name: expect.objectContaining({ value: 'universalIdentifier' }),
+          }),
+        }),
+      ]);
+    },
+  });
+  expect(applicationFields).toEqual(['findOneApplication']);
+  expect(canarySource).toContain(
+    '{ universalIdentifier: APPLICATION_IDENTIFIER }',
+  );
 });
 
 const workspaceId = '11111111-1111-4111-8111-111111111111';
@@ -339,5 +424,110 @@ for (const [name, value] of [
 
     await assert.rejects(async () => execute());
     expect(calls).toEqual([]);
+  });
+}
+
+const nativeRecordNavigation = (initialUrl: string, expandedUrl: string) => {
+  const canarySource = readFileSync(
+    join(__dirname, 'meetingBooking.maintenance.spec.ts'),
+    'utf8',
+  );
+  const navigationSource = canarySource.match(
+    /named = true;([\s\S]*?)\n\s*phase = 'incomplete booking rejected without counting';/,
+  )?.[1];
+  expect(navigationSource).toBeDefined();
+  let currentUrl = initialUrl;
+  let expansionCount = 0;
+  let fieldsChecked = false;
+  const origin = 'https://crm.corgiinvest.com';
+  const page = {
+    url: () => currentUrl,
+    getByTestId: (testId: string) => {
+      expect(testId).toBe('record-fields-widget');
+      return 'fields-widget';
+    },
+    getByRole: (role: string, options: { name: string }) => {
+      expect(role).toBe('button');
+      expect(options.name).toBe('Expand record');
+      return {
+        click: async () => {
+          expansionCount += 1;
+          if (new URL(currentUrl).pathname.startsWith('/object/')) {
+            throw new Error('Full-page records have no Expand record button');
+          }
+          currentUrl = expandedUrl;
+        },
+      };
+    },
+  };
+  const navigationJavaScript = navigationSource!.replace('(url: URL)', '(url)');
+  const execute = runInNewContext(`(async () => {${navigationJavaScript}})`, {
+    page,
+    meetingId: memberId,
+    APPROVED_ORIGIN: origin,
+    URL,
+    expect: (actual: unknown) => ({
+      toBeVisible: async () => {
+        expect(actual).toBe('fields-widget');
+        fieldsChecked = true;
+      },
+      toHaveURL: async (matcher: RegExp | ((url: URL) => boolean)) => {
+        expect(actual).toBe(page);
+        expect(
+          typeof matcher === 'function'
+            ? matcher(new URL(currentUrl))
+            : matcher.test(currentUrl),
+        ).toBe(true);
+      },
+    }),
+  }) as () => Promise<void>;
+  return {
+    execute,
+    result: () => ({ expansionCount, fieldsChecked }),
+  };
+};
+
+for (const suffix of ['', '?viewId=synthetic#timeline']) {
+  test(`accepts native full-page creation only at the exact record route (${suffix || 'no suffix'})`, async () => {
+    const recordUrl = `https://crm.corgiinvest.com/object/meetingBooking/${memberId}${suffix}`;
+    const navigation = nativeRecordNavigation(recordUrl, recordUrl);
+
+    await navigation.execute();
+
+    expect(navigation.result()).toEqual({
+      expansionCount: 0,
+      fieldsChecked: true,
+    });
+  });
+
+  test(`expands native side-panel creation into the exact record route (${suffix || 'no suffix'})`, async () => {
+    const navigation = nativeRecordNavigation(
+      'https://crm.corgiinvest.com/objects/meetingBookings',
+      `https://crm.corgiinvest.com/object/meetingBooking/${memberId}${suffix}`,
+    );
+
+    await navigation.execute();
+
+    expect(navigation.result()).toEqual({
+      expansionCount: 1,
+      fieldsChecked: true,
+    });
+  });
+}
+
+for (const recordUrl of [
+  `https://wrong-origin.example/object/meetingBooking/${memberId}`,
+  `https://wrong-origin.example/object/meetingBooking/${memberId}#timeline`,
+  `https://crm.corgiinvest.com/object/meetingBooking/${otherId}?viewId=synthetic`,
+  `https://crm.corgiinvest.com/object/company/${memberId}`,
+  `https://crm.corgiinvest.com/object/meetingBooking/${memberId}/extra`,
+]) {
+  test(`rejects native expansion outside the exact approved record route: ${recordUrl}`, async () => {
+    const navigation = nativeRecordNavigation(
+      'https://crm.corgiinvest.com/objects/meetingBookings',
+      recordUrl,
+    );
+
+    await assert.rejects(async () => navigation.execute());
   });
 }
