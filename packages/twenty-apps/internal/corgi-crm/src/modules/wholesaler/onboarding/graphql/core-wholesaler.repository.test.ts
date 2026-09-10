@@ -178,4 +178,76 @@ describe('CoreWholesalerRepository external object access', () => {
     expect(generated.query).toHaveBeenCalledTimes(2);
     expect(raw.request).not.toHaveBeenCalled();
   });
+
+  it('pages the whole roster through raw GraphQL, keeping every role value', async () => {
+    const page = (
+      nodes: Array<Record<string, unknown>>,
+      hasNextPage: boolean,
+      endCursor: string | null,
+    ) => ({
+      wholesalers: {
+        edges: nodes.map((node) => ({ node })),
+        pageInfo: { hasNextPage, endCursor },
+      },
+    });
+    const external = {
+      ...record,
+      id: '33333333-3333-4333-8333-333333333333',
+      name: 'Alex',
+      wholesalerRole: ' ew ',
+    };
+    const generated = { query: vi.fn() };
+    const raw = {
+      request: vi
+        .fn()
+        .mockResolvedValueOnce(page([record], true, 'cursor-1'))
+        // A repeated node across pages must not be counted twice.
+        .mockResolvedValueOnce(page([record, external], false, null)),
+    };
+    const repository = new CoreWholesalerRepository(
+      generated as never,
+      raw as never,
+    );
+
+    await expect(repository.listWholesalers()).resolves.toEqual([
+      record,
+      external,
+    ]);
+    expect(generated.query).not.toHaveBeenCalled();
+    expect(raw.request.mock.calls.map(([selection]) => selection.variables)).toEqual([
+      { first: 100, after: null },
+      { first: 100, after: 'cursor-1' },
+    ]);
+    expect(raw.request.mock.calls[0][0]).toMatchObject({
+      operationName: 'CorgiListWholesalers',
+      document: expect.stringMatching(
+        /query CorgiListWholesalers\(\$first: Int!, \$after: String\)/,
+      ),
+    });
+  });
+
+  it.each([
+    [{ hasNextPage: true, endCursor: null }, 'missing or repeated cursor'],
+    [{ hasNextPage: 'yes', endCursor: 'cursor-1' }, 'malformed connection'],
+  ] as const)('fails closed on unusable roster pagination', async (pageInfo, message) => {
+    const { repository } = buildRepository({
+      rawResult: { wholesalers: { edges: [{ node: record }], pageInfo } },
+    });
+    await expect(repository.listWholesalers()).rejects.toThrow(message);
+  });
+
+  it('stops a roster cursor loop instead of paging forever', async () => {
+    const { raw, repository } = buildRepository({
+      rawResult: {
+        wholesalers: {
+          edges: [{ node: record }],
+          pageInfo: { hasNextPage: true, endCursor: 'same-cursor' },
+        },
+      },
+    });
+    await expect(repository.listWholesalers()).rejects.toThrow(
+      'missing or repeated cursor',
+    );
+    expect(raw.request).toHaveBeenCalledTimes(2);
+  });
 });
