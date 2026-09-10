@@ -377,6 +377,25 @@ jobs:
           CORGI_CRM_TELEGRAM_DAILY_SUMMARY_TIME: ${{ vars.CORGI_CRM_TELEGRAM_DAILY_SUMMARY_TIME }}
         run: node "${APP_PATH}/scripts/configure-telegram.mjs" stage
 
+      - name: Verify native CRM meeting booking while Telegram is disabled
+        if: inputs.operation == 'publish-and-install'
+        env:
+          FRONTEND_BASE_URL: ${{ env.CORGI_CRM_API_URL }}
+          BACKEND_BASE_URL: ${{ env.CORGI_CRM_API_URL }}
+          CRM_E2E_LOGIN: ${{ secrets.CRM_E2E_LOGIN }}
+          CRM_E2E_PASSWORD: ${{ secrets.CRM_E2E_PASSWORD }}
+          CRM_E2E_WORKSPACE_NAME: ${{ secrets.CRM_E2E_WORKSPACE_NAME }}
+          CRM_MEETING_CANARY_ENABLED: 'true'
+          CRM_MEETING_CANARY_CONFIRMATION: VERIFY_NATIVE_CRM_MEETING_WITH_TELEGRAM_DISABLED
+          CRM_MEETING_CANARY_OPERATION: ${{ inputs.operation }}
+          CRM_DEPLOYED_SHA: ${{ inputs.deployed_sha }}
+          CORGI_CRM_EXPECTED_VERSION: ${{ steps.app.outputs.version }}
+          PLAYWRIGHT_NO_COPY_PROMPT: '1'
+        run: >-
+          npx nx test:production twenty-e2e-testing --
+          tests/production/meetingBooking.maintenance.spec.ts
+          --project=production-chromium --no-deps --retries=0
+
       - name: Register and verify the live Telegram provider
         if: inputs.telegram_enable
         env:
