@@ -7,6 +7,7 @@ import { buildSchema, parse, validate } from 'graphql';
 import {
   resolveCorgiRoleObjectIdentifiers,
   verifyApplicationRoleContract,
+  verifyInstalledApplication,
   verifyMeetingApplicationContract,
   verifyMeetingBookingSchema,
   verifyReconciliation,
@@ -14,6 +15,32 @@ import {
   verifyTelegramDisabled,
   verifyTelegramPersistenceSchema,
 } from './verify-production-install.mjs';
+
+const verifierSource = await fs.readFile(
+  new URL('./verify-production-install.mjs', import.meta.url),
+  'utf8',
+);
+const applicationServiceSource = await fs.readFile(
+  new URL(
+    '../../../../twenty-server/src/engine/core-modules/application/application.service.ts',
+    import.meta.url,
+  ),
+  'utf8',
+);
+const applicationEntitySource = await fs.readFile(
+  new URL(
+    '../../../../twenty-server/src/engine/core-modules/application/application.entity.ts',
+    import.meta.url,
+  ),
+  'utf8',
+);
+const applicationDtoSource = await fs.readFile(
+  new URL(
+    '../../../../twenty-server/src/engine/core-modules/application/dtos/application.dto.ts',
+    import.meta.url,
+  ),
+  'utf8',
+);
 
 const member = {
   id: 'member-1',
@@ -338,6 +365,186 @@ describe('installed application role verification', () => {
       canDestroyObjectRecords: false,
     })),
   };
+
+  it('uses the hydrated app resolver and joins its role by exact server-backed ID', async () => {
+    const metadataSchema = buildSchema(
+      await fs.readFile(
+        new URL(
+          '../../../../twenty-client-sdk/src/metadata/generated/schema.graphql',
+          import.meta.url,
+        ),
+        'utf8',
+      ),
+    );
+    const documents = [
+      ...verifierSource.matchAll(
+        /`(query VerifyCorgiCrmInstalledApplication(?:Role)?[\s\S]*?)`/g,
+      ),
+    ].map(([, document]) => document);
+
+    assert.equal(documents.length, 2);
+    for (const document of documents) {
+      assert.deepEqual(
+        validate(metadataSchema, parse(document)).map((error) => error.message),
+        [],
+      );
+    }
+    assert.match(
+      documents[0],
+      /\$applicationUniversalIdentifier:\s*UUID![\s\S]*findOneApplication\s*\(\s*universalIdentifier:\s*\$applicationUniversalIdentifier\s*\)/,
+    );
+    assert.match(documents[0], /defaultRoleId/);
+    assert.doesNotMatch(documents[0], /findManyApplications/);
+    assert.doesNotMatch(documents[0], /defaultLogicFunctionRole/);
+    assert.match(documents[1], /getRoles/);
+    assert.match(verifierSource, /applicationUniversalIdentifier:\s*APPLICATION_ID/);
+
+    const findManyImplementation = applicationServiceSource.slice(
+      applicationServiceSource.indexOf('async findManyApplications('),
+      applicationServiceSource.indexOf('async findManyInstalledFlatApplications('),
+    );
+    const findOneImplementation = applicationServiceSource.slice(
+      applicationServiceSource.indexOf('async findOneApplication({'),
+      applicationServiceSource.indexOf('async findOneApplicationOrThrow({'),
+    );
+    assert.doesNotMatch(
+      findManyImplementation,
+      /logicFunctionRepository|applicationVariableRepository/,
+    );
+    assert.match(findOneImplementation, /logicFunctionRepository\.find/);
+    assert.match(findOneImplementation, /applicationVariableRepository\.find/);
+    assert.match(applicationEntitySource, /defaultRoleId:\s*string \| null/);
+    assert.match(applicationEntitySource, /defaultRole:\s*RoleDTO \| null/);
+    assert.match(applicationDtoSource, /defaultLogicFunctionRole\?:\s*RoleDTO/);
+  });
+
+  it('reads the exact installed app and attaches only its exact role', async () => {
+    const roleId = '99999999-9999-4999-8999-999999999999';
+    const calls = [];
+    const graphql = async (request) => {
+      calls.push(request);
+      if (request.operationName === 'VerifyCorgiCrmInstalledApplication') {
+        return {
+          currentWorkspace: { id: 'workspace-1' },
+          findOneApplication: {
+            universalIdentifier: 'ca87ad48-b62a-41be-a790-7c17707ff1b4',
+            version: '1.2.0',
+            state: 'INSTALLED',
+            defaultRoleId: roleId,
+            applicationVariables: [
+              { key: 'CORGI_CRM_WORKSPACE_ID', value: 'workspace-1' },
+            ],
+            logicFunctions: [
+              {
+                universalIdentifier: '65f68f6b-e130-4292-ab05-3ef48458d7de',
+                databaseEventTriggerSettings: JSON.stringify({
+                  eventName: 'workspaceMember.created',
+                }),
+              },
+            ],
+          },
+        };
+      }
+      if (request.operationName === 'VerifyCorgiCrmInstalledApplicationRole') {
+        return {
+          currentWorkspace: { id: 'workspace-1' },
+          getRoles: [{ id: 'another-role' }, { ...role, id: roleId }],
+        };
+      }
+      throw new Error('Unexpected operation');
+    };
+
+    const application = await verifyInstalledApplication({
+      graphql,
+      version: '1.2.0',
+      workspaceId: 'workspace-1',
+    });
+
+    assert.equal(application.defaultRoleId, roleId);
+    assert.deepEqual(application.defaultLogicFunctionRole, {
+      ...role,
+      id: roleId,
+    });
+    assert.deepEqual(
+      calls.map(({ operationName }) => operationName),
+      [
+        'VerifyCorgiCrmInstalledApplication',
+        'VerifyCorgiCrmInstalledApplicationRole',
+      ],
+    );
+    assert.deepEqual(calls[0].variables, {
+      applicationUniversalIdentifier: 'ca87ad48-b62a-41be-a790-7c17707ff1b4',
+    });
+  });
+
+  it('rejects malformed, absent, duplicate, or cross-workspace application roles', async () => {
+    const roleId = '99999999-9999-4999-8999-999999999999';
+    const applicationData = (defaultRoleId = roleId) => ({
+      currentWorkspace: { id: 'workspace-1' },
+      findOneApplication: {
+        universalIdentifier: 'ca87ad48-b62a-41be-a790-7c17707ff1b4',
+        version: '1.2.0',
+        state: 'INSTALLED',
+        defaultRoleId,
+        applicationVariables: [
+          { key: 'CORGI_CRM_WORKSPACE_ID', value: 'workspace-1' },
+        ],
+        logicFunctions: [
+          {
+            universalIdentifier: '65f68f6b-e130-4292-ab05-3ef48458d7de',
+            databaseEventTriggerSettings: JSON.stringify({
+              eventName: 'workspaceMember.created',
+            }),
+          },
+        ],
+      },
+    });
+    const execute = (defaultRoleId, roleData) => {
+      let call = 0;
+      return verifyInstalledApplication({
+        graphql: async () =>
+          call++ === 0 ? applicationData(defaultRoleId) : roleData,
+        version: '1.2.0',
+        workspaceId: 'workspace-1',
+      });
+    };
+
+    await assert.rejects(
+      execute('not-a-uuid', {
+        currentWorkspace: { id: 'workspace-1' },
+        getRoles: [],
+      }),
+      /role ID is invalid/i,
+    );
+    await assert.rejects(
+      execute(roleId, {
+        currentWorkspace: { id: 'workspace-1' },
+        getRoles: [],
+      }),
+      /exactly one.*role/i,
+    );
+    await assert.rejects(
+      execute(roleId, {
+        currentWorkspace: { id: 'workspace-1' },
+        getRoles: { id: roleId },
+      }),
+      /exactly one.*role/i,
+    );
+    await assert.rejects(
+      execute(roleId, {
+        currentWorkspace: { id: 'workspace-1' },
+        getRoles: [{ id: roleId }, { id: roleId }],
+      }),
+      /exactly one.*role/i,
+    );
+    await assert.rejects(
+      execute(roleId, {
+        currentWorkspace: { id: 'workspace-2' },
+        getRoles: [{ id: roleId }],
+      }),
+      /workspace changed.*role/i,
+    );
+  });
 
   it('accepts only the exact eight-object least-privilege role', () => {
     assert.doesNotThrow(() => verifyApplicationRoleContract(role, objects));
@@ -807,7 +1014,7 @@ describe('production metadata query compatibility', () => {
     const documents = [...endpointDocuments, ...deploymentKeyDocuments];
     assert.equal(
       documents.length,
-      15,
+      16,
       'all static deployment metadata documents are covered',
     );
     const schema = buildSchema(schemaSource);

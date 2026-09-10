@@ -761,36 +761,15 @@ const verifyInstalledApplication = async ({
   const data = await graphql({
     endpoint: '/metadata',
     operationName: 'VerifyCorgiCrmInstalledApplication',
-    query: `query VerifyCorgiCrmInstalledApplication {
+    query: `query VerifyCorgiCrmInstalledApplication(
+      $applicationUniversalIdentifier: UUID!
+    ) {
       currentWorkspace { id }
-      findManyApplications {
-        universalIdentifier version state
+      findOneApplication(
+        universalIdentifier: $applicationUniversalIdentifier
+      ) {
+        universalIdentifier version state defaultRoleId
         applicationVariables { key value }
-        defaultLogicFunctionRole {
-          canAccessAllTools
-          canBeAssignedToUsers
-          canBeAssignedToAgents
-          canBeAssignedToApiKeys
-          canReadAllObjectRecords
-          canUpdateAllObjectRecords
-          canSoftDeleteAllObjectRecords
-          canDestroyAllObjectRecords
-          canUpdateAllSettings
-          permissionFlags { id }
-          fieldPermissions { id }
-          rowLevelPermissionPredicates { id }
-          rowLevelPermissionPredicateGroups { id }
-          workspaceMembers { id }
-          agents { id }
-          apiKeys { id }
-          objectPermissions {
-            objectMetadataId
-            canReadObjectRecords
-            canUpdateObjectRecords
-            canSoftDeleteObjectRecords
-            canDestroyObjectRecords
-          }
-        }
         logicFunctions {
           universalIdentifier
           name
@@ -802,19 +781,15 @@ const verifyInstalledApplication = async ({
         }
       }
     }`,
+    variables: { applicationUniversalIdentifier: APPLICATION_ID },
   });
   if (data.currentWorkspace?.id !== workspaceId) {
     throw new Error('Workspace changed while verifying the installation');
   }
-  const applications = (data.findManyApplications ?? []).filter(
-    (application) => application.universalIdentifier === APPLICATION_ID,
-  );
-  if (applications.length !== 1) {
-    throw new Error(
-      `Expected one installed Corgi CRM app, found ${applications.length}`,
-    );
+  const application = data.findOneApplication;
+  if (application?.universalIdentifier !== APPLICATION_ID) {
+    throw new Error('Installed Corgi CRM application identity is incorrect');
   }
-  const application = applications[0];
   if (application.state !== 'INSTALLED' || application.version !== version) {
     throw new Error('Corgi CRM app is not installed at the expected version');
   }
@@ -838,7 +813,56 @@ const verifyInstalledApplication = async ({
   ) {
     throw new Error('Corgi CRM member-created database trigger is not active');
   }
-  return application;
+  if (!UUID_PATTERN.test(application.defaultRoleId ?? '')) {
+    throw new Error('Installed Corgi CRM application role ID is invalid');
+  }
+
+  const roleData = await graphql({
+    endpoint: '/metadata',
+    operationName: 'VerifyCorgiCrmInstalledApplicationRole',
+    query: `query VerifyCorgiCrmInstalledApplicationRole {
+      currentWorkspace { id }
+      getRoles {
+        id
+        canAccessAllTools
+        canBeAssignedToUsers
+        canBeAssignedToAgents
+        canBeAssignedToApiKeys
+        canReadAllObjectRecords
+        canUpdateAllObjectRecords
+        canSoftDeleteAllObjectRecords
+        canDestroyAllObjectRecords
+        canUpdateAllSettings
+        permissionFlags { id }
+        fieldPermissions { id }
+        rowLevelPermissionPredicates { id }
+        rowLevelPermissionPredicateGroups { id }
+        workspaceMembers { id }
+        agents { id }
+        apiKeys { id }
+        objectPermissions {
+          objectMetadataId
+          canReadObjectRecords
+          canUpdateObjectRecords
+          canSoftDeleteObjectRecords
+          canDestroyObjectRecords
+        }
+      }
+    }`,
+  });
+  if (roleData.currentWorkspace?.id !== workspaceId) {
+    throw new Error('Workspace changed while verifying the application role');
+  }
+  const roles = Array.isArray(roleData.getRoles)
+    ? roleData.getRoles.filter(
+        (role) => role?.id === application.defaultRoleId,
+      )
+    : [];
+  if (roles.length !== 1) {
+    throw new Error('Expected exactly one installed Corgi CRM application role');
+  }
+
+  return { ...application, defaultLogicFunctionRole: roles[0] };
 };
 
 const listAllMetadataObjects = async ({ graphql }) => {
@@ -1226,6 +1250,7 @@ export {
   parseResponse,
   resolveCorgiRoleObjectIdentifiers,
   verifyApplicationRoleContract,
+  verifyInstalledApplication,
   verifyMeetingApplicationContract,
   verifyMeetingBookingSchema,
   verifyReconciliation,
