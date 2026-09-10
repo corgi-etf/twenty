@@ -1,10 +1,17 @@
 import { execFile } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
-import { promisify, TextDecoder } from 'node:util';
+import { isDeepStrictEqual, promisify, TextDecoder } from 'node:util';
 
 const execFileAsync = promisify(execFile);
 const SHA_PATTERN = /^[0-9a-f]{40}$/;
 const MAX_GIT_OUTPUT_BYTES = 1024 * 1024;
+const APP_PATH = 'packages/twenty-apps/internal/corgi-crm/';
+const APP_RELEASE_PATHS = new Set([
+  `${APP_PATH}package.json`,
+  `${APP_PATH}README.md`,
+  `${APP_PATH}scripts/configure-telegram.mjs`,
+  `${APP_PATH}scripts/configure-telegram.test.mjs`,
+]);
 const EXACT_ALLOWED_PATHS = new Set([
   '.github/workflows/corgi-crm-app-production.yml',
   '.github/workflows/crm-outreach-activity-import.yml',
@@ -40,7 +47,9 @@ const isCanonicalRepositoryPath = (value) =>
   !value.includes('\0') &&
   value
     .split('/')
-    .every((segment) => segment.length > 0 && segment !== '.' && segment !== '..');
+    .every(
+      (segment) => segment.length > 0 && segment !== '.' && segment !== '..',
+    );
 
 export const parseNulDelimitedPaths = (value) => {
   if (!Buffer.isBuffer(value) || (value.length > 0 && value.at(-1) !== 0)) {
@@ -73,7 +82,13 @@ export const parseNulDelimitedPaths = (value) => {
   return paths;
 };
 
-export const assertAllowedChangedPaths = (paths) => {
+export const assertAllowedChangedPaths = (paths, scope = 'maintenance') => {
+  if (scope !== 'maintenance' && scope !== 'app-release') {
+    throw guardError(
+      'INVALID_SCOPE',
+      'Deployment revision guard received an invalid scope',
+    );
+  }
   if (
     !Array.isArray(paths) ||
     paths.some((path) => !isCanonicalRepositoryPath(path))
@@ -85,13 +100,20 @@ export const assertAllowedChangedPaths = (paths) => {
   }
 
   const rejectedCount = paths.filter(
-    (path) => !EXACT_ALLOWED_PATHS.has(path),
+    (path) =>
+      !EXACT_ALLOWED_PATHS.has(path) &&
+      !(
+        scope === 'app-release' &&
+        (path.startsWith(`${APP_PATH}src/`) || APP_RELEASE_PATHS.has(path))
+      ),
   ).length;
 
   if (rejectedCount > 0) {
     throw guardError(
-      'NON_MAINTENANCE_CHANGE',
-      `Deployment revision guard rejected ${rejectedCount} non-maintenance changed path(s)`,
+      scope === 'maintenance'
+        ? 'NON_MAINTENANCE_CHANGE'
+        : 'SERVER_RUNTIME_CHANGE',
+      `Deployment revision guard rejected ${rejectedCount} changed path(s) outside its approved scope`,
     );
   }
 
@@ -101,8 +123,10 @@ export const assertAllowedChangedPaths = (paths) => {
 export const verifyDeploymentRevision = async ({
   deployedSha,
   workflowSha,
+  scope = 'maintenance',
   executeFile = execFileAsync,
 }) => {
+  assertAllowedChangedPaths([], scope);
   if (!SHA_PATTERN.test(deployedSha) || !SHA_PATTERN.test(workflowSha)) {
     throw guardError(
       'INVALID_REVISION',
@@ -149,7 +173,65 @@ export const verifyDeploymentRevision = async ({
     );
   }
 
-  return assertAllowedChangedPaths(parseNulDelimitedPaths(output.stdout));
+  const paths = parseNulDelimitedPaths(output.stdout);
+  const result = assertAllowedChangedPaths(paths, scope);
+  if (
+    scope === 'app-release' &&
+    paths.some(
+      (path) =>
+        path.startsWith(`${APP_PATH}src/`) ||
+        path === `${APP_PATH}package.json`,
+    )
+  ) {
+    // This proves only server-runtime equivalence. App executable changes must
+    // be published separately as an immutable, strictly newer app version.
+    // Dependencies, build scripts and SDK changes still require a server release.
+    try {
+      const readPackage = async (sha) => {
+        const value = await executeFile(
+          'git',
+          ['show', `${sha}:${APP_PATH}package.json`],
+          options,
+        );
+        return JSON.parse(
+          new TextDecoder('utf-8', { fatal: true }).decode(value.stdout),
+        );
+      };
+      const [before, after] = await Promise.all([
+        readPackage(deployedSha),
+        readPackage(workflowSha),
+      ]);
+      const { version: beforeVersion, ...beforeConfiguration } = before;
+      const { version: afterVersion, ...afterConfiguration } = after;
+      const versionParts = (value) => {
+        if (
+          typeof value !== 'string' ||
+          !/^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/.test(value)
+        )
+          throw new Error();
+        const parts = value.split('.').map(Number);
+        if (!parts.every(Number.isSafeInteger)) throw new Error();
+        return parts;
+      };
+      const oldParts = versionParts(beforeVersion);
+      const newParts = versionParts(afterVersion);
+      const difference = newParts.findIndex(
+        (part, index) => part !== oldParts[index],
+      );
+      if (
+        !isDeepStrictEqual(beforeConfiguration, afterConfiguration) ||
+        difference < 0 ||
+        newParts[difference] <= oldParts[difference]
+      )
+        throw new Error();
+    } catch {
+      throw guardError(
+        'INVALID_APP_RELEASE',
+        'App-only release requires a version-only package bump and unchanged server dependencies',
+      );
+    }
+  }
+  return result;
 };
 
 const main = async () => {
@@ -157,10 +239,20 @@ const main = async () => {
     const result = await verifyDeploymentRevision({
       deployedSha: process.argv[2] ?? '',
       workflowSha: process.argv[3] ?? '',
+      scope: process.argv[4] ?? 'maintenance',
     });
     console.log(
       JSON.stringify({
-        deploymentRevisionGuard: { status: 'verified', ...result },
+        deploymentRevisionGuard: {
+          status: 'verified',
+          ...(process.argv[4] === 'app-release'
+            ? {
+                scope: 'server-runtime-only',
+                appRelease: 'separate-immutable-publication-required',
+              }
+            : {}),
+          ...result,
+        },
       }),
     );
   } catch (error) {

@@ -174,7 +174,9 @@ jobs:
           [[ "${MODE}" == "dry-run" || "${MODE}" == "apply" ]]
           [[ "${DEPLOYED_SHA}" =~ ^[0-9a-f]{40}$ ]]
           git cat-file -e "${DEPLOYED_SHA}^{commit}"
-          node packages/twenty-apps/internal/corgi-crm/scripts/deployment-revision-guard.mjs "${DEPLOYED_SHA}" "${GITHUB_SHA}"
+          # Server equivalence only; exact-SHA identity/app-install provenance
+          # remains independently mandatory before any import operation.
+          node packages/twenty-apps/internal/corgi-crm/scripts/deployment-revision-guard.mjs "${DEPLOYED_SHA}" "${GITHUB_SHA}" app-release
           [[ "${SOURCE_FORMAT}" == "legacy-nash-outreach-v1" || "${SOURCE_FORMAT}" == "completed-actions-v2" ]]
           [[ "${OWNER_LABEL}" == "Grace" || "${OWNER_LABEL}" == "Kelly" || "${OWNER_LABEL}" == "Nash" ]]
           [[ "${SOURCE_SHA256}" =~ ^[0-9a-f]{64}$ ]]

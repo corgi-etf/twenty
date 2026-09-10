@@ -42,7 +42,7 @@ const parseRunnerEnvironment = (contents) =>
   );
 
 describe('Corgi CRM production app workflow contract', () => {
-  it('allows only guarded maintenance drift from the deployed runtime revision', () => {
+  it('keeps configuration strict and publishes app-only changes as a separate immutable release', () => {
     assert.doesNotMatch(
       workflow,
       /\[\[ "\$\{DEPLOYED_SHA\}" == "\$\{GITHUB_SHA\}" \]\]/,
@@ -53,6 +53,18 @@ describe('Corgi CRM production app workflow contract', () => {
     );
     assert.match(workflow, /\.head_sha == \$deployed_sha/);
     assert.match(workflow, /imageTag=git-\$\{DEPLOYED_SHA\}/);
+    assert.match(
+      workflow,
+      /"\$\{OPERATION\}" == "configure-telegram"[\s\S]*revision_scope=maintenance[\s\S]*revision_scope=app-release/,
+    );
+    assert.match(
+      workflow,
+      /"\$\{DEPLOYED_SHA\}" "\$\{GITHUB_SHA\}" "\$\{revision_scope\}"/,
+    );
+    assert.match(
+      workflow,
+      /CORGI_CRM_TELEGRAM_PUBLIC_REPORTS_ENABLED: \$\{\{ vars\.CORGI_CRM_TELEGRAM_PUBLIC_REPORTS_ENABLED \|\| 'false' \}\}/,
+    );
   });
 
   it('derives the workspace ID from integrity-validated bootstrap evidence without a UUID literal', () => {
@@ -74,7 +86,10 @@ describe('Corgi CRM production app workflow contract', () => {
       prerequisite,
       /export CRM_WORKSPACE_ENV_PATH="\$GITHUB_ENV"[\s\S]*workspaceMetadataBootstrapPrerequisite/,
     );
-    assert.match(prerequisite, /Verify authenticated tenant environment handoff/);
+    assert.match(
+      prerequisite,
+      /Verify authenticated tenant environment handoff/,
+    );
     assert.match(prerequisite, /CORGI_CRM_EXPECTED_WORKSPACE_ID/);
     assert.match(prerequisite, /CORGI_CRM_EXPECTED_USER_WORKSPACE_ID/);
     assert.match(bootstrapSpec, /assertCompletedWorkspaceMetadataBootstrap/);
@@ -85,7 +100,9 @@ describe('Corgi CRM production app workflow contract', () => {
 
   it('resolves build-time role identifiers after acquiring the key and before publish', () => {
     const acquire = position('Acquire a short-lived deployment API key');
-    const roleStep = position('Resolve least-privilege role object identifiers');
+    const roleStep = position(
+      'Resolve least-privilege role object identifiers',
+    );
     const roleEnv = position('verify-production-install.mjs" role-env');
     const publish = position('Publish the private Corgi CRM app');
     assert.ok(acquire < roleEnv && roleEnv < publish);
@@ -94,10 +111,7 @@ describe('Corgi CRM production app workflow contract', () => {
       /CORGI_CRM_ROLE_ENV_PATH:\s*\$\{\{ github\.env \}\}/,
     );
     const roleHandoff = workflow.slice(roleStep, publish);
-    assert.match(
-      roleHandoff,
-      /export CORGI_CRM_ROLE_ENV_PATH="\$GITHUB_ENV"/,
-    );
+    assert.match(roleHandoff, /export CORGI_CRM_ROLE_ENV_PATH="\$GITHUB_ENV"/);
     assert.match(roleHandoff, /Verify application role environment handoff/);
     assert.match(
       roleHandoff,
@@ -109,58 +123,55 @@ describe('Corgi CRM production app workflow contract', () => {
     );
   });
 
-  it(
-    'exports tenant and role identifiers to the current runner environment file',
-    async (testContext) => {
-      const directory = await mkdtemp(join(tmpdir(), 'corgi-crm-runner-env-'));
-      testContext.after(() => rm(directory, { recursive: true }));
-      const staleEnvironmentPath = join(directory, 'previous-step.env');
-      const currentEnvironmentPath = join(directory, 'current-step.env');
-      await Promise.all([
-        writeFile(staleEnvironmentPath, ''),
-        writeFile(currentEnvironmentPath, ''),
-      ]);
+  it('exports tenant and role identifiers to the current runner environment file', async (testContext) => {
+    const directory = await mkdtemp(join(tmpdir(), 'corgi-crm-runner-env-'));
+    testContext.after(() => rm(directory, { recursive: true }));
+    const staleEnvironmentPath = join(directory, 'previous-step.env');
+    const currentEnvironmentPath = join(directory, 'current-step.env');
+    await Promise.all([
+      writeFile(staleEnvironmentPath, ''),
+      writeFile(currentEnvironmentPath, ''),
+    ]);
 
-      const runtimeExports = [
-        workflow.match(/export CRM_WORKSPACE_ENV_PATH="\$GITHUB_ENV"/)?.[0],
-        workflow.match(/export CORGI_CRM_ROLE_ENV_PATH="\$GITHUB_ENV"/)?.[0],
-      ];
-      assert.ok(runtimeExports.every(Boolean));
+    const runtimeExports = [
+      workflow.match(/export CRM_WORKSPACE_ENV_PATH="\$GITHUB_ENV"/)?.[0],
+      workflow.match(/export CORGI_CRM_ROLE_ENV_PATH="\$GITHUB_ENV"/)?.[0],
+    ];
+    assert.ok(runtimeExports.every(Boolean));
 
-      await execFileAsync(
-        'bash',
-        [
-          '-c',
-          `${runtimeExports.join('\n')}\n` +
-            'printf "%s\\n" "CORGI_CRM_EXPECTED_WORKSPACE_ID=$WORKSPACE_ID" >> "$CRM_WORKSPACE_ENV_PATH"\n' +
-            'printf "%s\\n" "CORGI_CRM_WHOLESALER_OBJECT_UNIVERSAL_IDENTIFIER=$WHOLESALER_ID" >> "$CORGI_CRM_ROLE_ENV_PATH"',
-        ],
-        {
-          env: {
-            ...process.env,
-            GITHUB_ENV: currentEnvironmentPath,
-            CRM_WORKSPACE_ENV_PATH: staleEnvironmentPath,
-            CORGI_CRM_ROLE_ENV_PATH: staleEnvironmentPath,
-            WORKSPACE_ID: '11111111-1111-4111-8111-111111111111',
-            WHOLESALER_ID: '22222222-2222-4222-8222-222222222222',
-          },
+    await execFileAsync(
+      'bash',
+      [
+        '-c',
+        `${runtimeExports.join('\n')}\n` +
+          'printf "%s\\n" "CORGI_CRM_EXPECTED_WORKSPACE_ID=$WORKSPACE_ID" >> "$CRM_WORKSPACE_ENV_PATH"\n' +
+          'printf "%s\\n" "CORGI_CRM_WHOLESALER_OBJECT_UNIVERSAL_IDENTIFIER=$WHOLESALER_ID" >> "$CORGI_CRM_ROLE_ENV_PATH"',
+      ],
+      {
+        env: {
+          ...process.env,
+          GITHUB_ENV: currentEnvironmentPath,
+          CRM_WORKSPACE_ENV_PATH: staleEnvironmentPath,
+          CORGI_CRM_ROLE_ENV_PATH: staleEnvironmentPath,
+          WORKSPACE_ID: '11111111-1111-4111-8111-111111111111',
+          WHOLESALER_ID: '22222222-2222-4222-8222-222222222222',
         },
-      );
+      },
+    );
 
-      assert.equal(await readFile(staleEnvironmentPath, 'utf8'), '');
-      const nextStepEnvironment = parseRunnerEnvironment(
-        await readFile(currentEnvironmentPath, 'utf8'),
-      );
-      assert.equal(
-        nextStepEnvironment.CORGI_CRM_EXPECTED_WORKSPACE_ID,
-        '11111111-1111-4111-8111-111111111111',
-      );
-      assert.equal(
-        nextStepEnvironment.CORGI_CRM_WHOLESALER_OBJECT_UNIVERSAL_IDENTIFIER,
-        '22222222-2222-4222-8222-222222222222',
-      );
-    },
-  );
+    assert.equal(await readFile(staleEnvironmentPath, 'utf8'), '');
+    const nextStepEnvironment = parseRunnerEnvironment(
+      await readFile(currentEnvironmentPath, 'utf8'),
+    );
+    assert.equal(
+      nextStepEnvironment.CORGI_CRM_EXPECTED_WORKSPACE_ID,
+      '11111111-1111-4111-8111-111111111111',
+    );
+    assert.equal(
+      nextStepEnvironment.CORGI_CRM_WHOLESALER_OBJECT_UNIVERSAL_IDENTIFIER,
+      '22222222-2222-4222-8222-222222222222',
+    );
+  });
 
   it('prevalidates trusted config, verifies the exact provider contract, then enables Telegram', () => {
     const configureDisabled = position('configure-telegram.mjs" disabled');
@@ -168,7 +179,9 @@ describe('Corgi CRM production app workflow contract', () => {
     const liveVerify = position('verify-telegram-live.mjs" enabled');
     const enable = position('configure-telegram.mjs" enable');
     const installVerify = position('verify-production-install.mjs" telegram');
-    assert.ok(configureDisabled < stage && stage < liveVerify && liveVerify < enable);
+    assert.ok(
+      configureDisabled < stage && stage < liveVerify && liveVerify < enable,
+    );
     assert.ok(enable < installVerify);
     assert.match(workflow, /CORGI_CRM_TELEGRAM_LINK_CODES:\s*\$\{\{ secrets\./);
     assert.match(
@@ -188,13 +201,22 @@ describe('Corgi CRM production app workflow contract', () => {
       position('Verify installed application, trigger, and reconciliation'),
     );
     assert.match(stageBlock, /CORGI_CRM_TELEGRAM_NOTIFICATION_ROUTES:/);
-    assert.doesNotMatch(providerBlock, /CORGI_CRM_TELEGRAM_NOTIFICATION_ROUTES:/);
+    assert.doesNotMatch(
+      providerBlock,
+      /CORGI_CRM_TELEGRAM_NOTIFICATION_ROUTES:/,
+    );
     assert.match(enableBlock, /CORGI_CRM_TELEGRAM_NOTIFICATION_ROUTES:/);
-    assert.match(workflow, /CORGI_CRM_TELEGRAM_SIGNED_CANARY_CONFIRM:\s*RUN_SIGNED_CANARY/);
+    assert.match(
+      workflow,
+      /CORGI_CRM_TELEGRAM_SIGNED_CANARY_CONFIRM:\s*RUN_SIGNED_CANARY/,
+    );
   });
 
   it('always disables and unregisters on opt-out, with idempotent failure cleanup', () => {
-    assert.match(workflow, /Configure Telegram disabled[\s\S]*if:[^\n]*always\(\)/);
+    assert.match(
+      workflow,
+      /Configure Telegram disabled[\s\S]*if:[^\n]*always\(\)/,
+    );
     const disabledBlock = workflow.slice(
       position('Configure Telegram disabled'),
       position('Unregister Telegram provider'),
@@ -204,9 +226,15 @@ describe('Corgi CRM production app workflow contract', () => {
       /CORGI_CRM_TELEGRAM_TIME_ZONE:\s*\$\{\{ vars\./,
     );
     assert.doesNotMatch(disabledBlock, /CORGI_CRM_TELEGRAM_BOT_TOKEN/);
-    assert.match(workflow, /Unregister Telegram provider[\s\S]*if:[^\n]*!inputs\.telegram_enable/);
+    assert.match(
+      workflow,
+      /Unregister Telegram provider[\s\S]*if:[^\n]*!inputs\.telegram_enable/,
+    );
     assert.match(workflow, /verify-telegram-live\.mjs" disabled/);
-    assert.match(workflow, /Fail closed after Telegram setup failure[\s\S]*if:[^\n]*failure\(\)/);
+    assert.match(
+      workflow,
+      /Fail closed after Telegram setup failure[\s\S]*if:[^\n]*failure\(\)/,
+    );
     const cleanup = workflow.slice(
       position('Fail closed after Telegram setup failure'),
       position('Revoke the short-lived deployment API key'),
@@ -239,21 +267,27 @@ describe('Corgi CRM production app workflow contract', () => {
         canary < register,
     );
     const installedBlock = workflow.slice(installed, configureDisabled);
-    assert.match(installedBlock, /if: inputs\.operation == 'configure-telegram'/);
+    assert.match(
+      installedBlock,
+      /if: inputs\.operation == 'configure-telegram'/,
+    );
     assert.match(
       installedBlock,
       /CORGI_CRM_EXPECTED_VERSION:\s*\$\{\{ steps\.app\.outputs\.version \}\}/,
     );
-    assert.match(
-      installedBlock,
-      /verify-production-install\.mjs" installed/,
-    );
+    assert.match(installedBlock, /verify-production-install\.mjs" installed/);
     const canaryBlock = workflow.slice(canary, register);
     assert.doesNotMatch(canaryBlock, /^\s*if:/m);
-    assert.doesNotMatch(canaryBlock, /inputs\.operation == 'publish-and-install'/);
+    assert.doesNotMatch(
+      canaryBlock,
+      /inputs\.operation == 'publish-and-install'/,
+    );
     assert.doesNotMatch(canaryBlock, /if: inputs\.telegram_enable/);
     assert.match(canaryBlock, /CRM_MEETING_CANARY_ENABLED: 'true'/);
-    assert.match(canaryBlock, /VERIFY_NATIVE_CRM_MEETING_WITH_TELEGRAM_DISABLED/);
+    assert.match(
+      canaryBlock,
+      /VERIFY_NATIVE_CRM_MEETING_WITH_TELEGRAM_DISABLED/,
+    );
     assert.match(canaryBlock, /meetingBooking\.maintenance\.spec\.ts/);
     assert.match(
       canaryBlock,
@@ -272,7 +306,10 @@ describe('Corgi CRM production app workflow contract', () => {
       position('Verify exact-SHA metadata bootstrap lineage'),
     );
     assert.match(recovery, /OPERATION: \$\{\{ inputs\.operation \}\}/);
-    assert.match(recovery, /RECOVERY_RUN_ID: \$\{\{ inputs\.meeting_recovery_run_id \}\}/);
+    assert.match(
+      recovery,
+      /RECOVERY_RUN_ID: \$\{\{ inputs\.meeting_recovery_run_id \}\}/,
+    );
     assert.match(
       recovery,
       /RECOVERY_RUN_ATTEMPT: \$\{\{ inputs\.meeting_recovery_run_attempt \}\}/,
@@ -320,7 +357,9 @@ describe('Corgi CRM production app workflow contract', () => {
       position(
         '\n      - name: Verify native CRM meeting booking while Telegram is disabled',
       ),
-      position('\n      - name: Register and verify the live Telegram provider'),
+      position(
+        '\n      - name: Register and verify the live Telegram provider',
+      ),
     );
     assert.match(
       canary,
