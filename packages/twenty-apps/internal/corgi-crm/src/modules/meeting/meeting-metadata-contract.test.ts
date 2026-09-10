@@ -145,7 +145,7 @@ describe('Meeting booking metadata', () => {
       type: ViewType.FIELDS_WIDGET,
     });
     expect(
-      meetingRecordFieldsView.config.fields.some(
+      (meetingRecordFieldsView.config.fields ?? []).some(
         (viewField) =>
           viewField.fieldMetadataUniversalIdentifier ===
           identifiers.MEETING_BOOKING_VALIDATION_MESSAGE_FIELD_UNIVERSAL_IDENTIFIER,

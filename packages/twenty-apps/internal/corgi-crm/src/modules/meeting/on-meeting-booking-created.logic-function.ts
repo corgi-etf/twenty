@@ -6,8 +6,10 @@ import {
 } from 'twenty-sdk/define';
 
 import { CoreMeetingBookingRepository } from 'src/modules/meeting/graphql/core-meeting-booking.repository';
-import { MEETING_BOOKING_CREATED_FUNCTION_UNIVERSAL_IDENTIFIER } from 'src/modules/meeting/meeting-identifiers';
-import { MEETING_BOOKING_STATUS } from 'src/modules/meeting/meeting-identifiers';
+import {
+  MEETING_BOOKING_CREATED_FUNCTION_UNIVERSAL_IDENTIFIER,
+  MEETING_BOOKING_STATUS,
+} from 'src/modules/meeting/meeting-identifiers';
 import { reconcileMeetingBooking } from 'src/modules/meeting/services/reconcile-meeting-booking.service';
 
 type MeetingBookingEventRecord = {

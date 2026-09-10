@@ -1,14 +1,15 @@
 import { describe, expect, it, vi } from 'vitest';
 
+import { type MeetingBookingRecord } from 'src/modules/meeting/graphql/core-meeting-booking.repository';
 import {
   reconcileMeetingBooking,
   type MeetingBookingRepository,
 } from 'src/modules/meeting/services/reconcile-meeting-booking.service';
 
-const meeting = {
+const meeting: MeetingBookingRecord = {
   id: '11111111-1111-4111-8111-111111111111',
   name: 'Portfolio review',
-  status: 'BOOKED' as const,
+  status: 'BOOKED',
   scheduledAt: '2026-09-18T15:00:00.000Z',
   bookedAt: null,
   bookedById: null,
@@ -18,7 +19,9 @@ const meeting = {
   updatedAt: '2026-09-10T13:14:59.000Z',
 };
 
-const repository = (record = meeting): MeetingBookingRepository => ({
+const repository = (
+  record: MeetingBookingRecord = meeting,
+): MeetingBookingRepository => ({
   get: vi.fn().mockResolvedValue(record),
   stampBooked: vi.fn().mockResolvedValue(true),
   rejectInvalidBooking: vi.fn().mockResolvedValue(true),
