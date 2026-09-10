@@ -25,7 +25,7 @@ export type CompletedActionNormalizationReceipt = {
   emailCount: number;
 };
 
-type CompletedActionNormalizationExpectations = {
+export type CompletedActionNormalizationExpectations = {
   sourceDocumentSha256: string;
   sourceRowCount: number;
   activityCount: number;
@@ -42,8 +42,8 @@ const sha256 = (value: string | Uint8Array): string =>
 const csvField = (value: string): string =>
   /[",\r\n]/.test(value) ? `"${value.replace(/"/g, '""')}"` : value;
 
-const assertCount = (value: number, label: string): void => {
-  if (!Number.isSafeInteger(value) || value < 0) {
+const assertCount = (value: number, label: string, minimum = 0): void => {
+  if (!Number.isSafeInteger(value) || value < minimum) {
     throw new Error(`Completed action ${label} is invalid`);
   }
 };
@@ -63,14 +63,14 @@ export const normalizeCompletedActionRows = (input: {
   if (sha256(input.sourceDocument) !== expectations.sourceDocumentSha256) {
     throw new Error('Completed action source document SHA-256 mismatch');
   }
-  for (const [label, value] of [
-    ['source row count', expectations.sourceRowCount],
-    ['activity count', expectations.activityCount],
-    ['phone call count', expectations.phoneCallCount],
-    ['voicemail count', expectations.voicemailCount],
-    ['email count', expectations.emailCount],
+  for (const [label, value, minimum] of [
+    ['source row count', expectations.sourceRowCount, 1],
+    ['activity count', expectations.activityCount, 1],
+    ['phone call count', expectations.phoneCallCount, 0],
+    ['voicemail count', expectations.voicemailCount, 0],
+    ['email count', expectations.emailCount, 0],
   ] as const) {
-    assertCount(value, label);
+    assertCount(value, label, minimum);
   }
   if (input.rows.length !== expectations.sourceRowCount) {
     throw new Error('Completed action source row count mismatch');
@@ -82,18 +82,10 @@ export const normalizeCompletedActionRows = (input: {
   let emailCount = 0;
   for (const [index, row] of input.rows.entries()) {
     if (
+      !row ||
       row.sourceRowNumber !== index + 1 ||
-      !Number.isSafeInteger(row.sourceRowNumber)
-    ) {
-      throw new Error('Completed action source rows are not sequential');
-    }
-    const companyName = row.companyName.trim().normalize('NFKC');
-    if (!companyName) {
-      throw new Error(
-        `Completed action source row ${index + 1} has no company`,
-      );
-    }
-    if (
+      !Number.isSafeInteger(row.sourceRowNumber) ||
+      typeof row.companyName !== 'string' ||
       ![
         row.phoneCallCompleted,
         row.voicemail,
@@ -103,6 +95,12 @@ export const normalizeCompletedActionRows = (input: {
       (row.notes !== null && typeof row.notes !== 'string')
     ) {
       throw new Error(`Completed action source row ${index + 1} is invalid`);
+    }
+    const companyName = row.companyName.trim().normalize('NFKC');
+    if (!companyName) {
+      throw new Error(
+        `Completed action source row ${index + 1} has no company`,
+      );
     }
     if (row.voicemail && !row.phoneCallCompleted) {
       throw new Error(

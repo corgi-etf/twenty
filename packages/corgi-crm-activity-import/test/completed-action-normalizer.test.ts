@@ -23,9 +23,9 @@ const worksheetRows = Array.from({ length: 36 }, (_, index) => {
     emailSent: sourceRowNumber === 24 || sourceRowNumber === 25,
     notes:
       sourceRowNumber === 23
-        ? 'Took down my email, number'
+        ? 'Shared contact details'
         : sourceRowNumber === 24
-          ? 'emailed and followed on Linkedin'
+          ? 'Sent a message; social follow noted'
           : null,
   } satisfies CompletedActionWorksheetRow;
 });
@@ -94,14 +94,14 @@ test('normalizes only checked completed actions in deterministic order', () => {
         actionOrdinal: 1,
         activityType: 'phone_call',
         outcome: 'connected',
-        notes: 'Took down my email, number',
+        notes: 'Shared contact details',
       },
       {
         sourceRowNumber: 24,
         actionOrdinal: 1,
         activityType: 'email',
         outcome: 'no_response',
-        notes: 'emailed and followed on Linkedin',
+        notes: 'Sent a message; social follow noted',
       },
       {
         sourceRowNumber: 25,
@@ -137,7 +137,7 @@ test('emits exact PII-free hashes and aggregate counts', () => {
   assert.match(receipt.rowSequenceSha256, /^[a-f0-9]{64}$/);
   assert.doesNotMatch(
     JSON.stringify(receipt),
-    /Synthetic Company|Took down|Linkedin/,
+    /Synthetic Company|Shared contact|social follow/,
   );
 });
 
@@ -158,5 +158,32 @@ test('fails closed on changed provenance, invalid checkbox state, and count drif
   assert.throws(
     () => normalize(worksheetRows, { activityCount: 24 }),
     /activity count mismatch/,
+  );
+  assert.throws(
+    () =>
+      normalize([{ ...worksheetRows[0]!, companyName: undefined as never }], {
+        sourceRowCount: 1,
+        activityCount: 1,
+        phoneCallCount: 1,
+        voicemailCount: 1,
+        emailCount: 0,
+      }),
+    /source row 1 is invalid/,
+  );
+  assert.throws(
+    () =>
+      normalizeCompletedActionRows({
+        sourceDocument: document,
+        rows: [],
+        expectations: {
+          sourceDocumentSha256: documentSha256,
+          sourceRowCount: 0,
+          activityCount: 0,
+          phoneCallCount: 0,
+          voicemailCount: 0,
+          emailCount: 0,
+        },
+      }),
+    /source row count is invalid/,
   );
 });
