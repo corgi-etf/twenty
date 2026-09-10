@@ -1,7 +1,6 @@
 import { pathToFileURL } from 'node:url';
 
-const APPLICATION_UNIVERSAL_IDENTIFIER =
-  'ca87ad48-b62a-41be-a790-7c17707ff1b4';
+const APPLICATION_UNIVERSAL_IDENTIFIER = 'ca87ad48-b62a-41be-a790-7c17707ff1b4';
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -23,10 +22,9 @@ const validateLinkBindings = (raw) => {
     typeof parsed !== 'object' ||
     Array.isArray(parsed) ||
     Object.keys(parsed).join(',') !== 'bindings' ||
-    !Array.isArray(parsed.bindings) ||
-    parsed.bindings.length === 0
+    !Array.isArray(parsed.bindings)
   ) {
-    throw new Error('Telegram link configuration needs a non-empty bindings array');
+    throw new Error('Telegram link configuration needs a bindings array');
   }
   const bindings = parsed.bindings.map((binding) => {
     if (
@@ -121,12 +119,19 @@ const exactlyOneApplication = (applications) => {
       application.universalIdentifier === APPLICATION_UNIVERSAL_IDENTIFIER,
   );
   if (matches.length !== 1 || !UUID_PATTERN.test(matches[0]?.id ?? '')) {
-    throw new Error(`Expected one installed Corgi CRM application, found ${matches.length}`);
+    throw new Error(
+      `Expected one installed Corgi CRM application, found ${matches.length}`,
+    );
   }
   return matches[0];
 };
 
-const configureTelegramApplication = async ({ graphql, enabled, stage = false, ...input }) => {
+const configureTelegramApplication = async ({
+  graphql,
+  enabled,
+  stage = false,
+  ...input
+}) => {
   // Enabling validates every trusted value before even looking up the app.
   // Disabling deliberately needs only the derived workspace identity so a
   // missing provider secret can never prevent the fail-closed application gate.
@@ -166,12 +171,14 @@ const configureTelegramApplication = async ({ graphql, enabled, stage = false, .
   for (const [key, value] of Object.entries(variables)) await write(key, value);
   if (enabled === true) await write('CORGI_CRM_TELEGRAM_ENABLED', 'true');
   return {
-    status: enabled === true ? 'enabled' : stage === true ? 'staged' : 'disabled',
+    status:
+      enabled === true ? 'enabled' : stage === true ? 'staged' : 'disabled',
   };
 };
 
 const parseResponse = async (response, operationName) => {
-  if (!response.ok) throw new Error(`${operationName} failed with HTTP ${response.status}`);
+  if (!response.ok)
+    throw new Error(`${operationName} failed with HTTP ${response.status}`);
   const body = await response.json();
   if (body.errors?.length || !body.data) {
     throw new Error(`${operationName} returned GraphQL errors`);
@@ -179,31 +186,34 @@ const parseResponse = async (response, operationName) => {
   return body.data;
 };
 
-const createGraphqlClient = ({ origin, apiKey }) => async (request) =>
-  parseResponse(
-    await fetch(new URL(request.endpoint, origin), {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-        Origin: origin,
-      },
-      body: JSON.stringify({
-        operationName: request.operationName,
-        query: request.query,
-        variables: request.variables ?? {},
+const createGraphqlClient =
+  ({ origin, apiKey }) =>
+  async (request) =>
+    parseResponse(
+      await fetch(new URL(request.endpoint, origin), {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+          Origin: origin,
+        },
+        body: JSON.stringify({
+          operationName: request.operationName,
+          query: request.query,
+          variables: request.variables ?? {},
+        }),
+        redirect: 'error',
       }),
-      redirect: 'error',
-    }),
-    request.operationName,
-  );
+      request.operationName,
+    );
 
 const main = async () => {
   const mode = process.argv[2];
   if (mode !== 'disabled' && mode !== 'stage' && mode !== 'enable') {
     throw new Error('Usage: configure-telegram.mjs <disabled|stage|enable>');
   }
-  const origin = new URL(required(process.env.CORGI_CRM_API_URL, 'CRM API URL')).origin;
+  const origin = new URL(required(process.env.CORGI_CRM_API_URL, 'CRM API URL'))
+    .origin;
   const result = await configureTelegramApplication({
     graphql: createGraphqlClient({
       origin,
@@ -222,11 +232,11 @@ const main = async () => {
   console.log(`Telegram application configuration is ${result.status}.`);
 };
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (
+  process.argv[1] &&
+  import.meta.url === pathToFileURL(process.argv[1]).href
+) {
   await main();
 }
 
-export {
-  configureTelegramApplication,
-  validateTrustedTelegramConfiguration,
-};
+export { configureTelegramApplication, validateTrustedTelegramConfiguration };

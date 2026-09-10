@@ -6,6 +6,19 @@ const configurationModule = await import('./configure-telegram.mjs').catch(
 );
 
 describe('trusted Telegram application configuration', () => {
+  it('allows initial activation with no linked users and no private report access', () => {
+    const variables = configurationModule.validateTrustedTelegramConfiguration({
+      workspaceId: '11111111-1111-4111-8111-111111111111',
+      token: 'token',
+      webhookSecret: 'secret',
+      operatorSecret: 'operator-secret',
+      linkCodesJson: '{"bindings":[]}',
+      timeZone: 'America/Chicago',
+      dailySummaryTime: '18:00',
+    });
+    assert.equal(variables.CORGI_CRM_TELEGRAM_LINK_CODES, '{"bindings":[]}');
+  });
+
   it('actively disables without requiring provider secrets', async () => {
     const writes = [];
     await configurationModule.configureTelegramApplication({
@@ -149,7 +162,10 @@ describe('trusted Telegram application configuration', () => {
       value: 'false',
     });
     assert.deepEqual(
-      writes.slice(1).map(({ key }) => key).sort(),
+      writes
+        .slice(1)
+        .map(({ key }) => key)
+        .sort(),
       [
         'CORGI_CRM_TELEGRAM_BOT_TOKEN',
         'CORGI_CRM_TELEGRAM_DAILY_SUMMARY_TIME',
