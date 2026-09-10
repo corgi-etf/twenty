@@ -129,13 +129,18 @@ const CANONICAL_ACTIVITY_OUTCOMES = [
   'other',
 ] as const;
 const ACTIVITY_IMPORT_UUID_NAMESPACE = 'c0671000-75d5-5df7-a950-50da7105b2dd';
+const COMPATIBLE_OUTCOMES_BY_ACTIVITY_TYPE: Readonly<
+  Record<CompletedActivityType, readonly CanonicalActivityOutcome[]>
+> = {
+  phone_call: ['left_voicemail', 'no_response', 'connected', 'other'],
+  email: ['no_response', 'follow_up_scheduled', 'not_interested', 'other'],
+};
 
 const isCompatibleActivityTypeAndOutcome = (
   activityType: CompletedActivityType,
   outcome: CanonicalActivityOutcome,
 ): boolean =>
-  activityType === 'phone_call' ||
-  (outcome !== 'left_voicemail' && outcome !== 'connected');
+  COMPATIBLE_OUTCOMES_BY_ACTIVITY_TYPE[activityType].includes(outcome);
 
 const assertNormalizationReceipt = (
   receipt: ActivityImportNormalizationReceipt | undefined,
@@ -699,8 +704,6 @@ export const deterministicCompletedActivityId = (input: {
       input.ownerWorkspaceMemberId,
       input.sourceRowNumber,
       input.actionOrdinal,
-      input.activityType,
-      input.outcome,
     ].join(':'),
   );
 };
