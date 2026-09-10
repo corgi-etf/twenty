@@ -173,8 +173,8 @@ jobs:
           set -euo pipefail
           [[ "${MODE}" == "dry-run" || "${MODE}" == "apply" ]]
           [[ "${DEPLOYED_SHA}" =~ ^[0-9a-f]{40}$ ]]
-          [[ "${DEPLOYED_SHA}" == "${GITHUB_SHA}" ]]
           git cat-file -e "${DEPLOYED_SHA}^{commit}"
+          node packages/twenty-apps/internal/corgi-crm/scripts/deployment-revision-guard.mjs "${DEPLOYED_SHA}" "${GITHUB_SHA}"
           [[ "${SOURCE_FORMAT}" == "legacy-nash-outreach-v1" || "${SOURCE_FORMAT}" == "completed-actions-v2" ]]
           [[ "${OWNER_LABEL}" == "Grace" || "${OWNER_LABEL}" == "Kelly" || "${OWNER_LABEL}" == "Nash" ]]
           [[ "${SOURCE_SHA256}" =~ ^[0-9a-f]{64}$ ]]
@@ -250,7 +250,7 @@ jobs:
             [[ "${RESUME_ATTEMPT}" =~ ^[1-9][0-9]*$ ]]
           fi
 
-      - name: Verify authenticated exact-SHA identity artifact lineage
+      - name: Verify authenticated exact-workflow identity artifact lineage
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -278,7 +278,7 @@ jobs:
             --arg run_id "${IDENTITY_RUN_ID}" \
             --argjson attempt "${IDENTITY_ATTEMPT}" \
             --arg workflow_id "${workflow_id}" \
-            --arg sha "${DEPLOYED_SHA}" '
+            --arg sha "${GITHUB_SHA}" '
               (.id | tostring) == $run_id and .run_attempt == $attempt and
               (.workflow_id | tostring) == $workflow_id and
               .event == "workflow_dispatch" and .head_branch == "main" and

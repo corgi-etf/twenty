@@ -3,6 +3,10 @@ name: Manual CRM territory identity discovery
 on:
   workflow_dispatch:
     inputs:
+      deployed_sha:
+        description: Exact 40-character SHA currently deployed to both CRM services
+        required: true
+        type: string
       app_install_run_id:
         description: Successful Corgi CRM app production workflow run ID
         required: true
@@ -41,20 +45,22 @@ jobs:
     timeout-minutes: 30
     environment: production
     env:
-      DEPLOYED_SHA: ${{ github.sha }}
+      DEPLOYED_SHA: ${{ inputs.deployed_sha }}
     steps:
       - name: Check out the exact discovery revision
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          fetch-depth: 0
 
-      - name: Require the exact deployed workflow revision
+      - name: Prove only reviewed maintenance paths differ from the live revision
         shell: bash
         run: |
           set -euo pipefail
           [[ "${DEPLOYED_SHA}" =~ ^[0-9a-f]{40}$ ]]
-          [[ "${DEPLOYED_SHA}" == "${GITHUB_SHA}" ]]
           git cat-file -e "${DEPLOYED_SHA}^{commit}"
+          node packages/twenty-apps/internal/corgi-crm/scripts/deployment-revision-guard.mjs "${DEPLOYED_SHA}" "${GITHUB_SHA}"
 
-      - name: Verify exact-SHA app install lineage
+      - name: Verify exact-workflow app install lineage
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -79,13 +85,13 @@ jobs:
             --arg run_id "${APP_RUN_ID}" \
             --argjson run_attempt "${APP_RUN_ATTEMPT}" \
             --arg workflow_id "${workflow_id}" \
-            --arg deployed_sha "${DEPLOYED_SHA}" '
+            --arg workflow_sha "${GITHUB_SHA}" '
               (.id | tostring) == $run_id and .run_attempt == $run_attempt and
               (.workflow_id | tostring) == $workflow_id and
               .name == "Publish and install Corgi CRM app in production" and
               .event == "workflow_dispatch" and .head_branch == "main" and
               .head_repository.full_name == $repository and
-              .head_sha == $deployed_sha and
+              .head_sha == $workflow_sha and
               .status == "completed" and .conclusion == "success"
             ' "${run_json}" >/dev/null
 
