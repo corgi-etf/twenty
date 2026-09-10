@@ -158,6 +158,25 @@ describe('Corgi CRM production app workflow contract', () => {
     assert.ok(configureDisabled < stage && stage < liveVerify && liveVerify < enable);
     assert.ok(enable < installVerify);
     assert.match(workflow, /CORGI_CRM_TELEGRAM_LINK_CODES:\s*\$\{\{ secrets\./);
+    assert.match(
+      workflow,
+      /CORGI_CRM_TELEGRAM_NOTIFICATION_ROUTES:\s*\$\{\{ secrets\./,
+    );
+    const stageBlock = workflow.slice(
+      position('Stage Telegram configuration while disabled'),
+      position('Register and verify the live Telegram provider'),
+    );
+    const providerBlock = workflow.slice(
+      position('Register and verify the live Telegram provider'),
+      position('Enable verified Telegram configuration'),
+    );
+    const enableBlock = workflow.slice(
+      position('Enable verified Telegram configuration'),
+      position('Verify installed application, trigger, and reconciliation'),
+    );
+    assert.match(stageBlock, /CORGI_CRM_TELEGRAM_NOTIFICATION_ROUTES:/);
+    assert.doesNotMatch(providerBlock, /CORGI_CRM_TELEGRAM_NOTIFICATION_ROUTES:/);
+    assert.match(enableBlock, /CORGI_CRM_TELEGRAM_NOTIFICATION_ROUTES:/);
     assert.match(workflow, /CORGI_CRM_TELEGRAM_SIGNED_CANARY_CONFIRM:\s*RUN_SIGNED_CANARY/);
   });
 

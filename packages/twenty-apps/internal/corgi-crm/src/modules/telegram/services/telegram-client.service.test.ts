@@ -28,6 +28,29 @@ describe('TelegramClient', () => {
     );
   });
 
+  it('targets an explicit forum topic without changing ordinary messages', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify({ ok: true, result: { message_id: 1 } }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+    const client = new TelegramClient({ token: 'bot-secret' });
+
+    await client.sendMessage('-100123', 'Booked', 42);
+
+    expect(fetchSpy).toHaveBeenCalledWith(
+      'https://api.telegram.org/botbot-secret/sendMessage',
+      expect.objectContaining({
+        body: JSON.stringify({
+          chat_id: '-100123',
+          text: 'Booked',
+          message_thread_id: 42,
+        }),
+      }),
+    );
+  });
+
   it('redacts provider and token details from errors', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(
       new Response(

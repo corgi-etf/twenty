@@ -96,6 +96,29 @@ source:
 }
 ```
 
+- `CORGI_CRM_TELEGRAM_NOTIFICATION_ROUTES` (secret): optional destinations for
+  CRM event alerts. An unset value or `{}` sends no alerts. Use the numeric
+  Telegram chat/channel ID, and include `messageThreadId` only for a forum
+  topic. Each event/destination/topic combination must be unique:
+
+```json
+{
+  "version": 1,
+  "routes": [
+    {
+      "event": "meeting_booked",
+      "chatId": "-1001234567890",
+      "messageThreadId": 42
+    }
+  ]
+}
+```
+
+The `meeting_booked` event sends `🎉 NEW MEETING BOOKED! 🎉` with the RIA,
+scheduled date, owner, booking timestamp, and the booking user when a human name
+is available. It never includes ARR. Only the first valid transition into a
+booked state alerts; reschedules and later status changes do not alert again.
+
 - `CORGI_CRM_TELEGRAM_TIME_ZONE`: an IANA zone such as `America/Chicago`.
 - `CORGI_CRM_TELEGRAM_DAILY_SUMMARY_TIME`: `HH:MM` on a 15-minute boundary.
 

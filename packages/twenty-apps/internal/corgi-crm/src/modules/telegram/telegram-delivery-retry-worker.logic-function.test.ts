@@ -83,6 +83,42 @@ const context = {
 };
 
 describe('Telegram delivery retry worker', () => {
+  it('replays the persisted forum topic exactly', async () => {
+    const topicEnvelope = {
+      kind: 'message',
+      chatId: '-1001',
+      text: 'Booked',
+      messageThreadId: 42,
+    } as const;
+    const topicKey = `telegram:delivery:${'f'.repeat(64)}`;
+    const values = new Map<string, any>([
+      [topicKey, { ...initialState, deliveryKey: topicKey }],
+      [`telegram:delivery-audit:${requestId}`, { ...audit, deliveryKey: topicKey }],
+      [`telegram:delivery-envelope:${'f'.repeat(64)}`, topicEnvelope],
+    ]);
+    const sendMessage = vi.fn().mockResolvedValue(undefined);
+
+    await workerModule.handleTelegramDeliveryRetryJob(
+      { deliveryKey: topicKey, expectedUnknownAt: unknownAt, requestId },
+      context,
+      {
+        expectedWorkspaceId: WORKSPACE_ID,
+        enabled: 'true',
+        store: {
+          get: vi.fn(async (key: string) => values.get(key) ?? null),
+          set: vi.fn(async (key: string, value: unknown) => {
+            values.set(key, value);
+          }),
+          delete: vi.fn(),
+        },
+        repository: makeRepository(values) as never,
+        createTelegramClient: () => ({ sendMessage, answerCallbackQuery: vi.fn() }),
+      },
+    );
+
+    expect(sendMessage).toHaveBeenCalledWith('-1001', 'Booked', 42);
+  });
+
   it('does not parse, read state, or construct a provider while disabled', async () => {
     const store = { get: vi.fn(), set: vi.fn(), delete: vi.fn() };
     const createTelegramClient = vi.fn();

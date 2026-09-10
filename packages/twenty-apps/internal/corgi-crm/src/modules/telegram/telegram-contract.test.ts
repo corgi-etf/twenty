@@ -7,17 +7,38 @@ import deliveryControl from 'src/modules/telegram/telegram-delivery-control.logi
 import deliveryRetryWorker, * as retryWorkerModule from 'src/modules/telegram/telegram-delivery-retry-worker.logic-function';
 import updateWorker, * as workerModule from 'src/modules/telegram/telegram-update-worker.logic-function';
 import webhook, * as webhookModule from 'src/modules/telegram/telegram-webhook.logic-function';
+import meetingBookedAlert from 'src/modules/telegram/telegram-meeting-booked-alert.logic-function';
+import notificationDeliveryWorker from 'src/modules/telegram/telegram-notification-delivery-worker.logic-function';
 
 const WORKSPACE_ID = '11111111-1111-4111-8111-111111111111';
 const OTHER_WORKSPACE_ID = '22222222-2222-4222-8222-222222222222';
 
 describe('Telegram application contract', () => {
+  it('wires meeting alerts through one filtered event ingress and an untriggered worker', () => {
+    expect(meetingBookedAlert.success).toBe(true);
+    expect(meetingBookedAlert.config.databaseEventTriggerSettings).toEqual({
+      eventName: 'meetingBooking.updated',
+      updatedFields: ['bookedAt'],
+    });
+    expect(notificationDeliveryWorker.success).toBe(true);
+    expect(notificationDeliveryWorker.config).not.toHaveProperty(
+      'databaseEventTriggerSettings',
+    );
+    expect(notificationDeliveryWorker.config).not.toHaveProperty(
+      'httpRouteTriggerSettings',
+    );
+    expect(notificationDeliveryWorker.config).not.toHaveProperty(
+      'cronTriggerSettings',
+    );
+  });
+
   it('declares secrets without embedding values and requires explicit schedule config', () => {
     const variables = application.config.applicationVariables!;
     for (const key of [
       'CORGI_CRM_TELEGRAM_BOT_TOKEN',
       'CORGI_CRM_TELEGRAM_WEBHOOK_SECRET',
       'CORGI_CRM_TELEGRAM_LINK_CODES',
+      'CORGI_CRM_TELEGRAM_NOTIFICATION_ROUTES',
     ]) {
       expect(variables[key]).toMatchObject({ isSecret: true });
       expect(variables[key]).not.toHaveProperty('value');

@@ -12,7 +12,12 @@ import {
 import { getTelegramDeliveryId } from 'src/modules/telegram/services/telegram-identifiers.service';
 
 export type TelegramRetryEnvelope =
-  | { kind: 'message'; chatId: string; text: string }
+  | {
+      kind: 'message';
+      chatId: string;
+      text: string;
+      messageThreadId?: number;
+    }
   | { kind: 'callback'; callbackQueryId: string };
 
 export type TelegramDeliveryState = {
