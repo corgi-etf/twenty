@@ -31,7 +31,6 @@ on:
         options:
           - select-owner
           - Grace
-          - Kelly
           - Nash
       source_sha256:
         description: SHA-256 of the normalized CSV stored in the production environment secret
@@ -178,7 +177,7 @@ jobs:
           # remains independently mandatory before any import operation.
           node packages/twenty-apps/internal/corgi-crm/scripts/deployment-revision-guard.mjs "${DEPLOYED_SHA}" "${GITHUB_SHA}" app-release
           [[ "${SOURCE_FORMAT}" == "legacy-nash-outreach-v1" || "${SOURCE_FORMAT}" == "completed-actions-v2" ]]
-          [[ "${OWNER_LABEL}" == "Grace" || "${OWNER_LABEL}" == "Kelly" || "${OWNER_LABEL}" == "Nash" ]]
+          [[ "${OWNER_LABEL}" == "Grace" || "${OWNER_LABEL}" == "Nash" ]]
           [[ "${SOURCE_SHA256}" =~ ^[0-9a-f]{64}$ ]]
           if [[ "${SOURCE_FORMAT}" == "legacy-nash-outreach-v1" ]]; then
             [[ "${OWNER_LABEL}" == "Nash" ]]
@@ -210,7 +209,7 @@ jobs:
             jq -e '
               .schemaVersion == 2 and
               (.sourceFormat == "legacy-nash-outreach-v1" or .sourceFormat == "completed-actions-v2") and
-              (.ownerLabel == "Grace" or .ownerLabel == "Kelly" or .ownerLabel == "Nash") and
+              (.ownerLabel == "Grace" or .ownerLabel == "Nash") and
               ([.sourceSha256, .provenanceSha256, .rowSequenceSha256, .importIdHash, .activityIdSetHash, .planHash] |
                 all(type == "string" and test("^[a-f0-9]{64}$"))) and
               ([.expectedRows, .rowCount, .blankNoteCount, .distinctCompanyCount] |
