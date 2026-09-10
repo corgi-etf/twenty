@@ -2,6 +2,9 @@ import { STANDARD_OBJECT_UNIVERSAL_IDENTIFIERS } from 'twenty-sdk/define';
 import { describe, expect, it } from 'vitest';
 
 import {
+  MEETING_BOOKING_OBJECT_UNIVERSAL_IDENTIFIER,
+} from 'src/modules/meeting/meeting-identifiers';
+import {
   TELEGRAM_DELIVERY_AUDIT_OBJECT_UNIVERSAL_IDENTIFIER,
   TELEGRAM_DELIVERY_OBJECT_UNIVERSAL_IDENTIFIER,
 } from 'src/modules/telegram/telegram-persistence-identifiers';
@@ -42,7 +45,7 @@ describe('Corgi CRM function role', () => {
     expect(defaultRole.config.rowLevelPermissionPredicateGroups).toEqual([]);
   });
 
-  it('reads only the seven required objects and writes only app-owned operational data', () => {
+  it('reads only the eight required objects and writes only scoped operational data', () => {
     const readOnly = [
       STANDARD_OBJECT_UNIVERSAL_IDENTIFIERS.workspaceMember
         .universalIdentifier,
@@ -63,6 +66,7 @@ describe('Corgi CRM function role', () => {
       OUTREACH_ACTIVITY_OBJECT_ID,
       TELEGRAM_DELIVERY_OBJECT_UNIVERSAL_IDENTIFIER,
       TELEGRAM_DELIVERY_AUDIT_OBJECT_UNIVERSAL_IDENTIFIER,
+      MEETING_BOOKING_OBJECT_UNIVERSAL_IDENTIFIER,
     ]) {
       expect(permissionFor(objectUniversalIdentifier)).toEqual({
         objectUniversalIdentifier,
@@ -72,6 +76,6 @@ describe('Corgi CRM function role', () => {
         canDestroyObjectRecords: false,
       });
     }
-    expect(defaultRole.config.objectPermissions).toHaveLength(7);
+    expect(defaultRole.config.objectPermissions).toHaveLength(8);
   });
 });
