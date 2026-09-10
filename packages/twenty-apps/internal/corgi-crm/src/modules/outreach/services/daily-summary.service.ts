@@ -1,3 +1,9 @@
+import {
+  isQuickLogActivityType,
+  isQuickLogOutcome,
+  QUICK_LOG_ACTIVITY_LABELS,
+  QUICK_LOG_OUTCOME_LABELS,
+} from 'src/modules/outreach/quick-log-taxonomy';
 import { type OutreachActivity } from 'src/modules/outreach/types';
 
 export type SummaryCount = { label: string; count: number };
@@ -59,19 +65,29 @@ export const buildDailySummaries = (
     );
 };
 
+// Mirrors report-summary.service.ts's taxonomy mapping so /today reads the
+// same as /daily, /weekly and /monthly instead of showing raw stored values
+// (e.g. "phone_call") next to their friendly labels (e.g. "Phone call").
+const activityLabel = (value: string) =>
+  isQuickLogActivityType(value) ? QUICK_LOG_ACTIVITY_LABELS[value] : value;
+const outcomeLabel = (value: string) =>
+  isQuickLogOutcome(value) ? QUICK_LOG_OUTCOME_LABELS[value] : value;
+
 export const formatDailySummary = (summary: DailySummary): string => {
-  const formatCounts = (values: SummaryCount[]) =>
-    values.map(({ label, count }) => `${label}: ${count}`).join(', ');
+  const formatCounts = (
+    values: SummaryCount[],
+    labelFor: (label: string) => string,
+  ) => values.map(({ label, count }) => `${labelFor(label)}: ${count}`).join(', ');
   const activityLines = summary.activities.map((activity) => {
     const contact = activity.contactName ? ` / ${activity.contactName}` : '';
-    return `• ${activity.activityType} — ${activity.companyName}${contact} — ${activity.outcome}`;
+    return `• ${activityLabel(activity.activityType)} — ${activity.companyName}${contact} — ${outcomeLabel(activity.outcome)}`;
   });
 
   return [
     `${summary.wholesalerName} — ${summary.localDate}`,
     `Total: ${summary.total}`,
-    `By activity: ${formatCounts(summary.activityCounts) || 'None'}`,
-    `By outcome: ${formatCounts(summary.outcomeCounts) || 'None'}`,
+    `By activity: ${formatCounts(summary.activityCounts, activityLabel) || 'None'}`,
+    `By outcome: ${formatCounts(summary.outcomeCounts, outcomeLabel) || 'None'}`,
     ...activityLines,
   ].join('\n');
 };
