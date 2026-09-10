@@ -32,6 +32,13 @@ const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const MAX_NAME_LENGTH = 500;
 
+export class MeetingBookedNotificationValidationError extends Error {
+  public constructor(message: string) {
+    super(message);
+    this.name = 'MeetingBookedNotificationValidationError';
+  }
+}
+
 const normalizeName = (value: unknown): string =>
   typeof value === 'string' ? value.trim().replace(/\s+/g, ' ') : '';
 
@@ -49,7 +56,9 @@ export const parseMeetingBookedNotificationEvent = (
   value: unknown,
 ): MeetingBookedNotificationEvent => {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) {
-    throw new Error('Invalid meeting booked notification event');
+    throw new MeetingBookedNotificationValidationError(
+      'Invalid meeting booked notification event',
+    );
   }
   const event = value as Record<string, unknown>;
   const allowedKeys = event.bookedByName === undefined
@@ -73,7 +82,9 @@ export const parseMeetingBookedNotificationEvent = (
     !validName(ownerName) ||
     (event.bookedByName !== undefined && !validName(bookedByName))
   ) {
-    throw new Error('Invalid meeting booked notification event');
+    throw new MeetingBookedNotificationValidationError(
+      'Invalid meeting booked notification event',
+    );
   }
   return {
     type: 'meeting_booked',
@@ -114,7 +125,9 @@ const buildEvent = (
     !validName(ownerName) ||
     (bookedByName && !validName(bookedByName))
   ) {
-    throw new Error('Invalid authoritative meeting booking for notification');
+    throw new MeetingBookedNotificationValidationError(
+      'Invalid authoritative meeting booking for notification',
+    );
   }
   return {
     type: 'meeting_booked',
@@ -150,7 +163,9 @@ export const readMeetingBookedNotificationSnapshot = async ({
   if (existing !== null) {
     const parsed = parseMeetingBookedNotificationEvent(existing);
     if (parsed.meetingId !== meetingId || parsed.bookedAt !== bookedAt) {
-      throw new Error('Meeting booked notification snapshot collision');
+      throw new MeetingBookedNotificationValidationError(
+        'Meeting booked notification snapshot collision',
+      );
     }
     return parsed;
   }

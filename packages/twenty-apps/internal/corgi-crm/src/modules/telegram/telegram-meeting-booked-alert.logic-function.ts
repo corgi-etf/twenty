@@ -6,7 +6,11 @@ import {
   defineLogicFunction,
   type ObjectRecordUpdateEvent,
 } from 'twenty-sdk/define';
-import { enqueueJobs, kv } from 'twenty-sdk/logic-function';
+import {
+  enqueueJobs,
+  kv,
+  RetryableLogicFunctionError,
+} from 'twenty-sdk/logic-function';
 
 import {
   TELEGRAM_MEETING_BOOKED_ALERT_UNIVERSAL_IDENTIFIER,
@@ -15,6 +19,7 @@ import {
 import { CoreMeetingNotificationRepository } from 'src/modules/telegram/graphql/core-meeting-notification.repository';
 import {
   assertIanaTimeZone,
+  MeetingBookedNotificationValidationError,
   readMeetingBookedNotificationSnapshot,
   type MeetingBookingNotificationSource,
 } from 'src/modules/telegram/services/meeting-booked-notification.service';
@@ -99,20 +104,27 @@ export const handleTelegramMeetingBookedEvent = async (
   if (!bookedTransition) return { status: 'ignored' } as const;
   const timeZone = dependencies.timeZone?.trim() ?? '';
   assertIanaTimeZone(timeZone);
-  const event = await readMeetingBookedNotificationSnapshot({
-    ...bookedTransition,
-    store: dependencies.store,
-    readMeetingBooking: dependencies.readMeetingBooking,
-  });
-  const jobs = routes.map((route) => ({
-    jobId: jobId(event.meetingId, event.bookedAt, route),
-    payload: { version: 1 as const, event, route, timeZone },
-  }));
-  const result = await dependencies.enqueue(jobs);
-  if (result.enqueued !== true || result.enqueuedJobsCount !== jobs.length) {
-    throw new Error('Telegram meeting alert jobs were not fully enqueued');
+  try {
+    const event = await readMeetingBookedNotificationSnapshot({
+      ...bookedTransition,
+      store: dependencies.store,
+      readMeetingBooking: dependencies.readMeetingBooking,
+    });
+    const jobs = routes.map((route) => ({
+      jobId: jobId(event.meetingId, event.bookedAt, route),
+      payload: { version: 1 as const, event, route, timeZone },
+    }));
+    const result = await dependencies.enqueue(jobs);
+    if (result.enqueued !== true || result.enqueuedJobsCount !== jobs.length) {
+      throw new Error('Telegram meeting alert jobs were not fully enqueued');
+    }
+    return { status: 'enqueued', destinations: jobs.length } as const;
+  } catch (error) {
+    if (error instanceof MeetingBookedNotificationValidationError) throw error;
+    throw new RetryableLogicFunctionError(
+      'Telegram meeting alert ingress did not complete',
+    );
   }
-  return { status: 'enqueued', destinations: jobs.length } as const;
 };
 
 export const handler = async (payload: MeetingBookedUpdatePayload) => {

@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { RetryableLogicFunctionError } from 'twenty-sdk/logic-function';
 
 import {
   handleTelegramMeetingBookedEvent,
@@ -118,6 +119,113 @@ describe('meeting booked Telegram event ingress', () => {
     expect(enqueue.mock.calls[1]![0].map((job: { jobId: string }) => job.jobId)).toEqual(
       jobs.map((job: { jobId: string }) => job.jobId),
     );
+  });
+
+  it('classifies CRM snapshot failures as retryable after permanent validation', async () => {
+    const readMeetingBooking = vi
+      .fn()
+      .mockRejectedValue(new Error('Core API temporarily unavailable'));
+    await expect(
+      handleTelegramMeetingBookedEvent(payload, {
+        expectedWorkspaceId: WORKSPACE_ID,
+        enabled: 'true',
+        routesJson,
+        timeZone: 'America/Chicago',
+        store: {
+          get: vi.fn().mockResolvedValue(null),
+          set: vi.fn(),
+          delete: vi.fn(),
+        },
+        readMeetingBooking,
+        enqueue: vi.fn(),
+      }),
+    ).rejects.toBeInstanceOf(RetryableLogicFunctionError);
+    expect(readMeetingBooking).toHaveBeenCalledOnce();
+  });
+
+  it('retries an unconfirmed enqueue with the immutable snapshot and job IDs', async () => {
+    const values = new Map<string, unknown>();
+    const readMeetingBooking = vi.fn().mockResolvedValue({
+      id: MEETING_ID,
+      status: 'BOOKED',
+      bookedAt: BOOKED_AT,
+      scheduledAt: '2026-09-15T19:00:00.000Z',
+      company: {
+        id: '33333333-3333-4333-8333-333333333333',
+        name: 'RIA',
+      },
+      wholesaler: {
+        id: '44444444-4444-4444-8444-444444444444',
+        name: 'Nash',
+      },
+      bookedBy: null,
+    });
+    const enqueue = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('queue response lost'))
+      .mockResolvedValueOnce({ enqueued: true, enqueuedJobsCount: 2 });
+    const dependencies = {
+      expectedWorkspaceId: WORKSPACE_ID,
+      enabled: 'true',
+      routesJson,
+      timeZone: 'America/Chicago',
+      store: {
+        get: vi.fn(async (key: string) => values.get(key) ?? null),
+        set: vi.fn(async (key: string, value: unknown) => {
+          values.set(key, value);
+        }),
+        delete: vi.fn(),
+      },
+      readMeetingBooking,
+      enqueue,
+    };
+
+    await expect(
+      handleTelegramMeetingBookedEvent(payload, dependencies),
+    ).rejects.toBeInstanceOf(RetryableLogicFunctionError);
+    await expect(
+      handleTelegramMeetingBookedEvent(payload, dependencies),
+    ).resolves.toEqual({ status: 'enqueued', destinations: 2 });
+
+    expect(readMeetingBooking).toHaveBeenCalledOnce();
+    expect(
+      enqueue.mock.calls[1]![0].map((job: { jobId: string }) => job.jobId),
+    ).toEqual(
+      enqueue.mock.calls[0]![0].map((job: { jobId: string }) => job.jobId),
+    );
+    expect(enqueue.mock.calls[1]![0]).toEqual(enqueue.mock.calls[0]![0]);
+  });
+
+  it('keeps invalid trusted configuration non-retryable', async () => {
+    await expect(
+      handleTelegramMeetingBookedEvent(payload, {
+        expectedWorkspaceId: WORKSPACE_ID,
+        enabled: 'true',
+        routesJson,
+        timeZone: 'not-a-time-zone',
+        store: { get: vi.fn(), set: vi.fn(), delete: vi.fn() },
+        readMeetingBooking: vi.fn(),
+        enqueue: vi.fn(),
+      }),
+    ).rejects.not.toBeInstanceOf(RetryableLogicFunctionError);
+  });
+
+  it('keeps an invalid authoritative booking non-retryable', async () => {
+    await expect(
+      handleTelegramMeetingBookedEvent(payload, {
+        expectedWorkspaceId: WORKSPACE_ID,
+        enabled: 'true',
+        routesJson,
+        timeZone: 'America/Chicago',
+        store: {
+          get: vi.fn().mockResolvedValue(null),
+          set: vi.fn(),
+          delete: vi.fn(),
+        },
+        readMeetingBooking: vi.fn().mockResolvedValue(null),
+        enqueue: vi.fn(),
+      }),
+    ).rejects.not.toBeInstanceOf(RetryableLogicFunctionError);
   });
 
   it('refuses a mismatched workspace before dependencies', async () => {
