@@ -321,12 +321,21 @@ const formatExternalWholesalerRevenue = (
     minimumFractionDigits: 0,
     maximumFractionDigits: 0,
   });
+  // Summed from the same figures printed above rather than stated separately,
+  // so the total cannot disagree with its parts once a real ARR source
+  // replaces the placeholder.
+  const total = section.wholesalers.reduce(
+    (running, { attributedAnnualRecurringRevenue }) =>
+      running + attributedAnnualRecurringRevenue,
+    0,
+  );
   return [
     EXTERNAL_WHOLESALER_REVENUE_ZERO_NOTE,
     ...section.wholesalers.map(
       ({ name, attributedAnnualRecurringRevenue }) =>
         `\u2022 ${name}: ${money.format(attributedAnnualRecurringRevenue)}`,
     ),
+    `Total ARR: ${money.format(total)}`,
   ];
 };
 

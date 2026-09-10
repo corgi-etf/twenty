@@ -665,6 +665,7 @@ describe('outreach report summaries', () => {
         '💰 ARR attributed per EW',
         'No ARR source is connected yet, so every figure reads $0.',
         '• Alex: $0',
+        'Total ARR: $0',
       ],
     ],
     [
