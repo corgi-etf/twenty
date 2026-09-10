@@ -3,8 +3,10 @@ import { createHash } from 'node:crypto';
 import { test } from 'node:test';
 
 import {
+  activityImportCompanyMatchKey,
   assertTerritoryIdentityArtifact,
   buildActivityImportPlan,
+  buildCompanyCreationPlan,
   deterministicActivityId,
   deterministicCompletedActivityId,
   parseActivityCsv,
@@ -644,4 +646,107 @@ test('emits a stable PII-free manifest', () => {
   ]) {
     assert.match(hash, /^[0-9a-f]{64}$/);
   }
+});
+
+const EN_DASH_FIRM = 'Holistic Planning \u2013 Kansas City';
+const PIPE_FIRM = 'WEALTH | KC';
+const AMPERSAND_FIRM = 'Atwood & Palmer, Inc.';
+
+const creationRows = (names: readonly string[]) =>
+  names.map((companyName, index) => ({
+    rowNumber: index + 1,
+    companyName,
+    notes: null,
+    occurredAt: '2026-09-09T12:00:00.000Z',
+  }));
+
+test('company creation plans only the names that match zero companies', () => {
+  const plan = buildCompanyCreationPlan({
+    rows: creationRows(['Acme, Inc.', 'Missing Firm']),
+    companies: [{ id: uuid('4'), name: 'Acme, Inc.' }],
+  });
+
+  assert.deepEqual(
+    plan.creations.map(({ name }) => name),
+    ['Missing Firm'],
+  );
+  assert.equal(plan.alreadyPresentCount, 1);
+  assert.deepEqual(plan.ambiguousRows, []);
+});
+
+test('company creation reports a two-or-more match instead of planning a duplicate', () => {
+  const plan = buildCompanyCreationPlan({
+    rows: creationRows(['Acme, Inc.']),
+    companies: [
+      { id: uuid('4'), name: 'Acme, Inc.' },
+      { id: uuid('5'), name: 'Acme, Inc.' },
+    ],
+  });
+
+  assert.deepEqual(plan.creations, []);
+  assert.deepEqual(plan.ambiguousRows, [
+    { rowNumber: 1, companyName: 'Acme, Inc.', matchCount: 2 },
+  ]);
+});
+
+test('company creation preserves an en dash, a pipe, and an ampersand exactly', () => {
+  const names = [EN_DASH_FIRM, PIPE_FIRM, AMPERSAND_FIRM];
+  const plan = buildCompanyCreationPlan({
+    rows: creationRows(names),
+    companies: [],
+  });
+
+  assert.deepEqual(
+    plan.creations.map(({ name }) => name),
+    names,
+  );
+  // A transliterated dash is the exact failure that would leave the very next
+  // import unmatched, so assert the codepoint rather than the rendered glyph.
+  assert.equal(plan.creations[0]?.name.includes('\u2013'), true);
+  assert.equal(plan.creations[0]?.name.includes('-'), false);
+  assert.equal(plan.creations[1]?.name, 'WEALTH | KC');
+  assert.equal(plan.creations[2]?.name, 'Atwood & Palmer, Inc.');
+  for (const name of names) {
+    assert.equal(activityImportCompanyMatchKey(name), name);
+  }
+});
+
+test('a created name matches itself on the next import attempt', () => {
+  const names = [EN_DASH_FIRM, PIPE_FIRM, AMPERSAND_FIRM];
+  const created = buildCompanyCreationPlan({
+    rows: creationRows(names),
+    companies: [],
+  }).creations.map(({ name }, index) => ({
+    id: uuid(String(index + 4)),
+    name,
+  }));
+
+  const rematched = buildCompanyCreationPlan({
+    rows: creationRows(names),
+    companies: created,
+  });
+
+  assert.deepEqual(rematched.creations, []);
+  assert.equal(rematched.alreadyPresentCount, names.length);
+});
+
+test('company creation collapses repeated rows for one firm into a single record', () => {
+  const plan = buildCompanyCreationPlan({
+    rows: creationRows([PIPE_FIRM, PIPE_FIRM, PIPE_FIRM]),
+    companies: [],
+  });
+
+  assert.equal(plan.creations.length, 1);
+  assert.deepEqual(plan.creations[0]?.rowNumbers, [1, 2, 3]);
+});
+
+test('company creation rejects an invalid company snapshot', () => {
+  assert.throws(
+    () =>
+      buildCompanyCreationPlan({
+        rows: creationRows(['Acme, Inc.']),
+        companies: [{ id: 'not-a-uuid', name: 'Acme, Inc.' }],
+      }),
+    /company snapshot is invalid/,
+  );
 });

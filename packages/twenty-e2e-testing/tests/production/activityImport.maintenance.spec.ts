@@ -1,4 +1,4 @@
-import { readFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 
 import { expect, test } from '@playwright/test';
 
@@ -9,8 +9,13 @@ import {
 import {
   assertActivityImportManifest,
   runActivityImport,
+  runActivityImportCompanyCreation,
 } from '../../../corgi-crm-activity-import/src/execution.ts';
-import { assertTerritoryIdentityArtifact } from '../../../corgi-crm-activity-import/src/importer.ts';
+import {
+  assertTerritoryIdentityArtifact,
+  type ActivityImportCsvOptions,
+  type ActivityImportNormalizationReceipt,
+} from '../../../corgi-crm-activity-import/src/importer.ts';
 import {
   ACTIVITY_IMPORT_APPROVED_ORIGIN,
   createActivityImportRequestGate,
@@ -75,6 +80,13 @@ test('runs a guarded, idempotent outreach activity import', async ({
   if (mode !== 'dry-run' && mode !== 'apply') {
     throw new Error('CRM_ACTIVITY_IMPORT_MODE must be dry-run or apply');
   }
+  // Defaulting to the import keeps an unset variable byte-for-byte identical
+  // to the behaviour before company creation existed.
+  const operation =
+    process.env.CRM_ACTIVITY_IMPORT_OPERATION || 'import-activities';
+  if (operation !== 'import-activities' && operation !== 'create-companies') {
+    throw new Error('CRM_ACTIVITY_IMPORT_OPERATION is invalid');
+  }
   const sourceFormat = requiredEnvironment('CRM_ACTIVITY_IMPORT_SOURCE_FORMAT');
   if (
     sourceFormat !== 'legacy-nash-outreach-v1' &&
@@ -104,7 +116,7 @@ test('runs a guarded, idempotent outreach activity import', async ({
   const expectedRows = Number(
     requiredEnvironment('CRM_ACTIVITY_IMPORT_EXPECTED_ROWS'),
   );
-  const normalizationReceipt =
+  const normalizationReceipt: ActivityImportNormalizationReceipt | undefined =
     sourceFormat === 'completed-actions-v2'
       ? {
           schemaVersion: 1 as const,
@@ -135,34 +147,79 @@ test('runs a guarded, idempotent outreach activity import', async ({
     origin: FRONTEND_BASE_URL,
     requestGate: createWorkspaceConfigRequestGate(),
   });
-  const result = await runActivityImport(
-    createPlaywrightActivityImportApi({
-      page,
-      backendBaseUrl: BACKEND_BASE_URL,
-      frontendBaseUrl: FRONTEND_BASE_URL,
-      checkpointPath: paths.checkpointPath,
-      requestGate,
-    }),
-    {
-      source,
-      csvOptions: {
-        sourceFormat,
-        ownerLabel,
-        sourceSha256,
-        provenanceSha256,
-        expectedRowSequenceSha256,
-        expectedRows,
-        activityDate: requiredEnvironment('CRM_ACTIVITY_IMPORT_DATE'),
-        timeZone: requiredEnvironment('CRM_ACTIVITY_IMPORT_TIME_ZONE'),
-        importId: requiredEnvironment('CRM_ACTIVITY_IMPORT_ID'),
-        normalizationReceipt,
+  const csvOptions: ActivityImportCsvOptions = {
+    sourceFormat,
+    ownerLabel,
+    sourceSha256,
+    provenanceSha256,
+    expectedRowSequenceSha256,
+    expectedRows,
+    activityDate: requiredEnvironment('CRM_ACTIVITY_IMPORT_DATE'),
+    timeZone: requiredEnvironment('CRM_ACTIVITY_IMPORT_TIME_ZONE'),
+    importId: requiredEnvironment('CRM_ACTIVITY_IMPORT_ID'),
+    normalizationReceipt,
+  };
+  const api = createPlaywrightActivityImportApi({
+    page,
+    backendBaseUrl: BACKEND_BASE_URL,
+    frontendBaseUrl: FRONTEND_BASE_URL,
+    checkpointPath: paths.checkpointPath,
+    requestGate,
+  });
+
+  if (operation === 'create-companies') {
+    // The REST client owning the authenticated write path cannot be extended
+    // under the deployment revision guard allowlist, so creation reuses that
+    // same authenticated request context and the same paced gate as every
+    // other call in this run rather than standing up a second client.
+    const createCompany = async ({ name }: { name: string }) => {
+      const response = await requestGate(() =>
+        page.request.post(
+          new URL('/rest/companies?depth=0', BACKEND_BASE_URL).toString(),
+          { headers: { Origin: FRONTEND_BASE_URL }, data: { name } },
+        ),
+      );
+      const failedStatus = response.ok() ? undefined : response.status();
+      await response.dispose();
+      if (failedStatus !== undefined) {
+        throw new Error(`Create company failed with HTTP ${failedStatus}`);
+      }
+    };
+    const creation = await runActivityImportCompanyCreation(
+      { ...api, createCompany },
+      {
+        source,
+        csvOptions,
+        mode,
+        confirmation:
+          process.env.CRM_ACTIVITY_IMPORT_CREATE_COMPANIES_CONFIRMATION,
       },
-      identityArtifact,
-      mode,
-      confirmation: process.env.CRM_ACTIVITY_IMPORT_CONFIRMATION,
-      expectedManifest: parseExpectedManifest(),
-    },
-  );
+    );
+    // writeActivityImportResult demands a full activity manifest, which cannot
+    // exist while the companies are still missing, so the creation report is
+    // written directly to the same uploaded artifact path.
+    await writeFile(
+      paths.resultPath,
+      `${JSON.stringify(creation, null, 2)}\n`,
+      'utf8',
+    );
+
+    expect(creation.operation).toBe('create-companies');
+    expect(creation.mode).toBe(mode);
+    if (mode === 'dry-run') expect(creation.createdCount).toBe(0);
+    else expect(creation.plannedCount).toBe(creation.createdCount);
+
+    return;
+  }
+
+  const result = await runActivityImport(api, {
+    source,
+    csvOptions,
+    identityArtifact,
+    mode,
+    confirmation: process.env.CRM_ACTIVITY_IMPORT_CONFIRMATION,
+    expectedManifest: parseExpectedManifest(),
+  });
   await writeActivityImportResult(paths.resultPath, result);
 
   expect(result.plannedCount).toBe(result.manifest.expectedRows);

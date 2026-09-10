@@ -816,6 +816,86 @@ const ACTIVITY_OUTCOME_LABELS: Record<CanonicalActivityOutcome, string> = {
   other: 'Other',
 };
 
+// Both source parsers already trim and NFKC each company name, and the importer
+// keys existing companies the same way. Creation must reuse this exact key: a
+// company stored under any other form leaves the next import unmatched again.
+export const activityImportCompanyMatchKey = (name: string): string =>
+  name.trim().normalize('NFKC');
+
+export type PlannedCompanyCreation = {
+  name: string;
+  rowNumbers: number[];
+};
+
+export type AmbiguousCompanyRow = {
+  rowNumber: number;
+  companyName: string;
+  matchCount: number;
+};
+
+export type CompanyCreationPlan = {
+  creations: PlannedCompanyCreation[];
+  ambiguousRows: AmbiguousCompanyRow[];
+  alreadyPresentCount: number;
+};
+
+export const buildCompanyCreationPlan = (input: {
+  rows: readonly SourceActivity[];
+  companies: readonly ActivityImportCompany[];
+}): CompanyCreationPlan => {
+  const matchCounts = new Map<string, number>();
+  for (const company of input.companies) {
+    if (typeof company.name !== 'string' || !UUID_PATTERN.test(company.id)) {
+      throw new Error('Activity import company snapshot is invalid');
+    }
+    const exactName = activityImportCompanyMatchKey(company.name);
+    matchCounts.set(exactName, (matchCounts.get(exactName) ?? 0) + 1);
+  }
+
+  const creations = new Map<string, PlannedCompanyCreation>();
+  const ambiguousRows: AmbiguousCompanyRow[] = [];
+  const alreadyPresent = new Set<string>();
+  for (const row of input.rows) {
+    // The created name is the row value verbatim, so it must already be in
+    // match-key form or the post-creation match would silently miss again.
+    if (activityImportCompanyMatchKey(row.companyName) !== row.companyName) {
+      throw new Error(
+        `Activity import row ${row.rowNumber} company name is not in exact match form`,
+      );
+    }
+    const matchCount = matchCounts.get(row.companyName) ?? 0;
+    // Two or more existing companies is a real ambiguity for a human to
+    // resolve. Minting a third duplicate would bury it instead of raising it.
+    if (matchCount > 1) {
+      ambiguousRows.push({
+        rowNumber: row.rowNumber,
+        companyName: row.companyName,
+        matchCount,
+      });
+      continue;
+    }
+    if (matchCount === 1) {
+      alreadyPresent.add(row.companyName);
+      continue;
+    }
+    const planned = creations.get(row.companyName);
+    if (planned) {
+      planned.rowNumbers.push(row.rowNumber);
+      continue;
+    }
+    creations.set(row.companyName, {
+      name: row.companyName,
+      rowNumbers: [row.rowNumber],
+    });
+  }
+
+  return {
+    creations: [...creations.values()],
+    ambiguousRows,
+    alreadyPresentCount: alreadyPresent.size,
+  };
+};
+
 export const buildActivityImportPlan = (input: {
   rows: readonly SourceActivity[];
   csvOptions: ActivityImportCsvOptions;
@@ -853,7 +933,7 @@ export const buildActivityImportPlan = (input: {
     if (typeof company.name !== 'string' || !UUID_PATTERN.test(company.id)) {
       throw new Error('Activity import company snapshot is invalid');
     }
-    const exactName = company.name.trim().normalize('NFKC');
+    const exactName = activityImportCompanyMatchKey(company.name);
     const matches = companiesByExactName.get(exactName) ?? [];
     matches.push(company);
     companiesByExactName.set(exactName, matches);

@@ -189,3 +189,77 @@ test('package is a locked root workspace for immutable installs', async () => {
     /"corgi-crm-activity-import@workspace:packages\/corgi-crm-activity-import"/,
   );
 });
+
+test('company creation is opt-in, separately confirmed, and default off', async () => {
+  const [workflow, maintenanceSpec, execution] = await Promise.all([
+    readFile(workflowPath, 'utf8'),
+    readFile(maintenanceSpecPath, 'utf8'),
+    readFile(new URL('../src/execution.ts', import.meta.url), 'utf8'),
+  ]);
+
+  // Default off: a dispatch that leaves the selector alone must import.
+  assert.match(
+    workflow,
+    /operation:[\s\S]*?default: import-activities[\s\S]*?options:[\s\S]*?- import-activities[\s\S]*?- create-companies/,
+  );
+  assert.match(
+    workflow,
+    /\[\[ "\$\{OPERATION\}" == "import-activities" \|\| "\$\{OPERATION\}" == "create-companies" \]\]/,
+  );
+
+  // Its own confirmation string, distinct from the activity import's.
+  assert.match(workflow, /create_companies_confirmation:/);
+  assert.match(workflow, /CREATE_CRM_IMPORT_COMPANIES/);
+  assert.notEqual(
+    'CREATE_CRM_IMPORT_COMPANIES',
+    'IMPORT_CRM_OUTREACH_ACTIVITIES',
+  );
+  assert.match(
+    workflow,
+    /\[\[ "\$\{CREATE_COMPANIES_CONFIRMATION\}" == "CREATE_CRM_IMPORT_COMPANIES" \]\]/,
+  );
+
+  // Creation never rides along with an activity apply, and never resumes.
+  const createBranch = workflow.slice(
+    workflow.indexOf('if [[ "${OPERATION}" == "create-companies" ]]; then'),
+    workflow.indexOf('elif [[ "${MODE}" == "apply" ]]; then'),
+  );
+  assert.ok(createBranch.length > 0);
+  for (const guard of [
+    'CONFIRMATION',
+    'EXPECTED_MANIFEST',
+    'RESUME_RUN_ID',
+    'RESUME_ATTEMPT',
+  ]) {
+    assert.match(
+      createBranch,
+      new RegExp(`\\[\\[ -z "\\$\\{${guard}\\}" \\]\\]`),
+    );
+  }
+
+  assert.match(
+    workflow,
+    /CRM_ACTIVITY_IMPORT_OPERATION: \$\{\{ inputs\.operation \}\}/,
+  );
+  assert.match(
+    workflow,
+    /CRM_ACTIVITY_IMPORT_CREATE_COMPANIES_CONFIRMATION: \$\{\{ inputs\.create_companies_confirmation \}\}/,
+  );
+
+  // The runtime honours the selector and defaults to the import.
+  assert.match(maintenanceSpec, /runActivityImportCompanyCreation/);
+  assert.match(
+    maintenanceSpec,
+    /CRM_ACTIVITY_IMPORT_OPERATION \|\| 'import-activities'/,
+  );
+  assert.match(maintenanceSpec, /restUrl|\/rest\/companies/);
+
+  // Zero-match only, and the created name is never reshaped.
+  assert.match(execution, /resolve the duplicate before creating companies/);
+  assert.match(execution, /post-write verification failed/);
+  assert.match(execution, /createCompany\({ name: creation\.name }\)/);
+  assert.doesNotMatch(
+    execution,
+    /toLocaleLowerCase|toUpperCase|replace\(\/\\s/,
+  );
+});

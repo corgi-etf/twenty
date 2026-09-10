@@ -4,6 +4,7 @@ import { test } from 'node:test';
 
 import {
   runActivityImport,
+  runActivityImportCompanyCreation,
   type ActivityImportApi,
   type ActivityImportCheckpoint,
 } from '../src/execution.ts';
@@ -46,6 +47,7 @@ class FakeApi implements ActivityImportApi {
   activities: OutreachActivityRecord[] = [];
   checkpoints: ActivityImportCheckpoint[] = [];
   creates: OutreachActivityRecord[] = [];
+  companyCreates: { name: string }[] = [];
   failOnCreateNumber: number | undefined;
 
   async listCompanies() {
@@ -66,6 +68,10 @@ class FakeApi implements ActivityImportApi {
     }
     this.creates.push(record);
     this.activities.push(record);
+  }
+  async createCompany(company: { name: string }) {
+    this.companyCreates.push(company);
+    this.companies.push({ id: uuid('7'), name: company.name });
   }
   async readCheckpoint() {
     return this.checkpoints[this.checkpoints.length - 1];
@@ -202,5 +208,209 @@ test('a failure after one create leaves a PII-free resumable checkpoint', async 
   assert.doesNotMatch(
     JSON.stringify(checkpoint),
     /Acme|Beta|Reached|companyName|notes/,
+  );
+});
+
+const EN_DASH_FIRM = 'Holistic Planning \u2013 Kansas City';
+const PIPE_FIRM = 'WEALTH | KC';
+const AMPERSAND_FIRM = 'Atwood & Palmer, Inc.';
+// The ampersand firm carries a comma, so it has to arrive CSV-quoted.
+const trickySource = Buffer.from(
+  `${EN_DASH_FIRM},,,,,,,,,\n${PIPE_FIRM},,,,,,,,,\n"${AMPERSAND_FIRM}",,,,,,,,,\n`,
+  'utf8',
+);
+const trickyCsvOptions = {
+  ...csvOptions,
+  sourceSha256: createHash('sha256').update(trickySource).digest('hex'),
+  provenanceSha256: createHash('sha256').update(trickySource).digest('hex'),
+  expectedRows: 3,
+};
+
+const createCompanies = (
+  api: FakeApi,
+  mode: 'dry-run' | 'apply',
+  overrides: {
+    source?: Buffer;
+    csvOptions?: typeof csvOptions;
+    confirmation?: string;
+  } = {},
+) =>
+  runActivityImportCompanyCreation(api, {
+    source: overrides.source ?? source,
+    csvOptions: overrides.csvOptions ?? csvOptions,
+    mode,
+    confirmation:
+      'confirmation' in overrides
+        ? overrides.confirmation
+        : mode === 'apply'
+          ? 'CREATE_CRM_IMPORT_COMPANIES'
+          : undefined,
+  });
+
+test('company creation is off by default and leaves the import byte-for-byte unchanged', async () => {
+  const withoutCreation = new FakeApi();
+  const withCreation = new FakeApi();
+
+  const baseline = await run(withoutCreation, 'dry-run');
+  const unchanged = await run(withCreation, 'dry-run');
+
+  // A createCompany-capable API must not change what a plain import does.
+  assert.deepEqual(unchanged, baseline);
+  assert.equal(withCreation.companyCreates.length, 0);
+  assert.equal(withoutCreation.companyCreates.length, 0);
+});
+
+test('company creation creates only the zero-match firms and verifies the result', async () => {
+  const api = new FakeApi();
+  api.companies = [{ id: uuid('4'), name: 'Acme' }];
+
+  const result = await createCompanies(api, 'apply');
+
+  assert.equal(result.operation, 'create-companies');
+  assert.equal(result.mode, 'apply');
+  assert.equal(result.createdCount, 1);
+  assert.equal(result.alreadyPresentCount, 1);
+  assert.deepEqual(result.plannedNames, ['Beta']);
+  assert.deepEqual(
+    api.companyCreates.map(({ name }) => name),
+    ['Beta'],
+  );
+});
+
+test('company creation refuses a two-or-more match and creates nothing', async () => {
+  const api = new FakeApi();
+  api.companies = [
+    { id: uuid('4'), name: 'Acme' },
+    { id: uuid('5'), name: 'Acme' },
+    { id: uuid('6'), name: 'Beta' },
+  ];
+
+  await assert.rejects(
+    createCompanies(api, 'apply'),
+    /matched 2 companies[\s\S]*resolve the duplicate/,
+  );
+  assert.equal(api.companyCreates.length, 0);
+});
+
+test('company creation requires its own confirmation string', async () => {
+  const api = new FakeApi();
+  api.companies = [];
+
+  await assert.rejects(
+    createCompanies(api, 'apply', {
+      confirmation: 'IMPORT_CRM_OUTREACH_ACTIVITIES',
+    }),
+    /company creation confirmation is invalid/,
+  );
+  await assert.rejects(
+    createCompanies(api, 'apply', { confirmation: undefined }),
+    /company creation confirmation is invalid/,
+  );
+  assert.equal(api.companyCreates.length, 0);
+});
+
+test('company creation fails closed when the API cannot create companies', async () => {
+  const api = new FakeApi();
+  api.companies = [];
+  const withoutCreate: ActivityImportApi = {
+    listCompanies: () => api.listCompanies(),
+    listWholesalers: () => api.listWholesalers(),
+    listPeople: () => api.listPeople(),
+    listOutreachActivities: () => api.listOutreachActivities(),
+    createOutreachActivity: (record) => api.createOutreachActivity(record),
+    readCheckpoint: () => api.readCheckpoint(),
+    writeCheckpoint: (checkpoint) => api.writeCheckpoint(checkpoint),
+  };
+
+  await assert.rejects(
+    runActivityImportCompanyCreation(withoutCreate, {
+      source,
+      csvOptions,
+      mode: 'apply',
+      confirmation: 'CREATE_CRM_IMPORT_COMPANIES',
+    }),
+    /cannot create companies/,
+  );
+  assert.equal(api.companyCreates.length, 0);
+});
+
+test('company creation dry-run reports what it would create and creates nothing', async () => {
+  const api = new FakeApi();
+  api.companies = [{ id: uuid('4'), name: 'Acme' }];
+
+  const result = await createCompanies(api, 'dry-run');
+
+  assert.equal(result.mode, 'dry-run');
+  assert.equal(result.createdCount, 0);
+  assert.equal(result.plannedCount, 1);
+  assert.deepEqual(result.plannedNames, ['Beta']);
+  assert.equal(result.alreadyPresentCount, 1);
+  assert.equal(api.companyCreates.length, 0);
+  assert.equal(api.companies.length, 1);
+});
+
+test('company creation dry-run cannot carry an apply approval', async () => {
+  const api = new FakeApi();
+
+  await assert.rejects(
+    createCompanies(api, 'dry-run', {
+      confirmation: 'CREATE_CRM_IMPORT_COMPANIES',
+    }),
+    /cannot include apply approval/,
+  );
+  assert.equal(api.companyCreates.length, 0);
+});
+
+test('a second company creation run creates nothing', async () => {
+  const api = new FakeApi();
+  api.companies = [];
+
+  const first = await createCompanies(api, 'apply');
+  api.companyCreates = [];
+  const rerun = await createCompanies(api, 'apply');
+
+  assert.equal(first.createdCount, 2);
+  assert.equal(rerun.createdCount, 0);
+  assert.equal(rerun.plannedCount, 0);
+  assert.equal(rerun.alreadyPresentCount, 2);
+  assert.equal(api.companyCreates.length, 0);
+});
+
+test('company creation stores an en dash, pipe, and ampersand byte-for-byte', async () => {
+  const api = new FakeApi();
+  api.companies = [];
+
+  const result = await createCompanies(api, 'apply', {
+    source: trickySource,
+    csvOptions: trickyCsvOptions,
+  });
+
+  assert.equal(result.createdCount, 3);
+  assert.deepEqual(
+    api.companyCreates.map(({ name }) => name),
+    [EN_DASH_FIRM, PIPE_FIRM, AMPERSAND_FIRM],
+  );
+  assert.equal(api.companyCreates[0]?.name.includes('\u2013'), true);
+  assert.equal(api.companyCreates[0]?.name.includes('-'), false);
+
+  // The whole point of byte preservation: the next run must match, not recreate.
+  const rerun = await createCompanies(api, 'apply', {
+    source: trickySource,
+    csvOptions: trickyCsvOptions,
+  });
+  assert.equal(rerun.createdCount, 0);
+  assert.equal(rerun.alreadyPresentCount, 3);
+});
+
+test('company creation fails closed when a write did not land', async () => {
+  const api = new FakeApi();
+  api.companies = [];
+  api.createCompany = async (company: { name: string }) => {
+    api.companyCreates.push(company);
+  };
+
+  await assert.rejects(
+    createCompanies(api, 'apply'),
+    /post-write verification failed/,
   );
 });
