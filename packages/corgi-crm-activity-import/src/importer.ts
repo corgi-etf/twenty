@@ -865,13 +865,29 @@ export const buildActivityImportPlan = (input: {
     existingById.set(activity.id, matches);
   }
 
+  // Report every unmatched row at once. Throwing on the first hides the other 62
+  // behind it, so each dry run surfaced a single name and the real scale of the
+  // mismatch stayed invisible across repeated runs.
+  const unmatched = input.rows
+    .map((row) => ({
+      row,
+      count: (companiesByExactName.get(row.companyName) ?? []).length,
+    }))
+    .filter(({ count }) => count !== 1);
+  if (unmatched.length > 0) {
+    throw new Error(
+      unmatched
+        .map(
+          ({ row, count }) =>
+            `Activity import row ${row.rowNumber} must match exactly one company ` +
+            `("${row.companyName}" matched ${count})`,
+        )
+        .join('; '),
+    );
+  }
+
   const activities = input.rows.map((row): PlannedActivity => {
     const companyMatches = companiesByExactName.get(row.companyName) ?? [];
-    if (companyMatches.length !== 1) {
-      throw new Error(
-        `Activity import row ${row.rowNumber} must match exactly one company`,
-      );
-    }
     const companyId = companyMatches[0]!.id;
     const completedActivity =
       input.csvOptions.sourceFormat === 'completed-actions-v2';
