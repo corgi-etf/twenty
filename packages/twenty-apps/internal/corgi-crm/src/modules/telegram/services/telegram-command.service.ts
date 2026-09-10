@@ -5,6 +5,7 @@ import {
 } from 'src/modules/outreach/services/daily-summary.service';
 import { getZonedDayWindow } from 'src/modules/outreach/services/day-window.service';
 import { logOutreach } from 'src/modules/outreach/services/log-outreach.service';
+import { readReportSummary } from 'src/modules/outreach/services/report-summary.service';
 import { type OutreachRepository } from 'src/modules/outreach/types';
 import {
   getValidatedTelegramLink,
@@ -12,7 +13,10 @@ import {
   parseTelegramLinkBindings,
   type TelegramIdentitySource,
 } from 'src/modules/telegram/services/telegram-link.service';
-import { type KeyValueStore, type ParsedTelegramUpdate } from 'src/modules/telegram/types';
+import {
+  type KeyValueStore,
+  type ParsedTelegramUpdate,
+} from 'src/modules/telegram/types';
 import { parseTelegramLogCommand } from 'src/modules/telegram/services/parse-telegram-log-command.service';
 import { splitTelegramMessage } from 'src/modules/telegram/services/split-telegram-message.service';
 import { getTelegramActivityId } from 'src/modules/telegram/services/telegram-identifiers.service';
@@ -23,6 +27,9 @@ const HELP = [
   '/log call | Company | outcome | notes',
   '/log type=meeting; company=Company; contact=Name; outcome=follow_up_scheduled; notes=Next step; followup=YYYY-MM-DD',
   '/today — your activity breakdown for the current local day',
+  '/daily — all owners, last 24 hours',
+  '/weekly — all owners, last 7 days excluding Saturday/Sunday',
+  '/monthly — all owners, last 30 days',
   '/help — show this guide',
 ].join('\n');
 
@@ -58,24 +65,30 @@ export const processTelegramCommand = async (
     await dependencies.answerCallback(update.callbackQueryId);
   }
   const command = commandName(update.text);
-  if (command === '/help' || command === '/start') {
+  const payload = update.text
+    .trim()
+    .replace(/^\S+\s*/, '')
+    .trim();
+  if (command === '/help' || (command === '/start' && !payload)) {
     await sendParts(dependencies.send, update.chatId, HELP);
     return { status: 'help' } as const;
   }
-  if (command === '/link') {
-    const code = update.text.replace(/^\/link(?:@\w+)?\s*/i, '').trim();
+  if (command === '/link' || command === '/start') {
+    const code = payload;
     try {
       const link = await linkTelegramAccount({
         code,
         userId: update.userId,
         chatId: update.chatId,
-        configuredBindings: parseTelegramLinkBindings(dependencies.linkCodesJson),
+        configuredBindings: parseTelegramLinkBindings(
+          dependencies.linkCodesJson,
+        ),
         identity: dependencies.identity,
         store: dependencies.store,
       });
       await dependencies.send(
         update.chatId,
-        `Linked to ${link.wholesalerName}. Use /log or /today.`,
+        `Linked to ${link.wholesalerName}. Use /log, /today, /daily, /weekly or /monthly.`,
       );
       return { status: 'linked' } as const;
     } catch {
@@ -100,6 +113,23 @@ export const processTelegramCommand = async (
     return { status: 'not_linked' } as const;
   }
 
+  if (command === '/daily' || command === '/weekly' || command === '/monthly') {
+    const period =
+      command === '/daily'
+        ? 'daily'
+        : command === '/weekly'
+          ? 'weekly'
+          : 'monthly';
+    const text = await readReportSummary({
+      repository: dependencies.repository,
+      period,
+      now: dependencies.now(),
+      timeZone: dependencies.timeZone,
+    });
+    await sendParts(dependencies.send, update.chatId, text);
+    return { status: 'report', period } as const;
+  }
+
   if (command === '/log') {
     let input;
     try {
@@ -108,7 +138,10 @@ export const processTelegramCommand = async (
         getTelegramActivityId(update.updateId),
       );
     } catch {
-      await dependencies.send(update.chatId, `Could not parse that entry.\n${HELP}`);
+      await dependencies.send(
+        update.chatId,
+        `Could not parse that entry.\n${HELP}`,
+      );
       return { status: 'invalid_log' } as const;
     }
     if (resume?.status === 'crm_committed') {
@@ -134,7 +167,10 @@ export const processTelegramCommand = async (
         update.chatId,
         `Logged ${result.companyName}. Use /today to review your day.`,
       );
-    } else if (result.status === 'ambiguous_company' || result.status === 'ambiguous_contact') {
+    } else if (
+      result.status === 'ambiguous_company' ||
+      result.status === 'ambiguous_contact'
+    ) {
       await dependencies.send(
         update.chatId,
         `More than one match: ${result.matches.map(({ name }) => name).join(', ')}. Use the exact name and try again.`,
@@ -150,7 +186,11 @@ export const processTelegramCommand = async (
     return result;
   }
 
-  if (command === '/today' || command === '/summary' || update.text === 'today') {
+  if (
+    command === '/today' ||
+    command === '/summary' ||
+    update.text === 'today'
+  ) {
     const window = getZonedDayWindow({
       now: dependencies.now(),
       timeZone: dependencies.timeZone,

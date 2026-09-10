@@ -134,8 +134,13 @@ optional contact and follow-up:
 ```
 
 `/today` (or `/summary`) returns that person's current local-day breakdown.
-`/help` shows the syntax; there is no `/cancel` command because the bot does not
-hold mutable drafts. The cron runs every 15 minutes. From the configured local
+`/daily`, `/weekly`, and `/monthly` return whole-workspace totals, activity and
+outcome breakdowns, and an all-owner leaderboard for the rolling last 24 hours,
+7 days (weekend activity excluded), or 30 days. Owners come from the activity
+records themselves; there is no fixed people list. `/help` shows the syntax;
+there is no `/cancel` command because the bot does not hold mutable drafts. The
+cron sends the same whole-workspace rolling-24-hour report to each securely
+linked recipient. It runs every 15 minutes. From the configured local
 time until that local date ends, every tick addresses the same deterministic
 per-member job, so missed ticks and restarts catch up without creating a second
 daily admission. A nonexistent DST wall time uses the first valid minute after
