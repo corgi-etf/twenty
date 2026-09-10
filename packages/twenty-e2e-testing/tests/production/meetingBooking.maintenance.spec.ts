@@ -659,7 +659,7 @@ test('books and reschedules a native CRM meeting while Telegram is disabled', as
       );
       await timeInput.press('Tab');
       await page
-        .getByRole('option', {
+        .getByRole('gridcell', {
           name: new RegExp(`, ${month} ${day}(?:st|nd|rd|th)?, ${year}$`),
         })
         .click();
