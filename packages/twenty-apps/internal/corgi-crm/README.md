@@ -16,8 +16,10 @@ existing `Wholesaler` object, which was created before this app.
 4. Run `crm-workspace-config.yml` from the same SHA, supplying all three UUIDs
    explicitly plus the discovery run and attempt. The workflow rejects UUIDs
    that differ from the PII-safe discovery artifact before any mutation.
-5. The manifest defaults `CORGI_CRM_WORKSPACE_ID` to the approved Corgi CRM
-   workspace. Do not publish or install this tenant-specific app elsewhere.
+5. The app workflow exports `CORGI_CRM_WORKSPACE_ID` from the integrity-checked
+   metadata-bootstrap artifact only after it exactly matches the authenticated
+   current workspace. No production workspace UUID is embedded in the app or
+   verifier. Do not publish or install this tenant-specific app elsewhere.
 
 Version `1.1.0` adds the Telegram channel and must be published as a new
 immutable app version; it must not reuse the baseline `1.0.0` release.
@@ -66,9 +68,15 @@ Configure these app variables in **Settings → Apps → Corgi CRM → Variables
 There are deliberately no token, user, chat, schedule, or time-zone defaults in
 source:
 
+- `CORGI_CRM_TELEGRAM_ENABLED`: defaults to `false`; the production workflow
+  changes it to `true` only after trusted configuration and live provider
+  verification complete.
 - `CORGI_CRM_TELEGRAM_BOT_TOKEN` (secret): token from BotFather.
 - `CORGI_CRM_TELEGRAM_WEBHOOK_SECRET` (secret): a new random Telegram webhook
   secret token.
+- `CORGI_CRM_TELEGRAM_OPERATOR_SECRET` (secret): independent proof required in
+  addition to authenticated Twenty access for redacted unknown-delivery
+  inspection or reset.
 - `CORGI_CRM_TELEGRAM_LINK_CODES` (secret): explicit one-to-one bindings of a
   code, WorkspaceMember UUID, and Telegram user ID. Codes, members, and users
   must each be unique:
@@ -87,12 +95,14 @@ source:
 - `CORGI_CRM_TELEGRAM_TIME_ZONE`: an IANA zone such as `America/Chicago`.
 - `CORGI_CRM_TELEGRAM_DAILY_SUMMARY_TIME`: `HH:MM` on a 15-minute boundary.
 
-After publishing and installing the app, register the exact workspace route
-`https://crm.corgiinvest.com/s/telegram/webhook` with Telegram `setWebhook` and
-pass the same webhook secret as `secret_token`. Subscribe only to `message` and
-`callback_query` updates. Keep the bot token and webhook secret in a secret
-manager or encrypted application variables; never put either value in a shell
-argument, workflow input, source file, or log.
+When Telegram enablement is explicitly selected, the production workflow first
+validates all trusted inputs and writes them while the runtime remains disabled.
+It then registers the exact workspace route with Telegram `setWebhook`, passing
+the same webhook secret as `secret_token` and subscribing only to `message` and
+`callback_query`. It verifies `getMe`, `getWebhookInfo`, and signed/unsigned
+route canaries before enabling the runtime. Keep provider and operator secrets
+in the secret store; never put them in arguments, workflow inputs, source, or
+logs.
 
 Run `yarn verify:telegram` with the same short-lived production verification
 environment used by `verify:production`. It checks the installed variable
@@ -100,13 +110,12 @@ configuration, forwarded secret header, least-privilege role, and exact webhook
 → queued worker plus 15-minute cron → queued delivery-worker topology without
 printing any secret values.
 
-Optional live checks are isolated behind `yarn verify:telegram:live`. The script
-does no network work unless
+Live checks are isolated behind `yarn verify:telegram:live`. The script does no
+network work unless
 `CORGI_CRM_TELEGRAM_LIVE_VERIFICATION_CONFIRM=VERIFY_TELEGRAM_LIVE` is set. It
-checks `getMe` and `getWebhookInfo` against
-`CORGI_CRM_TELEGRAM_WEBHOOK_URL`. The invalid-update signed/unsigned route
-canary additionally requires
-`CORGI_CRM_TELEGRAM_SIGNED_CANARY_CONFIRM=RUN_SIGNED_CANARY`. A real test message
+registers and checks the exact webhook plus `getMe` and `getWebhookInfo` against
+`CORGI_CRM_TELEGRAM_WEBHOOK_URL`. The signed/unsigned invalid-update canaries
+also require `CORGI_CRM_TELEGRAM_SIGNED_CANARY_CONFIRM=RUN_SIGNED_CANARY`. A real test message
 requires all three of `CORGI_CRM_TELEGRAM_TEST_DELIVERY_ENABLED=true`,
 `CORGI_CRM_TELEGRAM_TEST_DELIVERY_CONFIRM=SEND_TELEGRAM_TEST`, and an explicit
 `CORGI_CRM_TELEGRAM_TEST_CHAT_ID`. Load the token and webhook secret from the
@@ -122,12 +131,21 @@ optional contact and follow-up:
 ```
 
 `/today` (or `/summary`) returns that person's current local-day breakdown.
-`/cancel` clears any draft without a CRM write and `/help` shows the syntax. The
-cron runs every 15 minutes, gates on the configured local time using IANA rules,
-and admits deterministic per-member/day delivery jobs. Each worker revalidates
-the WorkspaceMember-to-Wholesaler ownership immediately before reading or
-sending. It records intent before every Telegram API call. A proven HTTP/API
-rejection is retryable; a timeout, network failure, crash after intent, or other
-ambiguous result is marked unknown and is never resent. This deliberate
-at-most-once policy prevents duplicate daily messages, but an ambiguous delivery
-can omit that part and all later parts until an operator reviews it.
+`/help` shows the syntax; there is no `/cancel` command because the bot does not
+hold mutable drafts. The cron runs every 15 minutes and admits the configured
+scheduled instant throughout its 15-minute window, so a short queue delay cannot
+miss the day. Each worker revalidates WorkspaceMember-to-Wholesaler ownership
+immediately before reading or writing.
+
+Every interactive reply, callback answer, and daily message part records intent
+before the Telegram API call. A proven provider rejection is retryable. A
+timeout, network failure, crash after intent, or failed post-send checkpoint is
+marked unknown and is never automatically resent. This deliberate at-most-once
+policy prevents duplicate messages but can under-deliver. Unknown events emit a
+redacted alert containing only an opaque delivery key, timestamp, and reason
+code. An operator can inspect that exact key through the authenticated
+`/telegram/delivery-control` route with the independent operator secret. A reset
+requires the exact `unknownAt` version, a unique request UUID, explicit
+`RESET_UNKNOWN_TELEGRAM_DELIVERY` confirmation, and an audit reason. The audit
+is written before one deterministic retry job; stale or completed-state replay
+is rejected.
