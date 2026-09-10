@@ -15,6 +15,7 @@ import {
   MEETING_CANARY_ACTOR_IDENTITY_QUERY,
   MEETING_CANARY_MEMBERS_QUERY,
   createMeetingCanaryReceipt,
+  auditMeetingCanaryCalendarPresentation,
   inspectMeetingCanaryCalendarResponse,
   meetingCanaryFailureCategory,
   meetingCanaryGraphqlFailure,
@@ -22,6 +23,7 @@ import {
   MeetingCanaryCheckError,
   type MeetingCanaryRecord as Meeting,
   type MeetingCanaryCalendarEvidence,
+  type MeetingCanaryCalendarPresentationAudit,
   parseMeetingCanaryRecovery,
   resolveMeetingCanaryActor,
   resolveMeetingCanaryRecord,
@@ -69,9 +71,8 @@ test.beforeAll(async () => {
   expect(requiredEnvironment('GITHUB_WORKFLOW_REF')).toBe(
     `${requiredEnvironment('GITHUB_REPOSITORY')}/.github/workflows/corgi-crm-app-production.yml@refs/heads/main`,
   );
-  expect(['publish-and-install', 'configure-telegram']).toContain(
-    requiredEnvironment('CRM_MEETING_CANARY_OPERATION'),
-  );
+  const operation = requiredEnvironment('CRM_MEETING_CANARY_OPERATION');
+  expect(['publish-and-install', 'configure-telegram']).toContain(operation);
   const deployedSha = requiredEnvironment('CRM_DEPLOYED_SHA');
   const workflowSha = requiredEnvironment('GITHUB_SHA');
   expect(deployedSha).toMatch(/^[0-9a-f]{40}$/);
@@ -83,7 +84,7 @@ test.beforeAll(async () => {
   expect(new URL(BACKEND_BASE_URL).origin).toBe(APPROVED_ORIGIN);
   const repositoryRoot = resolve(__dirname, '../../../..');
   try {
-    // Re-prove source equivalence; a workflow flag cannot authorize native writes.
+    // Re-prove the revision policy independently of the workflow's own check.
     await promisify(execFile)(
       process.execPath,
       [
@@ -93,6 +94,7 @@ test.beforeAll(async () => {
         ),
         deployedSha,
         workflowSha,
+        operation === 'publish-and-install' ? 'app-release' : 'maintenance',
       ],
       {
         cwd: repositoryRoot,
@@ -118,6 +120,8 @@ test('books and reschedules a native CRM meeting while Telegram is disabled', as
   const locatorCounts: Record<string, number> = {};
   let calendarDiagnosticLocators: Record<string, Locator> = {};
   const calendarQueryEvidence: MeetingCanaryCalendarEvidence[] = [];
+  let calendarPresentationAudit:
+    MeetingCanaryCalendarPresentationAudit | undefined;
   const calendarObservations = new Set<Promise<void>>();
   let meetingId: string | undefined;
   let initialName: string | null | undefined;
@@ -786,20 +790,36 @@ test('books and reschedules a native CRM meeting while Telegram is disabled', as
       calendarDayLabels: page.getByText('Day', { exact: true }),
     };
     page.on('response', observeCalendarResponse);
-    step = 'calendar index navigation';
-    await page.goto('/objects/meetingBookings');
-    step = 'calendar view picker';
-    await page.getByText('All Meetings', { exact: true }).click();
-    step = 'calendar view choice';
-    await page.getByText('Meeting Calendar', { exact: true }).click();
-    step = 'calendar Today visibility';
-    await expect(todayButton).toBeVisible();
-    step = 'calendar Today click';
-    await todayButton.click();
-    step = 'calendar scroll container visibility';
-    await expect(calendar).toBeVisible();
-    step = 'calendar run-owned name visibility';
-    await expect(calendarName).toBeVisible();
+    calendarPresentationAudit = await auditMeetingCanaryCalendarPresentation(
+      async () => {
+        step = 'calendar index navigation';
+        await page.goto('/objects/meetingBookings');
+        step = 'calendar view picker';
+        await page.getByText('All Meetings', { exact: true }).click();
+        step = 'calendar view choice';
+        await page.getByText('Meeting Calendar', { exact: true }).click();
+        step = 'calendar Today visibility';
+        await expect(todayButton).toBeVisible();
+        step = 'calendar Today click';
+        await todayButton.click();
+        step = 'calendar scroll container visibility';
+        await expect(calendar).toBeVisible();
+        step = 'calendar run-owned name visibility';
+        await expect(calendarName).toBeVisible();
+      },
+    );
+    for (const [key, locator] of Object.entries(calendarDiagnosticLocators)) {
+      locatorCounts[key] = await locator.count().catch(() => -1);
+    }
+    await Promise.all(calendarObservations);
+    console.log(
+      JSON.stringify({
+        meetingCalendarPresentationAudit: calendarPresentationAudit,
+        step,
+        locatorCounts,
+        calendarQueryEvidence,
+      }),
+    );
     step = 'calendar disabled gate';
     await assertDisabled();
     step = 'calendar final attribution reread';
@@ -1036,7 +1056,8 @@ test('books and reschedules a native CRM meeting while Telegram is disabled', as
       nativeSchedule: true,
       bookingStamped: true,
       reschedulePreservedAttribution: true,
-      nativeCalendar: true,
+      nativeCalendar: calendarPresentationAudit?.status === 'passed',
+      calendarPresentationAudit,
       telegramDisabled: true,
       exactRecordCleanupVerified: cleanupVerified,
       installedReportRuntime: 'LIVE_FROM_SOURCE',
