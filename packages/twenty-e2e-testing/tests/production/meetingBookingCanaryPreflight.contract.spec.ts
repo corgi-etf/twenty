@@ -9,7 +9,15 @@ import { runInNewContext } from 'node:vm';
 import {
   MEETING_CANARY_ACTOR_IDENTITY_QUERY,
   MEETING_CANARY_MEMBERS_QUERY,
+  meetingCanaryFailureCategory,
+  MeetingCanaryCheckError,
+  parseMeetingCanaryRecovery,
+  resolveMeetingCanaryRecord,
   resolveMeetingCanaryActor,
+  validateMeetingCanaryRecoveryRecord,
+  createMeetingCanaryReceipt,
+  meetingCanaryRecords,
+  meetingCanaryGraphqlFailure,
 } from './meetingBookingCanaryPreflight';
 
 const repositoryRoot = join(__dirname, '../../../..');
@@ -531,3 +539,368 @@ for (const recordUrl of [
     await assert.rejects(async () => navigation.execute());
   });
 }
+
+test('uses a bounded exact-ID list read because the real singular resolver throws on absence', () => {
+  const serverSource = readFileSync(
+    join(
+      repositoryRoot,
+      'packages/twenty-server/src/engine/api/common/common-query-runners/common-find-one-query-runner.service.ts',
+    ),
+    'utf8',
+  );
+  expect(serverSource).toMatch(
+    /if \(!objectRecord\) \{\s*throw new CommonQueryRunnerException/,
+  );
+  const source = readFileSync(
+    join(__dirname, 'meetingBooking.maintenance.spec.ts'),
+    'utf8',
+  );
+  expect(source).not.toMatch(/\bmeetingBooking\(\s*filter:/);
+  expect(source).toMatch(
+    /meetingBookings\(\s*first: 2\s*filter: \{\s*id: \{ eq: \$id \}/,
+  );
+});
+
+test('recovery obeys the actual runtime one-operator-per-field filter contract', () => {
+  const processor = readFileSync(
+    join(
+      repositoryRoot,
+      'packages/twenty-server/src/engine/api/common/common-args-processors/filter-arg-processor/utils/validate-and-transform-operator-and-value.util.ts',
+    ),
+    'utf8',
+  );
+  expect(processor).toContain('if (entries.length !== 1)');
+  expect(processor).toContain(
+    'CommonQueryRunnerExceptionCode.INVALID_ARGS_FILTER',
+  );
+  const source = readFileSync(
+    join(__dirname, 'meetingBooking.maintenance.spec.ts'),
+    'utf8',
+  );
+  const query = source.match(
+    /`(\s*query FindPriorRunMeetingCanary[\s\S]*?)`/,
+  )?.[1];
+  expect(query).toBeDefined();
+  const operators: string[] = [];
+  visit(parse(query!), {
+    ObjectField(node) {
+      if (node.name.value !== 'createdAt') return;
+      expect(node.value.kind).toBe('ObjectValue');
+      if (node.value.kind !== 'ObjectValue')
+        throw new Error('Expected field filter');
+      expect(node.value.fields.length).toBe(1);
+      operators.push(node.value.fields[0]!.name.value);
+    },
+  });
+  expect(operators.sort()).toEqual(['gte', 'lt']);
+});
+
+const recoveryEnvironment = () => ({
+  CRM_MEETING_CANARY_RECOVERY_RUN_ID: '34464729678',
+  CRM_MEETING_CANARY_RECOVERY_RUN_ATTEMPT: '1',
+  CRM_MEETING_CANARY_RECOVERY_CREATED_AFTER: '2026-09-10T10:19:26Z',
+  CRM_MEETING_CANARY_RECOVERY_CREATED_BEFORE: '2026-09-10T10:19:41Z',
+  CRM_MEETING_CANARY_RECOVERY_CONFIRMATION: 'CLEANUP_RUN_OWNED_MEETING',
+});
+const recoveryRecord = () => ({
+  id: otherId,
+  name: `CRM meeting canary 34464729678-1-${workspaceId}`,
+  createdAt: '2026-09-10T10:19:30Z',
+  updatedAt: '2026-09-10T10:19:32Z',
+  createdBy: { workspaceMemberId: memberId },
+  companyId: null,
+  wholesalerId: null,
+  scheduledAt: null,
+  status: 'DRAFT',
+  bookedAt: null,
+  bookedById: null,
+  bookingValidationMessage: null,
+});
+
+test('distinguishes exact-ID presence from verified absence without swallowing read errors', () => {
+  const record = recoveryRecord();
+  expect(
+    resolveMeetingCanaryRecord(
+      { meetingBookings: { edges: [{ node: record }] } },
+      otherId,
+    ),
+  ).toEqual(record);
+  expect(
+    resolveMeetingCanaryRecord({ meetingBookings: { edges: [] } }, otherId),
+  ).toBeNull();
+  for (const response of [
+    null,
+    {},
+    { meetingBookings: { edges: null } },
+    { meetingBookings: { edges: [{ node: record }, { node: record }] } },
+    { meetingBookings: { edges: [{ node: { ...record, id: workspaceId } }] } },
+    {
+      meetingBookings: {
+        edges: [{ node: { ...record, createdAt: 'invalid' } }],
+      },
+    },
+  ])
+    expect(() => resolveMeetingCanaryRecord(response, otherId)).toThrow();
+});
+
+test('requires complete explicit recovery confirmation and a bounded valid UTC window', () => {
+  expect(parseMeetingCanaryRecovery({})).toBeNull();
+  expect(parseMeetingCanaryRecovery(recoveryEnvironment())).toMatchObject({
+    runId: '34464729678',
+    attempt: '1',
+  });
+  for (const [key, value] of [
+    ['CRM_MEETING_CANARY_RECOVERY_RUN_ID', ''],
+    ['CRM_MEETING_CANARY_RECOVERY_RUN_ATTEMPT', '1-2'],
+    ['CRM_MEETING_CANARY_RECOVERY_CONFIRMATION', 'yes'],
+    ['CRM_MEETING_CANARY_RECOVERY_CREATED_AFTER', 'invalid'],
+    ['CRM_MEETING_CANARY_RECOVERY_CREATED_AFTER', '2026-09-10T10:20:00Z'],
+    ['CRM_MEETING_CANARY_RECOVERY_CREATED_BEFORE', '2026-09-10T11:19:41Z'],
+  ])
+    expect(() =>
+      parseMeetingCanaryRecovery({ ...recoveryEnvironment(), [key!]: value }),
+    ).toThrow();
+});
+
+test('requires full UUID-suffixed name, exact authenticated creator and creation window before recovery deletion', () => {
+  const recovery = parseMeetingCanaryRecovery(recoveryEnvironment())!;
+  expect(() =>
+    validateMeetingCanaryRecoveryRecord(recoveryRecord(), recovery, memberId),
+  ).not.toThrow();
+  for (const record of [
+    {
+      ...recoveryRecord(),
+      name: 'CRM meeting canary 34464729678-1-not-a-uuid',
+    },
+    {
+      ...recoveryRecord(),
+      name: `CRM meeting canary 34464729678-2-${workspaceId}`,
+    },
+    { ...recoveryRecord(), createdBy: { workspaceMemberId: userId } },
+    { ...recoveryRecord(), createdAt: '2026-09-10T10:19:25Z' },
+    { ...recoveryRecord(), createdAt: '2026-09-10T10:19:41Z' },
+    { ...recoveryRecord(), updatedAt: '2026-09-10T10:19:42Z' },
+  ])
+    expect(() =>
+      validateMeetingCanaryRecoveryRecord(record, recovery, memberId),
+    ).toThrow();
+});
+
+test('diagnostic categories never include raw error messages or response contents', () => {
+  expect(
+    meetingCanaryFailureCategory(new MeetingCanaryCheckError('OWNERSHIP')),
+  ).toBe('OWNERSHIP');
+  expect(
+    meetingCanaryFailureCategory({
+      name: 'TimeoutError',
+      message: 'private DOM',
+    }),
+  ).toBe('TIMEOUT');
+  expect(
+    meetingCanaryFailureCategory({
+      matcherResult: { actual: 'private record' },
+    }),
+  ).toBe('ASSERTION');
+  expect(meetingCanaryFailureCategory(new Error('private secret'))).toBe(
+    'UNKNOWN',
+  );
+});
+
+test('receipt contains only validated synthetic run and creation identifiers', () => {
+  const receipt = createMeetingCanaryReceipt({
+    runId: '34464729678',
+    attempt: '1',
+    meetingId: otherId,
+    nameNonce: workspaceId,
+    creationRequestedAt: Date.parse('2026-09-10T10:19:30Z'),
+  });
+  expect(receipt).toEqual({
+    runId: '34464729678',
+    attempt: '1',
+    meetingId: otherId,
+    nameNonce: workspaceId,
+    creationRequestedAt: '2026-09-10T10:19:30.000Z',
+  });
+  expect(() =>
+    createMeetingCanaryReceipt({
+      ...receipt,
+      runId: 'private',
+      creationRequestedAt: Date.now(),
+    }),
+  ).toThrow();
+});
+
+const runRecovery = (options: {
+  candidates: Array<ReturnType<typeof recoveryRecord>>;
+  reread?: ReturnType<typeof recoveryRecord> | null;
+  readError?: boolean;
+  destroyError?: boolean;
+  readbackPresent?: boolean;
+  disabledGate?: number;
+}) => {
+  const source = readFileSync(
+    join(__dirname, 'meetingBooking.maintenance.spec.ts'),
+    'utf8',
+  );
+  const recoverySource = source.match(
+    /    if \(recovery\) \{[\s\S]*?(?=\n    step = 'start';)/,
+  )?.[0];
+  expect(recoverySource).toBeDefined();
+  const javascript = recoverySource!
+    .replace(/graphql<unknown>/g, 'graphql')
+    .replace(
+      /graphql<\{\s*destroyMeetingBooking: \{ id: string \};\s*\}>/g,
+      'graphql',
+    );
+  const calls: string[] = [];
+  let readCount = 0;
+  let gateCount = 0;
+  const receipt: unknown[] = [];
+  const execute = runInNewContext(`(async () => {${javascript}})`, {
+    phase: '',
+    step: '',
+    expect,
+    recovery: parseMeetingCanaryRecovery(recoveryEnvironment()),
+    workspaceMemberId: memberId,
+    meetingCanaryRecords,
+    MeetingCanaryCheckError,
+    validateMeetingCanaryRecoveryRecord,
+    assertDisabled: async () => {
+      calls.push('disabled');
+      if (++gateCount === options.disabledGate)
+        throw new MeetingCanaryCheckError('OWNERSHIP');
+    },
+    graphql: async (
+      endpoint: string,
+      operation: string,
+      query: string,
+      variables: Record<string, string>,
+    ) => {
+      expect(endpoint).toBe('/graphql');
+      calls.push(operation);
+      if (operation === 'FindPriorRunMeetingCanary') {
+        expect(query).toContain('first: 2');
+        expect(query).toContain('startsWith: $prefix');
+        expect(query).toContain('createdAt: { gte: $after }');
+        expect(query).toContain('createdAt: { lt: $before }');
+        expect(query).toContain('is: NULL');
+        expect(query).toContain('is: NOT_NULL');
+        expect(variables).toEqual({
+          prefix: 'CRM meeting canary 34464729678-1-',
+          after: '2026-09-10T10:19:26Z',
+          before: '2026-09-10T10:19:41Z',
+        });
+        return {
+          meetingBookings: {
+            edges: options.candidates.map((node) => ({ node })),
+          },
+        };
+      }
+      expect(operation).toBe('DestroyPriorRunMeetingCanary');
+      expect(variables).toEqual({ id: otherId });
+      if (options.destroyError)
+        throw new MeetingCanaryCheckError('GRAPHQL_PERMISSION');
+      return { destroyMeetingBooking: { id: otherId } };
+    },
+    readMeetingById: async (id: string) => {
+      calls.push('read-exact');
+      expect(id).toBe(otherId);
+      if (options.readError) throw new MeetingCanaryCheckError('GRAPHQL_OTHER');
+      readCount += 1;
+      const record =
+        readCount === 1
+          ? options.reread === undefined
+            ? recoveryRecord()
+            : options.reread
+          : options.readbackPresent
+            ? recoveryRecord()
+            : null;
+      return resolveMeetingCanaryRecord(
+        { meetingBookings: { edges: record ? [{ node: record }] : [] } },
+        id,
+      );
+    },
+    console: { log: (value: string) => receipt.push(JSON.parse(value)) },
+  }) as () => Promise<void>;
+  return { execute, calls, receipt };
+};
+
+test('zero prior candidates is verified already absent and never deletes', async () => {
+  const run = runRecovery({ candidates: [] });
+  await run.execute();
+  expect(run.calls).toEqual(['disabled', 'FindPriorRunMeetingCanary']);
+  expect(run.receipt).toEqual([
+    { meetingCanaryRecovery: 'already-absent', candidateCount: 0 },
+  ]);
+});
+
+test('one exact prior candidate is revalidated, destroyed by UUID and verified absent', async () => {
+  const run = runRecovery({ candidates: [recoveryRecord()] });
+  await run.execute();
+  expect(run.calls).toEqual([
+    'disabled',
+    'FindPriorRunMeetingCanary',
+    'read-exact',
+    'disabled',
+    'DestroyPriorRunMeetingCanary',
+    'read-exact',
+  ]);
+  expect(run.receipt).toEqual([
+    { meetingCanaryRecovery: 'deleted-exact-run-record', candidateCount: 1 },
+  ]);
+});
+
+for (const [name, options] of Object.entries({
+  ambiguous: { candidates: [recoveryRecord(), recoveryRecord()] },
+  creatorChanged: {
+    candidates: [recoveryRecord()],
+    reread: { ...recoveryRecord(), createdBy: { workspaceMemberId: userId } },
+  },
+  editedAfterRun: {
+    candidates: [{ ...recoveryRecord(), updatedAt: '2026-09-10T10:20:00Z' }],
+  },
+  updatedAtChanged: {
+    candidates: [recoveryRecord()],
+    reread: { ...recoveryRecord(), updatedAt: '2026-09-10T10:19:33Z' },
+  },
+  nameChanged: {
+    candidates: [recoveryRecord()],
+    reread: {
+      ...recoveryRecord(),
+      name: `CRM meeting canary 34464729678-1-${userId}`,
+    },
+  },
+  readError: { candidates: [recoveryRecord()], readError: true },
+  disabledGate: { candidates: [recoveryRecord()], disabledGate: 2 },
+})) {
+  test(`recovery ${name} fails before any delete`, async () => {
+    const run = runRecovery(options);
+    await assert.rejects(async () => run.execute());
+    expect(run.calls).not.toContain('DestroyPriorRunMeetingCanary');
+    expect(run.receipt).toEqual([]);
+  });
+}
+
+for (const options of [{ destroyError: true }, { readbackPresent: true }]) {
+  test(`recovery rejects ${Object.keys(options)[0]} without claiming cleanup`, async () => {
+    const run = runRecovery({ candidates: [recoveryRecord()], ...options });
+    await assert.rejects(async () => run.execute());
+    expect(run.receipt).toEqual([]);
+  });
+}
+
+test('GraphQL diagnostics classify only known codes without exposing messages', () => {
+  for (const [code, expected] of [
+    ['FORBIDDEN', 'GRAPHQL_PERMISSION'],
+    ['GRAPHQL_VALIDATION_FAILED', 'GRAPHQL_VALIDATION'],
+    ['RECORD_NOT_FOUND', 'GRAPHQL_RECORD_NOT_FOUND'],
+    ['private-code', 'GRAPHQL_OTHER'],
+  ])
+    expect(
+      meetingCanaryFailureCategory(
+        meetingCanaryGraphqlFailure([
+          { message: 'private', extensions: { code } },
+        ]),
+      ),
+    ).toBe(expected);
+});
