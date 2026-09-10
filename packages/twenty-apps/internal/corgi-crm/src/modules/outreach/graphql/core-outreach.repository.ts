@@ -329,8 +329,11 @@ export class CoreOutreachRepository implements OutreachRepository {
     const seenCursors = new Set<string>();
     const startTime = Date.parse(start);
     const endTime = Date.parse(end);
+    if (!(startTime < endTime)) {
+      throw new Error('Invalid outreach activity report window');
+    }
     let cursor: string | undefined;
-    while (true) {
+    for (let page = 0; page < MAX_PAGES; page += 1) {
       const filters: ActivityFilter['and'] = [
         { occurredAt: { gte: start } },
         { occurredAt: { lt: end } },
@@ -355,18 +358,35 @@ export class CoreOutreachRepository implements OutreachRepository {
       const connection = parseActivityConnection(result.outreachActivities);
       for (const edge of connection.edges) {
         const node = edge?.node;
-        const occurredAt = Date.parse(node?.occurredAt ?? '');
+        if (typeof node?.id !== 'string' || !node.id.trim()) {
+          throw new Error('Outreach activity returned an invalid identity');
+        }
         if (
-          !node?.id ||
-          !node.occurredAt ||
+          typeof node.occurredAt !== 'string' ||
+          !Number.isFinite(Date.parse(node.occurredAt))
+        ) {
+          throw new Error('Outreach activity returned an invalid timestamp');
+        }
+        const occurredAt = Date.parse(node.occurredAt);
+        if (
           !(occurredAt >= startTime && occurredAt < endTime) ||
           seenIds.has(node.id)
         ) {
           continue;
         }
         seenIds.add(node.id);
-        const ownerId =
-          node.wholesalerId?.trim() || node.wholesaler?.id?.trim();
+        const foreignOwnerId = node.wholesalerId?.trim();
+        const relatedOwnerId = node.wholesaler?.id?.trim();
+        if (
+          foreignOwnerId &&
+          relatedOwnerId &&
+          foreignOwnerId !== relatedOwnerId
+        ) {
+          throw new Error(
+            'Outreach activity returned conflicting owner identities',
+          );
+        }
+        const ownerId = foreignOwnerId || relatedOwnerId;
         output.push({
           id: node.id,
           wholesalerId: ownerId || 'unassigned',
@@ -391,5 +411,6 @@ export class CoreOutreachRepository implements OutreachRepository {
       seenCursors.add(nextCursor);
       cursor = nextCursor;
     }
+    throw new Error(`Outreach activity pagination exceeded ${MAX_PAGES} pages`);
   }
 }

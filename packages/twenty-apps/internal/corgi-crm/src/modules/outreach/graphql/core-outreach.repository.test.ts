@@ -108,7 +108,7 @@ describe('CoreOutreachRepository.listActivities', () => {
     expect(request.mock.calls[1]![0].variables.after).toBe('page-1');
   });
 
-  it('includes the start but excludes invalid timestamps, older, end-boundary and future activities', async () => {
+  it('includes the start but excludes valid older, end-boundary and future activities', async () => {
     const request = vi.fn().mockResolvedValue({
       outreachActivities: {
         edges: [
@@ -116,7 +116,6 @@ describe('CoreOutreachRepository.listActivities', () => {
           { ...activity, id: 'older', occurredAt: '2026-09-08T16:29:59.999Z' },
           { ...activity, id: 'end-boundary', occurredAt: window.end },
           { ...activity, id: 'future', occurredAt: '2026-09-09T16:30:00.001Z' },
-          { ...activity, id: 'invalid', occurredAt: 'invalid' },
         ].map((node) => ({ node })),
         pageInfo: { hasNextPage: false },
       },
@@ -125,6 +124,48 @@ describe('CoreOutreachRepository.listActivities', () => {
       request,
     }).repository.listActivities(window);
     expect(result.map(({ id }) => id)).toEqual(['activity-1']);
+  });
+
+  it.each([
+    [{ ...activity, id: null }, 'identity'],
+    [{ ...activity, id: ' ' }, 'identity'],
+    [{ ...activity, occurredAt: null }, 'timestamp'],
+    [{ ...activity, occurredAt: 'invalid' }, 'timestamp'],
+  ])(
+    'fails closed for an activity with a malformed %s',
+    async (node, expectedFailure) => {
+      const request = vi.fn().mockResolvedValue({
+        outreachActivities: {
+          edges: [{ node }],
+          pageInfo: { hasNextPage: false },
+        },
+      });
+
+      await expect(
+        createRepository({ request }).repository.listActivities(window),
+      ).rejects.toThrow(new RegExp(expectedFailure, 'i'));
+    },
+  );
+
+  it('rejects conflicting scalar and related owner identities', async () => {
+    const request = vi.fn().mockResolvedValue({
+      outreachActivities: {
+        edges: [
+          {
+            node: {
+              ...activity,
+              wholesalerId: 'owner-1',
+              wholesaler: { id: 'owner-2', name: 'Wrong owner' },
+            },
+          },
+        ],
+        pageInfo: { hasNextPage: false },
+      },
+    });
+
+    await expect(
+      createRepository({ request }).repository.listActivities(window),
+    ).rejects.toThrow(/conflicting owner identities/i);
   });
 
   it('fails instead of returning an incomplete report when pagination cycles', async () => {
@@ -153,6 +194,41 @@ describe('CoreOutreachRepository.listActivities', () => {
       createRepository({ request }).repository.listActivities(window),
     ).rejects.toThrow(/pagination.*cursor/i);
     expect(request).toHaveBeenCalledTimes(3);
+  });
+
+  it('bounds pagination instead of running indefinitely', async () => {
+    const request = vi.fn().mockImplementation(async () => {
+      if (request.mock.calls.length > 100) {
+        throw new Error('Test safety stop: repository exceeded page bound');
+      }
+      return {
+        outreachActivities: {
+          edges: [],
+          pageInfo: {
+            hasNextPage: true,
+            endCursor: `page-${request.mock.calls.length}`,
+          },
+        },
+      };
+    });
+
+    await expect(
+      createRepository({ request }).repository.listActivities(window),
+    ).rejects.toThrow(/pagination exceeded 100 pages/i);
+    expect(request).toHaveBeenCalledTimes(100);
+  });
+
+  it.each([
+    [{ ...window, start: 'invalid' }],
+    [{ ...window, end: 'invalid' }],
+    [{ ...window, start: window.end }],
+  ])('rejects invalid windows before reading CRM', async (invalidWindow) => {
+    const request = vi.fn();
+
+    await expect(
+      createRepository({ request }).repository.listActivities(invalidWindow),
+    ).rejects.toThrow(/invalid outreach activity report window/i);
+    expect(request).not.toHaveBeenCalled();
   });
 
   it.each([
