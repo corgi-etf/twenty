@@ -19,7 +19,6 @@ const uuid = (digit: string): string =>
 
 const identities = {
   Grace: uuid('1'),
-  Kelly: uuid('2'),
   Nash: uuid('3'),
 };
 
@@ -27,7 +26,7 @@ const identityArtifact = {
   workspaceMemberIds: identities,
   aggregateIdentityHash: createHash('sha256')
     .update(
-      `Grace=${identities.Grace}\nKelly=${identities.Kelly}\nNash=${identities.Nash}`,
+      `Grace=${identities.Grace}\nNash=${identities.Nash}`,
       'utf8',
     )
     .digest('hex'),
@@ -360,7 +359,6 @@ test('plans canonical completed actions for one explicitly selected owner', () =
     wholesalers: [
       { id: uuid('6'), workspaceMemberId: identities.Nash },
       { id: uuid('7'), workspaceMemberId: identities.Grace },
-      { id: uuid('8'), workspaceMemberId: identities.Kelly },
     ],
     people: [],
     existingActivities: [],
@@ -428,7 +426,7 @@ test('v2 IDs bind immutable source position and reject semantic drift as a colli
       companies: [{ id: uuid('4'), name: 'Acme, Inc.' }],
       wholesalers: [
         { id: uuid('7'), workspaceMemberId: identities.Grace },
-        { id: uuid('8'), workspaceMemberId: identities.Kelly },
+        { id: uuid('8'), workspaceMemberId: identities.Nash },
       ],
       people: [],
       existingActivities,
@@ -507,7 +505,7 @@ test('v2 IDs bind immutable source position and reject semantic drift as a colli
   );
 
   const changedOwner = buildCompletedPlan(
-    completedOptions({ ownerLabel: 'Kelly' as const }),
+    completedOptions({ ownerLabel: 'Nash' as const }),
   );
   assert.notDeepEqual(
     changedOwner.activities.map(({ record }) => record.id),
@@ -539,7 +537,7 @@ test('legacy source remains Nash-only and every owner must resolve uniquely', ()
     () =>
       buildActivityImportPlan({
         ...planInput(),
-        csvOptions: options({ ownerLabel: 'Kelly' as never }),
+        csvOptions: options({ ownerLabel: 'Grace' as never }),
       }),
     /legacy source owner must be Nash/,
   );

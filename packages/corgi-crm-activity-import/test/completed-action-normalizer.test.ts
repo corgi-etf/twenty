@@ -57,7 +57,7 @@ test('normalizes only checked completed actions in deterministic order', () => {
   const normalized = normalize();
   const activities = parseActivityCsv(normalized.normalizedCsv, {
     sourceFormat: 'completed-actions-v2',
-    ownerLabel: 'Kelly',
+    ownerLabel: 'Grace',
     sourceSha256: normalized.receipt.normalizedCsvSha256,
     provenanceSha256: normalized.receipt.sourceDocumentSha256,
     expectedRowSequenceSha256: normalized.receipt.rowSequenceSha256,

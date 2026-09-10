@@ -307,9 +307,9 @@ test('projects State and ZIP from the native address for every company', () => {
   assert.match(plan.expectedProjectionHash, /^[a-f0-9]{64}$/);
 });
 
-test('assigns Grace and Kelly to Chicago and Nash to Florida deterministically', () => {
+test('assigns each approved member its territory deterministically', () => {
   const graceWorkspaceMemberId = '11111111-1111-4111-8111-111111111111';
-  const kellyWorkspaceMemberId = '22222222-2222-4222-8222-222222222222';
+  const secondWorkspaceMemberId = '22222222-2222-4222-8222-222222222222';
   const nashWorkspaceMemberId = '33333333-3333-4333-8333-333333333333';
   const wholesalers = [
     {
@@ -320,16 +320,16 @@ test('assigns Grace and Kelly to Chicago and Nash to Florida deterministically',
       territory: null,
     },
     {
-      id: 'kelly-id',
+      id: 'second-id',
       updatedAt: '2026-09-08T00:00:00.000Z',
       name: 'Grace Nash',
-      workspaceMember: { id: kellyWorkspaceMemberId },
+      workspaceMember: { id: secondWorkspaceMemberId },
       territory: '  Chicago  ',
     },
     {
       id: 'nash-id',
       updatedAt: '2026-09-08T00:00:00.000Z',
-      name: 'Kelly Grace',
+      name: 'Nash Grace',
       workspaceMember: { id: nashWorkspaceMemberId },
       territory: 'Midwest',
     },
@@ -346,7 +346,7 @@ test('assigns Grace and Kelly to Chicago and Nash to Florida deterministically',
 
   const plan = buildWholesalerTerritoryPlan(wholesalers, [
     { workspaceMemberId: graceWorkspaceMemberId, territory: 'Chicago' },
-    { workspaceMemberId: kellyWorkspaceMemberId, territory: 'Chicago' },
+    { workspaceMemberId: secondWorkspaceMemberId, territory: 'Chicago' },
     { workspaceMemberId: nashWorkspaceMemberId, territory: 'Florida' },
   ]);
 
@@ -371,16 +371,11 @@ test('builds approved territory assignments only from distinct immutable member 
   assert.deepEqual(
     buildApprovedWholesalerTerritoryAssignments({
       graceWorkspaceMemberId: '11111111-1111-4111-8111-111111111111',
-      kellyWorkspaceMemberId: '22222222-2222-4222-8222-222222222222',
       nashWorkspaceMemberId: '33333333-3333-4333-8333-333333333333',
     }),
     [
       {
         workspaceMemberId: '11111111-1111-4111-8111-111111111111',
-        territory: 'Chicago',
-      },
-      {
-        workspaceMemberId: '22222222-2222-4222-8222-222222222222',
         territory: 'Chicago',
       },
       {
@@ -393,7 +388,6 @@ test('builds approved territory assignments only from distinct immutable member 
     () =>
       buildApprovedWholesalerTerritoryAssignments({
         graceWorkspaceMemberId: 'not-a-uuid',
-        kellyWorkspaceMemberId: '22222222-2222-4222-8222-222222222222',
         nashWorkspaceMemberId: '33333333-3333-4333-8333-333333333333',
       }),
     /identities are invalid/i,
@@ -402,11 +396,11 @@ test('builds approved territory assignments only from distinct immutable member 
 
 test('fails closed when immutable territory identities are missing, ambiguous, or reused', () => {
   const graceWorkspaceMemberId = '11111111-1111-4111-8111-111111111111';
-  const kellyWorkspaceMemberId = '22222222-2222-4222-8222-222222222222';
+  const secondWorkspaceMemberId = '22222222-2222-4222-8222-222222222222';
   const nashWorkspaceMemberId = '33333333-3333-4333-8333-333333333333';
   const assignments = [
     { workspaceMemberId: graceWorkspaceMemberId, territory: 'Chicago' },
-    { workspaceMemberId: kellyWorkspaceMemberId, territory: 'Chicago' },
+    { workspaceMemberId: secondWorkspaceMemberId, territory: 'Chicago' },
     { workspaceMemberId: nashWorkspaceMemberId, territory: 'Florida' },
   ];
   const record = (id: string, workspaceMemberId: string) => ({
@@ -420,7 +414,7 @@ test('fails closed when immutable territory identities are missing, ambiguous, o
     () =>
       buildWholesalerTerritoryPlan(
         [
-          record('kelly', kellyWorkspaceMemberId),
+          record('second', secondWorkspaceMemberId),
           record('nash', nashWorkspaceMemberId),
         ],
         assignments,
@@ -433,7 +427,7 @@ test('fails closed when immutable territory identities are missing, ambiguous, o
         [
           record('grace-1', graceWorkspaceMemberId),
           record('grace-2', graceWorkspaceMemberId),
-          record('kelly', kellyWorkspaceMemberId),
+          record('second', secondWorkspaceMemberId),
           record('nash', nashWorkspaceMemberId),
         ],
         assignments,
@@ -445,7 +439,7 @@ test('fails closed when immutable territory identities are missing, ambiguous, o
       buildWholesalerTerritoryPlan(
         [
           record('grace', graceWorkspaceMemberId),
-          record('kelly', kellyWorkspaceMemberId),
+          record('second', secondWorkspaceMemberId),
           record('nash', nashWorkspaceMemberId),
         ],
         [assignments[0]!, assignments[0]!, assignments[2]!],

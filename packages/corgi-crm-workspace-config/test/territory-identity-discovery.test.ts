@@ -15,7 +15,6 @@ import {
 
 const identities = {
   Grace: '11111111-1111-4111-8111-111111111111',
-  Kelly: '22222222-2222-4222-8222-222222222222',
   Nash: '33333333-3333-4333-8333-333333333333',
 } as const;
 
@@ -36,7 +35,6 @@ const approvedWholesalers = (): WholesalerTerritoryRecord[] => [
     { firstName: ' Grace ', lastName: 'Hopper' },
     identities.Grace,
   ),
-  wholesaler('wholesaler-kelly', 'KELLY Example', identities.Kelly),
   wholesaler(
     'wholesaler-nash',
     { firstName: 'Nash', lastName: 'Example' },
@@ -59,13 +57,13 @@ const approvedWholesalers = (): WholesalerTerritoryRecord[] => [
   ),
 ];
 
-test('discovers the three exact linked workspace member identities without PII', () => {
+test('discovers the two exact linked workspace member identities without PII', () => {
   const artifact = buildTerritoryIdentityArtifact(approvedWholesalers());
 
   assert.deepEqual(artifact, {
     workspaceMemberIds: identities,
     aggregateIdentityHash:
-      '9925a7559a425200cfc8d7572c10ddf7801aba8820710d7549107a6763f1ae02',
+      'c300c2d48c6977096c0c3361850eca796173aa3a3e4f64d5211ba3f051caefb3',
   });
   const serializedArtifact = JSON.stringify(artifact);
   for (const forbiddenValue of [
@@ -130,8 +128,8 @@ test('discovery rejects malformed and reused immutable links', () => {
 
   const reusedLink = approvedWholesalers();
   reusedLink[1] = wholesaler(
-    'wholesaler-kelly',
-    { firstName: 'Kelly', lastName: 'Example' },
+    'wholesaler-nash',
+    { firstName: 'Nash', lastName: 'Example' },
     identities.Grace,
   );
   assert.throws(

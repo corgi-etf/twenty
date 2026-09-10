@@ -45,11 +45,11 @@ test('workflow verifies live SHA and maintenance-only drift, serialized, two-pha
   assert.match(workflow, /owner_label:/);
   assert.match(
     workflow,
-    /owner_label:[\s\S]*?default: select-owner[\s\S]*?options:[\s\S]*?- select-owner[\s\S]*?- Grace[\s\S]*?- Kelly[\s\S]*?- Nash/,
+    /owner_label:[\s\S]*?default: select-owner[\s\S]*?options:[\s\S]*?- select-owner[\s\S]*?- Grace[\s\S]*?- Nash/,
   );
   assert.match(
     workflow,
-    /\[\[ "\$\{OWNER_LABEL\}" == "Grace" \|\| "\$\{OWNER_LABEL\}" == "Kelly" \|\| "\$\{OWNER_LABEL\}" == "Nash" \]\]/,
+    /\[\[ "\$\{OWNER_LABEL\}" == "Grace" \|\| "\$\{OWNER_LABEL\}" == "Nash" \]\]/,
   );
   assert.match(workflow, /provenance_sha256:/);
   assert.match(workflow, /expected_row_sequence_sha256:/);

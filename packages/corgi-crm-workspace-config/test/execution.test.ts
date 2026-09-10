@@ -20,12 +20,10 @@ import {
 } from '../src/planner.ts';
 
 const graceWorkspaceMemberId = '11111111-1111-4111-8111-111111111111';
-const kellyWorkspaceMemberId = '22222222-2222-4222-8222-222222222222';
 const nashWorkspaceMemberId = '33333333-3333-4333-8333-333333333333';
 const wholesalerTerritoryAssignments =
   buildApprovedWholesalerTerritoryAssignments({
     graceWorkspaceMemberId,
-    kellyWorkspaceMemberId,
     nashWorkspaceMemberId,
   });
 
@@ -336,13 +334,6 @@ class FakeApi implements WorkspaceConfigApi {
       territory: null,
     },
     {
-      id: 'kelly-id',
-      name: 'Kelly Johnson',
-      workspaceMember: { id: kellyWorkspaceMemberId },
-      updatedAt: '2026-09-08T00:00:00.000Z',
-      territory: 'Chicago',
-    },
-    {
       id: 'nash-id',
       name: 'Morgan Nash',
       workspaceMember: { id: nashWorkspaceMemberId },
@@ -463,7 +454,7 @@ test('backfills companies and seeded territories before layout and records a ver
   ]);
   assert.equal(result.companyMutations, 1);
   assert.equal(result.territoryMutations, 2);
-  assert.equal(result.wholesalerCount, 3);
+  assert.equal(result.wholesalerCount, 2);
   assert.equal(result.layoutMutations, 0);
   assert.equal(api.checkpoint?.status, 'complete');
   assert.equal(api.checkpoint?.expectedCompanyCount, 1);
