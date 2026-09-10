@@ -11,6 +11,7 @@ import {
 } from 'src/modules/outreach/services/report-summary.service';
 import { type OutreachRepository } from 'src/modules/outreach/types';
 import { type MeetingBookingReportRepository } from 'src/modules/outreach/report-meeting-booking.types';
+import { type WholesalerRoleReader } from 'src/modules/wholesaler/onboarding/types';
 import {
   getValidatedTelegramLink,
   linkTelegramAccount,
@@ -70,6 +71,7 @@ const GROUP_REPORTS_DISABLED =
 type CommandDependencies = {
   repository: OutreachRepository;
   meetingRepository: MeetingBookingReportRepository;
+  wholesalerRoleReader: WholesalerRoleReader;
   store: KeyValueStore;
   timeZone: string;
   publicReportsEnabled: string | undefined;
@@ -119,6 +121,7 @@ const sendWorkspaceReport = async ({
       readReportSummary({
         repository: dependencies.repository,
         meetingRepository: dependencies.meetingRepository,
+        wholesalerRoleReader: dependencies.wholesalerRoleReader,
         period,
         now: dependencies.now(),
         timeZone: dependencies.timeZone,

@@ -34,6 +34,7 @@ const base = () => {
     store,
     repository,
     meetingRepository: { listMeetingBookings: vi.fn().mockResolvedValue([]) },
+    wholesalerRoleReader: { findRolesByIds: vi.fn().mockResolvedValue([]) },
     timeZone: 'America/Chicago',
     publicReportsEnabled: 'false',
     linkCodesJson: '{}',
@@ -220,6 +221,78 @@ describe('processTelegramCommand', () => {
     await expect(processTelegramCommand(update('/daily'), dependencies)).rejects.toThrow('Meeting read unavailable');
     expect(dependencies.send).not.toHaveBeenCalled();
     expect(dependencies.values.has('telegram:report:interactive:42:/daily')).toBe(false);
+  });
+
+  // The regression that took the production bot down in v1.2.10: an unreadable
+  // wholesaler role threw out of the report instead of degrading its section.
+  it('still delivers the report when the wholesaler role read fails', async () => {
+    const dependencies = base();
+    dependencies.repository.listActivities = vi.fn().mockResolvedValue([
+      {
+        id: 'activity-1',
+        wholesalerId: '11111111-1111-4111-8111-111111111111',
+        wholesalerName: 'Jordan',
+        companyName: 'Acme',
+        activityType: 'phone_call',
+        outcome: 'connected',
+        occurredAt: '2026-09-09T15:30:00.000Z',
+      },
+    ]);
+    dependencies.wholesalerRoleReader.findRolesByIds.mockRejectedValue(
+      new Error('Wholesaler query is not permitted for this role'),
+    );
+
+    await expect(
+      processTelegramCommand(update('/daily'), dependencies),
+    ).resolves.toEqual({ status: 'report', period: 'daily' });
+    const message = dependencies.send.mock.calls
+      .map(([, text]) => text)
+      .join('\n');
+    expect(message).toContain('Total activities: 1');
+    expect(message).toContain('\u{1f3c6} Activity leaderboard');
+    expect(message).toContain('\u{1f4b0} ARR attributed per EW');
+    expect(message).toContain(
+      'Wholesaler roles could not be read for this report, so the EW breakdown is unavailable.',
+    );
+    expect(message).not.toMatch(/permitted|Error/);
+  });
+
+  it('lists each EW at $0 and leaves BDRs out of the delivered report', async () => {
+    const dependencies = base();
+    dependencies.repository.listActivities = vi.fn().mockResolvedValue([
+      {
+        id: 'activity-1',
+        wholesalerId: '11111111-1111-4111-8111-111111111111',
+        wholesalerName: 'Jordan',
+        companyName: 'Acme',
+        activityType: 'phone_call',
+        outcome: 'connected',
+        occurredAt: '2026-09-09T15:30:00.000Z',
+      },
+    ]);
+    dependencies.wholesalerRoleReader.findRolesByIds.mockResolvedValue([
+      {
+        id: '11111111-1111-4111-8111-111111111111',
+        name: 'Jordan',
+        wholesalerRole: ' ew ',
+      },
+      {
+        id: '22222222-2222-4222-8222-222222222222',
+        name: 'Sam',
+        wholesalerRole: 'BDR',
+      },
+    ]);
+
+    await processTelegramCommand(update('/daily'), dependencies);
+    const message = dependencies.send.mock.calls
+      .map(([, text]) => text)
+      .join('\n');
+    expect(dependencies.wholesalerRoleReader.findRolesByIds).toHaveBeenCalledWith([
+      '11111111-1111-4111-8111-111111111111',
+    ]);
+    expect(message).toContain('\u{1f4b0} ARR attributed per EW');
+    expect(message).toContain('\u2022 Jordan: $0');
+    expect(message).not.toContain('Sam');
   });
 
   it('splits a large leaderboard into Telegram-safe messages without dropping owners', async () => {

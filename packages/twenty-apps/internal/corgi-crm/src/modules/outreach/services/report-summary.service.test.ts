@@ -1,12 +1,16 @@
 import { describe, expect, it, vi } from 'vitest';
 
+import { DEFAULT_WHOLESALER_ROLE } from 'src/constants';
 import {
+  buildExternalWholesalerRevenueSection,
   buildReportSummary,
   formatReportSummary,
   getReportWindow,
+  PLACEHOLDER_ATTRIBUTED_ANNUAL_RECURRING_REVENUE,
   readReportSummary,
 } from 'src/modules/outreach/services/report-summary.service';
 import { type OutreachActivity } from 'src/modules/outreach/types';
+import { type WholesalerRecord } from 'src/modules/wholesaler/onboarding/types';
 
 const activity = (
   id: string,
@@ -23,6 +27,21 @@ const activity = (
   occurredAt: '2026-09-09T15:00:00.000Z',
   ...overrides,
 });
+
+const wholesaler = (
+  id: string,
+  wholesalerRole: string | null,
+  name = id,
+): WholesalerRecord => ({
+  id,
+  name,
+  email: `${id}@example.test`,
+  wholesalerRole,
+  workspaceMemberId: `member-${id}`,
+});
+
+const section = (wholesalerRoles: WholesalerRecord[]) =>
+  buildExternalWholesalerRevenueSection(wholesalerRoles);
 
 const defaults = {
   period: 'daily' as const,
@@ -168,7 +187,11 @@ describe('outreach report summaries', () => {
     expect(text).not.toMatch(/By activity|By outcome|Meeting-booking/);
     expect(text).not.toMatch(/[🥇🥈🥉] [123]\./u);
     expect(text).toContain('Meetings counted when booked, not when scheduled.');
-    expect(text).not.toMatch(/ARR|revenue|Private/);
+    // The per-person ranking stays counts-only; ARR belongs to its own section.
+    expect(
+      text.split('\n').filter((line) => /^[\u{1f947}\u{1f948}\u{1f949}]|^\d+\./u.test(line)),
+    ).toEqual(['\u{1f947} Jordan: 1 activity \u00b7 1 meeting set']);
+    expect(text).not.toMatch(/Private/);
   });
 
   it.each(['daily', 'weekly', 'monthly'] as const)(
@@ -348,5 +371,336 @@ describe('outreach report summaries', () => {
       ],
     });
     expect(formatReportSummary(summary)).toContain('🥇 Jordan Example: 1');
+  });
+
+  it('lists every EW with the zero ARR placeholder and leaves BDRs out', () => {
+    const summary = buildReportSummary({
+      ...defaults,
+      activities: [activity('1')],
+      externalWholesalerRevenue: section([
+        wholesaler('id-bdr', 'BDR', 'Sam'),
+        wholesaler('id-ew-2', 'EW', 'Casey'),
+        wholesaler('id-ew-1', 'EW', 'Alex'),
+        wholesaler('id-unset', null, 'Robin'),
+        wholesaler('id-default', DEFAULT_WHOLESALER_ROLE, 'Kim'),
+      ]),
+    });
+
+    expect(PLACEHOLDER_ATTRIBUTED_ANNUAL_RECURRING_REVENUE).toBe(0);
+    expect(summary.externalWholesalerRevenue).toEqual({
+      status: 'resolved',
+      wholesalers: [
+        {
+          wholesalerId: 'id-ew-1',
+          name: 'Alex',
+          attributedAnnualRecurringRevenue: 0,
+        },
+        {
+          wholesalerId: 'id-ew-2',
+          name: 'Casey',
+          attributedAnnualRecurringRevenue: 0,
+        },
+      ],
+    });
+    const text = formatReportSummary(summary);
+    expect(text).toContain('💰 ARR attributed per EW');
+    expect(text).toContain(
+      'No ARR source is connected yet, so every figure reads $0.',
+    );
+    expect(text).toContain('• Alex: $0');
+    expect(text).toContain('• Casey: $0');
+    for (const excluded of ['Sam', 'Robin', 'Kim'])
+      expect(text).not.toContain(excluded);
+  });
+
+  it.each([' ew ', 'EW', 'eW', ' Ew  ', '\tew\n', '  ew\t '])(
+    'reads the hand-entered role %j as EW',
+    (wholesalerRole) => {
+      expect(
+        section([wholesaler('id-ew', wholesalerRole, 'Alex')]),
+      ).toEqual({
+        status: 'resolved',
+        wholesalers: [
+          {
+            wholesalerId: 'id-ew',
+            name: 'Alex',
+            attributedAnnualRecurringRevenue: 0,
+          },
+        ],
+      });
+    },
+  );
+
+  it.each([
+    'BDR',
+    'bdr',
+    ' Bdr ',
+    DEFAULT_WHOLESALER_ROLE,
+    'EWW',
+    'new',
+    'e w',
+    '',
+    '   ',
+    null,
+  ])('keeps the role %j out of the ARR section', (wholesalerRole) => {
+    expect(section([wholesaler('id-other', wholesalerRole, 'Sam')])).toEqual({
+      status: 'resolved',
+      wholesalers: [],
+    });
+  });
+
+  it('explains the empty EW set rather than dropping or half-rendering the section', () => {
+    const text = formatReportSummary(
+      buildReportSummary({
+        ...defaults,
+        activities: [],
+        externalWholesalerRevenue: section([wholesaler('id-bdr', 'BDR', 'Sam')]),
+      }),
+    );
+    expect(text).toContain('💰 ARR attributed per EW');
+    expect(text).toContain(
+      'No wholesaler with the EW role appears in this period, so there is nothing to attribute.',
+    );
+    expect(text).not.toContain('$0');
+    expect(text).not.toContain('could not be read');
+  });
+
+  it('tells an unreadable role apart from an empty EW set', () => {
+    const text = formatReportSummary(
+      buildReportSummary({ ...defaults, activities: [] }),
+    );
+    expect(text).toContain('💰 ARR attributed per EW');
+    expect(text).toContain(
+      'Wholesaler roles could not be read for this report, so the EW breakdown is unavailable.',
+    );
+    expect(text).not.toContain('nothing to attribute');
+    expect(text).not.toContain('$0');
+  });
+
+  it('keeps an EW label on one line and labels an unnamed record', () => {
+    const resolved = section([
+      wholesaler('id-1', 'EW', ' Alex\nExample '),
+      wholesaler('id-2', 'EW', '   '),
+    ]);
+    expect(
+      resolved.status === 'resolved'
+        ? resolved.wholesalers.map(({ name }) => name)
+        : [],
+    ).toEqual(['Alex Example', 'Unnamed external wholesaler']);
+  });
+
+  it('keeps per-person counts identical whether or not EWs exist', () => {
+    const shared = {
+      ...defaults,
+      activities: [
+        activity('1'),
+        activity('2', { wholesalerId: 'owner-alex', wholesalerName: 'Alex' }),
+      ],
+      meetingBookings: [
+        {
+          id: 'booking-1',
+          bookedAt: '2026-09-09T15:00:00.000Z',
+          wholesalerId: 'owner-alex',
+          wholesalerName: 'Alex',
+        },
+      ],
+    };
+    const withoutRoles = buildReportSummary({
+      ...shared,
+      externalWholesalerRevenue: section([]),
+    });
+    const withRoles = buildReportSummary({
+      ...shared,
+      externalWholesalerRevenue: section([
+        wholesaler('owner-alex', 'EW', 'Alex'),
+        wholesaler('owner-jordan', 'BDR', 'Jordan'),
+      ]),
+    });
+
+    expect(withRoles.total).toBe(withoutRoles.total);
+    expect(withRoles.totalMeetingsSet).toBe(withoutRoles.totalMeetingsSet);
+    expect(withRoles.leaderboard).toEqual(withoutRoles.leaderboard);
+    const leaderboardLines = (summary: typeof withRoles) =>
+      formatReportSummary(summary)
+        .split('\n')
+        .filter((line) => /^[🥇🥈🥉]|^\d+\./u.test(line));
+    expect(leaderboardLines(withRoles)).toEqual(leaderboardLines(withoutRoles));
+    expect(leaderboardLines(withRoles)).toEqual([
+      '🥇 Alex: 1 activity · 1 meeting set',
+      '🥈 Jordan: 1 activity · 0 meetings set',
+    ]);
+  });
+
+  it('reads roles only for the wholesalers the report already returned', async () => {
+    const findRolesByIds = vi.fn().mockResolvedValue([
+      wholesaler('owner-jordan', 'EW', 'Jordan'),
+    ]);
+    const text = await readReportSummary({
+      ...defaults,
+      repository: {
+        listActivities: vi
+          .fn()
+          .mockResolvedValue([activity('1'), activity('2')]),
+      },
+      meetingRepository: {
+        listMeetingBookings: vi.fn().mockResolvedValue([
+          {
+            id: 'booking-1',
+            bookedAt: '2026-09-09T15:00:00.000Z',
+            wholesalerId: 'owner-booker',
+            wholesalerName: 'Casey',
+          },
+        ]),
+      },
+      wholesalerRoleReader: { findRolesByIds },
+    });
+
+    expect(findRolesByIds).toHaveBeenCalledOnce();
+    expect(findRolesByIds).toHaveBeenCalledWith([
+      'owner-jordan',
+      'owner-booker',
+    ]);
+    expect(text).toContain('• Jordan: $0');
+  });
+
+  it('never reads roles when the period returned nobody', async () => {
+    const findRolesByIds = vi.fn();
+    const text = await readReportSummary({
+      ...defaults,
+      repository: { listActivities: vi.fn().mockResolvedValue([]) },
+      meetingRepository: { listMeetingBookings: vi.fn().mockResolvedValue([]) },
+      wholesalerRoleReader: { findRolesByIds },
+    });
+
+    expect(findRolesByIds).not.toHaveBeenCalled();
+    expect(text).toContain(
+      'No wholesaler with the EW role appears in this period, so there is nothing to attribute.',
+    );
+  });
+
+  // The regression that took the production bot down: a failed role read used
+  // to throw out of readReportSummary, fail the installed-report verification
+  // and delete the live Telegram webhook.
+  it.each([
+    ['a rejected read', () => vi.fn().mockRejectedValue(new Error('denied'))],
+    [
+      'a synchronously thrown read',
+      () =>
+        vi.fn(() => {
+          throw new Error('Wholesaler query is not permitted');
+        }),
+    ],
+    ['a read that answered with nothing', () => vi.fn().mockResolvedValue(undefined)],
+    [
+      'a read that answered with a malformed roster',
+      () => vi.fn().mockResolvedValue([null]),
+    ],
+  ])('degrades the ARR section on %s and still delivers the report', async (
+    _name,
+    createReader,
+  ) => {
+    const listActivities = vi.fn().mockResolvedValue([activity('1')]);
+    const listMeetingBookings = vi.fn().mockResolvedValue([
+      {
+        id: 'booking-1',
+        bookedAt: '2026-09-09T15:00:00.000Z',
+        wholesalerId: 'owner-jordan',
+        wholesalerName: 'Jordan',
+      },
+    ]);
+    const text = await readReportSummary({
+      ...defaults,
+      repository: { listActivities },
+      meetingRepository: { listMeetingBookings },
+      wholesalerRoleReader: { findRolesByIds: createReader() },
+    });
+
+    expect(text).toContain('🎉 Daily outreach report — last 24 hours');
+    expect(text).toContain('📊 Total activities: 1');
+    expect(text).toContain('📅 Meetings set: 1');
+    expect(text).toContain('🏆 Activity leaderboard');
+    expect(text).toContain('🥇 Jordan: 1 activity · 1 meeting set');
+    expect(text).toContain('💰 ARR attributed per EW');
+    expect(text).toContain(
+      'Wholesaler roles could not be read for this report, so the EW breakdown is unavailable.',
+    );
+    // Never leak why: this text is delivered to a Telegram group.
+    expect(text).not.toMatch(/denied|permitted|Error/);
+  });
+
+  it('degrades rather than hanging when the role read never returns', async () => {
+    vi.useFakeTimers();
+    try {
+      const pending = readReportSummary({
+        ...defaults,
+        repository: {
+          listActivities: vi.fn().mockResolvedValue([activity('1')]),
+        },
+        meetingRepository: {
+          listMeetingBookings: vi.fn().mockResolvedValue([]),
+        },
+        wholesalerRoleReader: {
+          findRolesByIds: vi.fn(() => new Promise<never>(() => {})),
+        },
+      });
+      await vi.advanceTimersByTimeAsync(30_000);
+      const text = await pending;
+      expect(text).toContain('📊 Total activities: 1');
+      expect(text).toContain(
+        'Wholesaler roles could not be read for this report, so the EW breakdown is unavailable.',
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  // Pins the whole section body, not just fragments: the report is delivered
+  // verbatim to a Telegram group, so an unnoticed extra line is a product
+  // change nobody asked for.
+  it.each([
+    [
+      'listed EWs',
+      [wholesaler('id-ew-1', 'EW', 'Alex'), wholesaler('id-bdr', 'BDR', 'Sam')],
+      [
+        '💰 ARR attributed per EW',
+        'No ARR source is connected yet, so every figure reads $0.',
+        '• Alex: $0',
+        'Total ARR: $0',
+      ],
+    ],
+    [
+      'no EW in the period',
+      [wholesaler('id-bdr', 'BDR', 'Sam')],
+      [
+        '💰 ARR attributed per EW',
+        'No wholesaler with the EW role appears in this period, so there is nothing to attribute.',
+      ],
+    ],
+  ] as const)('renders exactly the %s section and nothing more', (
+    _name,
+    wholesalerRoles,
+    expected,
+  ) => {
+    const lines = formatReportSummary(
+      buildReportSummary({
+        ...defaults,
+        activities: [activity('1')],
+        externalWholesalerRevenue: section([...wholesalerRoles]),
+      }),
+    ).split('\n');
+    const heading = lines.indexOf('💰 ARR attributed per EW');
+    expect(heading).toBeGreaterThan(-1);
+    expect(lines.slice(heading)).toEqual([...expected]);
+  });
+
+  it('renders exactly the unavailable section and nothing more', () => {
+    const lines = formatReportSummary(
+      buildReportSummary({ ...defaults, activities: [activity('1')] }),
+    ).split('\n');
+    const heading = lines.indexOf('💰 ARR attributed per EW');
+    expect(lines.slice(heading)).toEqual([
+      '💰 ARR attributed per EW',
+      'Wholesaler roles could not be read for this report, so the EW breakdown is unavailable.',
+    ]);
   });
 });
