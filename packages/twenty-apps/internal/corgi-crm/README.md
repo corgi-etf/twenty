@@ -21,9 +21,10 @@ existing `Wholesaler` object, which was created before this app.
    current workspace. No production workspace UUID is embedded in the app or
    verifier. Do not publish or install this tenant-specific app elsewhere.
 
-Version `1.1.1` adds the Telegram channel with server-compatible delivery
-enum storage. It is a new immutable version: `1.1.0` was published but rejected
-at installation and must not be overwritten or reused.
+Version `1.2.0` adds native meeting bookings, separate meeting report totals,
+and configurable Telegram event destinations. It retains the server-compatible
+delivery enum storage from `1.1.1`. Published versions are immutable: `1.1.0`
+was published but rejected at installation and must not be overwritten or reused.
 
 The two custom CRM objects predate this app, so their universal identifiers are
 not guessed or committed. Immediately before packaging, use the short-lived
@@ -41,9 +42,10 @@ That mode fails unless it finds exactly one active `wholesaler` and one active
 role requires both at build time. The installed verifier then checks the actual
 role has read-only access to WorkspaceMember, Company, and Person; read/write
 access to Wholesaler, OutreachActivity, and the app-owned TelegramDelivery and
-TelegramDeliveryAudit objects; and no other object, delete, global, or settings
-permission. It also verifies both app-owned object schemas and the three unique
-indexes that fence delivery claims, reset generations, and request replays.
+TelegramDeliveryAudit objects; read/update access to MeetingBooking; and no
+other object, delete, global, or settings permission. It also verifies the
+app-owned object schemas and the three unique indexes that fence delivery
+claims, reset generations, and request replays.
 
 The post-install function reconciles all existing WorkspaceMembers. The
 `workspaceMember.created` trigger keeps future members synchronized. Both paths
@@ -58,6 +60,21 @@ one-to-one member reconciliation. It authenticates with the existing production
 smoke-test credentials, creates a uniquely named 30-minute API key for the run,
 masks its token, and always attempts verified revocation. No persistent app
 deployment credential belongs in the manifest, workflow, or repository.
+
+## Book a meeting in the CRM
+
+Open **Meetings**, create a draft, and fill in the meeting name, **RIA / Company**,
+**Owner**, and **Scheduled at** date and time. Change **Status** to **Booked**
+when those details are ready. Incomplete bookings return to Draft with an
+explanation in **Booking check**. The table, calendar, and native record page
+use the same meeting record.
+
+The first valid booking stamps **Booked at** and, when available, **Booked by**.
+Those fields cannot be edited by ordinary CRM users. Reports count when the
+meeting was booked, not its future scheduled date. Rescheduling, completing,
+cancelling, or reopening the same record does not count a second booking or
+send another booked alert. Historical bookings remain counted after a later
+cancellation. A meeting booking does not create an extra outreach activity.
 
 ## Telegram outreach channel
 
@@ -158,10 +175,12 @@ optional contact and follow-up:
 ```
 
 `/today` (or `/summary`) returns that person's current local-day breakdown.
-`/daily`, `/weekly`, and `/monthly` return whole-workspace totals, activity and
-outcome breakdowns, and an all-owner leaderboard for the rolling last 24 hours,
-7 days (weekend activity excluded), or 30 days. Owners come from the activity
-records themselves; there is no fixed people list. `/help` shows the syntax;
+`/daily`, `/weekly`, and `/monthly` return separate whole-workspace activity and
+meeting-booking totals, activity and outcome breakdowns, an activity leaderboard,
+and a meeting-booking leaderboard for the rolling last 24 hours, 7 days (local
+weekend events excluded), or 30 days. Owners come from the records themselves;
+there is no fixed people list. Meeting-only owners appear on the booking
+leaderboard. `/help` shows the syntax;
 there is no `/cancel` command because the bot does not hold mutable drafts. The
 cron sends the same whole-workspace rolling-24-hour report to each securely
 linked recipient. It runs every 15 minutes. From the configured local

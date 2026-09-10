@@ -250,11 +250,11 @@ describe('production Telegram application verification', () => {
 });
 
 describe('application release contract', () => {
-  it('uses a new immutable app version for Telegram capability', async () => {
+  it('uses a new immutable app version for meeting and Telegram capability', async () => {
     const packageJson = JSON.parse(
       await fs.readFile(new URL('../package.json', import.meta.url), 'utf8'),
     );
-    assert.equal(packageJson.version, '1.1.1');
+    assert.equal(packageJson.version, '1.2.0');
   });
 
   it('resolves exact custom object universal identifiers from live metadata', () => {
