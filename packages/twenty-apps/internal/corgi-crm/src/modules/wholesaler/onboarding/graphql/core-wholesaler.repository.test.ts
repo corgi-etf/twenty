@@ -45,6 +45,51 @@ describe('CoreWholesalerRepository external object access', () => {
     });
   });
 
+  it('reads one Wholesaler role by ID through raw GraphQL', async () => {
+    const { generated, raw, repository } = buildRepository({
+      rawResult: { wholesalers: { edges: [{ node: record }] } },
+    });
+
+    await expect(repository.findById(record.id)).resolves.toEqual(record);
+    expect(generated.query).not.toHaveBeenCalled();
+    expect(raw.request).toHaveBeenCalledWith({
+      operationName: 'CorgiFindWholesalerById',
+      document: expect.stringMatching(
+        /query CorgiFindWholesalerById\(\$wholesalerId: UUID!\)/,
+      ),
+      variables: { wholesalerId: record.id },
+    });
+  });
+
+  it('reports an absent Wholesaler instead of guessing one', async () => {
+    const { repository } = buildRepository({
+      rawResult: { wholesalers: { edges: [] } },
+    });
+
+    await expect(repository.findById(record.id)).resolves.toBeNull();
+  });
+
+  it.each([
+    [
+      'a duplicated ID',
+      { wholesalers: { edges: [{ node: record }, { node: record }] } },
+      /not unique/i,
+    ],
+    [
+      'a record that is not the one requested',
+      {
+        wholesalers: {
+          edges: [{ node: { ...record, id: '99999999-9999-4999-8999-999999999999' } }],
+        },
+      },
+      /different record/i,
+    ],
+  ])('refuses %s for a Wholesaler read by ID', async (_label, rawResult, expected) => {
+    const { repository } = buildRepository({ rawResult });
+
+    await expect(repository.findById(record.id)).rejects.toThrow(expected);
+  });
+
   it('escapes and verifies the exact email returned by raw GraphQL', async () => {
     const { raw, repository } = buildRepository({
       rawResult: {

@@ -2,6 +2,7 @@ import { type CoreApiClient } from 'twenty-client-sdk/core';
 
 import { type RawCoreGraphqlTransport } from 'src/modules/core/graphql/raw-core-graphql.transport';
 import {
+  findWholesalerById,
   findWholesalersByEmail,
   findWholesalersByWorkspaceMemberId,
 } from 'src/modules/wholesaler/onboarding/graphql/queries/find-wholesalers';
@@ -82,6 +83,17 @@ export class CoreWholesalerRepository implements WholesalerRepository {
     return nodes(
       await findWholesalersByWorkspaceMemberId(this.rawClient, memberId),
     );
+  }
+
+  public async findById(id: string): Promise<WholesalerRecord | null> {
+    const records = nodes(await findWholesalerById(this.rawClient, id));
+    if (records.length > 1) throw new Error('Wholesaler ID is not unique');
+    const record = records[0];
+    if (!record) return null;
+    if (record.id !== id) {
+      throw new Error('Wholesaler query returned a different record');
+    }
+    return record;
   }
 
   public async findByEmail(email: string): Promise<WholesalerRecord[]> {
