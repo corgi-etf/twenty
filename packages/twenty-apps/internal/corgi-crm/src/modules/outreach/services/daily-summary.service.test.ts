@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   buildDailySummaries,
+  formatDailySummary,
 } from 'src/modules/outreach/services/daily-summary.service';
 
 const activities = [
@@ -62,5 +63,60 @@ describe('buildDailySummaries', () => {
         activities: activities.slice(2),
       },
     ]);
+  });
+});
+
+describe('formatDailySummary', () => {
+  it('renders the same friendly taxonomy labels as the workspace reports', () => {
+    const [summary] = buildDailySummaries(
+      [
+        {
+          id: 'activity-1',
+          wholesalerId: 'wholesaler-1',
+          wholesalerName: 'Nash',
+          companyName: 'Acme',
+          contactName: 'Jamie',
+          activityType: 'phone_call',
+          outcome: 'follow_up_scheduled',
+          occurredAt: '2026-09-09T14:00:00.000Z',
+        },
+      ],
+      '2026-09-09',
+    );
+
+    expect(formatDailySummary(summary!)).toBe(
+      [
+        'Nash — 2026-09-09',
+        'Total: 1',
+        'By activity: Phone call: 1',
+        'By outcome: Follow-up scheduled: 1',
+        '• Phone call — Acme / Jamie — Follow-up scheduled',
+      ].join('\n'),
+    );
+  });
+
+  it('falls back to the raw value for a legacy or unrecognized taxonomy entry', () => {
+    const [summary] = buildDailySummaries(
+      [
+        {
+          id: 'activity-1',
+          wholesalerId: 'wholesaler-1',
+          wholesalerName: 'Nash',
+          companyName: 'Acme',
+          activityType: 'fax',
+          outcome: 'unknown_outcome',
+          occurredAt: '2026-09-09T14:00:00.000Z',
+        },
+      ],
+      '2026-09-09',
+    );
+
+    expect(formatDailySummary(summary!)).toContain('By activity: fax: 1');
+    expect(formatDailySummary(summary!)).toContain(
+      'By outcome: unknown_outcome: 1',
+    );
+    expect(formatDailySummary(summary!)).toContain(
+      '• fax — Acme — unknown_outcome',
+    );
   });
 });
