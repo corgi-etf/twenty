@@ -39,3 +39,62 @@ describe('CoreOutreachRepository.findContacts', () => {
     expect(query.mock.calls[1]![0].people.__args.after).toBe('cursor-100');
   });
 });
+
+describe('CoreOutreachRepository.createActivity', () => {
+  const write = {
+    id: '55555555-5555-4555-8555-555555555555',
+    name: 'Phone call — Acme',
+    companyId: 'company-1',
+    contactId: null,
+    wholesalerId: 'wholesaler-1',
+    activityType: 'phone_call' as const,
+    outcome: 'connected' as const,
+    notes: null,
+    occurredAt: '2026-09-10T04:59:00.000Z',
+    followUpDate: null,
+  };
+
+  it('accepts a production-style mutation collision only after reading the exact committed row', async () => {
+    const client = {
+      query: vi
+        .fn()
+        .mockResolvedValueOnce({
+          outreachActivities: { edges: [], pageInfo: { hasNextPage: false } },
+        })
+        .mockResolvedValueOnce({
+          outreachActivities: {
+            edges: [{ node: write }],
+            pageInfo: { hasNextPage: false },
+          },
+        }),
+      mutation: vi
+        .fn()
+        .mockRejectedValue(
+          new Error('duplicate key value violates unique constraint'),
+        ),
+    };
+    const repository = new CoreOutreachRepository(client as never);
+    await expect(repository.createActivity(write)).resolves.toEqual({
+      id: write.id,
+    });
+    expect(client.query).toHaveBeenCalledTimes(2);
+    expect(client.mutation).toHaveBeenCalledOnce();
+  });
+
+  it('does not accept a deterministic ID collision with different source data', async () => {
+    const client = {
+      query: vi
+        .fn()
+        .mockResolvedValueOnce({ outreachActivities: { edges: [] } })
+        .mockResolvedValueOnce({
+          outreachActivities: {
+            edges: [{ node: { ...write, occurredAt: '2026-09-10T05:01:00.000Z' } }],
+          },
+        }),
+      mutation: vi.fn().mockRejectedValue(new Error('duplicate key')),
+    };
+    await expect(
+      new CoreOutreachRepository(client as never).createActivity(write),
+    ).rejects.toThrow(/conflicts at occurredAt/i);
+  });
+});

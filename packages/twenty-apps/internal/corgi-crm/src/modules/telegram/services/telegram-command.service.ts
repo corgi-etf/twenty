@@ -23,7 +23,6 @@ const HELP = [
   '/log call | Company | outcome | notes',
   '/log type=meeting; company=Company; contact=Name; outcome=follow_up_scheduled; notes=Next step; followup=YYYY-MM-DD',
   '/today — your activity breakdown for the current local day',
-  '/cancel — cancel the current entry',
   '/help — show this guide',
 ].join('\n');
 
@@ -53,6 +52,7 @@ const commandName = (text: string) =>
 export const processTelegramCommand = async (
   update: ParsedTelegramUpdate,
   dependencies: CommandDependencies,
+  resume?: { status: 'crm_committed'; activityId: string },
 ) => {
   if (update.callbackQueryId && dependencies.answerCallback) {
     await dependencies.answerCallback(update.callbackQueryId);
@@ -61,11 +61,6 @@ export const processTelegramCommand = async (
   if (command === '/help' || command === '/start') {
     await sendParts(dependencies.send, update.chatId, HELP);
     return { status: 'help' } as const;
-  }
-  if (command === '/cancel') {
-    await dependencies.store.delete(`telegram:draft:${update.userId}`);
-    await dependencies.send(update.chatId, 'Canceled. Nothing was logged.');
-    return { status: 'canceled' } as const;
   }
   if (command === '/link') {
     const code = update.text.replace(/^\/link(?:@\w+)?\s*/i, '').trim();
@@ -116,10 +111,21 @@ export const processTelegramCommand = async (
       await dependencies.send(update.chatId, `Could not parse that entry.\n${HELP}`);
       return { status: 'invalid_log' } as const;
     }
+    if (resume?.status === 'crm_committed') {
+      await dependencies.send(
+        update.chatId,
+        `Logged ${input.companyQuery}. Use /today to review your day.`,
+      );
+      return {
+        status: 'logged',
+        activityId: resume.activityId,
+        companyName: input.companyQuery,
+      } as const;
+    }
     const result = await logOutreach({
       input,
       wholesalerId: link.wholesalerId,
-      now: dependencies.now(),
+      now: new Date(update.messageTimestamp),
       repository: dependencies.repository,
     });
     if (result.status === 'logged') {

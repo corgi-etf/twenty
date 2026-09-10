@@ -30,7 +30,13 @@ const parsePayload = (value: unknown): DailySummaryJobPayload => {
     throw new Error('Invalid Telegram daily summary job');
   }
   const payload = value as Record<string, unknown>;
-  for (const key of ['localDate', 'start', 'end', 'workspaceMemberId']) {
+  for (const key of [
+    'localDate',
+    'start',
+    'end',
+    'workspaceMemberId',
+    'scheduledInstant',
+  ]) {
     if (typeof payload[key] !== 'string' || !payload[key].trim()) {
       throw new Error('Invalid Telegram daily summary job');
     }
@@ -40,7 +46,15 @@ const parsePayload = (value: unknown): DailySummaryJobPayload => {
   }
   const start = Date.parse(payload.start as string);
   const end = Date.parse(payload.end as string);
-  if (!Number.isFinite(start) || !Number.isFinite(end) || start >= end) {
+  const scheduledInstant = Date.parse(payload.scheduledInstant as string);
+  if (
+    !Number.isFinite(start) ||
+    !Number.isFinite(end) ||
+    !Number.isFinite(scheduledInstant) ||
+    start >= end ||
+    scheduledInstant < start ||
+    scheduledInstant >= end
+  ) {
     throw new Error('Invalid Telegram daily summary window');
   }
   return payload as DailySummaryJobPayload;

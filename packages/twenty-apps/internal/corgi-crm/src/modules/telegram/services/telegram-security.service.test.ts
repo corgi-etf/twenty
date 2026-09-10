@@ -28,7 +28,27 @@ describe('Telegram webhook security', () => {
           text: '/today',
         },
       }),
-    ).toMatchObject({ updateId: 42, userId: '101', chatId: '101', text: '/today' });
+    ).toMatchObject({
+      updateId: 42,
+      userId: '101',
+      chatId: '101',
+      text: '/today',
+      messageTimestamp: '2026-09-10T00:26:40.000Z',
+    });
+  });
+
+  it('requires an immutable Telegram source timestamp', () => {
+    expect(() =>
+      parseTelegramUpdate({
+        update_id: 42,
+        message: {
+          message_id: 7,
+          from: { id: 101, is_bot: false, first_name: 'Nash' },
+          chat: { id: 101, type: 'private' },
+          text: '/log call | Acme | connected',
+        },
+      }),
+    ).toThrow(/timestamp|date/i);
   });
 
   it('rejects group messages, bot senders, and malformed updates', () => {

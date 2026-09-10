@@ -102,3 +102,50 @@ export const isScheduledLocalMinute = ({
   const parts = partsAt(now, timeZone);
   return `${pad(parts.hour)}:${pad(parts.minute)}` === localTime;
 };
+
+export const getScheduledAdmission = ({
+  now,
+  timeZone,
+  localTime,
+}: {
+  now: Date;
+  timeZone: string;
+  localTime: string;
+}): { localDate: string; scheduledInstant: Date } | null => {
+  if (!/^(?:[01]\d|2[0-3]):(?:00|15|30|45)$/.test(localTime)) {
+    throw new Error('Daily summary time must be HH:MM on a 15-minute boundary');
+  }
+  const current = partsAt(now, timeZone);
+  const [hour, minute] = localTime.split(':').map(Number) as [number, number];
+  const localDate = `${current.year}-${pad(current.month)}-${pad(current.day)}`;
+  const localAsUtc = Date.UTC(
+    current.year,
+    current.month - 1,
+    current.day,
+    hour,
+    minute,
+  );
+  let candidate = localAsUtc;
+  for (let iteration = 0; iteration < 4; iteration += 1) {
+    const represented = partsAt(new Date(candidate), timeZone);
+    const representedAsUtc = Date.UTC(
+      represented.year,
+      represented.month - 1,
+      represented.day,
+      represented.hour,
+      represented.minute,
+      represented.second,
+    );
+    const next = candidate + (localAsUtc - representedAsUtc);
+    if (next === candidate) break;
+    candidate = next;
+  }
+  const scheduledInstant = new Date(candidate);
+  if (
+    now.getTime() < scheduledInstant.getTime() ||
+    now.getTime() >= scheduledInstant.getTime() + 15 * 60_000
+  ) {
+    return null;
+  }
+  return { localDate, scheduledInstant };
+};

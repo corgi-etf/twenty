@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  getScheduledAdmission,
   getZonedDayWindow,
   isScheduledLocalMinute,
 } from 'src/modules/outreach/services/day-window.service';
@@ -47,5 +48,25 @@ describe('getZonedDayWindow', () => {
         localTime: '17:00',
       }),
     ).toBe(false);
+  });
+
+  it('admits a delayed cron anywhere in its deterministic 15-minute window', () => {
+    expect(
+      getScheduledAdmission({
+        now: new Date('2026-09-09T22:07:59.000Z'),
+        timeZone: 'America/Chicago',
+        localTime: '17:00',
+      }),
+    ).toEqual({
+      localDate: '2026-09-09',
+      scheduledInstant: new Date('2026-09-09T22:00:00.000Z'),
+    });
+    expect(
+      getScheduledAdmission({
+        now: new Date('2026-09-09T22:15:00.000Z'),
+        timeZone: 'America/Chicago',
+        localTime: '17:00',
+      }),
+    ).toBeNull();
   });
 });

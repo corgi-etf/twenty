@@ -10,10 +10,14 @@ import {
   TELEGRAM_DAILY_SUMMARY_UNIVERSAL_IDENTIFIER,
   TELEGRAM_DAILY_SUMMARY_WORKER_UNIVERSAL_IDENTIFIER,
 } from 'src/constants';
-import { runDailySummaryCron } from 'src/modules/telegram/services/daily-summary-cron.service';
+import {
+  type DailySummaryJobPayload,
+  runDailySummaryCron,
+} from 'src/modules/telegram/services/daily-summary-cron.service';
 import {
   getValidatedTelegramDeliveryRoster,
   parseTelegramLinkBindings,
+  type TelegramLink,
 } from 'src/modules/telegram/services/telegram-link.service';
 import { CoreWholesalerRepository } from 'src/modules/wholesaler/onboarding/graphql/core-wholesaler.repository';
 
@@ -23,42 +27,77 @@ const requiredEnvironment = (name: string): string => {
   return value;
 };
 
-export const handler = async (
+type DailySummaryDependencies = {
+  expectedWorkspaceId: string;
+  enabled: string | undefined;
+  now(): Date;
+  timeZone: string | undefined;
+  localTime: string | undefined;
+  loadRoster(): Promise<TelegramLink[]>;
+  enqueue(payload: DailySummaryJobPayload, jobId: string): Promise<unknown>;
+};
+
+export const handleTelegramDailySummary = async (
   _payload: unknown,
-  context?: LogicFunctionExecutionContext,
+  context: LogicFunctionExecutionContext | undefined,
+  dependencies: DailySummaryDependencies,
 ) => {
-  const expectedWorkspaceId = requiredEnvironment('CORGI_CRM_WORKSPACE_ID');
-  if (context?.workspaceId !== expectedWorkspaceId) {
+  if (context?.workspaceId !== dependencies.expectedWorkspaceId) {
     throw new Error('Telegram daily summary refused an unexpected workspace');
   }
-  const coreClient = new CoreApiClient();
-  const wholesalerRepository = new CoreWholesalerRepository(coreClient);
-  const identity = {
-    findWorkspaceMember: (workspaceMemberId: string) =>
-      wholesalerRepository.findWorkspaceMemberById(workspaceMemberId),
-    findWholesalers: async (workspaceMemberId: string) =>
-      (await wholesalerRepository.findByWorkspaceMemberId(workspaceMemberId))
-        .filter(
-          ({ id, name, workspaceMemberId: linkedMemberId }) =>
-            id && name?.trim() && linkedMemberId === workspaceMemberId,
-        )
-        .map(({ id, name }) => ({
-          id,
-          name: name!.trim(),
-          workspaceMemberId,
-        })),
-  };
+  if (dependencies.enabled !== 'true') return { status: 'disabled' } as const;
   return runDailySummaryCron({
-    now: new Date(),
-    timeZone: requiredEnvironment('CORGI_CRM_TELEGRAM_TIME_ZONE'),
-    localTime: requiredEnvironment('CORGI_CRM_TELEGRAM_DAILY_SUMMARY_TIME'),
-    roster: await getValidatedTelegramDeliveryRoster({
-      store: kv,
-      configuredBindings: parseTelegramLinkBindings(
-        process.env.CORGI_CRM_TELEGRAM_LINK_CODES,
-      ),
-      identity,
-    }),
+    now: dependencies.now(),
+    timeZone:
+      dependencies.timeZone?.trim() ||
+      requiredEnvironment('CORGI_CRM_TELEGRAM_TIME_ZONE'),
+    localTime:
+      dependencies.localTime?.trim() ||
+      requiredEnvironment('CORGI_CRM_TELEGRAM_DAILY_SUMMARY_TIME'),
+    roster: await dependencies.loadRoster(),
+    enqueue: dependencies.enqueue,
+  });
+};
+
+export const handler = async (
+  payload: unknown,
+  context?: LogicFunctionExecutionContext,
+) =>
+  handleTelegramDailySummary(payload, context, {
+    expectedWorkspaceId: requiredEnvironment('CORGI_CRM_WORKSPACE_ID'),
+    enabled: process.env.CORGI_CRM_TELEGRAM_ENABLED,
+    now: () => new Date(),
+    timeZone: process.env.CORGI_CRM_TELEGRAM_TIME_ZONE,
+    localTime: process.env.CORGI_CRM_TELEGRAM_DAILY_SUMMARY_TIME,
+    loadRoster: async () => {
+      const coreClient = new CoreApiClient();
+      const wholesalerRepository = new CoreWholesalerRepository(coreClient);
+      return getValidatedTelegramDeliveryRoster({
+        store: kv,
+        configuredBindings: parseTelegramLinkBindings(
+          process.env.CORGI_CRM_TELEGRAM_LINK_CODES,
+        ),
+        identity: {
+          findWorkspaceMember: (workspaceMemberId) =>
+            wholesalerRepository.findWorkspaceMemberById(workspaceMemberId),
+          findWholesalers: async (workspaceMemberId) =>
+            (
+              await wholesalerRepository.findByWorkspaceMemberId(
+                workspaceMemberId,
+              )
+            )
+              .filter(
+                ({ id, name, workspaceMemberId: linkedMemberId }) =>
+                  id && name?.trim() && linkedMemberId === workspaceMemberId,
+              )
+              .map(({ id, name }) => ({
+                id,
+                name: name!.trim(),
+                workspaceMemberId,
+              })),
+        },
+      });
+    },
     enqueue: (payload, jobId) =>
       enqueueJob({
         logicFunctionUniversalIdentifier:
@@ -68,7 +107,6 @@ export const handler = async (
         retryLimit: 5,
       }),
   });
-};
 
 export default defineLogicFunction({
   universalIdentifier: TELEGRAM_DAILY_SUMMARY_UNIVERSAL_IDENTIFIER,

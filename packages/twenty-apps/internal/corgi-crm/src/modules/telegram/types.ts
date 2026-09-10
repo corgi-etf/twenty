@@ -4,6 +4,7 @@ export type ParsedTelegramUpdate = {
   chatId: string;
   firstName: string;
   text: string;
+  messageTimestamp: string;
   callbackQueryId?: string;
 };
 

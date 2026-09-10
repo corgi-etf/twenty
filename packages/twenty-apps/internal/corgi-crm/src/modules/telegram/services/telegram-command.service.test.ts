@@ -57,6 +57,7 @@ const update = (text: string) => ({
   chatId: '101',
   firstName: 'Nash',
   text,
+  messageTimestamp: '2026-09-09T16:29:00.000Z',
 });
 
 describe('processTelegramCommand', () => {
@@ -109,6 +110,44 @@ describe('processTelegramCommand', () => {
         dependencies,
       ),
     ).resolves.toMatchObject({ status: 'logged', companyName: 'Acme' });
+    expect(dependencies.send).toHaveBeenCalledWith(
+      '101',
+      'Logged Acme. Use /today to review your day.',
+    );
+  });
+
+  it('uses the immutable Telegram source time when processing crosses local midnight', async () => {
+    const dependencies = base();
+    dependencies.now = () => new Date('2026-09-10T05:01:00.000Z');
+
+    await processTelegramCommand(
+      {
+        ...update('/log call | Acme | connected'),
+        messageTimestamp: '2026-09-10T04:59:00.000Z',
+      },
+      dependencies,
+    );
+
+    expect(dependencies.repository.createActivity).toHaveBeenCalledWith(
+      expect.objectContaining({ occurredAt: '2026-09-10T04:59:00.000Z' }),
+    );
+  });
+
+  it('short-circuits CRM mutation after the durable crm_committed phase', async () => {
+    const dependencies = base();
+    await expect(
+      processTelegramCommand(
+        update('/log call | Acme | connected'),
+        dependencies,
+        { status: 'crm_committed', activityId: getTelegramActivityId(42) },
+      ),
+    ).resolves.toEqual({
+      status: 'logged',
+      activityId: getTelegramActivityId(42),
+      companyName: 'Acme',
+    });
+    expect(dependencies.repository.findCompanies).not.toHaveBeenCalled();
+    expect(dependencies.repository.createActivity).not.toHaveBeenCalled();
     expect(dependencies.send).toHaveBeenCalledWith(
       '101',
       'Logged Acme. Use /today to review your day.',
@@ -194,13 +233,17 @@ describe('processTelegramCommand', () => {
     );
   });
 
-  it('clears a draft without writing when canceled', async () => {
+  it('does not advertise or pretend to cancel nonexistent drafts', async () => {
     const dependencies = base();
 
     await expect(
       processTelegramCommand(update('/cancel'), dependencies),
-    ).resolves.toEqual({ status: 'canceled' });
-    expect(dependencies.store.delete).toHaveBeenCalledWith('telegram:draft:101');
+    ).resolves.toEqual({ status: 'help' });
+    expect(dependencies.store.delete).not.toHaveBeenCalled();
+    expect(dependencies.send).not.toHaveBeenCalledWith(
+      '101',
+      expect.stringContaining('/cancel'),
+    );
     expect(dependencies.repository.createActivity).not.toHaveBeenCalled();
   });
 });

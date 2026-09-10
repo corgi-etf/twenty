@@ -1,18 +1,19 @@
-import { type KeyValueStore } from 'src/modules/telegram/types';
+import {
+  type KeyValueStore,
+  type ParsedTelegramUpdate,
+} from 'src/modules/telegram/types';
 import { TelegramDeliveryError } from 'src/modules/telegram/services/telegram-client.service';
 
 export const enqueueTelegramUpdateOnce = async ({
-  updateId,
-  payload,
+  update,
   store,
   enqueue,
 }: {
-  updateId: number;
-  payload: Record<string, unknown>;
+  update: ParsedTelegramUpdate;
   store: KeyValueStore;
   enqueue(payload: Record<string, unknown>, jobId: string): Promise<unknown>;
 }) => {
-  const key = `telegram:update:${updateId}`;
+  const key = `telegram:update:${update.updateId}`;
   const state = (await store.get(key)) as { status?: string } | null;
   if (state?.status === 'complete') {
     return { status: 'duplicate' } as const;
@@ -20,7 +21,7 @@ export const enqueueTelegramUpdateOnce = async ({
   // The queue's unique deterministic job ID is the authoritative admission
   // claim. No KV marker is written before enqueue, so a process crash after
   // queue acceptance is recovered by retrying the exact same job ID.
-  await enqueue(payload, `telegram-update-${updateId}`);
+  await enqueue(update, `telegram-update-${update.updateId}`);
   return { status: 'enqueued' } as const;
 };
 

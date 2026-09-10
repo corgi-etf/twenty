@@ -12,6 +12,9 @@ export default defineApplication({
       description:
         'Workspace ID allowed to run Corgi CRM automation. The member-created trigger fails closed for every other workspace.',
       isSecret: false,
+      ...(process.env.CORGI_CRM_EXPECTED_WORKSPACE_ID
+        ? { value: process.env.CORGI_CRM_EXPECTED_WORKSPACE_ID }
+        : {}),
     },
     CORGI_CRM_TELEGRAM_ENABLED: {
       universalIdentifier: '64c93fe6-4db5-4ea3-a5d4-bc5370cc0fe7',

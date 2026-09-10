@@ -1,6 +1,6 @@
 import {
   getZonedDayWindow,
-  isScheduledLocalMinute,
+  getScheduledAdmission,
 } from 'src/modules/outreach/services/day-window.service';
 import { type TelegramLink } from 'src/modules/telegram/services/telegram-link.service';
 
@@ -9,6 +9,7 @@ export type DailySummaryJobPayload = {
   start: string;
   end: string;
   workspaceMemberId: string;
+  scheduledInstant: string;
 };
 
 export const runDailySummaryCron = async ({
@@ -24,11 +25,15 @@ export const runDailySummaryCron = async ({
   roster: TelegramLink[];
   enqueue(payload: DailySummaryJobPayload, jobId: string): Promise<unknown>;
 }) => {
-  if (!isScheduledLocalMinute({ now, timeZone, localTime })) {
+  const admission = getScheduledAdmission({ now, timeZone, localTime });
+  if (!admission) {
     return { status: 'outside_window' } as const;
   }
 
-  const window = getZonedDayWindow({ now, timeZone });
+  const window = getZonedDayWindow({
+    now: admission.scheduledInstant,
+    timeZone,
+  });
   await Promise.all(
     roster.map(({ workspaceMemberId }) =>
       enqueue(
@@ -37,6 +42,7 @@ export const runDailySummaryCron = async ({
           start: window.start.toISOString(),
           end: window.end.toISOString(),
           workspaceMemberId,
+          scheduledInstant: admission.scheduledInstant.toISOString(),
         },
         `telegram-summary-${window.localDate}-${workspaceMemberId}`,
       ),

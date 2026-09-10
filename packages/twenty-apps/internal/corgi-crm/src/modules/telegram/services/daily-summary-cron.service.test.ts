@@ -46,8 +46,29 @@ describe('runDailySummaryCron', () => {
         localDate: '2026-09-09',
         start: '2026-09-09T05:00:00.000Z',
         end: '2026-09-10T05:00:00.000Z',
+        scheduledInstant: '2026-09-09T22:00:00.000Z',
         workspaceMemberId: MEMBER_ID,
       },
+      `telegram-summary-2026-09-09-${MEMBER_ID}`,
+    );
+  });
+
+  it('uses the scheduled instant when execution is delayed within the admission window', async () => {
+    const enqueue = vi.fn().mockResolvedValue({ enqueued: true });
+    await expect(
+      runDailySummaryCron({
+        now: new Date('2026-09-09T22:09:00.000Z'),
+        timeZone: 'America/Chicago',
+        localTime: '17:00',
+        roster,
+        enqueue,
+      }),
+    ).resolves.toEqual({ status: 'enqueued', enqueued: 1 });
+    expect(enqueue).toHaveBeenCalledWith(
+      expect.objectContaining({
+        localDate: '2026-09-09',
+        scheduledInstant: '2026-09-09T22:00:00.000Z',
+      }),
       `telegram-summary-2026-09-09-${MEMBER_ID}`,
     );
   });

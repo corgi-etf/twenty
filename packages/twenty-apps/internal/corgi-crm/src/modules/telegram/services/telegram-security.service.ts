@@ -51,6 +51,8 @@ export const parseTelegramUpdate = (value: unknown): ParsedTelegramUpdate => {
     from.is_bot !== false ||
     !Number.isSafeInteger(chat.id) ||
     typeof text !== 'string' ||
+    !Number.isSafeInteger(message.date) ||
+    (message.date as number) <= 0 ||
     !text.trim()
   ) {
     throw new Error('Invalid Telegram command update');
@@ -68,8 +70,42 @@ export const parseTelegramUpdate = (value: unknown): ParsedTelegramUpdate => {
         ? from.first_name.trim()
         : 'there',
     text: text.trim(),
+    messageTimestamp: new Date((message.date as number) * 1000).toISOString(),
     ...(callback && typeof callback.id === 'string'
       ? { callbackQueryId: callback.id }
+      : {}),
+  };
+};
+
+export const parseQueuedTelegramUpdate = (
+  value: unknown,
+): ParsedTelegramUpdate => {
+  const update = object(value);
+  if (
+    !update ||
+    !Number.isSafeInteger(update.updateId) ||
+    typeof update.userId !== 'string' ||
+    !/^[1-9][0-9]*$/.test(update.userId) ||
+    typeof update.chatId !== 'string' ||
+    !/^-?[1-9][0-9]*$/.test(update.chatId) ||
+    typeof update.firstName !== 'string' ||
+    !update.firstName.trim() ||
+    typeof update.text !== 'string' ||
+    !update.text.trim() ||
+    typeof update.messageTimestamp !== 'string' ||
+    !Number.isFinite(Date.parse(update.messageTimestamp))
+  ) {
+    throw new Error('Invalid queued Telegram update');
+  }
+  return {
+    updateId: update.updateId as number,
+    userId: update.userId,
+    chatId: update.chatId,
+    firstName: update.firstName.trim(),
+    text: update.text.trim(),
+    messageTimestamp: new Date(update.messageTimestamp).toISOString(),
+    ...(typeof update.callbackQueryId === 'string' && update.callbackQueryId
+      ? { callbackQueryId: update.callbackQueryId }
       : {}),
   };
 };

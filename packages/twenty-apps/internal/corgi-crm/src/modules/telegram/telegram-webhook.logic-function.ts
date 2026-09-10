@@ -1,5 +1,10 @@
 import { defineLogicFunction, type RoutePayload } from 'twenty-sdk/define';
-import { enqueueJob, kv, Response } from 'twenty-sdk/logic-function';
+import {
+  enqueueJob,
+  kv,
+  type LogicFunctionExecutionContext,
+  Response,
+} from 'twenty-sdk/logic-function';
 
 import {
   TELEGRAM_UPDATE_WORKER_UNIVERSAL_IDENTIFIER,
@@ -10,12 +15,33 @@ import {
   assertTelegramWebhookSecret,
   parseTelegramUpdate,
 } from 'src/modules/telegram/services/telegram-security.service';
+import {
+  type KeyValueStore,
+  type ParsedTelegramUpdate,
+} from 'src/modules/telegram/types';
 
-export const handler = async (payload: RoutePayload<unknown>) => {
+type WebhookDependencies = {
+  expectedWorkspaceId: string;
+  webhookSecret: string | undefined;
+  store: KeyValueStore;
+  enqueue(
+    payload: ParsedTelegramUpdate,
+    jobId: string,
+  ): Promise<unknown>;
+};
+
+export const handleTelegramWebhook = async (
+  payload: RoutePayload<unknown>,
+  context: LogicFunctionExecutionContext | undefined,
+  dependencies: WebhookDependencies,
+) => {
+  if (context?.workspaceId !== dependencies.expectedWorkspaceId) {
+    throw new Error('Telegram webhook refused an unexpected workspace');
+  }
   try {
     assertTelegramWebhookSecret(
       payload.headers['x-telegram-bot-api-secret-token'],
-      process.env.CORGI_CRM_TELEGRAM_WEBHOOK_SECRET,
+      dependencies.webhookSecret,
     );
   } catch {
     return new Response({ ok: false }, { status: 401 });
@@ -28,8 +54,23 @@ export const handler = async (payload: RoutePayload<unknown>) => {
     return new Response({ ok: false }, { status: 400 });
   }
   const result = await enqueueTelegramUpdateOnce({
-    updateId: update.updateId,
-    payload: payload.body as Record<string, unknown>,
+    update,
+    store: dependencies.store,
+    enqueue: dependencies.enqueue,
+  });
+  return new Response(
+    { ok: true, accepted: result.status === 'enqueued' },
+    { status: result.status === 'enqueued' ? 202 : 200 },
+  );
+};
+
+export const handler = async (
+  payload: RoutePayload<unknown>,
+  context?: LogicFunctionExecutionContext,
+) =>
+  handleTelegramWebhook(payload, context, {
+    expectedWorkspaceId: process.env.CORGI_CRM_WORKSPACE_ID?.trim() ?? '',
+    webhookSecret: process.env.CORGI_CRM_TELEGRAM_WEBHOOK_SECRET,
     store: kv,
     enqueue: (jobPayload, jobId) =>
       enqueueJob({
@@ -40,11 +81,6 @@ export const handler = async (payload: RoutePayload<unknown>) => {
         retryLimit: 5,
       }),
   });
-  return new Response(
-    { ok: true, accepted: result.status === 'enqueued' },
-    { status: result.status === 'enqueued' ? 202 : 200 },
-  );
-};
 
 export default defineLogicFunction({
   universalIdentifier: TELEGRAM_WEBHOOK_UNIVERSAL_IDENTIFIER,

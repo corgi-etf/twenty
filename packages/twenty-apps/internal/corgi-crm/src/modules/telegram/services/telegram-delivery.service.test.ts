@@ -6,6 +6,15 @@ import {
 } from 'src/modules/telegram/services/telegram-delivery.service';
 import { TelegramDeliveryError } from 'src/modules/telegram/services/telegram-client.service';
 
+const queuedUpdate = {
+  updateId: 42,
+  userId: '101',
+  chatId: '101',
+  firstName: 'Nash',
+  text: '/log call | Acme | connected',
+  messageTimestamp: '2026-09-10T04:59:00.000Z',
+};
+
 describe('enqueueTelegramUpdateOnce', () => {
   it('uses the update id as a durable dedupe key', async () => {
     const store = {
@@ -16,17 +25,17 @@ describe('enqueueTelegramUpdateOnce', () => {
     const enqueue = vi.fn().mockResolvedValue({ enqueued: true });
 
     await expect(
-      enqueueTelegramUpdateOnce({ updateId: 42, payload: { update_id: 42 }, store, enqueue }),
+      enqueueTelegramUpdateOnce({ update: queuedUpdate, store, enqueue }),
     ).resolves.toEqual({ status: 'enqueued' });
     expect(enqueue).toHaveBeenCalledWith(
-      { update_id: 42 },
+      queuedUpdate,
       'telegram-update-42',
     );
     expect(store.set).not.toHaveBeenCalled();
 
     store.get.mockResolvedValue({ status: 'complete' });
     await expect(
-      enqueueTelegramUpdateOnce({ updateId: 42, payload: { update_id: 42 }, store, enqueue }),
+      enqueueTelegramUpdateOnce({ update: queuedUpdate, store, enqueue }),
     ).resolves.toEqual({ status: 'duplicate' });
     expect(enqueue).toHaveBeenCalledTimes(1);
   });
@@ -48,7 +57,7 @@ describe('enqueueTelegramUpdateOnce', () => {
       }
       return { enqueued: true };
     });
-    const input = { updateId: 42, payload: { update_id: 42 }, store, enqueue };
+    const input = { update: queuedUpdate, store, enqueue };
     await expect(enqueueTelegramUpdateOnce(input)).rejects.toThrow(/crashed/);
     await expect(enqueueTelegramUpdateOnce(input)).resolves.toEqual({
       status: 'enqueued',
@@ -70,8 +79,8 @@ describe('enqueueTelegramUpdateOnce', () => {
       return { enqueued: true };
     });
     await Promise.all([
-      enqueueTelegramUpdateOnce({ updateId: 42, payload: { update_id: 42 }, store, enqueue }),
-      enqueueTelegramUpdateOnce({ updateId: 42, payload: { update_id: 42 }, store, enqueue }),
+      enqueueTelegramUpdateOnce({ update: queuedUpdate, store, enqueue }),
+      enqueueTelegramUpdateOnce({ update: queuedUpdate, store, enqueue }),
     ]);
     expect(jobIds).toEqual(['telegram-update-42', 'telegram-update-42']);
   });
