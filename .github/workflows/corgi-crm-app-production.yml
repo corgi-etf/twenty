@@ -268,11 +268,20 @@ jobs:
           CRM_WORKSPACE_METADATA_PREREQUISITE_ENABLED: 'true'
           CRM_DEPLOYED_SHA: ${{ inputs.deployed_sha }}
           CRM_WORKSPACE_METADATA_BOOTSTRAP_ARTIFACT_PATH: ${{ runner.temp }}/crm-workspace-metadata-bootstrap/bootstrap.json
-          CRM_WORKSPACE_ENV_PATH: ${{ github.env }}
-        run: >-
-          npx nx test:production twenty-e2e-testing --
-          tests/production/workspaceMetadataBootstrapPrerequisite.production.spec.ts
-          --project=production-chromium
+        run: |
+          set -euo pipefail
+          export CRM_WORKSPACE_ENV_PATH="$GITHUB_ENV"
+          npx nx test:production twenty-e2e-testing -- \
+            tests/production/workspaceMetadataBootstrapPrerequisite.production.spec.ts \
+            --project=production-chromium
+
+      - name: Verify authenticated tenant environment handoff
+        shell: bash
+        run: |
+          set -euo pipefail
+          uuid_pattern='^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+          [[ "${CORGI_CRM_EXPECTED_WORKSPACE_ID:-}" =~ ${uuid_pattern} ]]
+          [[ "${CORGI_CRM_EXPECTED_USER_WORKSPACE_ID:-}" =~ ${uuid_pattern} ]]
 
       - name: Acquire a short-lived deployment API key
         env:
@@ -305,8 +314,19 @@ jobs:
       - name: Resolve least-privilege role object identifiers
         env:
           CORGI_CRM_API_KEY: ${{ steps.credential.outputs.token }}
-          CORGI_CRM_ROLE_ENV_PATH: ${{ github.env }}
-        run: node "${APP_PATH}/scripts/verify-production-install.mjs" role-env
+        run: |
+          set -euo pipefail
+          export CORGI_CRM_ROLE_ENV_PATH="$GITHUB_ENV"
+          node "${APP_PATH}/scripts/verify-production-install.mjs" role-env
+
+      - name: Verify application role environment handoff
+        shell: bash
+        run: |
+          set -euo pipefail
+          uuid_pattern='^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+          [[ "${CORGI_CRM_EXPECTED_WORKSPACE_ID:-}" =~ ${uuid_pattern} ]]
+          [[ "${CORGI_CRM_WHOLESALER_OBJECT_UNIVERSAL_IDENTIFIER:-}" =~ ${uuid_pattern} ]]
+          [[ "${CORGI_CRM_OUTREACH_ACTIVITY_OBJECT_UNIVERSAL_IDENTIFIER:-}" =~ ${uuid_pattern} ]]
 
       - name: Verify the installed release before configuration-only changes
         if: inputs.operation == 'configure-telegram'
