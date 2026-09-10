@@ -426,3 +426,108 @@ for (const [name, value] of [
     expect(calls).toEqual([]);
   });
 }
+
+const nativeRecordNavigation = (initialUrl: string, expandedUrl: string) => {
+  const canarySource = readFileSync(
+    join(__dirname, 'meetingBooking.maintenance.spec.ts'),
+    'utf8',
+  );
+  const navigationSource = canarySource.match(
+    /named = true;([\s\S]*?)\n\s*phase = 'incomplete booking rejected without counting';/,
+  )?.[1];
+  expect(navigationSource).toBeDefined();
+  let currentUrl = initialUrl;
+  let expansionCount = 0;
+  let fieldsChecked = false;
+  const origin = 'https://crm.corgiinvest.com';
+  const page = {
+    url: () => currentUrl,
+    getByTestId: (testId: string) => {
+      expect(testId).toBe('record-fields-widget');
+      return 'fields-widget';
+    },
+    getByRole: (role: string, options: { name: string }) => {
+      expect(role).toBe('button');
+      expect(options.name).toBe('Expand record');
+      return {
+        click: async () => {
+          expansionCount += 1;
+          if (new URL(currentUrl).pathname.startsWith('/object/')) {
+            throw new Error('Full-page records have no Expand record button');
+          }
+          currentUrl = expandedUrl;
+        },
+      };
+    },
+  };
+  const navigationJavaScript = navigationSource!.replace('(url: URL)', '(url)');
+  const execute = runInNewContext(`(async () => {${navigationJavaScript}})`, {
+    page,
+    meetingId: memberId,
+    APPROVED_ORIGIN: origin,
+    URL,
+    expect: (actual: unknown) => ({
+      toBeVisible: async () => {
+        expect(actual).toBe('fields-widget');
+        fieldsChecked = true;
+      },
+      toHaveURL: async (matcher: RegExp | ((url: URL) => boolean)) => {
+        expect(actual).toBe(page);
+        expect(
+          typeof matcher === 'function'
+            ? matcher(new URL(currentUrl))
+            : matcher.test(currentUrl),
+        ).toBe(true);
+      },
+    }),
+  }) as () => Promise<void>;
+  return {
+    execute,
+    result: () => ({ expansionCount, fieldsChecked }),
+  };
+};
+
+for (const suffix of ['', '?viewId=synthetic#timeline']) {
+  test(`accepts native full-page creation only at the exact record route (${suffix || 'no suffix'})`, async () => {
+    const recordUrl = `https://crm.corgiinvest.com/object/meetingBooking/${memberId}${suffix}`;
+    const navigation = nativeRecordNavigation(recordUrl, recordUrl);
+
+    await navigation.execute();
+
+    expect(navigation.result()).toEqual({
+      expansionCount: 0,
+      fieldsChecked: true,
+    });
+  });
+
+  test(`expands native side-panel creation into the exact record route (${suffix || 'no suffix'})`, async () => {
+    const navigation = nativeRecordNavigation(
+      'https://crm.corgiinvest.com/objects/meetingBookings',
+      `https://crm.corgiinvest.com/object/meetingBooking/${memberId}${suffix}`,
+    );
+
+    await navigation.execute();
+
+    expect(navigation.result()).toEqual({
+      expansionCount: 1,
+      fieldsChecked: true,
+    });
+  });
+}
+
+for (const recordUrl of [
+  `https://wrong-origin.example/object/meetingBooking/${memberId}`,
+  `https://wrong-origin.example/object/meetingBooking/${memberId}#timeline`,
+  `https://crm.corgiinvest.com/object/meetingBooking/${otherId}?viewId=synthetic`,
+  `https://crm.corgiinvest.com/object/company/${memberId}`,
+  `https://crm.corgiinvest.com/object/meetingBooking/${memberId}/extra`,
+]) {
+  test(`rejects native expansion outside the exact approved record route: ${recordUrl}`, async () => {
+    const navigation = nativeRecordNavigation(
+      'https://crm.corgiinvest.com/objects/meetingBookings',
+      recordUrl,
+    );
+
+    await assert.rejects(async () => navigation.execute());
+  });
+}

@@ -429,10 +429,13 @@ test('books and reschedules a native CRM meeting while Telegram is disabled', as
       .toBe(true);
     named = true;
     await expect(page.getByTestId('record-fields-widget')).toBeVisible();
-    await page.getByRole('button', { name: 'Expand record' }).click();
-    await expect(page).toHaveURL(
-      new RegExp(`/object/meetingBooking/${meetingId}$`),
-    );
+    const isRunOwnedRecordPage = (url: URL) =>
+      url.origin === APPROVED_ORIGIN &&
+      url.pathname === `/object/meetingBooking/${meetingId}`;
+    if (!isRunOwnedRecordPage(new URL(page.url()))) {
+      await page.getByRole('button', { name: 'Expand record' }).click();
+    }
+    await expect(page).toHaveURL(isRunOwnedRecordPage);
 
     phase = 'incomplete booking rejected without counting';
     await selectBooked();
