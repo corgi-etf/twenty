@@ -75,7 +75,7 @@ describe('trusted Telegram application configuration', () => {
     assert.equal(mutations.length, 0);
   });
 
-  it('rejects duplicate user/member bindings and writes disabled state first', async () => {
+  it('stages every trusted value while the application remains disabled', async () => {
     assert.equal(
       typeof configurationModule.validateTrustedTelegramConfiguration,
       'function',
@@ -141,11 +141,31 @@ describe('trusted Telegram application configuration', () => {
       timeZone: 'America/Chicago',
       dailySummaryTime: '17:00',
       enabled: false,
+      stage: true,
     });
     assert.deepEqual(writes[0], {
       applicationId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
       key: 'CORGI_CRM_TELEGRAM_ENABLED',
       value: 'false',
     });
+    assert.deepEqual(
+      writes.slice(1).map(({ key }) => key).sort(),
+      [
+        'CORGI_CRM_TELEGRAM_BOT_TOKEN',
+        'CORGI_CRM_TELEGRAM_DAILY_SUMMARY_TIME',
+        'CORGI_CRM_TELEGRAM_LINK_CODES',
+        'CORGI_CRM_TELEGRAM_OPERATOR_SECRET',
+        'CORGI_CRM_TELEGRAM_TIME_ZONE',
+        'CORGI_CRM_TELEGRAM_WEBHOOK_SECRET',
+        'CORGI_CRM_WORKSPACE_ID',
+      ].sort(),
+    );
+    assert.equal(
+      writes.some(
+        ({ key, value }) =>
+          key === 'CORGI_CRM_TELEGRAM_ENABLED' && value === 'true',
+      ),
+      false,
+    );
   });
 });
