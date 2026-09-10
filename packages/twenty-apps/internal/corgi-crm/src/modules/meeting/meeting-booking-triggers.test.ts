@@ -9,13 +9,6 @@ vi.mock('twenty-client-sdk/core', () => ({ CoreApiClient: vi.fn() }));
 vi.mock('src/modules/meeting/graphql/core-meeting-booking.repository', () => ({
   CoreMeetingBookingRepository: vi.fn(),
 }));
-vi.mock('src/modules/core/graphql/raw-core-graphql.transport', () => ({
-  RawCoreGraphqlTransport: vi.fn(),
-}));
-vi.mock(
-  'src/modules/wholesaler/onboarding/graphql/core-wholesaler.repository',
-  () => ({ CoreWholesalerRepository: vi.fn() }),
-);
 vi.mock('src/modules/meeting/services/reconcile-meeting-booking.service', () => ({
   reconcileMeetingBooking: vi.fn(),
 }));
@@ -92,7 +85,6 @@ describe('meeting booking database triggers', () => {
         eventOccurredAt: '2026-09-10T13:15:00.000Z',
         actorWorkspaceMemberId: '44444444-4444-4444-8444-444444444444',
         repository: expect.anything(),
-        ownerRepository: expect.anything(),
       });
     },
   );
