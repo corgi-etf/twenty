@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+
 import {
   type KeyValueStore,
   type ParsedTelegramUpdate,
@@ -16,6 +18,8 @@ export type TelegramDeliveryState = {
   attempts: number;
   resetCount: number;
   lastReasonCode?: 'provider_ambiguous' | 'checkpoint_ambiguous';
+  retryRequestId?: string;
+  approvedUnknownAt?: string;
   retryEnvelope: TelegramRetryEnvelope;
 };
 
@@ -102,11 +106,19 @@ export const deliverTelegramOperation = async ({
       error instanceof TelegramDeliveryError &&
       error.mayHaveSucceeded === false
     ) {
-      await store.set(deliveryKey, {
+      const ready: TelegramDeliveryState = {
         ...intent,
         status: 'ready',
         updatedAt: now().toISOString(),
-      });
+      };
+      try {
+        await store.set(deliveryKey, ready);
+      } catch {
+        // A provider-declared rejection proves no message was accepted. Retry
+        // this state checkpoint once while that proof is still in-process so a
+        // transient store failure does not turn a safe retry into ambiguity.
+        await store.set(deliveryKey, ready);
+      }
       throw error;
     }
     const unknownAt = now().toISOString();
@@ -189,4 +201,3 @@ export const deliverDailySummary = async ({
 
   return { status: 'complete', sentParts: part } as const;
 };
-import { createHash } from 'node:crypto';

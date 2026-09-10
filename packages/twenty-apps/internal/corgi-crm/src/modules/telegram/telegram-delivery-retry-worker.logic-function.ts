@@ -23,6 +23,7 @@ type RetryWorkerDependencies = {
     TelegramClient,
     'sendMessage' | 'answerCallbackQuery'
   >;
+  onUnknown?(event: unknown): void;
 };
 
 const parsePayload = (value: unknown): TelegramDeliveryResetJob => {
@@ -77,30 +78,54 @@ export const handleTelegramDeliveryRetryJob = async (
   ) {
     throw new Error('Telegram delivery retry lacks exact audit authorization');
   }
-  const state = (await dependencies.store.get(
+  let state = (await dependencies.store.get(
     payload.deliveryKey,
   )) as TelegramDeliveryState | null;
-  if (
-    !state ||
-    state.status !== 'unknown' ||
-    state.unknownAt !== payload.expectedUnknownAt
-  ) {
+  if (!state) {
     throw new Error('Telegram delivery retry is stale or replayed');
   }
-  const approved: TelegramDeliveryState = {
-    ...state,
-    status: 'retry_approved',
-    updatedAt: new Date().toISOString(),
-    resetCount: state.resetCount + 1,
-  };
-  await dependencies.store.set(payload.deliveryKey, approved);
-  const client = dependencies.createTelegramClient();
+  const matchesApprovedGeneration =
+    state.retryRequestId === payload.requestId &&
+    state.approvedUnknownAt === payload.expectedUnknownAt;
+  if (state.status === 'complete') {
+    if (!matchesApprovedGeneration) {
+      throw new Error('Telegram delivery retry is stale or replayed');
+    }
+    return { status: 'complete' } as const;
+  }
+  if (state.status === 'unknown' && matchesApprovedGeneration) {
+    return { status: 'unknown' } as const;
+  }
+  if (state.status === 'unknown') {
+    if (state.unknownAt !== payload.expectedUnknownAt) {
+      throw new Error('Telegram delivery retry is stale or replayed');
+    }
+    state = {
+      ...state,
+      status: 'retry_approved',
+      updatedAt: new Date().toISOString(),
+      resetCount: state.resetCount + 1,
+      retryRequestId: payload.requestId,
+      approvedUnknownAt: payload.expectedUnknownAt,
+    };
+    await dependencies.store.set(payload.deliveryKey, state);
+  } else if (!matchesApprovedGeneration) {
+    throw new Error('Telegram delivery retry is stale or replayed');
+  }
+
+  let client:
+    | Pick<TelegramClient, 'sendMessage' | 'answerCallbackQuery'>
+    | undefined;
   return deliverTelegramOperation({
     deliveryKey: payload.deliveryKey,
     retryEnvelope: state.retryEnvelope,
     store: dependencies.store,
-    perform: (envelope) => performWithClient(client, envelope),
+    perform: (envelope) => {
+      client ??= dependencies.createTelegramClient();
+      return performWithClient(client, envelope);
+    },
     now: () => new Date(),
+    onUnknown: dependencies.onUnknown,
   });
 };
 

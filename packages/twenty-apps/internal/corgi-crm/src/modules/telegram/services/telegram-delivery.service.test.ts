@@ -354,4 +354,38 @@ describe('durable interactive Telegram delivery', () => {
     });
     expect(perform).toHaveBeenCalledTimes(2);
   });
+
+  it('retries the ready checkpoint once after an explicit provider rejection', async () => {
+    expect(typeof api.deliverTelegramOperation).toBe('function');
+    if (!api.deliverTelegramOperation) return;
+    const values = new Map<string, unknown>();
+    let readyWrites = 0;
+    const store = {
+      get: vi.fn(async (key: string) => values.get(key) ?? null),
+      set: vi.fn(async (key: string, value: unknown) => {
+        if ((value as { status?: string }).status === 'ready') {
+          readyWrites += 1;
+          if (readyWrites === 1) throw new Error('transient ready write failure');
+        }
+        values.set(key, value);
+      }),
+      delete: vi.fn(),
+    };
+    const perform = vi
+      .fn()
+      .mockRejectedValue(
+        new TelegramDeliveryError('Telegram explicitly rejected', false),
+      );
+    await expect(
+      api.deliverTelegramOperation({
+        deliveryKey: 'telegram:delivery:' + 'f'.repeat(64),
+        retryEnvelope: { kind: 'message', chatId: '101', text: 'retry' },
+        store,
+        perform,
+        now: () => new Date(),
+      }),
+    ).rejects.toThrow(/explicitly rejected/i);
+    expect(readyWrites).toBe(2);
+    expect([...values.values()][0]).toMatchObject({ status: 'ready' });
+  });
 });

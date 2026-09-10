@@ -115,4 +115,50 @@ describe('Telegram unknown-delivery control', () => {
     ).rejects.toThrow(/unknown|replay/i);
     expect(enqueue).not.toHaveBeenCalled();
   });
+
+  it('never enqueues without a durable audit and safely resumes after enqueue failure', async () => {
+    const request = {
+      deliveryKey,
+      expectedUnknownAt: unknownAt,
+      requestId: '11111111-1111-4111-8111-111111111111',
+      actorWorkspaceMemberId: '22222222-2222-4222-8222-222222222222',
+      confirmation: 'RESET_UNKNOWN_TELEGRAM_DELIVERY',
+      reason: 'Operator confirmed the recipient did not receive it',
+      now: () => new Date('2026-09-09T22:10:00.000Z'),
+    };
+    const auditFailure = setup();
+    auditFailure.store.set.mockRejectedValueOnce(new Error('audit write failed'));
+    await expect(
+      requestTelegramDeliveryReset({
+        ...request,
+        store: auditFailure.store,
+        enqueue: auditFailure.enqueue,
+      }),
+    ).rejects.toThrow(/audit write failed/i);
+    expect(auditFailure.enqueue).not.toHaveBeenCalled();
+
+    const enqueueFailure = setup();
+    enqueueFailure.enqueue.mockRejectedValueOnce(
+      new Error('enqueue response lost'),
+    );
+    const input = {
+      ...request,
+      store: enqueueFailure.store,
+      enqueue: enqueueFailure.enqueue,
+    };
+    await expect(requestTelegramDeliveryReset(input)).rejects.toThrow(
+      /enqueue response lost/i,
+    );
+    await expect(requestTelegramDeliveryReset(input)).resolves.toMatchObject({
+      status: 'retry_enqueued',
+    });
+    expect(enqueueFailure.enqueue.mock.calls[0]?.[1]).toBe(
+      enqueueFailure.enqueue.mock.calls[1]?.[1],
+    );
+    expect(
+      [...enqueueFailure.values.keys()].filter((key) =>
+        key.startsWith('telegram:delivery-audit:'),
+      ),
+    ).toHaveLength(1);
+  });
 });
