@@ -33,6 +33,7 @@ describe('meeting booked Telegram event ingress', () => {
       expectedWorkspaceId: WORKSPACE_ID,
       enabled: 'false',
       routesJson: '{bad',
+      canarySuppressionJson: undefined,
       store: { get: vi.fn(), set: vi.fn(), delete: vi.fn() },
       readMeetingBooking: vi.fn(),
       enqueue: vi.fn(),
@@ -61,6 +62,7 @@ describe('meeting booked Telegram event ingress', () => {
           expectedWorkspaceId: WORKSPACE_ID,
           enabled: 'true',
           routesJson,
+          canarySuppressionJson: undefined,
           store: { get: vi.fn(), set: vi.fn(), delete: vi.fn() },
           readMeetingBooking,
           enqueue,
@@ -81,6 +83,7 @@ describe('meeting booked Telegram event ingress', () => {
       expectedWorkspaceId: WORKSPACE_ID,
       enabled: 'true',
       routesJson,
+      canarySuppressionJson: undefined,
       timeZone: 'America/Chicago',
       store: {
         get: vi.fn(async (key: string) => values.get(key) ?? null),
@@ -130,6 +133,7 @@ describe('meeting booked Telegram event ingress', () => {
         expectedWorkspaceId: WORKSPACE_ID,
         enabled: 'true',
         routesJson,
+        canarySuppressionJson: undefined,
         timeZone: 'America/Chicago',
         store: {
           get: vi.fn().mockResolvedValue(null),
@@ -168,6 +172,7 @@ describe('meeting booked Telegram event ingress', () => {
       expectedWorkspaceId: WORKSPACE_ID,
       enabled: 'true',
       routesJson,
+      canarySuppressionJson: undefined,
       timeZone: 'America/Chicago',
       store: {
         get: vi.fn(async (key: string) => values.get(key) ?? null),
@@ -202,6 +207,7 @@ describe('meeting booked Telegram event ingress', () => {
         expectedWorkspaceId: WORKSPACE_ID,
         enabled: 'true',
         routesJson,
+        canarySuppressionJson: undefined,
         timeZone: 'not-a-time-zone',
         store: { get: vi.fn(), set: vi.fn(), delete: vi.fn() },
         readMeetingBooking: vi.fn(),
@@ -216,6 +222,7 @@ describe('meeting booked Telegram event ingress', () => {
         expectedWorkspaceId: WORKSPACE_ID,
         enabled: 'true',
         routesJson,
+        canarySuppressionJson: undefined,
         timeZone: 'America/Chicago',
         store: {
           get: vi.fn().mockResolvedValue(null),
@@ -235,6 +242,7 @@ describe('meeting booked Telegram event ingress', () => {
         expectedWorkspaceId: '99999999-9999-4999-8999-999999999999',
         enabled: 'true',
         routesJson,
+        canarySuppressionJson: undefined,
         timeZone: 'America/Chicago',
         store: { get: vi.fn(), set: vi.fn(), delete: vi.fn() },
         readMeetingBooking,
@@ -242,5 +250,83 @@ describe('meeting booked Telegram event ingress', () => {
       }),
     ).rejects.toThrow(/workspace/i);
     expect(readMeetingBooking).not.toHaveBeenCalled();
+  });
+});
+
+describe('release canary suppression', () => {
+  const NOW = Date.parse('2026-09-10T05:30:00.000Z');
+  const PREFIX = 'CRM meeting canary 34500629643-2-';
+  const CANARY_NAME = `${PREFIX}55555555-5555-4555-8555-555555555555`;
+  const canarySuppressionJson = JSON.stringify({
+    version: 1,
+    namePrefix: PREFIX,
+    notAfter: new Date(NOW + 5 * 60_000).toISOString(),
+  });
+  const bookingNamed = (name: string) => ({
+    id: MEETING_ID,
+    name,
+    status: 'BOOKED',
+    bookedAt: BOOKED_AT,
+    scheduledAt: '2026-09-15T19:00:00.000Z',
+    company: { id: '33333333-3333-4333-8333-333333333333', name: 'RIA' },
+    wholesaler: { id: '44444444-4444-4444-8444-444444444444', name: 'Nash' },
+    bookedBy: null,
+  });
+  const dependenciesFor = (name: string) => {
+    const values = new Map<string, unknown>();
+    return {
+      expectedWorkspaceId: WORKSPACE_ID,
+      enabled: 'true',
+      routesJson,
+      canarySuppressionJson,
+      timeZone: 'America/Chicago',
+      now: () => NOW,
+      store: {
+        get: vi.fn(async (key: string) => values.get(key) ?? null),
+        set: vi.fn(async (key: string, value: unknown) => {
+          values.set(key, value);
+        }),
+        delete: vi.fn(),
+      },
+      readMeetingBooking: vi.fn().mockResolvedValue(bookingNamed(name)),
+      enqueue: vi.fn().mockResolvedValue({ enqueued: true, enqueuedJobsCount: 2 }),
+    };
+  };
+
+  it('never enqueues or snapshots the run own canary booking', async () => {
+    const dependencies = dependenciesFor(CANARY_NAME);
+    await expect(
+      handleTelegramMeetingBookedEvent(payload, dependencies),
+    ).resolves.toEqual({ status: 'canary-suppressed' });
+    expect(dependencies.enqueue).not.toHaveBeenCalled();
+  });
+
+  it('holds the suppression decision across a retry once the token expires', async () => {
+    const dependencies = dependenciesFor(CANARY_NAME);
+    await handleTelegramMeetingBookedEvent(payload, dependencies);
+    const expired = { ...dependencies, now: () => NOW + 60 * 60_000 };
+    await expect(
+      handleTelegramMeetingBookedEvent(payload, expired),
+    ).resolves.toEqual({ status: 'canary-suppressed' });
+    expect(dependencies.readMeetingBooking).toHaveBeenCalledOnce();
+    expect(dependencies.enqueue).not.toHaveBeenCalled();
+  });
+
+  it('alerts a genuine booking while the canary token is armed', async () => {
+    const dependencies = dependenciesFor('Quarterly review with Acme');
+    await expect(
+      handleTelegramMeetingBookedEvent(payload, dependencies),
+    ).resolves.toEqual({ status: 'enqueued', destinations: 2 });
+    expect(dependencies.readMeetingBooking).toHaveBeenCalledOnce();
+  });
+
+  it('alerts the canary booking when no token is armed', async () => {
+    const dependencies = {
+      ...dependenciesFor(CANARY_NAME),
+      canarySuppressionJson: undefined,
+    };
+    await expect(
+      handleTelegramMeetingBookedEvent(payload, dependencies),
+    ).resolves.toEqual({ status: 'enqueued', destinations: 2 });
   });
 });

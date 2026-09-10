@@ -23,6 +23,13 @@ export default defineApplication({
       isSecret: false,
       value: 'false',
     },
+    CORGI_CRM_MEETING_CANARY_SUPPRESSION: {
+      universalIdentifier: 'f68bb67d-93d9-4ee8-9b49-4a450eb4e979',
+      description:
+        'Run-scoped self-expiring token that suppresses the meeting-booked alert for one release canary booking, so a release never has to disable the live bot. Empty outside a release.',
+      isSecret: false,
+      value: '',
+    },
     CORGI_CRM_TELEGRAM_PUBLIC_REPORTS_ENABLED: {
       universalIdentifier: 'efed240f-6856-46f3-973c-67b429287e0a',
       description:
