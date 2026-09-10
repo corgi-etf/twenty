@@ -27,6 +27,18 @@ on:
         description: Successful metadata-bootstrap workflow attempt number
         required: true
         type: string
+      meeting_recovery_run_id:
+        description: Prior failed app workflow run containing a run-owned meeting to recover
+        required: false
+        type: string
+      meeting_recovery_run_attempt:
+        description: Prior failed app workflow attempt containing a run-owned meeting to recover
+        required: false
+        type: string
+      meeting_recovery_confirmation:
+        description: Type CLEANUP_RUN_OWNED_MEETING to recover the exact prior-run canary meeting
+        required: false
+        type: string
       telegram_enable:
         description: Configure and enable Telegram only after live verification
         required: false
@@ -98,6 +110,89 @@ jobs:
           [[ "${BOOTSTRAP_RUN_ATTEMPT}" =~ ^[1-9][0-9]*$ ]]
           node "${APP_PATH}/scripts/deployment-revision-guard.mjs" \
             "${DEPLOYED_SHA}" "${GITHUB_SHA}"
+
+      - name: Resolve prior meeting canary recovery evidence
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OPERATION: ${{ inputs.operation }}
+          RECOVERY_RUN_ID: ${{ inputs.meeting_recovery_run_id }}
+          RECOVERY_RUN_ATTEMPT: ${{ inputs.meeting_recovery_run_attempt }}
+          RECOVERY_CONFIRMATION: ${{ inputs.meeting_recovery_confirmation }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${RECOVERY_RUN_ID}" && -z "${RECOVERY_RUN_ATTEMPT}" && -z "${RECOVERY_CONFIRMATION}" ]]; then
+            exit 0
+          fi
+          [[ "${OPERATION}" == "configure-telegram" ]]
+          [[ "${RECOVERY_RUN_ID}" =~ ^[1-9][0-9]*$ ]]
+          [[ "${RECOVERY_RUN_ATTEMPT}" =~ ^[1-9][0-9]*$ ]]
+          [[ "${RECOVERY_CONFIRMATION}" == "CLEANUP_RUN_OWNED_MEETING" ]]
+
+          workflow_json="${RUNNER_TEMP}/meeting-recovery-workflow.json"
+          run_json="${RUNNER_TEMP}/meeting-recovery-run.json"
+          jobs_json="${RUNNER_TEMP}/meeting-recovery-jobs.json"
+          trap 'rm -f "${workflow_json}" "${run_json}" "${jobs_json}"' EXIT
+          gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/corgi-crm-app-production.yml" > "${workflow_json}"
+          gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${RECOVERY_RUN_ID}/attempts/${RECOVERY_RUN_ATTEMPT}" > "${run_json}"
+          gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${RECOVERY_RUN_ID}/attempts/${RECOVERY_RUN_ATTEMPT}/jobs?per_page=100" > "${jobs_json}"
+
+          workflow_id="$(jq -er '
+            select(
+              .name == "Publish and install Corgi CRM app in production" and
+              .path == ".github/workflows/corgi-crm-app-production.yml" and
+              .state == "active" and (.id | type == "number")
+            ) | .id
+          ' "${workflow_json}")"
+          prior_head_sha="$(jq -er \
+            --arg repository "${GITHUB_REPOSITORY}" \
+            --arg run_id "${RECOVERY_RUN_ID}" \
+            --argjson run_attempt "${RECOVERY_RUN_ATTEMPT}" \
+            --argjson workflow_id "${workflow_id}" '
+              select(
+                (.id | tostring) == $run_id and
+                .run_attempt == $run_attempt and
+                .workflow_id == $workflow_id and
+                .name == "Publish and install Corgi CRM app in production" and
+                .event == "workflow_dispatch" and
+                .head_branch == "main" and
+                .head_repository.full_name == $repository and
+                .status == "completed" and
+                .conclusion == "failure" and
+                (.head_sha | type == "string" and test("^[0-9a-f]{40}$"))
+              ) | .head_sha
+            ' "${run_json}")"
+          node "${APP_PATH}/scripts/deployment-revision-guard.mjs" \
+            "${prior_head_sha}" "${GITHUB_SHA}"
+
+          failed_step="$(jq -cer \
+            --arg step_name "Verify native CRM meeting booking while Telegram is disabled" '
+              [.jobs[].steps[] | select(.name == $step_name)]
+              | select(length == 1)
+              | .[0]
+              | select(
+                  .status == "completed" and
+                  .conclusion == "failure" and
+                  (.started_at | type == "string") and
+                  (.completed_at | type == "string")
+                )
+            ' "${jobs_json}")"
+          started_at="$(jq -er '.started_at' <<< "${failed_step}")"
+          completed_at="$(jq -er '.completed_at' <<< "${failed_step}")"
+          read -r created_after created_before <<< "$(node -e '
+            const started = Date.parse(process.argv[1]);
+            const completed = Date.parse(process.argv[2]);
+            if (!Number.isFinite(started) || !Number.isFinite(completed) || completed < started || completed - started > 20 * 60_000) process.exit(1);
+            process.stdout.write(`${new Date(started - 30_000).toISOString()} ${new Date(completed + 30_000).toISOString()}`);
+          ' "${started_at}" "${completed_at}")"
+
+          {
+            printf '%s\n' "CRM_MEETING_CANARY_RECOVERY_RUN_ID=${RECOVERY_RUN_ID}"
+            printf '%s\n' "CRM_MEETING_CANARY_RECOVERY_RUN_ATTEMPT=${RECOVERY_RUN_ATTEMPT}"
+            printf '%s\n' "CRM_MEETING_CANARY_RECOVERY_CREATED_AFTER=${created_after}"
+            printf '%s\n' "CRM_MEETING_CANARY_RECOVERY_CREATED_BEFORE=${created_before}"
+            printf '%s\n' "CRM_MEETING_CANARY_RECOVERY_CONFIRMATION=${RECOVERY_CONFIRMATION}"
+          } >> "$GITHUB_ENV"
 
       - name: Verify exact-SHA metadata bootstrap lineage
         shell: bash
@@ -389,6 +484,11 @@ jobs:
           CRM_MEETING_CANARY_CONFIRMATION: VERIFY_NATIVE_CRM_MEETING_WITH_TELEGRAM_DISABLED
           CRM_MEETING_CANARY_OPERATION: ${{ inputs.operation }}
           CRM_DEPLOYED_SHA: ${{ inputs.deployed_sha }}
+          CRM_MEETING_CANARY_RECOVERY_RUN_ID: ${{ env.CRM_MEETING_CANARY_RECOVERY_RUN_ID }}
+          CRM_MEETING_CANARY_RECOVERY_RUN_ATTEMPT: ${{ env.CRM_MEETING_CANARY_RECOVERY_RUN_ATTEMPT }}
+          CRM_MEETING_CANARY_RECOVERY_CREATED_AFTER: ${{ env.CRM_MEETING_CANARY_RECOVERY_CREATED_AFTER }}
+          CRM_MEETING_CANARY_RECOVERY_CREATED_BEFORE: ${{ env.CRM_MEETING_CANARY_RECOVERY_CREATED_BEFORE }}
+          CRM_MEETING_CANARY_RECOVERY_CONFIRMATION: ${{ env.CRM_MEETING_CANARY_RECOVERY_CONFIRMATION }}
           CORGI_CRM_EXPECTED_VERSION: ${{ steps.app.outputs.version }}
           PLAYWRIGHT_NO_COPY_PROMPT: '1'
         run: >-

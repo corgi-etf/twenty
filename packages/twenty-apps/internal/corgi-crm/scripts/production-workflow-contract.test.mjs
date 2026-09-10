@@ -226,8 +226,12 @@ describe('Corgi CRM production app workflow contract', () => {
     );
     const configureDisabled = position('Configure Telegram disabled');
     const stage = position('configure-telegram.mjs" stage');
-    const canary = position('Verify native CRM meeting booking while Telegram is disabled');
-    const register = position('Register and verify the live Telegram provider');
+    const canary = position(
+      '\n      - name: Verify native CRM meeting booking while Telegram is disabled',
+    );
+    const register = position(
+      '\n      - name: Register and verify the live Telegram provider',
+    );
     assert.ok(
       installed < configureDisabled &&
         configureDisabled < stage &&
@@ -253,6 +257,88 @@ describe('Corgi CRM production app workflow contract', () => {
     assert.match(canaryBlock, /meetingBooking\.maintenance\.spec\.ts/);
     assert.match(canaryBlock, /--project=production-chromium --no-deps --retries=0/);
     assert.doesNotMatch(canaryBlock, /continue-on-error/);
+  });
+
+  it('derives an exact prior failed-canary cleanup window from trusted workflow evidence', () => {
+    assert.match(workflow, /meeting_recovery_run_id:/);
+    assert.match(workflow, /meeting_recovery_run_attempt:/);
+    assert.match(workflow, /meeting_recovery_confirmation:/);
+
+    const recovery = workflow.slice(
+      position('Resolve prior meeting canary recovery evidence'),
+      position('Verify exact-SHA metadata bootstrap lineage'),
+    );
+    assert.match(recovery, /OPERATION: \$\{\{ inputs\.operation \}\}/);
+    assert.match(recovery, /RECOVERY_RUN_ID: \$\{\{ inputs\.meeting_recovery_run_id \}\}/);
+    assert.match(
+      recovery,
+      /RECOVERY_RUN_ATTEMPT: \$\{\{ inputs\.meeting_recovery_run_attempt \}\}/,
+    );
+    assert.match(
+      recovery,
+      /RECOVERY_CONFIRMATION: \$\{\{ inputs\.meeting_recovery_confirmation \}\}/,
+    );
+    assert.match(recovery, /CLEANUP_RUN_OWNED_MEETING/);
+    assert.match(recovery, /OPERATION.*configure-telegram/s);
+    assert.match(
+      recovery,
+      /actions\/runs\/\$\{RECOVERY_RUN_ID\}\/attempts\/\$\{RECOVERY_RUN_ATTEMPT\}/,
+    );
+    assert.match(
+      recovery,
+      /actions\/runs\/\$\{RECOVERY_RUN_ID\}\/attempts\/\$\{RECOVERY_RUN_ATTEMPT\}\/jobs\?per_page=100/,
+    );
+    assert.match(
+      recovery,
+      /trap 'rm -f "\$\{workflow_json\}" "\$\{run_json\}" "\$\{jobs_json\}"' EXIT/,
+    );
+    assert.match(recovery, /\.workflow_id == \$workflow_id/);
+    assert.match(recovery, /\.head_repository\.full_name == \$repository/);
+    assert.match(recovery, /\.head_branch == "main"/);
+    assert.match(recovery, /\.event == "workflow_dispatch"/);
+    assert.match(recovery, /\.conclusion == "failure"/);
+    assert.match(
+      recovery,
+      /Verify native CRM meeting booking while Telegram is disabled/,
+    );
+    assert.match(recovery, /deployment-revision-guard\.mjs/);
+    assert.match(recovery, /"\$\{prior_head_sha\}" "\$\{GITHUB_SHA\}"/);
+    assert.match(recovery, /CRM_MEETING_CANARY_RECOVERY_RUN_ID=/);
+    assert.match(recovery, /CRM_MEETING_CANARY_RECOVERY_RUN_ATTEMPT=/);
+    assert.match(recovery, /CRM_MEETING_CANARY_RECOVERY_CREATED_AFTER=/);
+    assert.match(recovery, /CRM_MEETING_CANARY_RECOVERY_CREATED_BEFORE=/);
+    assert.match(recovery, /CRM_MEETING_CANARY_RECOVERY_CONFIRMATION=/);
+    assert.match(recovery, />> "\$GITHUB_ENV"/);
+    assert.match(recovery, /completed - started > 20 \* 60_000/);
+    assert.match(recovery, /started - 30_000/);
+    assert.match(recovery, /completed \+ 30_000/);
+
+    const canary = workflow.slice(
+      position(
+        '\n      - name: Verify native CRM meeting booking while Telegram is disabled',
+      ),
+      position('\n      - name: Register and verify the live Telegram provider'),
+    );
+    assert.match(
+      canary,
+      /CRM_MEETING_CANARY_RECOVERY_RUN_ID: \$\{\{ env\.CRM_MEETING_CANARY_RECOVERY_RUN_ID \}\}/,
+    );
+    assert.match(
+      canary,
+      /CRM_MEETING_CANARY_RECOVERY_RUN_ATTEMPT: \$\{\{ env\.CRM_MEETING_CANARY_RECOVERY_RUN_ATTEMPT \}\}/,
+    );
+    assert.match(
+      canary,
+      /CRM_MEETING_CANARY_RECOVERY_CREATED_AFTER: \$\{\{ env\.CRM_MEETING_CANARY_RECOVERY_CREATED_AFTER \}\}/,
+    );
+    assert.match(
+      canary,
+      /CRM_MEETING_CANARY_RECOVERY_CREATED_BEFORE: \$\{\{ env\.CRM_MEETING_CANARY_RECOVERY_CREATED_BEFORE \}\}/,
+    );
+    assert.match(
+      canary,
+      /CRM_MEETING_CANARY_RECOVERY_CONFIRMATION: \$\{\{ env\.CRM_MEETING_CANARY_RECOVERY_CONFIRMATION \}\}/,
+    );
   });
 
   it('keeps real test delivery opt-in behind two independent workflow gates', () => {
