@@ -81,6 +81,18 @@ const exactDelivery = (
   left.deliveryKey === right.deliveryKey &&
   left.operationDigest === right.operationDigest;
 
+const exactOwnedIntent = (
+  left: TelegramDeliveryRecord,
+  right: TelegramDeliveryRecord,
+) =>
+  exactDelivery(left, right) &&
+  left.status === 'intent' &&
+  left.stateToken === right.stateToken &&
+  left.attempts === right.attempts &&
+  left.resetCount === right.resetCount &&
+  typeof left.createdAt === 'string' &&
+  typeof left.updatedAt === 'string';
+
 const exactAudit = (
   left: TelegramDeliveryAuditRecord,
   right: TelegramDeliveryAuditRecord,
@@ -130,20 +142,28 @@ export class CoreTelegramDeliveryRepository {
           ...deliverySelection,
         },
       });
-      return {
-        acquired: true,
-        record: result.createTelegramDelivery as TelegramDeliveryRecord,
-      } as const;
+      const created = result.createTelegramDelivery as
+        | TelegramDeliveryRecord
+        | null
+        | undefined;
+      if (created && exactOwnedIntent(created, record)) {
+        return { acquired: true, record: created } as const;
+      }
     } catch {
-      const existing = await this.get(record.deliveryKey);
-      if (!existing) {
-        throw new Error('Could not confirm rejected Telegram delivery claim');
-      }
-      if (!exactDelivery(existing, record)) {
-        throw new Error('Telegram delivery deterministic claim collision');
-      }
-      return { acquired: false, record: existing } as const;
+      // A transport error may happen after the insert committed. The exact
+      // caller-generated state token below distinguishes our insert from a
+      // competing process that won the unique delivery-key claim.
     }
+    const existing = await this.get(record.deliveryKey);
+    if (!existing) {
+      throw new Error('Could not confirm rejected Telegram delivery claim');
+    }
+    if (!exactDelivery(existing, record)) {
+      throw new Error('Telegram delivery deterministic claim collision');
+    }
+    return exactOwnedIntent(existing, record)
+      ? ({ acquired: true, record: existing } as const)
+      : ({ acquired: false, record: existing } as const);
   }
 
   public async transition({

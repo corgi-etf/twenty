@@ -28,9 +28,10 @@ describe('CoreTelegramDeliveryRepository', () => {
       query,
     } as never);
 
+    const competing = { ...delivery, stateToken: 'token-2' };
     const [first, second] = await Promise.all([
       repository.claim(delivery),
-      repository.claim(delivery),
+      repository.claim(competing),
     ]);
 
     expect([first.acquired, second.acquired].sort()).toEqual([false, true]);
@@ -42,6 +43,51 @@ describe('CoreTelegramDeliveryRepository', () => {
       },
     });
     await expect(repository.claim(delivery)).rejects.toThrow(/collision/i);
+  });
+
+  it.each([
+    null,
+    { id: delivery.id },
+    { ...delivery, id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' },
+    { ...delivery, operationDigest: 'c'.repeat(64) },
+    { ...delivery, status: 'complete' },
+    { ...delivery, stateToken: 'wrong-token' },
+  ])('does not trust a malformed resolved create payload %#', async (created) => {
+    const repository = new CoreTelegramDeliveryRepository({
+      mutation: vi.fn().mockResolvedValue({ createTelegramDelivery: created }),
+      query: vi.fn().mockResolvedValue({
+        telegramDeliveries: { edges: [{ node: delivery }] },
+      }),
+    } as never);
+
+    await expect(repository.claim(delivery)).resolves.toEqual({
+      acquired: true,
+      record: delivery,
+    });
+  });
+
+  it('treats a lost response after its own commit as acquired but a competing token as not acquired', async () => {
+    const query = vi
+      .fn()
+      .mockResolvedValueOnce({
+        telegramDeliveries: { edges: [{ node: delivery }] },
+      })
+      .mockResolvedValueOnce({
+        telegramDeliveries: {
+          edges: [{ node: { ...delivery, stateToken: 'competitor-token' } }],
+        },
+      });
+    const repository = new CoreTelegramDeliveryRepository({
+      mutation: vi.fn().mockRejectedValue(new Error('response lost')),
+      query,
+    } as never);
+
+    await expect(repository.claim(delivery)).resolves.toMatchObject({
+      acquired: true,
+    });
+    await expect(repository.claim(delivery)).resolves.toMatchObject({
+      acquired: false,
+    });
   });
 
   it('fails closed when a rejected create cannot be confirmed', async () => {
