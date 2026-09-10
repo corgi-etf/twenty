@@ -14,6 +14,7 @@ export type MeetingBookingRecord = {
   bookedById: string | null;
   companyId: string | null;
   wholesalerId: string | null;
+  externalWholesalerId: string | null;
   bookingValidationMessage: string | null;
   updatedAt: string;
 };
@@ -34,6 +35,7 @@ const selection = {
   bookedById: true,
   companyId: true,
   wholesalerId: true,
+  externalWholesalerId: true,
   bookingValidationMessage: true,
   updatedAt: true,
 };
@@ -61,6 +63,7 @@ const parseMeetingBooking = (value: unknown): MeetingBookingRecord | null => {
     !isNullableString(candidate.bookedById) ||
     !isNullableString(candidate.companyId) ||
     !isNullableString(candidate.wholesalerId) ||
+    !isNullableString(candidate.externalWholesalerId) ||
     !isNullableString(candidate.bookingValidationMessage) ||
     typeof candidate.updatedAt !== 'string'
   ) {
