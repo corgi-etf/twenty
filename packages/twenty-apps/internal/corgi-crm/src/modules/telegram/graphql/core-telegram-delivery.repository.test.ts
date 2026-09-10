@@ -207,4 +207,23 @@ describe('CoreTelegramDeliveryRepository', () => {
       record: audit,
     });
   });
+
+  it('does not enqueue from a malformed reset-audit create response', async () => {
+    const audit = {
+      id: '38d0e91a-0f05-558f-a3ba-8f83e61d822c',
+      requestId: '11111111-1111-4111-8111-111111111111',
+      deliveryKey: delivery.deliveryKey,
+      expectedUnknownAt: '2026-09-09T12:01:00.000Z',
+      actorWorkspaceMemberId: '22222222-2222-4222-8222-222222222222',
+      reasonDigest: 'd'.repeat(64),
+      requestedAt: '2026-09-09T12:02:00.000Z',
+    };
+    const repository = new CoreTelegramDeliveryRepository({
+      mutation: vi.fn().mockResolvedValue({ createTelegramDeliveryAudit: null }),
+      query: vi.fn().mockResolvedValue({
+        telegramDeliveryAudits: { edges: [] },
+      }),
+    } as never);
+    await expect(repository.recordResetAudit(audit)).rejects.toThrow(/confirm/i);
+  });
 });
