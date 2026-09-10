@@ -94,7 +94,6 @@ const processDailySummaryJob = async (rawPayload: unknown) => {
   const wholesalerRepository = new CoreWholesalerRepository(coreClient);
   const roster = await getValidatedTelegramDeliveryRoster({
     store: kv,
-    repository: new CoreTelegramDeliveryRepository(coreClient),
     configuredBindings: [binding],
     identity: {
       findWorkspaceMember: (workspaceMemberId) =>
@@ -138,6 +137,7 @@ const processDailySummaryJob = async (rawPayload: unknown) => {
       messages: splitTelegramMessage(text),
     },
     store: kv,
+    repository: new CoreTelegramDeliveryRepository(coreClient),
     send: (chatId, message) => telegram.sendMessage(chatId, message),
   });
 };

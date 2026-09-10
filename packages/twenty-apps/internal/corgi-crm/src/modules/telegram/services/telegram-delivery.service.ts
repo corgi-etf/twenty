@@ -265,7 +265,7 @@ export const deliverTelegramOperation = async ({
   store: KeyValueStore;
   perform(envelope: TelegramRetryEnvelope): Promise<void>;
   now(): Date;
-  onUnknown?(event: ReturnType<typeof unknownEvent>): void;
+  onUnknown?(event: unknown): void;
   repository?: CoreTelegramDeliveryRepository;
 }) => {
   assertTelegramDeliveryKey(deliveryKey);

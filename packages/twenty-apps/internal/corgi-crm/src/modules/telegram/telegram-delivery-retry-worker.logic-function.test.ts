@@ -329,7 +329,9 @@ describe('Telegram delivery retry worker', () => {
     ]);
     const store = {
       get: vi.fn(async (key: string) => values.get(key) ?? null),
-      set: vi.fn(async (key: string, value: unknown) => values.set(key, value)),
+      set: vi.fn(async (key: string, value: unknown) => {
+        values.set(key, value);
+      }),
       delete: vi.fn(),
     };
     const sendMessage = vi.fn().mockResolvedValue(undefined);
@@ -382,7 +384,9 @@ describe('Telegram delivery retry worker', () => {
           }
           return values.get(key) ?? null;
         }),
-        set: vi.fn(async (key: string, value: unknown) => values.set(key, value)),
+        set: vi.fn(async (key: string, value: unknown) => {
+          values.set(key, value);
+        }),
         delete: vi.fn(),
       };
       const createTelegramClient = vi.fn();
