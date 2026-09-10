@@ -155,13 +155,34 @@ const verifyApplicationRoleContract = (role, objects) => {
     throw new Error('Installed application role is missing');
   }
   if (
+    role.canAccessAllTools !== false ||
+    role.canBeAssignedToUsers !== false ||
+    role.canBeAssignedToAgents !== false ||
+    role.canBeAssignedToApiKeys !== false ||
     role.canReadAllObjectRecords !== false ||
     role.canUpdateAllObjectRecords !== false ||
     role.canSoftDeleteAllObjectRecords !== false ||
     role.canDestroyAllObjectRecords !== false ||
     role.canUpdateAllSettings !== false
   ) {
-    throw new Error('Installed application role has a global permission');
+    throw new Error(
+      'Installed application role has a global, tool, or assignment capability',
+    );
+  }
+  for (const collection of [
+    'permissionFlags',
+    'fieldPermissions',
+    'rowLevelPermissionPredicates',
+    'rowLevelPermissionPredicateGroups',
+    'workspaceMembers',
+    'agents',
+    'apiKeys',
+  ]) {
+    if (!Array.isArray(role[collection]) || role[collection].length !== 0) {
+      throw new Error(
+        `Installed application role ${collection} collection must be present and empty`,
+      );
+    }
   }
   const permissions = role.objectPermissions ?? [];
   if (permissions.length !== 5) {
@@ -329,11 +350,22 @@ const verifyInstalledApplication = async ({
         universalIdentifier version state
         applicationVariables { key value }
         defaultLogicFunctionRole {
+          canAccessAllTools
+          canBeAssignedToUsers
+          canBeAssignedToAgents
+          canBeAssignedToApiKeys
           canReadAllObjectRecords
           canUpdateAllObjectRecords
           canSoftDeleteAllObjectRecords
           canDestroyAllObjectRecords
           canUpdateAllSettings
+          permissionFlags { id }
+          fieldPermissions { id }
+          rowLevelPermissionPredicates { id }
+          rowLevelPermissionPredicateGroups { id }
+          workspaceMembers { id }
+          agents { id }
+          apiKeys { id }
           objectPermissions {
             objectMetadataId
             canReadObjectRecords

@@ -30,6 +30,7 @@ export default defineApplicationRole({
   canSoftDeleteAllObjectRecords: false,
   canDestroyAllObjectRecords: false,
   canUpdateAllSettings: false,
+  canAccessAllTools: false,
   canBeAssignedToAgents: false,
   canBeAssignedToUsers: false,
   canBeAssignedToApiKeys: false,
@@ -52,4 +53,6 @@ export default defineApplicationRole({
   ],
   fieldPermissions: [],
   permissionFlagUniversalIdentifiers: [],
+  rowLevelPermissionPredicateGroups: [],
+  rowLevelPermissionPredicates: [],
 });

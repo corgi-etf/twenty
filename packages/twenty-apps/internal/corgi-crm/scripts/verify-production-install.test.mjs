@@ -281,11 +281,22 @@ describe('installed application role verification', () => {
   }));
   const writable = new Set(['wholesaler', 'outreachActivity']);
   const role = {
+    canAccessAllTools: false,
+    canBeAssignedToUsers: false,
+    canBeAssignedToAgents: false,
+    canBeAssignedToApiKeys: false,
     canReadAllObjectRecords: false,
     canUpdateAllObjectRecords: false,
     canSoftDeleteAllObjectRecords: false,
     canDestroyAllObjectRecords: false,
     canUpdateAllSettings: false,
+    permissionFlags: [],
+    fieldPermissions: [],
+    rowLevelPermissionPredicates: [],
+    rowLevelPermissionPredicateGroups: [],
+    workspaceMembers: [],
+    agents: [],
+    apiKeys: [],
     objectPermissions: objects.map(({ id, nameSingular }) => ({
       objectMetadataId: id,
       canReadObjectRecords: true,
@@ -297,6 +308,61 @@ describe('installed application role verification', () => {
 
   it('accepts only the exact five-object least-privilege role', () => {
     assert.doesNotThrow(() => verifyApplicationRoleContract(role, objects));
+  });
+
+  it('fails closed when any tool, assignment, flag, field, or row capability is missing or non-empty', () => {
+    for (const key of [
+      'canAccessAllTools',
+      'canBeAssignedToUsers',
+      'canBeAssignedToAgents',
+      'canBeAssignedToApiKeys',
+      'permissionFlags',
+      'fieldPermissions',
+      'rowLevelPermissionPredicates',
+      'rowLevelPermissionPredicateGroups',
+      'workspaceMembers',
+      'agents',
+      'apiKeys',
+    ]) {
+      const missing = { ...role };
+      delete missing[key];
+      assert.throws(
+        () => verifyApplicationRoleContract(missing, objects),
+        /capability|assignment|permission|collection/i,
+      );
+      assert.throws(
+        () =>
+          verifyApplicationRoleContract(
+            {
+              ...role,
+              [key]: key.startsWith('can') ? true : [{ id: 'unexpected' }],
+            },
+            objects,
+          ),
+        /capability|assignment|permission|collection/i,
+      );
+    }
+  });
+
+  it('rejects duplicate object permissions even when the count remains five', () => {
+    assert.throws(
+      () =>
+        verifyApplicationRoleContract(
+          {
+            ...role,
+            objectPermissions: role.objectPermissions.map((permission, index) =>
+              index === 4
+                ? {
+                    ...permission,
+                    objectMetadataId: role.objectPermissions[0].objectMetadataId,
+                  }
+                : permission,
+            ),
+          },
+          objects,
+        ),
+      /unexpected|duplicate/i,
+    );
   });
 
   it('rejects a global, extra, or excessive object permission', () => {
@@ -343,5 +409,27 @@ describe('installed application role verification', () => {
         ),
       /company/i,
     );
+  });
+
+  it('queries every capability needed for fail-closed live verification', async () => {
+    const source = await fs.readFile(
+      new URL('./verify-production-install.mjs', import.meta.url),
+      'utf8',
+    );
+    for (const field of [
+      'canAccessAllTools',
+      'canBeAssignedToUsers',
+      'canBeAssignedToAgents',
+      'canBeAssignedToApiKeys',
+      'permissionFlags { id }',
+      'fieldPermissions { id }',
+      'rowLevelPermissionPredicates { id }',
+      'rowLevelPermissionPredicateGroups { id }',
+      'workspaceMembers { id }',
+      'agents { id }',
+      'apiKeys { id }',
+    ]) {
+      assert.match(source, new RegExp(field.replace(/[{}]/g, '\\$&')));
+    }
   });
 });

@@ -26,7 +26,15 @@ describe('Corgi CRM function role', () => {
       canSoftDeleteAllObjectRecords: false,
       canDestroyAllObjectRecords: false,
       canUpdateAllSettings: false,
+      canAccessAllTools: false,
+      canBeAssignedToAgents: false,
+      canBeAssignedToUsers: false,
+      canBeAssignedToApiKeys: false,
     });
+    expect(defaultRole.config.permissionFlagUniversalIdentifiers).toEqual([]);
+    expect(defaultRole.config.fieldPermissions).toEqual([]);
+    expect(defaultRole.config.rowLevelPermissionPredicates).toEqual([]);
+    expect(defaultRole.config.rowLevelPermissionPredicateGroups).toEqual([]);
   });
 
   it('reads only the five required objects and writes only app-owned activity and wholesaler data', () => {
