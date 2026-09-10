@@ -103,7 +103,9 @@ describe('CoreTelegramDeliveryRepository', () => {
 
   it('performs compare-and-set transitions with all expected fields', async () => {
     const mutation = vi.fn().mockResolvedValue({
-      updateTelegramDeliveries: [{ ...delivery, status: 'complete' }],
+      updateTelegramDeliveries: [
+        { ...delivery, status: 'complete', stateToken: 'token-2' },
+      ],
     });
     const repository = new CoreTelegramDeliveryRepository({
       mutation,
@@ -126,6 +128,52 @@ describe('CoreTelegramDeliveryRepository', () => {
           { stateToken: { eq: 'token-1' } },
         ],
       });
+  });
+
+  it.each([
+    null,
+    [],
+    [{ id: delivery.id }],
+    [{ ...delivery, id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', status: 'complete', stateToken: 'token-2' }],
+    [{ ...delivery, status: 'ready', stateToken: 'token-2' }],
+    [{ ...delivery, status: 'complete', stateToken: 'wrong-token' }],
+  ])('does not trust a malformed transition response %#', async (response) => {
+    const persisted = { ...delivery, status: 'complete', stateToken: 'token-2' };
+    const repository = new CoreTelegramDeliveryRepository({
+      mutation: vi.fn().mockResolvedValue({ updateTelegramDeliveries: response }),
+      query: vi.fn().mockResolvedValue({
+        telegramDeliveries: { edges: [{ node: persisted }] },
+      }),
+    } as never);
+    await expect(
+      repository.transition({
+        id: delivery.id,
+        expectedStatus: 'intent',
+        expectedStateToken: 'token-1',
+        patch: { status: 'complete', stateToken: 'token-2' },
+      }),
+    ).resolves.toBe(true);
+  });
+
+  it('fails a transition closed when readback has a competing fence', async () => {
+    const repository = new CoreTelegramDeliveryRepository({
+      mutation: vi.fn().mockRejectedValue(new Error('response lost')),
+      query: vi.fn().mockResolvedValue({
+        telegramDeliveries: {
+          edges: [
+            { node: { ...delivery, status: 'complete', stateToken: 'competitor' } },
+          ],
+        },
+      }),
+    } as never);
+    await expect(
+      repository.transition({
+        id: delivery.id,
+        expectedStatus: 'intent',
+        expectedStateToken: 'token-1',
+        patch: { status: 'complete', stateToken: 'token-2' },
+      }),
+    ).resolves.toBe(false);
   });
 
   it('atomically rejects a second reset grant for the same unknown generation', async () => {

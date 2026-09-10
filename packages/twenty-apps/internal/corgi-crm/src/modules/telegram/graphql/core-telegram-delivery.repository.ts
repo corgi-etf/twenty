@@ -123,6 +123,18 @@ export class CoreTelegramDeliveryRepository {
     return records[0] ?? null;
   }
 
+  private async getById(id: string): Promise<TelegramDeliveryRecord | null> {
+    const result = await this.dynamicClient.query({
+      telegramDeliveries: {
+        __args: { filter: { id: { eq: id } }, first: 2 },
+        edges: { node: deliverySelection },
+      },
+    });
+    const records = edgesFrom<TelegramDeliveryRecord>(result, 'telegramDeliveries');
+    if (records.length > 1) throw new Error('Telegram delivery ID is not unique');
+    return records[0] ?? null;
+  }
+
   public async claim(record: TelegramDeliveryRecord) {
     try {
       const result = await this.dynamicClient.mutation({
@@ -177,23 +189,44 @@ export class CoreTelegramDeliveryRepository {
     expectedStateToken: string;
     patch: Partial<TelegramDeliveryRecord>;
   }): Promise<boolean> {
-    const result = await this.dynamicClient.mutation({
-      updateTelegramDeliveries: {
-        __args: {
-          data: patch,
-          filter: {
-            and: [
-              { id: { eq: id } },
-              { status: { eq: expectedStatus } },
-              { stateToken: { eq: expectedStateToken } },
-            ],
+    if (!patch.status || !patch.stateToken) return false;
+    try {
+      const result = await this.dynamicClient.mutation({
+        updateTelegramDeliveries: {
+          __args: {
+            data: patch,
+            filter: {
+              and: [
+                { id: { eq: id } },
+                { status: { eq: expectedStatus } },
+                { stateToken: { eq: expectedStateToken } },
+              ],
+            },
           },
+          id: true,
+          status: true,
+          stateToken: true,
         },
-        id: true,
-      },
-    });
-    return Array.isArray(result.updateTelegramDeliveries) &&
-      result.updateTelegramDeliveries.length === 1;
+      });
+      const records = result.updateTelegramDeliveries;
+      if (
+        Array.isArray(records) &&
+        records.length === 1 &&
+        records[0]?.id === id &&
+        records[0]?.status === patch.status &&
+        records[0]?.stateToken === patch.stateToken
+      ) {
+        return true;
+      }
+    } catch {
+      // The update may have committed before the response was lost. Read back
+      // the exact row and only accept the caller-generated target fence.
+    }
+    const persisted = await this.getById(id);
+    return (
+      persisted?.status === patch.status &&
+      persisted.stateToken === patch.stateToken
+    );
   }
 
   public async getAudit(

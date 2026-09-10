@@ -103,7 +103,6 @@ export const handleTelegramDeliveryRetryJob = async (
       throw new Error('Telegram delivery retry is stale or replayed');
     }
     const nextState = {
-      ...state,
       status: 'retry_approved',
       updatedAt: new Date().toISOString(),
       stateToken: randomUUID(),
@@ -118,7 +117,7 @@ export const handleTelegramDeliveryRetryJob = async (
       patch: nextState,
     });
     state = approved
-      ? nextState
+      ? { ...state, ...nextState }
       : ((await dependencies.repository.get(payload.deliveryKey)) ?? state);
     if (
       state.retryRequestId !== payload.requestId ||
