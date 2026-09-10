@@ -1,4 +1,4 @@
-name: Inspect Corgi CRM outreach activity types in production
+name: Inspect Corgi CRM outreach activities in production
 
 # Read-only by construction. There is no mode input and no write step: the
 # runner it invokes builds the read adapter, which owns no mutation method.
@@ -48,7 +48,7 @@ env:
 
 jobs:
   inspect-activity-types:
-    name: Read the outreach activity type inventory
+    name: Read the outreach activity diagnostics
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -172,7 +172,7 @@ jobs:
           echo "::add-mask::${token}"
           echo "token=${token}" >> "${GITHUB_OUTPUT}"
 
-      - name: Read the outreach activity type inventory
+      - name: Read the outreach activity diagnostics
         env:
           TWENTY_API_KEY: ${{ steps.credential.outputs.token }}
         run: |
@@ -188,7 +188,7 @@ jobs:
           report="${RUNNER_TEMP}/activity-type-inventory.txt"
           [[ -s "${report}" ]] || exit 0
           {
-            echo '## Outreach activity type inventory'
+            echo '## Outreach activity diagnostics'
             echo
             echo '```text'
             cat "${report}"

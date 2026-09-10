@@ -72,9 +72,46 @@ export const formatInventoryReport = (result: {
     ...inventory.map(({ count }) => String(count).length),
   );
 
-  const lines = [
-    'Outreach activity type inventory',
-    ORIGIN,
+  const lines = ['Outreach activity diagnostics', ORIGIN, ''];
+
+  const { rowShape } = result;
+  if (rowShape) {
+    lines.push(
+      `${pad(rowShape.total, 6)} rows total`,
+      `${pad(rowShape.missingOccurredAt, 6)} have no occurredAt`,
+      `${pad(rowShape.missingWholesaler, 6)} have no wholesaler`,
+      `${pad(rowShape.missingBoth, 6)} have NEITHER a date nor an owner`,
+      '',
+      'By createdBy.source',
+      '',
+    );
+    for (const entry of rowShape.bySource) {
+      lines.push(`  ${pad(entry.count, countWidth)}  ${entry.source}`);
+    }
+    lines.push('');
+
+    if (rowShape.missingBoth > 0) {
+      lines.push(
+        '='.repeat(72),
+        `UNOWNED AND UNDATED: ${rowShape.missingBoth} row${rowShape.missingBoth === 1 ? '' : 's'}`,
+        '='.repeat(72),
+        '',
+        'These rows have neither occurredAt nor a wholesaler. That pairing is',
+        'the fingerprint of a front-end spreadsheet import: the rows exist, but',
+        'no date-windowed report can see them and every leaderboard counts them',
+        'as unassigned.',
+        '',
+        'This decides backfill versus fresh load. Read it before deciding how',
+        'any further records are brought in.',
+        '',
+      );
+    } else {
+      lines.push('Every row has both a date and an owner.', '');
+    }
+  }
+
+  lines.push(
+    'Activity type inventory',
     '',
     `${pad(summary.rows, 6)} outreach activities read`,
     `${pad(summary.alreadyBackfilledRows, 6)} already have a dropdown value (left untouched)`,
@@ -83,30 +120,12 @@ export const formatInventoryReport = (result: {
     '',
     `Distinct values: ${summary.distinctValues}`,
     '',
-  ];
+  );
 
   for (const entry of inventory) {
     lines.push(
       `  ${pad(entry.count, countWidth)}  ${entry.disposition.padEnd(10)}  ${printableValue(entry.normalizedValue)}`,
     );
-  }
-
-  if (result.rowShape) {
-    const { rowShape } = result;
-    lines.push(
-      '',
-      'Row shape',
-      '',
-      `${pad(rowShape.total, 6)} rows total`,
-      `${pad(rowShape.missingOccurredAt, 6)} have no occurredAt`,
-      `${pad(rowShape.missingWholesaler, 6)} have no wholesaler`,
-      '',
-      'By createdBy.source',
-      '',
-    );
-    for (const entry of rowShape.bySource) {
-      lines.push(`  ${pad(entry.count, countWidth)}  ${entry.source}`);
-    }
   }
 
   lines.push('');

@@ -89,8 +89,14 @@ mutation method, and there is no execute path in the runner. It prints every
 distinct `activityType` value with a count and a disposition, and calls out the
 values that need a human decision before any backfill can run. It also prints
 the plan hash, which binds an approved plan to the exact dry run it came from,
-and a row-shape summary: total rows, how many lack `occurredAt`, how many lack
-a wholesaler, and a breakdown by `createdBy.source`.
+and a row-shape summary, which the report leads with because it matters more:
+total rows, how many lack `occurredAt`, how many lack a wholesaler, how many
+lack **both**, and a breakdown by `createdBy.source`.
+
+Rows lacking both a date and an owner get their own banner. That pairing is the
+fingerprint of a front-end spreadsheet import: the rows exist, but no
+date-windowed report can see them and every leaderboard counts them as
+unassigned. It is the number that decides backfill versus fresh load.
 
 Output is written for a CI log that is not private. Only `createdBy.source` is
 read from that composite, never the actor name or id, and a free-typed activity

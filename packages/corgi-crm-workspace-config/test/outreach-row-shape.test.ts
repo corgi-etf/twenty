@@ -48,6 +48,21 @@ test('reports zeroes rather than failing on an empty workspace', () => {
     total: 0,
     missingOccurredAt: 0,
     missingWholesaler: 0,
+    missingBoth: 0,
     bySource: [],
   });
+});
+
+test('cross-tabs the rows missing both a date and an owner', () => {
+  const shape = summarizeOutreachRowShape([
+    row({ id: 'a1', occurredAt: null, wholesalerId: null }),
+    row({ id: 'a2', occurredAt: null, wholesalerId: null }),
+    row({ id: 'a3', occurredAt: null }),
+    row({ id: 'a4', wholesalerId: null }),
+    row({ id: 'a5' }),
+  ]);
+
+  assert.equal(shape.missingOccurredAt, 3);
+  assert.equal(shape.missingWholesaler, 3);
+  assert.equal(shape.missingBoth, 2);
 });

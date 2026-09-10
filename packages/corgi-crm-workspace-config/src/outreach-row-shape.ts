@@ -4,6 +4,10 @@ export type OutreachRowShape = {
   total: number;
   missingOccurredAt: number;
   missingWholesaler: number;
+  // Rows missing both are the fingerprint of a front-end spreadsheet import:
+  // they exist, but a date-windowed report cannot see them and every
+  // leaderboard shows them as unassigned.
+  missingBoth: number;
   bySource: Array<{ source: string; count: number }>;
 };
 
@@ -26,10 +30,14 @@ export const summarizeOutreachRowShape = (
   const counts = new Map<string, number>();
   let missingOccurredAt = 0;
   let missingWholesaler = 0;
+  let missingBoth = 0;
 
   for (const row of rows) {
-    if (isMissing(row.occurredAt)) missingOccurredAt += 1;
-    if (isMissing(row.wholesalerId)) missingWholesaler += 1;
+    const noDate = isMissing(row.occurredAt);
+    const noOwner = isMissing(row.wholesalerId);
+    if (noDate) missingOccurredAt += 1;
+    if (noOwner) missingWholesaler += 1;
+    if (noDate && noOwner) missingBoth += 1;
     const source = sourceOf(row);
     counts.set(source, (counts.get(source) ?? 0) + 1);
   }
@@ -38,6 +46,7 @@ export const summarizeOutreachRowShape = (
     total: rows.length,
     missingOccurredAt,
     missingWholesaler,
+    missingBoth,
     bySource: [...counts]
       .map(([source, count]) => ({ source, count }))
       .sort(

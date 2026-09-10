@@ -99,6 +99,7 @@ test('reports the row shape that decides backfill versus fresh load', () => {
       total: 986,
       missingOccurredAt: 63,
       missingWholesaler: 0,
+      missingBoth: 0,
       bySource: [
         { source: 'IMPORT', count: 900 },
         { source: 'MANUAL', count: 86 },
@@ -120,4 +121,59 @@ test('caps a free-typed value before it reaches a CI log', () => {
 
   assert.doesNotMatch(report, new RegExp('a{100}'));
   assert.match(report, /\.\.\. \(truncated\)/);
+});
+
+test('makes an unowned and undated block impossible to skim past', () => {
+  const report = formatInventoryReport({
+    ...result([]),
+    rowShape: {
+      total: 986,
+      missingOccurredAt: 63,
+      missingWholesaler: 63,
+      missingBoth: 63,
+      bySource: [{ source: 'IMPORT', count: 986 }],
+    },
+  });
+
+  assert.match(report, /UNOWNED AND UNDATED: 63 rows/);
+  assert.match(report, /={72}/);
+  assert.match(report, /63 have NEITHER a date nor an owner/);
+  assert.match(report, /fingerprint of a front-end spreadsheet import/);
+  assert.match(report, /decides backfill versus fresh load/);
+});
+
+test('says so plainly when every row has a date and an owner', () => {
+  const report = formatInventoryReport({
+    ...result([]),
+    rowShape: {
+      total: 986,
+      missingOccurredAt: 0,
+      missingWholesaler: 0,
+      missingBoth: 0,
+      bySource: [],
+    },
+  });
+
+  assert.match(report, /Every row has both a date and an owner/);
+  assert.doesNotMatch(report, /UNOWNED AND UNDATED/);
+});
+
+test('leads with the row shape, not the type inventory', () => {
+  const report = formatInventoryReport({
+    ...result([
+      { normalizedValue: 'phone_call', count: 900, disposition: 'canonical' },
+    ]),
+    rowShape: {
+      total: 986,
+      missingOccurredAt: 63,
+      missingWholesaler: 63,
+      missingBoth: 63,
+      bySource: [],
+    },
+  });
+
+  assert.ok(
+    report.indexOf('UNOWNED AND UNDATED') <
+      report.indexOf('Activity type inventory'),
+  );
 });
