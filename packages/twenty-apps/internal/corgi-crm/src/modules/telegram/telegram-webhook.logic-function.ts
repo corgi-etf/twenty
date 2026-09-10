@@ -11,6 +11,7 @@ import {
   TELEGRAM_WEBHOOK_UNIVERSAL_IDENTIFIER,
 } from 'src/constants';
 import { enqueueTelegramUpdateOnce } from 'src/modules/telegram/services/telegram-delivery.service';
+import { parseTelegramGroupTopics } from 'src/modules/telegram/services/telegram-group-topics.service';
 import {
   assertTelegramWebhookSecret,
   parseTelegramUpdate,
@@ -24,11 +25,26 @@ type WebhookDependencies = {
   expectedWorkspaceId: string;
   enabled: string | undefined;
   webhookSecret: string | undefined;
+  groupTopicsJson: string | undefined;
   store: KeyValueStore;
   enqueue(
     payload: ParsedTelegramUpdate,
     jobId: string,
   ): Promise<unknown>;
+};
+
+// A malformed allowlist must not take private chats down with it, and a non-2xx
+// here would make Telegram retry every update forever. Refuse every group
+// instead and leave the configuration error in the logs.
+const readAllowedGroupTopics = (groupTopicsJson: string | undefined) => {
+  try {
+    return parseTelegramGroupTopics(groupTopicsJson);
+  } catch {
+    console.error(
+      JSON.stringify({ event: 'telegram_group_topic_configuration_invalid' }),
+    );
+    return [];
+  }
 };
 
 export const handleTelegramWebhook = async (
@@ -56,7 +72,10 @@ export const handleTelegramWebhook = async (
 
   let update;
   try {
-    update = parseTelegramUpdate(payload.body);
+    update = parseTelegramUpdate(
+      payload.body,
+      readAllowedGroupTopics(dependencies.groupTopicsJson),
+    );
   } catch {
     // An update Telegram itself sent (a sticker, a group message, a bot
     // sender) but that this bot does not handle is not a delivery failure.
@@ -87,6 +106,7 @@ export const handler = async (
     expectedWorkspaceId: process.env.CORGI_CRM_WORKSPACE_ID?.trim() ?? '',
     enabled: process.env.CORGI_CRM_TELEGRAM_ENABLED,
     webhookSecret: process.env.CORGI_CRM_TELEGRAM_WEBHOOK_SECRET,
+    groupTopicsJson: process.env.CORGI_CRM_TELEGRAM_GROUP_TOPICS,
     store: kv,
     enqueue: (jobPayload, jobId) =>
       enqueueJob({
