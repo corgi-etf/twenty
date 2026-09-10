@@ -6,8 +6,11 @@ import {
   assertTerritoryIdentityArtifact,
   buildActivityImportPlan,
   deterministicActivityId,
+  deterministicCompletedActivityId,
   parseActivityCsv,
   type ActivityImportCsvOptions,
+  type CanonicalActivityOutcome,
+  type CompletedActivityType,
   type OutreachActivityRecord,
 } from '../src/importer.ts';
 
@@ -37,11 +40,63 @@ const source = Buffer.from(
 );
 
 const options = (overrides: Partial<ActivityImportCsvOptions> = {}) => ({
+  sourceFormat: 'legacy-nash-outreach-v1' as const,
+  ownerLabel: 'Nash' as const,
   sourceSha256: createHash('sha256').update(source).digest('hex'),
+  provenanceSha256: createHash('sha256').update(source).digest('hex'),
   expectedRows: 2,
   activityDate: '2026-09-09',
   timeZone: 'America/Chicago',
   importId: 'nash-calls-2026-09-09',
+  ...overrides,
+});
+
+const completedColumns = [
+  ['7', '1', 'Acme, Inc.', 'phone_call', 'left_voicemail', 'Try again'],
+  ['7', '2', 'Acme, Inc.', 'email', 'other', 'Sent recap'],
+] as const;
+const completedSource = Buffer.from(
+  '7,1,"Acme, Inc.",phone_call,left_voicemail,Try again\n' +
+    '7,2,"Acme, Inc.",email,other,Sent recap\n',
+);
+const rowSequenceSha256For = (
+  columns: readonly (readonly string[])[],
+): string =>
+  createHash('sha256')
+    .update(
+      columns
+        .map((row) =>
+          createHash('sha256').update(JSON.stringify(row)).digest('hex'),
+        )
+        .join('\n'),
+    )
+    .digest('hex');
+const completedRowSequenceSha256 = rowSequenceSha256For(completedColumns);
+const completedNormalizationReceipt = {
+  schemaVersion: 1 as const,
+  sourceFormat: 'completed-actions-v2' as const,
+  sourceDocumentSha256: 'a'.repeat(64),
+  normalizedCsvSha256: createHash('sha256')
+    .update(completedSource)
+    .digest('hex'),
+  rowSequenceSha256: completedRowSequenceSha256,
+  sourceRowCount: 7,
+  activityCount: 2,
+  phoneCallCount: 1,
+  voicemailCount: 1,
+  emailCount: 1,
+};
+const completedOptions = (overrides = {}) => ({
+  sourceFormat: 'completed-actions-v2' as const,
+  ownerLabel: 'Grace' as const,
+  sourceSha256: createHash('sha256').update(completedSource).digest('hex'),
+  provenanceSha256: 'a'.repeat(64),
+  expectedRowSequenceSha256: completedRowSequenceSha256,
+  expectedRows: 2,
+  activityDate: '2026-09-09',
+  timeZone: 'America/Chicago',
+  importId: 'completed-actions-2026-09-09',
+  normalizationReceipt: completedNormalizationReceipt,
   ...overrides,
 });
 
@@ -82,9 +137,122 @@ test('parses quoted multiline headerless rows and preserves blank activities', (
   ]);
 });
 
+test('parses completed action rows with exact provenance and row hashes', () => {
+  assert.deepEqual(parseActivityCsv(completedSource, completedOptions()), [
+    {
+      rowNumber: 1,
+      sourceRowNumber: 7,
+      actionOrdinal: 1,
+      companyName: 'Acme, Inc.',
+      activityType: 'phone_call',
+      outcome: 'left_voicemail',
+      notes: 'Try again',
+      occurredAt: '2026-09-09T17:00:00.000Z',
+    },
+    {
+      rowNumber: 2,
+      sourceRowNumber: 7,
+      actionOrdinal: 2,
+      companyName: 'Acme, Inc.',
+      activityType: 'email',
+      outcome: 'other',
+      notes: 'Sent recap',
+      occurredAt: '2026-09-09T17:00:00.000Z',
+    },
+  ]);
+
+  assert.throws(
+    () =>
+      parseActivityCsv(
+        completedSource,
+        completedOptions({
+          expectedRowSequenceSha256: '0'.repeat(64),
+          normalizationReceipt: {
+            ...completedNormalizationReceipt,
+            rowSequenceSha256: '0'.repeat(64),
+          },
+        }),
+      ),
+    /row sequence SHA-256 mismatch/,
+  );
+  assert.throws(
+    () =>
+      parseActivityCsv(
+        completedSource,
+        completedOptions({ provenanceSha256: 'invalid' }),
+      ),
+    /provenance SHA-256 is invalid/,
+  );
+});
+
+const compatibilityMatrix: Readonly<
+  Record<CompletedActivityType, ReadonlySet<CanonicalActivityOutcome>>
+> = {
+  phone_call: new Set(['left_voicemail', 'no_response', 'connected', 'other']),
+  email: new Set([
+    'no_response',
+    'follow_up_scheduled',
+    'not_interested',
+    'other',
+  ]),
+};
+for (const activityType of ['phone_call', 'email'] as const) {
+  for (const outcome of [
+    'left_voicemail',
+    'no_response',
+    'connected',
+    'follow_up_scheduled',
+    'not_interested',
+    'other',
+  ] as const) {
+    const allowed = compatibilityMatrix[activityType].has(outcome);
+    test(`parser ${allowed ? 'allows' : 'rejects'} ${activityType} + ${outcome}`, () => {
+      const columns = [
+        ['7', '1', 'Acme', activityType, outcome, 'Synthetic note'],
+      ] as const;
+      const pairSource = Buffer.from(
+        `7,1,Acme,${activityType},${outcome},Synthetic note\n`,
+      );
+      const pairSourceSha256 = createHash('sha256')
+        .update(pairSource)
+        .digest('hex');
+      const pairRowSequenceSha256 = rowSequenceSha256For(columns);
+      const parsePair = () =>
+        parseActivityCsv(pairSource, {
+          ...completedOptions(),
+          sourceSha256: pairSourceSha256,
+          expectedRowSequenceSha256: pairRowSequenceSha256,
+          expectedRows: 1,
+          normalizationReceipt: {
+            ...completedNormalizationReceipt,
+            normalizedCsvSha256: pairSourceSha256,
+            rowSequenceSha256: pairRowSequenceSha256,
+            activityCount: 1,
+            phoneCallCount: activityType === 'phone_call' ? 1 : 0,
+            voicemailCount:
+              activityType === 'phone_call' && outcome === 'left_voicemail'
+                ? 1
+                : 0,
+            emailCount: activityType === 'email' ? 1 : 0,
+          },
+        });
+
+      if (allowed) assert.doesNotThrow(parsePair);
+      else assert.throws(parsePair, /incompatible activity type and outcome/);
+    });
+  }
+}
+
 test('rejects a changed source, wrong row count, malformed width, and invalid timezone', () => {
   assert.throws(
-    () => parseActivityCsv(source, options({ sourceSha256: '0'.repeat(64) })),
+    () =>
+      parseActivityCsv(
+        source,
+        options({
+          sourceSha256: '0'.repeat(64),
+          provenanceSha256: '0'.repeat(64),
+        }),
+      ),
     /source SHA-256 mismatch/,
   );
   assert.throws(
@@ -97,6 +265,7 @@ test('rejects a changed source, wrong row count, malformed width, and invalid ti
       parseActivityCsv(malformed, {
         ...options(),
         sourceSha256: createHash('sha256').update(malformed).digest('hex'),
+        provenanceSha256: createHash('sha256').update(malformed).digest('hex'),
         expectedRows: 1,
       }),
     /exactly 10 columns/,
@@ -124,6 +293,7 @@ test('validates the immutable territory identity artifact and detects tampering'
 
 test('derives stable distinct RFC 4122 version 5 IDs from import ID and row', () => {
   const first = deterministicActivityId(options().importId, 1);
+  assert.equal(first, '3e048693-e9aa-59de-8fe4-d90263d8e00b');
   assert.equal(first, deterministicActivityId(options().importId, 1));
   assert.notEqual(first, deterministicActivityId(options().importId, 2));
   assert.notEqual(first, deterministicActivityId('another-import', 1));
@@ -178,6 +348,216 @@ test('plans one call per row with exact company and Nash ownership only', () => 
   });
   assert.equal(plan.activities[1]?.record.contactId, null);
   assert.ok(!('outcome' in plan.activities[0]!.record));
+});
+
+test('plans canonical completed actions for one explicitly selected owner', () => {
+  const rows = parseActivityCsv(completedSource, completedOptions());
+  const plan = buildActivityImportPlan({
+    rows,
+    csvOptions: completedOptions(),
+    identityArtifact,
+    companies: [{ id: uuid('4'), name: 'Acme, Inc.' }],
+    wholesalers: [
+      { id: uuid('6'), workspaceMemberId: identities.Nash },
+      { id: uuid('7'), workspaceMemberId: identities.Grace },
+      { id: uuid('8'), workspaceMemberId: identities.Kelly },
+    ],
+    people: [],
+    existingActivities: [],
+  });
+
+  assert.deepEqual(
+    plan.activities.map(({ record }) => record),
+    [
+      {
+        id: deterministicCompletedActivityId({
+          provenanceSha256: 'a'.repeat(64),
+          ownerWorkspaceMemberId: identities.Grace,
+          sourceRowNumber: 7,
+          actionOrdinal: 1,
+          activityType: 'phone_call',
+          outcome: 'left_voicemail',
+        }),
+        name: 'Phone call · Left voicemail',
+        companyId: uuid('4'),
+        wholesalerId: uuid('7'),
+        activityType: 'phone_call',
+        outcome: 'left_voicemail',
+        occurredAt: '2026-09-09T17:00:00.000Z',
+        notes: 'Try again',
+        contactId: null,
+      },
+      {
+        id: deterministicCompletedActivityId({
+          provenanceSha256: 'a'.repeat(64),
+          ownerWorkspaceMemberId: identities.Grace,
+          sourceRowNumber: 7,
+          actionOrdinal: 2,
+          activityType: 'email',
+          outcome: 'other',
+        }),
+        name: 'Email · Other',
+        companyId: uuid('4'),
+        wholesalerId: uuid('7'),
+        activityType: 'email',
+        outcome: 'other',
+        occurredAt: '2026-09-09T17:00:00.000Z',
+        notes: 'Sent recap',
+        contactId: null,
+      },
+    ],
+  );
+  assert.equal(plan.manifest.ownerLabel, 'Grace');
+  assert.equal(plan.manifest.provenanceSha256, 'a'.repeat(64));
+  assert.equal(plan.manifest.rowSequenceSha256, completedRowSequenceSha256);
+  assert.deepEqual(
+    plan.manifest.normalizationReceipt,
+    completedNormalizationReceipt,
+  );
+});
+
+test('v2 IDs bind immutable source position and reject semantic drift as a collision', () => {
+  const buildCompletedPlan = (
+    csvOptions = completedOptions(),
+    existingActivities: OutreachActivityRecord[] = [],
+  ) =>
+    buildActivityImportPlan({
+      rows: parseActivityCsv(completedSource, csvOptions),
+      csvOptions,
+      identityArtifact,
+      companies: [{ id: uuid('4'), name: 'Acme, Inc.' }],
+      wholesalers: [
+        { id: uuid('7'), workspaceMemberId: identities.Grace },
+        { id: uuid('8'), workspaceMemberId: identities.Kelly },
+      ],
+      people: [],
+      existingActivities,
+    });
+  const first = buildCompletedPlan();
+  const renamedImport = completedOptions({
+    importId: 'operator-renamed-import',
+  });
+  const second = buildCompletedPlan(
+    renamedImport,
+    first.activities.map(({ record }) => record),
+  );
+  assert.deepEqual(
+    second.activities.map(({ record }) => record.id),
+    first.activities.map(({ record }) => record.id),
+  );
+  assert.deepEqual(
+    second.activities.map(({ state }) => state),
+    ['existing', 'existing'],
+  );
+
+  assert.equal(
+    deterministicCompletedActivityId({
+      provenanceSha256: 'a'.repeat(64),
+      ownerWorkspaceMemberId: identities.Grace,
+      sourceRowNumber: 7,
+      actionOrdinal: 2,
+      activityType: 'email',
+      outcome: 'other',
+    }),
+    deterministicCompletedActivityId({
+      provenanceSha256: 'a'.repeat(64),
+      ownerWorkspaceMemberId: identities.Grace,
+      sourceRowNumber: 7,
+      actionOrdinal: 2,
+      activityType: 'phone_call',
+      outcome: 'no_response',
+    }),
+  );
+
+  const driftColumns = [
+    ['7', '1', 'Acme, Inc.', 'phone_call', 'left_voicemail', 'Try again'],
+    ['7', '2', 'Acme, Inc.', 'phone_call', 'no_response', 'Sent recap'],
+  ] as const;
+  const driftSource = Buffer.from(
+    '7,1,"Acme, Inc.",phone_call,left_voicemail,Try again\n' +
+      '7,2,"Acme, Inc.",phone_call,no_response,Sent recap\n',
+  );
+  const driftSourceSha256 = createHash('sha256')
+    .update(driftSource)
+    .digest('hex');
+  const driftRowSequenceSha256 = rowSequenceSha256For(driftColumns);
+  const driftOptions = completedOptions({
+    sourceSha256: driftSourceSha256,
+    expectedRowSequenceSha256: driftRowSequenceSha256,
+    normalizationReceipt: {
+      ...completedNormalizationReceipt,
+      normalizedCsvSha256: driftSourceSha256,
+      rowSequenceSha256: driftRowSequenceSha256,
+      phoneCallCount: 2,
+      emailCount: 0,
+    },
+  });
+  assert.throws(
+    () =>
+      buildActivityImportPlan({
+        rows: parseActivityCsv(driftSource, driftOptions),
+        csvOptions: driftOptions,
+        identityArtifact,
+        companies: [{ id: uuid('4'), name: 'Acme, Inc.' }],
+        wholesalers: [{ id: uuid('7'), workspaceMemberId: identities.Grace }],
+        people: [],
+        existingActivities: first.activities.map(({ record }) => record),
+      }),
+    /deterministic activity ID collision/,
+  );
+
+  const changedOwner = buildCompletedPlan(
+    completedOptions({ ownerLabel: 'Kelly' as const }),
+  );
+  assert.notDeepEqual(
+    changedOwner.activities.map(({ record }) => record.id),
+    first.activities.map(({ record }) => record.id),
+  );
+
+  const changedProvenance = 'b'.repeat(64);
+  const changedSourceDocument = buildCompletedPlan(
+    completedOptions({
+      provenanceSha256: changedProvenance,
+      normalizationReceipt: {
+        ...completedNormalizationReceipt,
+        sourceDocumentSha256: changedProvenance,
+      },
+    }),
+  );
+  assert.notDeepEqual(
+    changedSourceDocument.activities.map(({ record }) => record.id),
+    first.activities.map(({ record }) => record.id),
+  );
+});
+
+test('legacy source remains Nash-only and every owner must resolve uniquely', () => {
+  assert.throws(
+    () => parseActivityCsv(source, options({ ownerLabel: 'Grace' as never })),
+    /legacy source owner must be Nash/,
+  );
+  assert.throws(
+    () =>
+      buildActivityImportPlan({
+        ...planInput(),
+        csvOptions: options({ ownerLabel: 'Kelly' as never }),
+      }),
+    /legacy source owner must be Nash/,
+  );
+
+  const rows = parseActivityCsv(completedSource, completedOptions());
+  assert.throws(
+    () =>
+      buildActivityImportPlan({
+        rows,
+        csvOptions: completedOptions(),
+        identityArtifact,
+        companies: [{ id: uuid('4'), name: 'Acme, Inc.' }],
+        wholesalers: [],
+        people: [],
+        existingActivities: [],
+      }),
+    /Grace must match exactly one wholesaler/,
+  );
 });
 
 test('sets contact null when evidence is missing, ambiguous, or cross-company', () => {
@@ -258,6 +638,8 @@ test('emits a stable PII-free manifest', () => {
   assert.doesNotMatch(serialized, /Acme|Beta|voicemail|555|a@example/);
   for (const hash of [
     manifest.sourceSha256,
+    manifest.provenanceSha256,
+    manifest.rowSequenceSha256,
     manifest.importIdHash,
     manifest.activityIdSetHash,
     manifest.planHash,

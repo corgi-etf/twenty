@@ -26,7 +26,10 @@ const identityArtifact = {
 };
 const source = Buffer.from('Acme,,,,,,,Reached them,,\nBeta,,,,,,,,,\n');
 const csvOptions = {
+  sourceFormat: 'legacy-nash-outreach-v1' as const,
+  ownerLabel: 'Nash' as const,
   sourceSha256: createHash('sha256').update(source).digest('hex'),
+  provenanceSha256: createHash('sha256').update(source).digest('hex'),
   expectedRows: 2,
   activityDate: '2026-09-09',
   timeZone: 'America/Chicago',

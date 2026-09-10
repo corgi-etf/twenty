@@ -15,13 +15,61 @@ on:
         description: Exact 40-character SHA currently deployed to both CRM services
         required: true
         type: string
-      source_sha256:
-        description: SHA-256 of the raw headerless CSV stored in the production environment secret
+      source_format:
+        description: Versioned normalized CSV contract
         required: true
+        default: legacy-nash-outreach-v1
+        type: choice
+        options:
+          - legacy-nash-outreach-v1
+          - completed-actions-v2
+      owner_label:
+        description: Explicit activity owner from the authenticated identity artifact
+        required: true
+        default: select-owner
+        type: choice
+        options:
+          - select-owner
+          - Grace
+          - Kelly
+          - Nash
+      source_sha256:
+        description: SHA-256 of the normalized CSV stored in the production environment secret
+        required: true
+        type: string
+      provenance_sha256:
+        description: Original-document SHA-256; leave blank only for legacy CSV where it equals source_sha256
+        required: false
+        default: ''
+        type: string
+      expected_row_sequence_sha256:
+        description: Exact normalized logical-row sequence hash; required for completed-actions-v2
+        required: false
+        default: ''
         type: string
       expected_rows:
         description: Exact logical CSV row count
         required: true
+        type: number
+      expected_source_rows:
+        description: Original worksheet row count; required for completed-actions-v2 and zero for legacy
+        required: false
+        default: 0
+        type: number
+      expected_phone_calls:
+        description: Completed phone call count; required for completed-actions-v2 and zero for legacy
+        required: false
+        default: 0
+        type: number
+      expected_voicemails:
+        description: Completed voicemail count; required for completed-actions-v2 and zero for legacy
+        required: false
+        default: 0
+        type: number
+      expected_emails:
+        description: Completed email count; required for completed-actions-v2 and zero for legacy
+        required: false
+        default: 0
         type: number
       activity_date:
         description: Activity date in YYYY-MM-DD form
@@ -32,7 +80,7 @@ on:
         required: true
         type: string
       import_id:
-        description: Stable non-PII idempotency key for this source import
+        description: Non-PII audit label; also the legacy-v1 idempotency key
         required: true
         type: string
       identity_discovery_run_id:
@@ -102,8 +150,16 @@ jobs:
         env:
           MODE: ${{ inputs.mode }}
           DEPLOYED_SHA: ${{ inputs.deployed_sha }}
+          SOURCE_FORMAT: ${{ inputs.source_format }}
+          OWNER_LABEL: ${{ inputs.owner_label }}
           SOURCE_SHA256: ${{ inputs.source_sha256 }}
+          PROVENANCE_SHA256: ${{ inputs.provenance_sha256 }}
+          EXPECTED_ROW_SEQUENCE_SHA256: ${{ inputs.expected_row_sequence_sha256 }}
           EXPECTED_ROWS: ${{ inputs.expected_rows }}
+          EXPECTED_SOURCE_ROWS: ${{ inputs.expected_source_rows }}
+          EXPECTED_PHONE_CALLS: ${{ inputs.expected_phone_calls }}
+          EXPECTED_VOICEMAILS: ${{ inputs.expected_voicemails }}
+          EXPECTED_EMAILS: ${{ inputs.expected_emails }}
           ACTIVITY_DATE: ${{ inputs.activity_date }}
           TIME_ZONE: ${{ inputs.time_zone }}
           IMPORT_ID: ${{ inputs.import_id }}
@@ -119,7 +175,27 @@ jobs:
           [[ "${DEPLOYED_SHA}" =~ ^[0-9a-f]{40}$ ]]
           [[ "${DEPLOYED_SHA}" == "${GITHUB_SHA}" ]]
           git cat-file -e "${DEPLOYED_SHA}^{commit}"
+          [[ "${SOURCE_FORMAT}" == "legacy-nash-outreach-v1" || "${SOURCE_FORMAT}" == "completed-actions-v2" ]]
+          [[ "${OWNER_LABEL}" == "Grace" || "${OWNER_LABEL}" == "Kelly" || "${OWNER_LABEL}" == "Nash" ]]
           [[ "${SOURCE_SHA256}" =~ ^[0-9a-f]{64}$ ]]
+          if [[ "${SOURCE_FORMAT}" == "legacy-nash-outreach-v1" ]]; then
+            [[ "${OWNER_LABEL}" == "Nash" ]]
+            [[ -z "${PROVENANCE_SHA256}" || "${PROVENANCE_SHA256}" == "${SOURCE_SHA256}" ]]
+            [[ -z "${EXPECTED_ROW_SEQUENCE_SHA256}" || "${EXPECTED_ROW_SEQUENCE_SHA256}" =~ ^[0-9a-f]{64}$ ]]
+            [[ "${EXPECTED_SOURCE_ROWS}" == "0" ]]
+            [[ "${EXPECTED_PHONE_CALLS}" == "0" ]]
+            [[ "${EXPECTED_VOICEMAILS}" == "0" ]]
+            [[ "${EXPECTED_EMAILS}" == "0" ]]
+          else
+            [[ "${PROVENANCE_SHA256}" =~ ^[0-9a-f]{64}$ ]]
+            [[ "${EXPECTED_ROW_SEQUENCE_SHA256}" =~ ^[0-9a-f]{64}$ ]]
+            [[ "${EXPECTED_SOURCE_ROWS}" =~ ^[1-9][0-9]*$ ]]
+            [[ "${EXPECTED_PHONE_CALLS}" =~ ^[0-9]+$ ]]
+            [[ "${EXPECTED_VOICEMAILS}" =~ ^[0-9]+$ ]]
+            [[ "${EXPECTED_EMAILS}" =~ ^[0-9]+$ ]]
+            (( EXPECTED_PHONE_CALLS + EXPECTED_EMAILS == EXPECTED_ROWS ))
+            (( EXPECTED_VOICEMAILS <= EXPECTED_PHONE_CALLS ))
+          fi
           [[ "${EXPECTED_ROWS}" =~ ^[1-9][0-9]*$ ]]
           [[ "${ACTIVITY_DATE}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]
           [[ "${TIME_ZONE}" =~ ^[A-Za-z0-9_+-]+(/[A-Za-z0-9_+-]+)+$ ]]
@@ -130,14 +206,37 @@ jobs:
           if [[ "${MODE}" == "apply" ]]; then
             [[ "${CONFIRMATION}" == "IMPORT_CRM_OUTREACH_ACTIVITIES" ]]
             jq -e '
-              .schemaVersion == 1 and
-              ([.sourceSha256, .importIdHash, .activityIdSetHash, .planHash] |
+              .schemaVersion == 2 and
+              (.sourceFormat == "legacy-nash-outreach-v1" or .sourceFormat == "completed-actions-v2") and
+              (.ownerLabel == "Grace" or .ownerLabel == "Kelly" or .ownerLabel == "Nash") and
+              ([.sourceSha256, .provenanceSha256, .rowSequenceSha256, .importIdHash, .activityIdSetHash, .planHash] |
                 all(type == "string" and test("^[a-f0-9]{64}$"))) and
               ([.expectedRows, .rowCount, .blankNoteCount, .distinctCompanyCount] |
                 all(type == "number" and . >= 0 and floor == .)) and
               .expectedRows == .rowCount and
               (.activityDate | type == "string") and
-              (.timeZone | type == "string" and length > 0)
+              (.timeZone | type == "string" and length > 0) and
+              (if .sourceFormat == "legacy-nash-outreach-v1" then
+                .ownerLabel == "Nash" and
+                .provenanceSha256 == .sourceSha256 and
+                .normalizationReceipt == null
+              else
+                (.normalizationReceipt |
+                  .schemaVersion == 1 and
+                  .sourceFormat == "completed-actions-v2" and
+                  ([.sourceDocumentSha256, .normalizedCsvSha256, .rowSequenceSha256] |
+                    all(type == "string" and test("^[a-f0-9]{64}$"))) and
+                  ([.sourceRowCount, .activityCount, .phoneCallCount, .voicemailCount, .emailCount] |
+                    all(type == "number" and . >= 0 and floor == .)) and
+                  .sourceRowCount > 0 and
+                  .activityCount > 0 and
+                  .phoneCallCount + .emailCount == .activityCount and
+                  .voicemailCount <= .phoneCallCount) and
+                .normalizationReceipt.sourceDocumentSha256 == .provenanceSha256 and
+                .normalizationReceipt.normalizedCsvSha256 == .sourceSha256 and
+                .normalizationReceipt.rowSequenceSha256 == .rowSequenceSha256 and
+                .normalizationReceipt.activityCount == .rowCount
+              end)
             ' <<< "${EXPECTED_MANIFEST}" >/dev/null
           else
             [[ -z "${CONFIRMATION}" ]]
@@ -200,7 +299,7 @@ jobs:
             )] | length == 1
           ' "${artifacts_json}" >/dev/null
 
-      - name: Download authenticated Nash identity mapping
+      - name: Download authenticated territory identity mapping
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: crm-territory-member-identities-${{ inputs.identity_discovery_run_id }}-${{ inputs.identity_discovery_attempt }}
@@ -284,7 +383,7 @@ jobs:
           assert_stable_service_tasks "${SERVER_SERVICE}" "${SERVER_CONTAINER}"
           assert_stable_service_tasks "${WORKER_SERVICE}" "${WORKER_CONTAINER}"
 
-      - name: Materialize the encrypted CSV only under RUNNER_TEMP
+      - name: Materialize the encrypted normalized action CSV only under RUNNER_TEMP
         shell: bash
         env:
           CSV_BASE64: ${{ secrets.CRM_ACTIVITY_IMPORT_CSV_BASE64 }}
@@ -310,12 +409,20 @@ jobs:
           CRM_E2E_WORKSPACE_NAME: ${{ secrets.CRM_E2E_WORKSPACE_NAME }}
           CRM_ACTIVITY_IMPORT_ENABLED: 'true'
           CRM_ACTIVITY_IMPORT_MODE: ${{ inputs.mode }}
+          CRM_ACTIVITY_IMPORT_SOURCE_FORMAT: ${{ inputs.source_format }}
+          CRM_ACTIVITY_IMPORT_OWNER_LABEL: ${{ inputs.owner_label }}
           CRM_ACTIVITY_IMPORT_SOURCE_PATH: ${{ runner.temp }}/crm-activity-import/private/source/activities.csv
           CRM_ACTIVITY_IMPORT_IDENTITY_PATH: ${{ runner.temp }}/crm-activity-import/private/identity/workspace-member-identities.json
           CRM_ACTIVITY_IMPORT_CHECKPOINT_PATH: ${{ runner.temp }}/crm-activity-import/output/activity-import-checkpoint.json
           CRM_ACTIVITY_IMPORT_RESULT_PATH: ${{ runner.temp }}/crm-activity-import/output/activity-import-result.json
           CRM_ACTIVITY_IMPORT_SOURCE_SHA256: ${{ inputs.source_sha256 }}
+          CRM_ACTIVITY_IMPORT_PROVENANCE_SHA256: ${{ inputs.provenance_sha256 || inputs.source_sha256 }}
+          CRM_ACTIVITY_IMPORT_EXPECTED_ROW_SEQUENCE_SHA256: ${{ inputs.expected_row_sequence_sha256 }}
           CRM_ACTIVITY_IMPORT_EXPECTED_ROWS: ${{ inputs.expected_rows }}
+          CRM_ACTIVITY_IMPORT_EXPECTED_SOURCE_ROWS: ${{ inputs.expected_source_rows }}
+          CRM_ACTIVITY_IMPORT_EXPECTED_PHONE_CALLS: ${{ inputs.expected_phone_calls }}
+          CRM_ACTIVITY_IMPORT_EXPECTED_VOICEMAILS: ${{ inputs.expected_voicemails }}
+          CRM_ACTIVITY_IMPORT_EXPECTED_EMAILS: ${{ inputs.expected_emails }}
           CRM_ACTIVITY_IMPORT_DATE: ${{ inputs.activity_date }}
           CRM_ACTIVITY_IMPORT_TIME_ZONE: ${{ inputs.time_zone }}
           CRM_ACTIVITY_IMPORT_ID: ${{ inputs.import_id }}

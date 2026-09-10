@@ -12,14 +12,101 @@ import {
 
 const HASH_PATTERN = /^[a-f0-9]{64}$/;
 
+const exactKeys = (value: unknown, keys: readonly string[]): boolean =>
+  value !== null &&
+  typeof value === 'object' &&
+  !Array.isArray(value) &&
+  Object.keys(value as Record<string, unknown>)
+    .sort()
+    .join(',') === [...keys].sort().join(',');
+
+const stableStringify = (value: unknown): string => {
+  if (Array.isArray(value)) return `[${value.map(stableStringify).join(',')}]`;
+  if (value !== null && typeof value === 'object') {
+    return `{${Object.entries(value as Record<string, unknown>)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, entry]) => `${JSON.stringify(key)}:${stableStringify(entry)}`)
+      .join(',')}}`;
+  }
+
+  return JSON.stringify(value);
+};
+
+const validNormalizationReceipt = (
+  manifest: ActivityImportManifest,
+): boolean => {
+  const receipt = manifest.normalizationReceipt;
+  if (manifest.sourceFormat === 'legacy-nash-outreach-v1') {
+    return receipt === null;
+  }
+
+  return (
+    exactKeys(receipt, [
+      'schemaVersion',
+      'sourceFormat',
+      'sourceDocumentSha256',
+      'normalizedCsvSha256',
+      'rowSequenceSha256',
+      'sourceRowCount',
+      'activityCount',
+      'phoneCallCount',
+      'voicemailCount',
+      'emailCount',
+    ]) &&
+    receipt?.schemaVersion === 1 &&
+    receipt.sourceFormat === 'completed-actions-v2' &&
+    receipt.sourceDocumentSha256 === manifest.provenanceSha256 &&
+    receipt.normalizedCsvSha256 === manifest.sourceSha256 &&
+    receipt.rowSequenceSha256 === manifest.rowSequenceSha256 &&
+    [
+      receipt.sourceRowCount,
+      receipt.activityCount,
+      receipt.phoneCallCount,
+      receipt.voicemailCount,
+      receipt.emailCount,
+    ].every((count) => Number.isSafeInteger(count) && count >= 0) &&
+    receipt.sourceRowCount > 0 &&
+    receipt.activityCount === manifest.rowCount &&
+    receipt.phoneCallCount + receipt.emailCount === receipt.activityCount &&
+    receipt.voicemailCount <= receipt.phoneCallCount
+  );
+};
+
 export const assertActivityImportManifest = (
   value: unknown,
 ): ActivityImportManifest => {
   const manifest = value as ActivityImportManifest;
   if (
-    manifest?.schemaVersion !== 1 ||
+    !exactKeys(manifest, [
+      'schemaVersion',
+      'sourceFormat',
+      'ownerLabel',
+      'sourceSha256',
+      'provenanceSha256',
+      'rowSequenceSha256',
+      'importIdHash',
+      'expectedRows',
+      'activityDate',
+      'timeZone',
+      'rowCount',
+      'blankNoteCount',
+      'distinctCompanyCount',
+      'activityIdSetHash',
+      'planHash',
+      'normalizationReceipt',
+    ]) ||
+    manifest?.schemaVersion !== 2 ||
+    !['legacy-nash-outreach-v1', 'completed-actions-v2'].includes(
+      manifest.sourceFormat,
+    ) ||
+    !['Grace', 'Kelly', 'Nash'].includes(manifest.ownerLabel) ||
+    (manifest.sourceFormat === 'legacy-nash-outreach-v1' &&
+      (manifest.ownerLabel !== 'Nash' ||
+        manifest.provenanceSha256 !== manifest.sourceSha256)) ||
     ![
       manifest.sourceSha256,
+      manifest.provenanceSha256,
+      manifest.rowSequenceSha256,
       manifest.importIdHash,
       manifest.activityIdSetHash,
       manifest.planHash,
@@ -35,7 +122,8 @@ export const assertActivityImportManifest = (
     manifest.distinctCompanyCount > manifest.rowCount ||
     !/^\d{4}-\d{2}-\d{2}$/.test(manifest.activityDate) ||
     typeof manifest.timeZone !== 'string' ||
-    !manifest.timeZone
+    !manifest.timeZone ||
+    !validNormalizationReceipt(manifest)
   ) {
     throw new Error('Activity import manifest is invalid');
   }
@@ -46,11 +134,7 @@ export const assertActivityImportManifest = (
 const sameManifest = (
   left: ActivityImportManifest,
   right: ActivityImportManifest,
-): boolean =>
-  Object.keys(left).length === Object.keys(right).length &&
-  Object.entries(left).every(
-    ([key, value]) => right[key as keyof ActivityImportManifest] === value,
-  );
+): boolean => stableStringify(left) === stableStringify(right);
 
 const assertCheckpoint = (
   value: ActivityImportCheckpoint,

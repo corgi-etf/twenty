@@ -1,25 +1,60 @@
 import { createHash } from 'node:crypto';
 
+export type ActivityImportSourceFormat =
+  | 'legacy-nash-outreach-v1'
+  | 'completed-actions-v2';
+export type ActivityOwnerLabel = 'Grace' | 'Kelly' | 'Nash';
+export type CompletedActivityType = 'phone_call' | 'email';
+export type CanonicalActivityOutcome =
+  | 'left_voicemail'
+  | 'no_response'
+  | 'connected'
+  | 'follow_up_scheduled'
+  | 'not_interested'
+  | 'other';
+
+export type ActivityImportNormalizationReceipt = {
+  schemaVersion: 1;
+  sourceFormat: 'completed-actions-v2';
+  sourceDocumentSha256: string;
+  normalizedCsvSha256: string;
+  rowSequenceSha256: string;
+  sourceRowCount: number;
+  activityCount: number;
+  phoneCallCount: number;
+  voicemailCount: number;
+  emailCount: number;
+};
+
 export type ActivityImportCsvOptions = {
+  sourceFormat: ActivityImportSourceFormat;
+  ownerLabel: ActivityOwnerLabel;
   sourceSha256: string;
+  provenanceSha256: string;
+  expectedRowSequenceSha256?: string;
   expectedRows: number;
   activityDate: string;
   timeZone: string;
   importId: string;
+  normalizationReceipt?: ActivityImportNormalizationReceipt;
 };
 
 export type SourceActivity = {
   rowNumber: number;
   companyName: string;
-  phone: string | null;
-  websiteEvidence: string | null;
-  linkedInEvidence: string | null;
-  contactEmail: string | null;
-  contactName: string | null;
-  assetsUnderManagement: string | null;
-  primaryNotes: string | null;
-  additionalDetailOne: string | null;
-  additionalDetailTwo: string | null;
+  sourceRowNumber?: number;
+  actionOrdinal?: number;
+  activityType?: CompletedActivityType;
+  outcome?: CanonicalActivityOutcome;
+  phone?: string | null;
+  websiteEvidence?: string | null;
+  linkedInEvidence?: string | null;
+  contactEmail?: string | null;
+  contactName?: string | null;
+  assetsUnderManagement?: string | null;
+  primaryNotes?: string | null;
+  additionalDetailOne?: string | null;
+  additionalDetailTwo?: string | null;
   notes: string | null;
   occurredAt: string;
 };
@@ -45,8 +80,12 @@ export type TerritoryIdentityArtifact = {
 };
 
 export type ActivityImportManifest = {
-  schemaVersion: 1;
+  schemaVersion: 2;
+  sourceFormat: ActivityImportSourceFormat;
+  ownerLabel: ActivityOwnerLabel;
   sourceSha256: string;
+  provenanceSha256: string;
+  rowSequenceSha256: string;
   importIdHash: string;
   expectedRows: number;
   activityDate: string;
@@ -56,6 +95,7 @@ export type ActivityImportManifest = {
   distinctCompanyCount: number;
   activityIdSetHash: string;
   planHash: string;
+  normalizationReceipt: ActivityImportNormalizationReceipt | null;
 };
 
 export type PlannedActivity = {
@@ -74,7 +114,90 @@ const HASH_PATTERN = /^[a-f0-9]{64}$/;
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const IMPORT_ID_PATTERN = /^[a-z0-9][a-z0-9._-]{2,127}$/;
+const ACTIVITY_SOURCE_FORMATS = [
+  'legacy-nash-outreach-v1',
+  'completed-actions-v2',
+] as const;
+const ACTIVITY_OWNER_LABELS = ['Grace', 'Kelly', 'Nash'] as const;
+const COMPLETED_ACTIVITY_TYPES = ['phone_call', 'email'] as const;
+const CANONICAL_ACTIVITY_OUTCOMES = [
+  'left_voicemail',
+  'no_response',
+  'connected',
+  'follow_up_scheduled',
+  'not_interested',
+  'other',
+] as const;
 const ACTIVITY_IMPORT_UUID_NAMESPACE = 'c0671000-75d5-5df7-a950-50da7105b2dd';
+const COMPATIBLE_OUTCOMES_BY_ACTIVITY_TYPE: Readonly<
+  Record<CompletedActivityType, readonly CanonicalActivityOutcome[]>
+> = {
+  phone_call: ['left_voicemail', 'no_response', 'connected', 'other'],
+  email: ['no_response', 'follow_up_scheduled', 'not_interested', 'other'],
+};
+
+const isCompatibleActivityTypeAndOutcome = (
+  activityType: CompletedActivityType,
+  outcome: CanonicalActivityOutcome,
+): boolean =>
+  COMPATIBLE_OUTCOMES_BY_ACTIVITY_TYPE[activityType].includes(outcome);
+
+const assertNormalizationReceipt = (
+  receipt: ActivityImportNormalizationReceipt | undefined,
+  options: ActivityImportCsvOptions,
+): void => {
+  if (options.sourceFormat === 'legacy-nash-outreach-v1') {
+    if (receipt !== undefined) {
+      throw new Error(
+        'Activity import legacy source cannot include a normalization receipt',
+      );
+    }
+    return;
+  }
+  if (
+    Object.keys((receipt as unknown as Record<string, unknown>) ?? {})
+      .sort()
+      .join(',') !==
+      [
+        'schemaVersion',
+        'sourceFormat',
+        'sourceDocumentSha256',
+        'normalizedCsvSha256',
+        'rowSequenceSha256',
+        'sourceRowCount',
+        'activityCount',
+        'phoneCallCount',
+        'voicemailCount',
+        'emailCount',
+      ]
+        .sort()
+        .join(',') ||
+    receipt?.schemaVersion !== 1 ||
+    receipt.sourceFormat !== 'completed-actions-v2' ||
+    ![
+      receipt.sourceDocumentSha256,
+      receipt.normalizedCsvSha256,
+      receipt.rowSequenceSha256,
+    ].every((hash) => typeof hash === 'string' && HASH_PATTERN.test(hash)) ||
+    receipt.sourceDocumentSha256 !== options.provenanceSha256 ||
+    receipt.normalizedCsvSha256 !== options.sourceSha256 ||
+    receipt.rowSequenceSha256 !== options.expectedRowSequenceSha256 ||
+    receipt.activityCount !== options.expectedRows ||
+    ![
+      receipt.sourceRowCount,
+      receipt.activityCount,
+      receipt.phoneCallCount,
+      receipt.voicemailCount,
+      receipt.emailCount,
+    ].every((count) => Number.isSafeInteger(count) && count >= 0) ||
+    receipt.sourceRowCount < 1 ||
+    receipt.activityCount < 1 ||
+    receipt.phoneCallCount + receipt.emailCount !== receipt.activityCount ||
+    receipt.voicemailCount > receipt.phoneCallCount
+  ) {
+    throw new Error('Activity import normalization receipt is invalid');
+  }
+};
 
 const stableStringify = (value: unknown): string => {
   if (Array.isArray(value)) return `[${value.map(stableStringify).join(',')}]`;
@@ -92,9 +215,43 @@ const sha256 = (value: string | Uint8Array): string =>
   createHash('sha256').update(value).digest('hex');
 
 const assertCsvOptions = (options: ActivityImportCsvOptions): void => {
+  if (!ACTIVITY_SOURCE_FORMATS.includes(options.sourceFormat)) {
+    throw new Error('Activity import source format is invalid');
+  }
+  if (!ACTIVITY_OWNER_LABELS.includes(options.ownerLabel)) {
+    throw new Error('Activity import owner label is invalid');
+  }
   if (!HASH_PATTERN.test(options.sourceSha256)) {
     throw new Error('Activity import source SHA-256 is invalid');
   }
+  if (!HASH_PATTERN.test(options.provenanceSha256)) {
+    throw new Error('Activity import provenance SHA-256 is invalid');
+  }
+  if (
+    options.expectedRowSequenceSha256 !== undefined &&
+    !HASH_PATTERN.test(options.expectedRowSequenceSha256)
+  ) {
+    throw new Error('Activity import row sequence SHA-256 is invalid');
+  }
+  if (
+    options.sourceFormat === 'legacy-nash-outreach-v1' &&
+    options.ownerLabel !== 'Nash'
+  ) {
+    throw new Error('Activity import legacy source owner must be Nash');
+  }
+  if (
+    options.sourceFormat === 'legacy-nash-outreach-v1' &&
+    options.provenanceSha256 !== options.sourceSha256
+  ) {
+    throw new Error('Activity import legacy provenance must match its source');
+  }
+  if (
+    options.sourceFormat === 'completed-actions-v2' &&
+    options.expectedRowSequenceSha256 === undefined
+  ) {
+    throw new Error('Activity import completed actions require a row hash');
+  }
+  assertNormalizationReceipt(options.normalizationReceipt, options);
   if (
     !Number.isSafeInteger(options.expectedRows) ||
     options.expectedRows < 1 ||
@@ -259,6 +416,20 @@ const localNoon = (activityDate: string, timeZone: string): string => {
   return instant.toISOString();
 };
 
+const rowSequenceSha256 = (rows: readonly (readonly string[])[]): string =>
+  sha256(rows.map((row) => sha256(stableStringify(row))).join('\n'));
+
+export const activityCsvRowSequenceSha256 = (source: Uint8Array): string => {
+  let decoded: string;
+  try {
+    decoded = new TextDecoder('utf-8', { fatal: true }).decode(source);
+  } catch {
+    throw new Error('Activity import source is not valid UTF-8');
+  }
+
+  return rowSequenceSha256(parseCsvRows(decoded));
+};
+
 export const parseActivityCsv = (
   source: Uint8Array,
   options: ActivityImportCsvOptions,
@@ -278,7 +449,108 @@ export const parseActivityCsv = (
     throw new Error('Activity import logical row count mismatch');
   }
 
+  const actualRowSequenceSha256 = rowSequenceSha256(rows);
+  if (
+    options.expectedRowSequenceSha256 !== undefined &&
+    options.expectedRowSequenceSha256 !== actualRowSequenceSha256
+  ) {
+    throw new Error('Activity import row sequence SHA-256 mismatch');
+  }
+
   const occurredAt = localNoon(options.activityDate, options.timeZone);
+
+  if (options.sourceFormat === 'completed-actions-v2') {
+    let previousSourceRow = 0;
+    let previousActionOrdinal = 0;
+
+    const completedRows = rows.map((columns, rowIndex) => {
+      if (columns.length !== 6) {
+        throw new Error(
+          `Activity import row ${rowIndex + 1} must have exactly 6 columns`,
+        );
+      }
+      if (
+        !/^[1-9][0-9]*$/.test(columns[0]!) ||
+        !/^[1-9][0-9]*$/.test(columns[1]!)
+      ) {
+        throw new Error(
+          `Activity import row ${rowIndex + 1} has an invalid source position`,
+        );
+      }
+      const sourceRowNumber = Number(columns[0]);
+      const actionOrdinal = Number(columns[1]);
+      if (
+        !Number.isSafeInteger(sourceRowNumber) ||
+        !Number.isSafeInteger(actionOrdinal) ||
+        sourceRowNumber < previousSourceRow ||
+        (sourceRowNumber === previousSourceRow &&
+          actionOrdinal !== previousActionOrdinal + 1) ||
+        (sourceRowNumber > previousSourceRow && actionOrdinal !== 1)
+      ) {
+        throw new Error(
+          `Activity import row ${rowIndex + 1} is not in deterministic source order`,
+        );
+      }
+      previousSourceRow = sourceRowNumber;
+      previousActionOrdinal = actionOrdinal;
+
+      const companyName = columns[2]!.trim().normalize('NFKC');
+      if (!companyName) {
+        throw new Error(`Activity import row ${rowIndex + 1} has no company`);
+      }
+      const activityType = columns[3]!.trim() as CompletedActivityType;
+      if (!COMPLETED_ACTIVITY_TYPES.includes(activityType)) {
+        throw new Error(
+          `Activity import row ${rowIndex + 1} has an invalid activity type`,
+        );
+      }
+      const outcome = columns[4]!.trim() as CanonicalActivityOutcome;
+      if (!CANONICAL_ACTIVITY_OUTCOMES.includes(outcome)) {
+        throw new Error(
+          `Activity import row ${rowIndex + 1} has an invalid outcome`,
+        );
+      }
+      if (!isCompatibleActivityTypeAndOutcome(activityType, outcome)) {
+        throw new Error(
+          `Activity import row ${rowIndex + 1} has an incompatible activity type and outcome`,
+        );
+      }
+      const notes = columns[5]!.trim().normalize('NFKC') || null;
+
+      return {
+        rowNumber: rowIndex + 1,
+        sourceRowNumber,
+        actionOrdinal,
+        companyName,
+        activityType,
+        outcome,
+        notes,
+        occurredAt,
+      };
+    });
+    const receipt = options.normalizationReceipt!;
+    const phoneCallCount = completedRows.filter(
+      ({ activityType }) => activityType === 'phone_call',
+    ).length;
+    const emailCount = completedRows.filter(
+      ({ activityType }) => activityType === 'email',
+    ).length;
+    const voicemailCount = completedRows.filter(
+      ({ activityType, outcome }) =>
+        activityType === 'phone_call' && outcome === 'left_voicemail',
+    ).length;
+    if (
+      receipt.sourceRowCount < previousSourceRow ||
+      receipt.activityCount !== completedRows.length ||
+      receipt.phoneCallCount !== phoneCallCount ||
+      receipt.voicemailCount !== voicemailCount ||
+      receipt.emailCount !== emailCount
+    ) {
+      throw new Error('Activity import normalization receipt count mismatch');
+    }
+
+    return completedRows;
+  }
 
   return rows.map((columns, rowIndex) => {
     if (columns.length !== 10) {
@@ -370,26 +642,70 @@ const formatUuid = (bytes: Buffer): string => {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}`;
 };
 
-export const deterministicActivityId = (
-  importId: string,
-  rowNumber: number,
-): string => {
-  if (
-    !IMPORT_ID_PATTERN.test(importId) ||
-    !Number.isSafeInteger(rowNumber) ||
-    rowNumber < 1
-  ) {
-    throw new Error('Deterministic activity identity input is invalid');
-  }
+const deterministicUuid = (seed: string): string => {
   const digest = createHash('sha1')
     .update(uuidBytes(ACTIVITY_IMPORT_UUID_NAMESPACE))
-    .update(`${importId}:${rowNumber}`, 'utf8')
+    .update(seed, 'utf8')
     .digest()
     .subarray(0, 16);
   digest[6] = (digest[6]! & 0x0f) | 0x50;
   digest[8] = (digest[8]! & 0x3f) | 0x80;
 
   return formatUuid(digest);
+};
+
+export const deterministicActivityId = (
+  importId: string,
+  activityKey: number | string,
+): string => {
+  if (
+    !IMPORT_ID_PATTERN.test(importId) ||
+    !(
+      (typeof activityKey === 'number' &&
+        Number.isSafeInteger(activityKey) &&
+        activityKey >= 1) ||
+      (typeof activityKey === 'string' &&
+        /^source-row:[1-9][0-9]*:action:[1-9][0-9]*$/.test(activityKey))
+    )
+  ) {
+    throw new Error('Deterministic activity identity input is invalid');
+  }
+  return deterministicUuid(`${importId}:${activityKey}`);
+};
+
+export const deterministicCompletedActivityId = (input: {
+  provenanceSha256: string;
+  ownerWorkspaceMemberId: string;
+  sourceRowNumber: number;
+  actionOrdinal: number;
+  activityType: CompletedActivityType;
+  outcome: CanonicalActivityOutcome;
+}): string => {
+  if (
+    !HASH_PATTERN.test(input.provenanceSha256) ||
+    !UUID_PATTERN.test(input.ownerWorkspaceMemberId) ||
+    !Number.isSafeInteger(input.sourceRowNumber) ||
+    input.sourceRowNumber < 1 ||
+    !Number.isSafeInteger(input.actionOrdinal) ||
+    input.actionOrdinal < 1 ||
+    !COMPLETED_ACTIVITY_TYPES.includes(input.activityType) ||
+    !CANONICAL_ACTIVITY_OUTCOMES.includes(input.outcome) ||
+    !isCompatibleActivityTypeAndOutcome(input.activityType, input.outcome)
+  ) {
+    throw new Error(
+      'Deterministic completed activity identity input is invalid',
+    );
+  }
+
+  return deterministicUuid(
+    [
+      'completed-actions-v2',
+      input.provenanceSha256,
+      input.ownerWorkspaceMemberId,
+      input.sourceRowNumber,
+      input.actionOrdinal,
+    ].join(':'),
+  );
 };
 
 const relationWorkspaceMemberId = (
@@ -480,6 +796,19 @@ const collisionProjection = (record: OutreachActivityRecord) => ({
   outcome: record.outcome ?? null,
 });
 
+const ACTIVITY_TYPE_LABELS: Record<CompletedActivityType, string> = {
+  phone_call: 'Phone call',
+  email: 'Email',
+};
+const ACTIVITY_OUTCOME_LABELS: Record<CanonicalActivityOutcome, string> = {
+  left_voicemail: 'Left voicemail',
+  no_response: 'No response',
+  connected: 'Connected',
+  follow_up_scheduled: 'Follow-up scheduled',
+  not_interested: 'Not interested',
+  other: 'Other',
+};
+
 export const buildActivityImportPlan = (input: {
   rows: readonly SourceActivity[];
   csvOptions: ActivityImportCsvOptions;
@@ -496,13 +825,16 @@ export const buildActivityImportPlan = (input: {
   const identityArtifact = assertTerritoryIdentityArtifact(
     input.identityArtifact,
   );
+  const ownerWorkspaceMemberId =
+    identityArtifact.workspaceMemberIds[input.csvOptions.ownerLabel];
   const matchingWholesalers = input.wholesalers.filter(
     (wholesaler) =>
-      relationWorkspaceMemberId(wholesaler) ===
-      identityArtifact.workspaceMemberIds.Nash,
+      relationWorkspaceMemberId(wholesaler) === ownerWorkspaceMemberId,
   );
   if (matchingWholesalers.length !== 1) {
-    throw new Error('Nash must match exactly one wholesaler');
+    throw new Error(
+      `${input.csvOptions.ownerLabel} must match exactly one wholesaler`,
+    );
   }
   const wholesalerId = matchingWholesalers[0]!.id;
   if (!UUID_PATTERN.test(wholesalerId)) {
@@ -534,16 +866,40 @@ export const buildActivityImportPlan = (input: {
       );
     }
     const companyId = companyMatches[0]!.id;
-    const record: OutreachActivityRecord = {
-      id: deterministicActivityId(input.csvOptions.importId, row.rowNumber),
-      name: 'Call',
-      companyId,
-      wholesalerId,
-      activityType: 'call',
-      occurredAt: row.occurredAt,
-      notes: row.notes,
-      contactId: resolveContactId({ row, companyId, people: input.people }),
-    };
+    const completedActivity =
+      input.csvOptions.sourceFormat === 'completed-actions-v2';
+    const activityKey = completedActivity
+      ? `source-row:${row.sourceRowNumber}:action:${row.actionOrdinal}`
+      : row.rowNumber;
+    const record: OutreachActivityRecord = completedActivity
+      ? {
+          id: deterministicCompletedActivityId({
+            provenanceSha256: input.csvOptions.provenanceSha256,
+            ownerWorkspaceMemberId,
+            sourceRowNumber: row.sourceRowNumber!,
+            actionOrdinal: row.actionOrdinal!,
+            activityType: row.activityType!,
+            outcome: row.outcome!,
+          }),
+          name: `${ACTIVITY_TYPE_LABELS[row.activityType!]} · ${ACTIVITY_OUTCOME_LABELS[row.outcome!]}`,
+          companyId,
+          wholesalerId,
+          activityType: row.activityType,
+          outcome: row.outcome,
+          occurredAt: row.occurredAt,
+          notes: row.notes,
+          contactId: null,
+        }
+      : {
+          id: deterministicActivityId(input.csvOptions.importId, activityKey),
+          name: 'Call',
+          companyId,
+          wholesalerId,
+          activityType: 'call',
+          occurredAt: row.occurredAt,
+          notes: row.notes,
+          contactId: resolveContactId({ row, companyId, people: input.people }),
+        };
     const existingMatches = existingById.get(record.id) ?? [];
     if (
       existingMatches.length > 1 ||
@@ -568,8 +924,14 @@ export const buildActivityImportPlan = (input: {
     throw new Error('Activity import plan contains duplicate activity IDs');
   }
   const manifest: ActivityImportManifest = {
-    schemaVersion: 1,
+    schemaVersion: 2,
+    sourceFormat: input.csvOptions.sourceFormat,
+    ownerLabel: input.csvOptions.ownerLabel,
     sourceSha256: input.csvOptions.sourceSha256,
+    provenanceSha256: input.csvOptions.provenanceSha256,
+    rowSequenceSha256:
+      input.csvOptions.expectedRowSequenceSha256 ??
+      sha256(stableStringify(input.rows)),
     importIdHash: sha256(input.csvOptions.importId),
     expectedRows: input.csvOptions.expectedRows,
     activityDate: input.csvOptions.activityDate,
@@ -583,6 +945,9 @@ export const buildActivityImportPlan = (input: {
     planHash: sha256(
       stableStringify(activities.map(({ operationHash }) => operationHash)),
     ),
+    normalizationReceipt: input.csvOptions.normalizationReceipt
+      ? { ...input.csvOptions.normalizationReceipt }
+      : null,
   };
 
   return { manifest, activities };
