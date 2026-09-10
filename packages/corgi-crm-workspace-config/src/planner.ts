@@ -82,7 +82,16 @@ const QUICK_LOG_SCALAR_FIELD_DEFINITIONS = [
   { name: 'activityType', label: 'Activity Type', type: 'TEXT' },
   { name: 'outcome', label: 'Outcome', type: 'TEXT' },
   { name: 'notes', label: 'Notes', type: 'TEXT' },
-  { name: 'occurredAt', label: 'Occurred At', type: 'DATE_TIME' },
+  // Without a default, anything created without an explicit date lands NULL, and
+  // every report filters on occurredAt -- so the activity exists but can never be
+  // counted. 'now' serializes to Postgres now() at the field level, so UI, API and
+  // import paths are all covered rather than each remembering to set it.
+  {
+    name: 'occurredAt',
+    label: 'Occurred At',
+    type: 'DATE_TIME',
+    defaultValue: 'now',
+  },
   { name: 'followUpDate', label: 'Follow-up Date', type: 'DATE' },
 ] as const;
 
@@ -828,8 +837,19 @@ export const buildWorkspaceMetadataBootstrapPlan = (
         `Outreach Activity ${definition.name} must be ${definition.type}, found ${field.type}`,
       );
     }
-    if (field.label !== definition.label) {
-      metadataFieldsToUpdate.push({ id: field.id, label: definition.label });
+    const expectedDefaultValue =
+      'defaultValue' in definition ? definition.defaultValue : undefined;
+    const labelDrifted = field.label !== definition.label;
+    const defaultDrifted =
+      (field.defaultValue ?? undefined) !== expectedDefaultValue;
+    if (labelDrifted || defaultDrifted) {
+      metadataFieldsToUpdate.push({
+        id: field.id,
+        label: definition.label,
+        ...(expectedDefaultValue === undefined
+          ? {}
+          : { defaultValue: expectedDefaultValue }),
+      });
     }
   }
   for (const definition of QUICK_LOG_RELATION_FIELD_DEFINITIONS) {
