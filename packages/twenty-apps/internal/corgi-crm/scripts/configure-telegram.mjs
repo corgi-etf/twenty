@@ -113,11 +113,15 @@ const validateWorkspaceId = (workspaceId) => {
   return normalized;
 };
 
-const exactlyOneApplication = (applications) => {
-  const matches = (applications ?? []).filter(
+const exactlyOneApplication = (applications, { allowAbsent = false } = {}) => {
+  if (!Array.isArray(applications)) {
+    throw new Error('Installed Corgi CRM application lookup was invalid');
+  }
+  const matches = applications.filter(
     (application) =>
       application.universalIdentifier === APPLICATION_UNIVERSAL_IDENTIFIER,
   );
+  if (allowAbsent && matches.length === 0) return null;
   if (matches.length !== 1 || !UUID_PATTERN.test(matches[0]?.id ?? '')) {
     throw new Error(
       `Expected one installed Corgi CRM application, found ${matches.length}`,
@@ -147,7 +151,10 @@ const configureTelegramApplication = async ({
       findManyApplications { id universalIdentifier }
     }`,
   });
-  const application = exactlyOneApplication(data.findManyApplications);
+  const application = exactlyOneApplication(data?.findManyApplications, {
+    allowAbsent: variables === null,
+  });
+  if (!application) return { status: 'already-disabled' };
   const write = async (key, value) => {
     const result = await graphql({
       endpoint: '/metadata',
@@ -157,11 +164,11 @@ const configureTelegramApplication = async ({
       ) {
         updateOneApplicationVariable(
           applicationId: $applicationId, key: $key, value: $value
-        ) { key }
+        )
       }`,
       variables: { applicationId: application.id, key, value },
     });
-    if (result.updateOneApplicationVariable?.key !== key) {
+    if (result?.updateOneApplicationVariable !== true) {
       throw new Error(`Telegram application variable ${key} was not updated`);
     }
   };
