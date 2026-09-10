@@ -23,7 +23,7 @@ import { CoreTelegramDeliveryRepository } from 'src/modules/telegram/graphql/cor
 
 type ControlDependencies = {
   expectedWorkspaceId: string;
-  enabled: string | undefined;
+  enabled?: string;
   operatorSecret: string | undefined;
   store: KeyValueStore;
   repository?: CoreTelegramDeliveryRepository;

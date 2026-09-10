@@ -102,7 +102,8 @@ const exactAudit = (
   left.deliveryKey === right.deliveryKey &&
   left.expectedUnknownAt === right.expectedUnknownAt &&
   left.actorWorkspaceMemberId === right.actorWorkspaceMemberId &&
-  left.reasonDigest === right.reasonDigest;
+  left.reasonDigest === right.reasonDigest &&
+  left.requestedAt === right.requestedAt;
 
 export class CoreTelegramDeliveryRepository {
   private readonly dynamicClient: DynamicCoreApiClient;
@@ -259,19 +260,24 @@ export class CoreTelegramDeliveryRepository {
           ...auditSelection,
         },
       });
-      return {
-        acquired: true,
-        record: result.createTelegramDeliveryAudit as TelegramDeliveryAuditRecord,
-      } as const;
+      const created = result.createTelegramDeliveryAudit as
+        | TelegramDeliveryAuditRecord
+        | null
+        | undefined;
+      if (created && exactAudit(created, record)) {
+        return { acquired: true, record: created } as const;
+      }
     } catch {
-      const existing = await this.getAudit(record.requestId);
-      if (!existing) {
-        throw new Error('Could not confirm rejected Telegram reset audit');
-      }
-      if (!exactAudit(existing, record)) {
-        throw new Error('Telegram reset audit deterministic claim collision');
-      }
-      return { acquired: false, record: existing } as const;
+      // Readback below distinguishes an idempotent replay from a competing
+      // generation claim even when the create response was lost.
     }
+    const existing = await this.getAudit(record.requestId);
+    if (!existing) {
+      throw new Error('Could not confirm rejected Telegram reset audit');
+    }
+    if (!exactAudit(existing, record)) {
+      throw new Error('Telegram reset audit deterministic claim collision');
+    }
+    return { acquired: false, record: existing } as const;
   }
 }

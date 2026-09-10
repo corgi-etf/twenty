@@ -185,8 +185,10 @@ const verifyApplicationRoleContract = (role, objects) => {
     }
   }
   const permissions = role.objectPermissions ?? [];
-  if (permissions.length !== 5) {
-    throw new Error('Installed application role must have exactly five object permissions');
+  if (permissions.length !== 7) {
+    throw new Error(
+      'Installed application role must have exactly seven object permissions',
+    );
   }
   const expected = new Map(
     [
@@ -195,6 +197,8 @@ const verifyApplicationRoleContract = (role, objects) => {
       ['person', false],
       ['wholesaler', true],
       ['outreachActivity', true],
+      ['telegramDelivery', true],
+      ['telegramDeliveryAudit', true],
     ].map(([nameSingular, writable]) => {
       const object = exactlyOne(
         objects,
@@ -220,6 +224,93 @@ const verifyApplicationRoleContract = (role, objects) => {
       throw new Error(
         `Installed application role has excessive ${contract.nameSingular} permission`,
       );
+    }
+  }
+};
+
+const TELEGRAM_PERSISTENCE_OBJECTS = {
+  telegramDelivery: {
+    fields: {
+      name: 'TEXT',
+      deliveryKey: 'TEXT',
+      operationDigest: 'TEXT',
+      status: 'SELECT',
+      stateToken: 'TEXT',
+      attempts: 'NUMBER',
+      resetCount: 'NUMBER',
+      unknownAt: 'DATE_TIME',
+      lastReasonCode: 'SELECT',
+      retryRequestId: 'TEXT',
+      approvedUnknownAt: 'DATE_TIME',
+    },
+    uniqueIndexes: [['deliveryKey']],
+  },
+  telegramDeliveryAudit: {
+    fields: {
+      name: 'TEXT',
+      requestId: 'TEXT',
+      deliveryKey: 'TEXT',
+      expectedUnknownAt: 'DATE_TIME',
+      actorWorkspaceMemberId: 'TEXT',
+      reasonDigest: 'TEXT',
+      requestedAt: 'DATE_TIME',
+    },
+    uniqueIndexes: [['requestId'], ['deliveryKey', 'expectedUnknownAt']],
+  },
+};
+
+const verifyTelegramPersistenceSchema = (objects) => {
+  for (const [nameSingular, contract] of Object.entries(
+    TELEGRAM_PERSISTENCE_OBJECTS,
+  )) {
+    const object = exactlyOne(
+      objects,
+      (candidate) =>
+        candidate?.nameSingular === nameSingular && candidate.isActive === true,
+      `${nameSingular} metadata object`,
+    );
+    const fields = object.fieldsList ?? [];
+    const fieldByName = new Map();
+    for (const [name, type] of Object.entries(contract.fields)) {
+      const field = exactlyOne(
+        fields,
+        (candidate) => candidate?.name === name && candidate.isActive !== false,
+        `${nameSingular}.${name} field`,
+      );
+      if (field.type !== type) {
+        throw new Error(`${nameSingular}.${name} field has an invalid type`);
+      }
+      fieldByName.set(name, field);
+    }
+
+    const uniqueIndexes = (object.indexMetadataList ?? []).filter(
+      (index) => index?.isUnique === true,
+    );
+    if (uniqueIndexes.length !== contract.uniqueIndexes.length) {
+      throw new Error(
+        `${nameSingular} has an unexpected number of unique indexes`,
+      );
+    }
+    const actualIndexSignatures = uniqueIndexes.map((index) =>
+      (index.indexFieldMetadataList ?? [])
+        .toSorted((left, right) => left.order - right.order)
+        .map((indexField) => indexField.fieldMetadataId)
+        .join(','),
+    );
+    for (const fieldNames of contract.uniqueIndexes) {
+      const expectedSignature = fieldNames
+        .map((name) => fieldByName.get(name)?.id)
+        .join(',');
+      if (
+        !expectedSignature ||
+        actualIndexSignatures.filter(
+          (signature) => signature === expectedSignature,
+        ).length !== 1
+      ) {
+        throw new Error(
+          `${nameSingular} is missing its unique ${fieldNames.join(', ')} index`,
+        );
+      }
     }
   }
 };
@@ -451,7 +542,20 @@ const listAllMetadataObjects = async ({ graphql }) => {
       operationName: 'VerifyCorgiCrmMetadataObjects',
       query: `query VerifyCorgiCrmMetadataObjects($after: String) {
         objects(paging: { first: ${PAGE_SIZE}, after: $after }, filter: {}) {
-          edges { node { id nameSingular universalIdentifier isActive } }
+          edges {
+            node {
+              id
+              nameSingular
+              universalIdentifier
+              isActive
+              fieldsList { id name type isActive universalIdentifier }
+              indexMetadataList {
+                universalIdentifier
+                isUnique
+                indexFieldMetadataList { fieldMetadataId order }
+              }
+            }
+          }
           pageInfo { hasNextPage endCursor }
         }
       }`,
@@ -606,6 +710,7 @@ const main = async () => {
     version: requiredEnvironment('CORGI_CRM_EXPECTED_VERSION'),
     workspaceId,
   });
+  verifyTelegramPersistenceSchema(metadataObjects);
   verifyApplicationRoleContract(
     application.defaultLogicFunctionRole,
     metadataObjects,
@@ -648,4 +753,5 @@ export {
   verifyReconciliation,
   verifyTelegramApplicationContract,
   verifyTelegramDisabled,
+  verifyTelegramPersistenceSchema,
 };

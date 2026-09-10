@@ -126,12 +126,14 @@ const exactlyOneApplication = (applications) => {
   return matches[0];
 };
 
-const configureTelegramApplication = async ({ graphql, enabled, ...input }) => {
+const configureTelegramApplication = async ({ graphql, enabled, stage = false, ...input }) => {
   // Enabling validates every trusted value before even looking up the app.
   // Disabling deliberately needs only the derived workspace identity so a
   // missing provider secret can never prevent the fail-closed application gate.
   const variables =
-    enabled === true ? validateTrustedTelegramConfiguration(input) : null;
+    enabled === true || stage === true
+      ? validateTrustedTelegramConfiguration(input)
+      : null;
   validateWorkspaceId(input.workspaceId);
   const data = await graphql({
     endpoint: '/metadata',
@@ -163,7 +165,9 @@ const configureTelegramApplication = async ({ graphql, enabled, ...input }) => {
   if (!variables) return { status: 'disabled' };
   for (const [key, value] of Object.entries(variables)) await write(key, value);
   if (enabled === true) await write('CORGI_CRM_TELEGRAM_ENABLED', 'true');
-  return { status: enabled === true ? 'enabled' : 'disabled' };
+  return {
+    status: enabled === true ? 'enabled' : stage === true ? 'staged' : 'disabled',
+  };
 };
 
 const parseResponse = async (response, operationName) => {
@@ -196,8 +200,8 @@ const createGraphqlClient = ({ origin, apiKey }) => async (request) =>
 
 const main = async () => {
   const mode = process.argv[2];
-  if (mode !== 'disabled' && mode !== 'enable') {
-    throw new Error('Usage: configure-telegram.mjs <disabled|enable>');
+  if (mode !== 'disabled' && mode !== 'stage' && mode !== 'enable') {
+    throw new Error('Usage: configure-telegram.mjs <disabled|stage|enable>');
   }
   const origin = new URL(required(process.env.CORGI_CRM_API_URL, 'CRM API URL')).origin;
   const result = await configureTelegramApplication({
@@ -213,6 +217,7 @@ const main = async () => {
     timeZone: process.env.CORGI_CRM_TELEGRAM_TIME_ZONE,
     dailySummaryTime: process.env.CORGI_CRM_TELEGRAM_DAILY_SUMMARY_TIME,
     enabled: mode === 'enable',
+    stage: mode === 'stage',
   });
   console.log(`Telegram application configuration is ${result.status}.`);
 };

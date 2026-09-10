@@ -48,10 +48,11 @@ describe('Corgi CRM production app workflow contract', () => {
 
   it('prevalidates trusted config, verifies the exact provider contract, then enables Telegram', () => {
     const configureDisabled = position('configure-telegram.mjs" disabled');
-    const liveVerify = position('verify-telegram-live.mjs');
+    const stage = position('configure-telegram.mjs" stage');
+    const liveVerify = position('verify-telegram-live.mjs" enabled');
     const enable = position('configure-telegram.mjs" enable');
     const installVerify = position('verify-production-install.mjs" telegram');
-    assert.ok(configureDisabled < liveVerify && liveVerify < enable);
+    assert.ok(configureDisabled < stage && stage < liveVerify && liveVerify < enable);
     assert.ok(enable < installVerify);
     assert.match(workflow, /CORGI_CRM_TELEGRAM_LINK_CODES:\s*\$\{\{ secrets\./);
     assert.match(workflow, /CORGI_CRM_TELEGRAM_SIGNED_CANARY_CONFIRM:\s*RUN_SIGNED_CANARY/);

@@ -13,17 +13,17 @@ import { TelegramClient } from 'src/modules/telegram/services/telegram-client.se
 import {
   assertTelegramDeliveryKey,
   deliverTelegramOperation,
+  readTelegramRetryEnvelope,
   type TelegramRetryEnvelope,
 } from 'src/modules/telegram/services/telegram-delivery.service';
 import { type KeyValueStore } from 'src/modules/telegram/types';
 import { CoreTelegramDeliveryRepository } from 'src/modules/telegram/graphql/core-telegram-delivery.repository';
-import { readTelegramRetryEnvelope } from 'src/modules/telegram/services/telegram-delivery.service';
 
 type RetryWorkerDependencies = {
   expectedWorkspaceId: string;
   enabled: string | undefined;
   store: KeyValueStore;
-  repository: CoreTelegramDeliveryRepository;
+  repository?: CoreTelegramDeliveryRepository;
   createTelegramClient(): Pick<
     TelegramClient,
     'sendMessage' | 'answerCallbackQuery'
@@ -69,10 +69,12 @@ export const handleTelegramDeliveryRetryJob = async (
     throw new Error('Telegram delivery retry refused an unexpected workspace');
   }
   if (dependencies.enabled !== 'true') return { status: 'disabled' } as const;
+  const repository = dependencies.repository;
+  if (!repository) throw new Error('Telegram delivery repository is required');
   const payload = parsePayload(rawPayload);
   const audit = await readTelegramDeliveryResetAudit({
     requestId: payload.requestId,
-    repository: dependencies.repository,
+    repository,
   });
   if (
     !audit ||
@@ -82,7 +84,7 @@ export const handleTelegramDeliveryRetryJob = async (
   ) {
     throw new Error('Telegram delivery retry lacks exact audit authorization');
   }
-  let state = await dependencies.repository.get(payload.deliveryKey);
+  let state = await repository.get(payload.deliveryKey);
   if (!state) {
     throw new Error('Telegram delivery retry is stale or replayed');
   }
@@ -110,7 +112,7 @@ export const handleTelegramDeliveryRetryJob = async (
       retryRequestId: payload.requestId,
       approvedUnknownAt: payload.expectedUnknownAt,
     } as const;
-    const approved = await dependencies.repository.transition({
+    const approved = await repository.transition({
       id: state.id,
       expectedStatus: 'unknown',
       expectedStateToken: state.stateToken,
@@ -118,7 +120,7 @@ export const handleTelegramDeliveryRetryJob = async (
     });
     state = approved
       ? { ...state, ...nextState }
-      : ((await dependencies.repository.get(payload.deliveryKey)) ?? state);
+      : ((await repository.get(payload.deliveryKey)) ?? state);
     if (
       state.retryRequestId !== payload.requestId ||
       state.approvedUnknownAt !== payload.expectedUnknownAt
@@ -143,7 +145,7 @@ export const handleTelegramDeliveryRetryJob = async (
     deliveryKey: payload.deliveryKey,
     retryEnvelope,
     store: dependencies.store,
-    repository: dependencies.repository,
+    repository,
     perform: (envelope) => {
       client ??= dependencies.createTelegramClient();
       return performWithClient(client, envelope);

@@ -2,11 +2,9 @@ import { describe, expect, it, vi } from 'vitest';
 
 import application from 'src/application-config';
 import dailySummary, * as dailyModule from 'src/modules/telegram/telegram-daily-summary.logic-function';
-import dailySummaryWorker from 'src/modules/telegram/telegram-daily-summary-worker.logic-function';
-import * as dailyWorkerModule from 'src/modules/telegram/telegram-daily-summary-worker.logic-function';
+import dailySummaryWorker, * as dailyWorkerModule from 'src/modules/telegram/telegram-daily-summary-worker.logic-function';
 import deliveryControl from 'src/modules/telegram/telegram-delivery-control.logic-function';
-import deliveryRetryWorker from 'src/modules/telegram/telegram-delivery-retry-worker.logic-function';
-import * as retryWorkerModule from 'src/modules/telegram/telegram-delivery-retry-worker.logic-function';
+import deliveryRetryWorker, * as retryWorkerModule from 'src/modules/telegram/telegram-delivery-retry-worker.logic-function';
 import updateWorker, * as workerModule from 'src/modules/telegram/telegram-update-worker.logic-function';
 import webhook, * as webhookModule from 'src/modules/telegram/telegram-webhook.logic-function';
 
