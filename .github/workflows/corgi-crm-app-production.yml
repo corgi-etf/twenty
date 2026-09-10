@@ -454,13 +454,18 @@ jobs:
             --header "Authorization: Bearer ${CORGI_CRM_API_KEY}" \
             --header 'Content-Type: application/json' \
             --header "Origin: ${CORGI_CRM_API_URL}" \
-            --data '{"operationName":"ReadCorgiCrmTelegramBaseline","query":"query ReadCorgiCrmTelegramBaseline { findManyApplications { applicationVariables { key value } } }","variables":{}}' \
+            --data '{"operationName":"ReadCorgiCrmTelegramBaseline","query":"query ReadCorgiCrmTelegramBaseline($applicationUniversalIdentifier: UUID!) { findOneApplication(universalIdentifier: $applicationUniversalIdentifier) { applicationVariables { key value } } }","variables":{"applicationUniversalIdentifier":"ca87ad48-b62a-41be-a790-7c17707ff1b4"}}' \
             --output "${body}"; then
+            # findOneApplication is the shape verify-production-install.mjs
+            # already uses for this read. findManyApplications does not accept
+            # the applicationVariables sub-selection, so the previous query
+            # errored and silently reported an unverified baseline -- which
+            # sends the failure policy to teardown on every run.
             if jq -e '
               (.errors | not) and
-              ([.data.findManyApplications[].applicationVariables[]
+              ([.data.findOneApplication.applicationVariables[]
                 | select(.key == "CORGI_CRM_TELEGRAM_ENABLED")] | length) == 1 and
-              ([.data.findManyApplications[].applicationVariables[]
+              ([.data.findOneApplication.applicationVariables[]
                 | select(.key == "CORGI_CRM_TELEGRAM_ENABLED")][0].value) == "true"
             ' "${body}" >/dev/null 2>&1; then
               verified=true
