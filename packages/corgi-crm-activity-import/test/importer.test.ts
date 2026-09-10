@@ -4,7 +4,9 @@ import { test } from 'node:test';
 
 import {
   activityImportCompanyMatchKey,
+  assertStableCompanyListing,
   assertTerritoryIdentityArtifact,
+  findSoftDeletedNamesakes,
   buildActivityImportPlan,
   buildCompanyCreationPlan,
   buildDuplicateCompanyResolutionPlan,
@@ -1080,4 +1082,87 @@ test('resolving a duplicate makes the very next run a no-op', () => {
   assert.equal(first.removals.length, 1);
   assert.deepEqual(second.removals, []);
   assert.deepEqual(second.groups, []);
+});
+
+test('two identical listing walks are accepted', () => {
+  const listing = [company('4'), company('5', NEWER, 'Elsewhere Capital')];
+
+  assert.doesNotThrow(() => assertStableCompanyListing(listing, [...listing]));
+});
+
+test('two walks that return the same set in a different order are accepted', () => {
+  const first = [company('4'), company('5', NEWER, 'Elsewhere Capital')];
+
+  // Page order is not the contract; completeness is.
+  assert.doesNotThrow(() =>
+    assertStableCompanyListing(first, [...first].reverse()),
+  );
+});
+
+test('a walk that dropped a company is rejected', () => {
+  const first = [company('4'), company('5', NEWER, 'Elsewhere Capital')];
+
+  // Exactly the pagination skip that would read as a zero match and mint a
+  // duplicate, caught before anything is created.
+  assert.throws(
+    () => assertStableCompanyListing(first, [first[0]!]),
+    /listing was not stable across two reads/,
+  );
+});
+
+test('a walk that renamed a company between reads is rejected', () => {
+  assert.throws(
+    () =>
+      assertStableCompanyListing(
+        [company('4', OLDER, 'BMG Advisors')],
+        [company('4', OLDER, 'BMG Advisers')],
+      ),
+    /listing was not stable across two reads/,
+  );
+});
+
+test('a walk that returned one record twice is rejected', () => {
+  assert.throws(
+    () => assertStableCompanyListing([company('4'), company('4')], []),
+    /returned a record twice/,
+  );
+});
+
+test('a soft-deleted namesake of a planned name is found', () => {
+  const namesakes = findSoftDeletedNamesakes({
+    names: ['BMG Advisors', 'Missing Firm'],
+    softDeletedCompanies: [
+      company('7', OLDER, 'BMG Advisors'),
+      company('8', OLDER, 'Unrelated Capital'),
+    ],
+  });
+
+  assert.deepEqual(namesakes, [
+    { name: 'BMG Advisors', companyIds: [uuid('7')] },
+  ]);
+});
+
+test('a soft-deleted namesake is matched on the same exact key as the import', () => {
+  // A trailing space and a non-breaking space both fold into the match key,
+  // so neither can hide a namesake from the check.
+  const namesakes = findSoftDeletedNamesakes({
+    names: ['BMG Advisors'],
+    softDeletedCompanies: [
+      company('7', OLDER, 'BMG Advisors '),
+      company('8', OLDER, 'BMG Advisors'),
+    ],
+  });
+
+  assert.equal(namesakes.length, 1);
+  assert.deepEqual(namesakes[0]?.companyIds, [uuid('7'), uuid('8')]);
+});
+
+test('no soft-deleted namesake is reported when nothing collides', () => {
+  assert.deepEqual(
+    findSoftDeletedNamesakes({
+      names: ['BMG Advisors'],
+      softDeletedCompanies: [company('7', OLDER, 'Unrelated Capital')],
+    }),
+    [],
+  );
 });

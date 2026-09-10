@@ -63,7 +63,7 @@ test.use({
 test.beforeAll(async () => {
   expect(requiredEnvironment('CRM_MEETING_CANARY_ENABLED')).toBe('true');
   expect(requiredEnvironment('CRM_MEETING_CANARY_CONFIRMATION')).toBe(
-    'VERIFY_NATIVE_CRM_MEETING_WITH_TELEGRAM_DISABLED',
+    'VERIFY_NATIVE_CRM_MEETING_WITH_ALERTS_SUPPRESSED',
   );
   expect(requiredEnvironment('GITHUB_ACTIONS')).toBe('true');
   expect(requiredEnvironment('GITHUB_EVENT_NAME')).toBe('workflow_dispatch');
@@ -111,7 +111,7 @@ test.beforeAll(async () => {
   }
 });
 
-test('books and reschedules a native CRM meeting while Telegram is disabled', async ({
+test('books and reschedules a native CRM meeting with alerts suppressed', async ({
   page,
 }) => {
   test.setTimeout(6 * 60_000);
@@ -132,7 +132,10 @@ test('books and reschedules a native CRM meeting while Telegram is disabled', as
   let failure: Error | undefined;
   const request = page.request;
   const nameNonce = randomUUID();
-  const meetingName = `CRM meeting canary ${requiredEnvironment('GITHUB_RUN_ID')}-${requiredEnvironment('GITHUB_RUN_ATTEMPT')}-${nameNonce}`;
+  // The armed suppression token names this exact prefix, so the two must be
+  // built from one expression or a booking could alert with the bot live.
+  const MEETING_CANARY_NAME_PREFIX = `CRM meeting canary ${requiredEnvironment('GITHUB_RUN_ID')}-${requiredEnvironment('GITHUB_RUN_ATTEMPT')}-`;
+  const meetingName = `${MEETING_CANARY_NAME_PREFIX}${nameNonce}`;
   const recovery = parseMeetingCanaryRecovery(process.env);
 
   const observeCalendarResponse = (response: Response): void => {
@@ -202,7 +205,7 @@ test('books and reschedules a native CRM meeting while Telegram is disabled', as
     }
   };
 
-  const assertDisabled = async () => {
+  const assertAlertsSuppressed = async () => {
     const result = await graphql<{
       currentWorkspace: { id: string };
       findOneApplication: {
@@ -247,15 +250,28 @@ test('books and reschedules a native CRM meeting while Telegram is disabled', as
     expect(
       application.version === requiredEnvironment('CORGI_CRM_EXPECTED_VERSION'),
     ).toBe(true);
-    for (const [key, value] of [
-      ['CORGI_CRM_WORKSPACE_ID', expectedWorkspaceId],
-      ['CORGI_CRM_TELEGRAM_ENABLED', 'false'],
-    ]) {
-      const matches = application.applicationVariables.filter(
-        (variable) => variable.key === key,
-      );
-      expect(matches.length === 1 && matches[0]?.value === value).toBe(true);
-    }
+    const matches = application.applicationVariables.filter(
+      (variable) => variable.key === 'CORGI_CRM_WORKSPACE_ID',
+    );
+    expect(
+      matches.length === 1 && matches[0]?.value === expectedWorkspaceId,
+    ).toBe(true);
+    // The bot stays live through the release, so the booking below is safe only
+    // while this run's own suppression token is armed and unexpired. Re-proving
+    // it before every mutation is what keeps a canary alert from ever escaping.
+    const armed = application.applicationVariables.filter(
+      (variable) => variable.key === 'CORGI_CRM_MEETING_CANARY_SUPPRESSION',
+    );
+    expect(armed.length).toBe(1);
+    const token = JSON.parse(armed[0]!.value) as {
+      version?: unknown;
+      namePrefix?: unknown;
+      notAfter?: unknown;
+    };
+    expect(token.version).toBe(1);
+    expect(token.namePrefix).toBe(MEETING_CANARY_NAME_PREFIX);
+    expect(typeof token.notAfter === 'string').toBe(true);
+    expect(Date.parse(token.notAfter as string) > Date.now()).toBe(true);
     return application.id;
   };
 
@@ -319,7 +335,7 @@ test('books and reschedules a native CRM meeting while Telegram is disabled', as
     if (!body.query) return route.abort('blockedbyclient');
     if (!/\bmutation\b/.test(body.query)) return route.continue();
     try {
-      await assertDisabled();
+      await assertAlertsSuppressed();
       if (body.operationName === 'CreateOneMeetingBooking') {
         const id = body.variables?.input?.id;
         if (meetingId || !id || !UUID_PATTERN.test(id)) {
@@ -357,8 +373,8 @@ test('books and reschedules a native CRM meeting while Telegram is disabled', as
   const openField = async (
     fieldName: 'status' | 'company' | 'wholesaler' | 'scheduledAt',
   ) => {
-    step = `${fieldName}: disabled gate`;
-    await assertDisabled();
+    step = `${fieldName}: suppression gate`;
+    await assertAlertsSuppressed();
     const field = page
       .getByTestId('record-fields-widget')
       .locator(`[id$="-${meetingId}-${fieldName}"]:not([id^="label-"])`);
@@ -440,8 +456,8 @@ test('books and reschedules a native CRM meeting while Telegram is disabled', as
         tenant.userWorkspaceId ===
           requiredEnvironment('CORGI_CRM_EXPECTED_USER_WORKSPACE_ID'),
     ).toBe(true);
-    phase = 'installed application and Telegram-disabled preflight';
-    await assertDisabled();
+    phase = 'installed application and alert-suppression preflight';
+    await assertAlertsSuppressed();
     phase = 'authenticated actor metadata identity query';
     const identity = await graphql<unknown>(
       '/metadata',
@@ -466,8 +482,8 @@ test('books and reschedules a native CRM meeting while Telegram is disabled', as
 
     if (recovery) {
       phase = 'prior-run meeting recovery';
-      step = 'recovery: disabled gate';
-      await assertDisabled();
+      step = 'recovery: suppression gate';
+      await assertAlertsSuppressed();
       step = 'recovery: bounded candidate read';
       const result = await graphql<unknown>(
         '/graphql',
@@ -545,8 +561,8 @@ test('books and reschedules a native CRM meeting while Telegram is disabled', as
           ) {
             throw new MeetingCanaryCheckError('OWNERSHIP');
           }
-          step = 'recovery: final disabled gate';
-          await assertDisabled();
+          step = 'recovery: final suppression gate';
+          await assertAlertsSuppressed();
           step = 'recovery: exact-ID destroy';
           const deletion = await graphql<{
             destroyMeetingBooking: { id: string };
@@ -633,7 +649,7 @@ test('books and reschedules a native CRM meeting while Telegram is disabled', as
     ).toBeVisible();
     await page.getByRole('link', { name: 'Meetings', exact: true }).click();
     await expect(page).toHaveURL(/\/objects\/meetingBookings(?:\?|$)/);
-    await assertDisabled();
+    await assertAlertsSuppressed();
     await page.route(`${APPROVED_ORIGIN}/graphql`, guardNativeMutation);
     await page.getByRole('button', { name: 'Create new Meeting' }).click();
     await expect
@@ -820,8 +836,8 @@ test('books and reschedules a native CRM meeting while Telegram is disabled', as
         calendarQueryEvidence,
       }),
     );
-    step = 'calendar disabled gate';
-    await assertDisabled();
+    step = 'calendar suppression gate';
+    await assertAlertsSuppressed();
     step = 'calendar final attribution reread';
     const finalMeeting = await readMeeting();
     step = 'calendar final attribution equality';
@@ -846,8 +862,8 @@ test('books and reschedules a native CRM meeting while Telegram is disabled', as
     try {
       await page.unroute(`${APPROVED_ORIGIN}/graphql`, guardNativeMutation);
       if (meetingId) {
-        cleanupStep = 'disabled gate';
-        await assertDisabled();
+        cleanupStep = 'suppression gate';
+        await assertAlertsSuppressed();
         cleanupStep = 'exact-ID reread';
         const meeting = await readMeeting();
         if (meeting) {
@@ -903,7 +919,7 @@ test('books and reschedules a native CRM meeting while Telegram is disabled', as
     windowHours: number;
   }>;
   try {
-    const applicationId = await assertDisabled();
+    const applicationId = await assertAlertsSuppressed();
     const functions = await graphql<{
       findManyLogicFunctions: Array<{
         id: string;
@@ -1039,7 +1055,7 @@ test('books and reschedules a native CRM meeting while Telegram is disabled', as
         meetingCount: report.meetingCount,
       };
     });
-    await assertDisabled();
+    await assertAlertsSuppressed();
   } catch {
     throw new Error(
       'Installed report runtime verification failed after exact meeting cleanup',

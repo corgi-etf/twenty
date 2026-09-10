@@ -900,6 +900,75 @@ export const buildCompanyCreationPlan = (input: {
   };
 };
 
+// Two independent walks of the same paginated listing must agree exactly.
+// A cursor walk that skipped a record would have to skip the same record twice
+// to pass this, and an unstable ordering would not. This is the pagination
+// hypothesis tested on every run rather than argued about: if a walk ever does
+// drop a company, creation stops instead of minting a duplicate from the gap.
+export const assertStableCompanyListing = (
+  first: readonly ActivityImportCompany[],
+  second: readonly ActivityImportCompany[],
+): void => {
+  const fingerprint = (companies: readonly ActivityImportCompany[]): string => {
+    const seenIds = new Set<string>();
+    const entries = companies.map((company) => {
+      if (typeof company.name !== 'string' || !UUID_PATTERN.test(company.id)) {
+        throw new Error('Activity import company snapshot is invalid');
+      }
+      if (seenIds.has(company.id)) {
+        throw new Error(
+          'Activity import company listing returned a record twice',
+        );
+      }
+      seenIds.add(company.id);
+
+      return `${company.id}:${activityImportCompanyMatchKey(company.name)}`;
+    });
+
+    return entries.sort().join('\n');
+  };
+
+  if (fingerprint(first) !== fingerprint(second)) {
+    throw new Error(
+      'Activity import company listing was not stable across two reads',
+    );
+  }
+};
+
+export type SoftDeletedNamesake = {
+  name: string;
+  companyIds: string[];
+};
+
+// The zero-match check reads the default listing, and Twenty excludes
+// soft-deleted records from it unconditionally. So a soft-deleted company with
+// the same name is invisible to it: creation mints a second record, and the
+// duplicate appears the moment anyone restores the first. Creating over a
+// namesake is therefore never safe, however the listing behaved.
+export const findSoftDeletedNamesakes = (input: {
+  names: readonly string[];
+  softDeletedCompanies: readonly ActivityImportCompany[];
+}): SoftDeletedNamesake[] => {
+  const byExactName = new Map<string, string[]>();
+  for (const company of input.softDeletedCompanies) {
+    if (typeof company.name !== 'string' || !UUID_PATTERN.test(company.id)) {
+      throw new Error('Activity import company snapshot is invalid');
+    }
+    const exactName = activityImportCompanyMatchKey(company.name);
+    byExactName.set(exactName, [
+      ...(byExactName.get(exactName) ?? []),
+      company.id,
+    ]);
+  }
+
+  const wanted = new Set(input.names.map(activityImportCompanyMatchKey));
+
+  return [...byExactName.entries()]
+    .filter(([name]) => wanted.has(name))
+    .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
+    .map(([name, companyIds]) => ({ name, companyIds }));
+};
+
 // Twenty returns a company's own columns at depth 0 and expands its relations
 // at depth 1. Removal is only ever justified by emptiness, so the probe reads
 // the whole record and reasons about every field it finds rather than a

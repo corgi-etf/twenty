@@ -19,6 +19,8 @@ import { CoreMeetingNotificationRepository } from 'src/modules/telegram/graphql/
 import { RawCoreGraphqlTransport } from 'src/modules/core/graphql/raw-core-graphql.transport';
 import {
   assertIanaTimeZone,
+  isSuppressedMeetingCanaryBooking,
+  meetingCanarySuppressionKey,
   MeetingBookedNotificationValidationError,
   readMeetingBookedNotificationSnapshot,
   type MeetingBookingNotificationSource,
@@ -45,7 +47,9 @@ type AlertDependencies = {
   expectedWorkspaceId: string;
   enabled: string | undefined;
   routesJson: string | undefined;
+  canarySuppressionJson: string | undefined;
   timeZone?: string;
+  now?: () => number;
   store: KeyValueStore;
   readMeetingBooking(
     meetingId: string,
@@ -105,10 +109,38 @@ export const handleTelegramMeetingBookedEvent = async (
   const timeZone = dependencies.timeZone?.trim() ?? '';
   assertIanaTimeZone(timeZone);
   try {
+    // Decide canary suppression once and persist it beside the snapshot: the
+    // token expires, so re-deciding on a retry could let a canary alert escape.
+    const decisionKey = meetingCanarySuppressionKey(
+      bookedTransition.meetingId,
+      bookedTransition.bookedAt,
+    );
+    const decided = await dependencies.store.get(decisionKey);
+    if (decided === true) return { status: 'canary-suppressed' } as const;
+    // Reuse the one authoritative read for both the decision and the snapshot,
+    // so a genuine booking still costs exactly one CRM read on first delivery
+    // and none on a retry.
+    let source: MeetingBookingNotificationSource | null | undefined;
+    const readMeetingBooking = async (meetingId: string) => {
+      if (source === undefined) {
+        source = await dependencies.readMeetingBooking(meetingId);
+      }
+      return source;
+    };
+    if (decided === null) {
+      const booking = await readMeetingBooking(bookedTransition.meetingId);
+      const suppressed = isSuppressedMeetingCanaryBooking({
+        name: booking?.name,
+        suppressionJson: dependencies.canarySuppressionJson,
+        now: dependencies.now?.() ?? Date.now(),
+      });
+      await dependencies.store.set(decisionKey, suppressed);
+      if (suppressed) return { status: 'canary-suppressed' } as const;
+    }
     const event = await readMeetingBookedNotificationSnapshot({
       ...bookedTransition,
       store: dependencies.store,
-      readMeetingBooking: dependencies.readMeetingBooking,
+      readMeetingBooking,
     });
     const jobs = routes.map((route) => ({
       jobId: jobId(event.meetingId, event.bookedAt, route),
@@ -133,6 +165,8 @@ export const handler = async (payload: MeetingBookedUpdatePayload) => {
     expectedWorkspaceId: requiredEnvironment('CORGI_CRM_WORKSPACE_ID'),
     enabled: process.env.CORGI_CRM_TELEGRAM_ENABLED,
     routesJson: process.env.CORGI_CRM_TELEGRAM_NOTIFICATION_ROUTES,
+    canarySuppressionJson:
+      process.env.CORGI_CRM_MEETING_CANARY_SUPPRESSION,
     timeZone: process.env.CORGI_CRM_TELEGRAM_TIME_ZONE,
     store: kv,
     readMeetingBooking: (meetingId) => {

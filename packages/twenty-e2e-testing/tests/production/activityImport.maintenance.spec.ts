@@ -173,38 +173,84 @@ test('runs a guarded, idempotent outreach activity import', async ({
     requestGate,
   });
 
-  if (operation === 'resolve-duplicate-companies') {
-    // Same constraint as company creation: the REST client owning the
-    // authenticated write path is outside the deployment revision guard
-    // allowlist, so the probe and the removal reuse this run's authenticated
-    // request context and its paced gate rather than standing up a second
-    // client.
-    const readJson = async (url: string, label: string) => {
-      const response = await requestGate(() =>
-        page.request.get(url, { headers: { Origin: FRONTEND_BASE_URL } }),
-      );
-      const failedStatus = response.ok() ? undefined : response.status();
-      let body: unknown;
-      try {
-        if (failedStatus === undefined) body = await response.json();
-      } finally {
-        await response.dispose();
-      }
-      if (failedStatus !== undefined) {
-        throw new Error(`${label} failed with HTTP ${failedStatus}`);
-      }
+  // Shared by both maintenance operations: the REST client owning the
+  // authenticated read/write path is outside the deployment revision guard
+  // allowlist, so anything beyond the plain import reuses this run's already
+  // authenticated request context and its paced gate rather than standing up
+  // a second client.
+  const readRest = async (
+    url: string,
+    label: string,
+  ): Promise<{
+    data?: Record<string, unknown>;
+    pageInfo?: { hasNextPage?: boolean; endCursor?: string | null };
+  }> => {
+    const response = await requestGate(() =>
+      page.request.get(url, { headers: { Origin: FRONTEND_BASE_URL } }),
+    );
+    const failedStatus = response.ok() ? undefined : response.status();
+    let body: unknown;
+    try {
+      if (failedStatus === undefined) body = await response.json();
+    } finally {
+      await response.dispose();
+    }
+    if (failedStatus !== undefined) {
+      throw new Error(`${label} failed with HTTP ${failedStatus}`);
+    }
 
-      return (body as { data?: Record<string, unknown> } | undefined)?.data;
-    };
+    return (body ?? {}) as { data?: Record<string, unknown> };
+  };
 
-    const readCompanyLinks = async (companyId: string) => {
-      const payload = await readJson(
+  // Twenty excludes soft-deleted records from every default listing, and only
+  // naming deletedAt in the filter widens the query. Without this the
+  // zero-match check cannot see a namesake waiting to be restored.
+  const listSoftDeletedCompanies = async () => {
+    const records: { id: string; name: unknown; createdAt?: unknown }[] = [];
+    let cursor: string | undefined;
+    do {
+      const query = new URLSearchParams({
+        filter: 'deletedAt[is]:NOT_NULL',
+        limit: '100',
+        depth: '0',
+      });
+      if (cursor) query.set('starting_after', cursor);
+      const body = await readRest(
         new URL(
-          `/rest/companies/${companyId}?depth=1`,
+          `/rest/companies?${query.toString()}`,
           BACKEND_BASE_URL,
         ).toString(),
-        'Read company',
+        'List soft-deleted companies',
       );
+      const pageRecords = body.data?.companies;
+      if (!Array.isArray(pageRecords)) {
+        throw new Error('List soft-deleted companies has an invalid shape');
+      }
+      records.push(...(pageRecords as typeof records));
+      cursor = body.pageInfo?.hasNextPage
+        ? (body.pageInfo.endCursor ?? undefined)
+        : undefined;
+      if (body.pageInfo?.hasNextPage && !cursor) {
+        throw new Error(
+          'List soft-deleted companies pagination omitted its cursor',
+        );
+      }
+    } while (cursor);
+
+    return records;
+  };
+
+  if (operation === 'resolve-duplicate-companies') {
+    const readCompanyLinks = async (companyId: string) => {
+      const payload = (
+        await readRest(
+          new URL(
+            `/rest/companies/${companyId}?depth=1`,
+            BACKEND_BASE_URL,
+          ).toString(),
+          'Read company',
+        )
+      ).data;
       const company = (payload?.company ?? payload) as
         | Record<string, unknown>
         | undefined;
@@ -223,13 +269,15 @@ test('runs a guarded, idempotent outreach activity import', async ({
           limit: '1',
           depth: '0',
         });
-        const body = await readJson(
-          new URL(
-            `/rest/${collection}?${query.toString()}`,
-            BACKEND_BASE_URL,
-          ).toString(),
-          `List ${collection}`,
-        );
+        const body = (
+          await readRest(
+            new URL(
+              `/rest/${collection}?${query.toString()}`,
+              BACKEND_BASE_URL,
+            ).toString(),
+            `List ${collection}`,
+          )
+        ).data;
         const records = body?.[collection];
         if (!Array.isArray(records)) {
           throw new Error(`List ${collection} response has an invalid shape`);
@@ -307,7 +355,7 @@ test('runs a guarded, idempotent outreach activity import', async ({
       }
     };
     const creation = await runActivityImportCompanyCreation(
-      { ...api, createCompany },
+      { ...api, createCompany, listSoftDeletedCompanies },
       {
         source,
         csvOptions,

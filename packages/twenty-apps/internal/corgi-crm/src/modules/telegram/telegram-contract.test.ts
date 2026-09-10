@@ -54,6 +54,13 @@ describe('Telegram application contract', () => {
       isSecret: false,
       value: 'false',
     });
+    // The canary suppression token is armed per release run and must never
+    // ship armed in the manifest, or a published version would silence a
+    // genuine booking on every workspace that installs it.
+    expect(variables.CORGI_CRM_MEETING_CANARY_SUPPRESSION).toMatchObject({
+      isSecret: false,
+      value: '',
+    });
     expect(variables.CORGI_CRM_WORKSPACE_ID).not.toHaveProperty('value');
     for (const key of [
       'CORGI_CRM_TELEGRAM_TIME_ZONE',

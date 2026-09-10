@@ -14,6 +14,7 @@ export type MeetingBookedNotificationEvent = {
 
 export type MeetingBookingNotificationSource = {
   id?: string | null;
+  name?: string | null;
   status?: string | null;
   bookedAt?: string | null;
   scheduledAt?: string | null;
@@ -51,6 +52,75 @@ const canonicalInstant = (value: unknown): string | null => {
 
 const validName = (value: string) =>
   value.length > 0 && value.length <= MAX_NAME_LENGTH;
+
+export type MeetingCanarySuppression = {
+  namePrefix: string;
+  notAfter: number;
+};
+
+// The release canary books a real meeting in production, which is precisely the
+// transition this alert fires on. A run-scoped self-expiring token lets that one
+// booking through without alerting, so a release no longer has to shut the whole
+// bot off. The prefix shape is pinned to the canary's own naming scheme and the
+// window is bounded, so an armed token can never suppress an arbitrary meeting.
+const MEETING_CANARY_NAME_PREFIX_PATTERN =
+  /^CRM meeting canary [1-9][0-9]*-[1-9][0-9]*-$/;
+const MEETING_CANARY_SUPPRESSION_MAX_WINDOW_MS = 30 * 60_000;
+
+export const parseMeetingCanarySuppression = (
+  value: unknown,
+  now: number,
+): MeetingCanarySuppression | null => {
+  if (typeof value !== 'string' || value.trim().length === 0) return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    return null;
+  }
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    return null;
+  }
+  const token = parsed as Record<string, unknown>;
+  if (
+    Object.keys(token).sort().join(',') !== 'namePrefix,notAfter,version' ||
+    token.version !== 1 ||
+    typeof token.namePrefix !== 'string' ||
+    !MEETING_CANARY_NAME_PREFIX_PATTERN.test(token.namePrefix)
+  ) {
+    return null;
+  }
+  const notAfter = canonicalInstant(token.notAfter);
+  if (!notAfter || notAfter !== token.notAfter || !Number.isFinite(now)) {
+    return null;
+  }
+  const expiresAt = Date.parse(notAfter);
+  if (
+    expiresAt <= now ||
+    expiresAt - now > MEETING_CANARY_SUPPRESSION_MAX_WINDOW_MS
+  ) {
+    return null;
+  }
+  return { namePrefix: token.namePrefix, notAfter: expiresAt };
+};
+
+// Fails open on every unparseable, expired or unmatched token: the worst case is
+// one spurious canary alert, never a silenced genuine booking.
+export const isSuppressedMeetingCanaryBooking = ({
+  name,
+  suppressionJson,
+  now,
+}: {
+  name: unknown;
+  suppressionJson: unknown;
+  now: number;
+}): boolean => {
+  const suppression = parseMeetingCanarySuppression(suppressionJson, now);
+  if (!suppression || typeof name !== 'string') return false;
+  const normalized = name.trim();
+  if (!normalized.startsWith(suppression.namePrefix)) return false;
+  return UUID_PATTERN.test(normalized.slice(suppression.namePrefix.length));
+};
 
 export const parseMeetingBookedNotificationEvent = (
   value: unknown,
@@ -139,6 +209,14 @@ const buildEvent = (
     ...(bookedByName ? { bookedByName } : {}),
   };
 };
+
+export const meetingCanarySuppressionKey = (
+  meetingId: string,
+  bookedAt: string,
+): string =>
+  `telegram:meeting-canary-suppression:${createHash('sha256')
+    .update(`meeting_booked:${meetingId}:${bookedAt}`)
+    .digest('hex')}`;
 
 const snapshotKey = (meetingId: string, bookedAt: string) =>
   `telegram:notification-event:${createHash('sha256')

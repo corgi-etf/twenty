@@ -1,8 +1,10 @@
 import {
+  assertStableCompanyListing,
   buildActivityImportPlan,
   buildCompanyCreationPlan,
   buildDuplicateCompanyResolutionPlan,
   findDuplicateCompanyGroups,
+  findSoftDeletedNamesakes,
   parseActivityCsv,
   summarizeCompanyLinks,
   type ActivityImportCompany,
@@ -12,6 +14,7 @@ import {
   type ActivityImportWholesaler,
   type CompanyLinkProbeRecord,
   type DuplicateCompanyGroupReport,
+  type SoftDeletedNamesake,
   type OutreachActivityRecord,
   type TerritoryIdentityArtifact,
 } from './importer.ts';
@@ -179,6 +182,10 @@ export type ActivityImportApi = {
   // Optional so an API that only imports activities still satisfies this
   // contract; company creation fails closed when it is absent.
   createCompany?(company: { name: string }): Promise<void>;
+  // The default listing hides soft-deleted records, so the zero-match check
+  // cannot see a namesake waiting to be restored. Creation fails closed
+  // without this rather than creating over one it cannot see.
+  listSoftDeletedCompanies?(): Promise<ActivityImportCompany[]>;
   // Same contract for duplicate resolution: without both of these the
   // operation cannot prove a record is empty, so it refuses to remove one.
   readCompanyLinks?(companyId: string): Promise<CompanyLinkProbeRecord>;
@@ -205,6 +212,7 @@ export type CompanyCreationRunResult = {
   createdCount: number;
   alreadyPresentCount: number;
   plannedNames: string[];
+  softDeletedNamesakes: SoftDeletedNamesake[];
 };
 
 export type DuplicateCompanyResolutionRunResult = {
@@ -249,11 +257,20 @@ export const runActivityImportCompanyCreation = async (
     throw new Error('Dry-run company creation cannot include apply approval');
   }
 
+  const listSoftDeletedCompanies = api.listSoftDeletedCompanies?.bind(api);
+  if (input.mode === 'apply' && !listSoftDeletedCompanies) {
+    throw new Error(
+      'Activity import API cannot see soft-deleted companies',
+    );
+  }
+
   const rows = parseActivityCsv(input.source, input.csvOptions);
-  const plan = buildCompanyCreationPlan({
-    rows,
-    companies: await api.listCompanies(),
-  });
+  // Two independent walks, compared. The whole plan rests on this listing
+  // being complete, and a paginated walk that silently dropped a record would
+  // read as a zero match and mint a duplicate.
+  const companies = await api.listCompanies();
+  assertStableCompanyListing(companies, await api.listCompanies());
+  const plan = buildCompanyCreationPlan({ rows, companies });
   // A row matching two or more companies stays fail-closed. The exact-match
   // contract is what surfaced the missing companies in the first place, and a
   // duplicate is a human decision rather than a reason to mint another record.
@@ -269,6 +286,15 @@ export const runActivityImportCompanyCreation = async (
     );
   }
   const plannedNames = plan.creations.map(({ name }) => name);
+  // Only the names about to be created matter: a namesake behind a name that
+  // already matches one live company is latent, not something this run would
+  // act on, so it is reported rather than treated as a blocker.
+  const softDeletedNamesakes = listSoftDeletedCompanies
+    ? findSoftDeletedNamesakes({
+        names: plannedNames,
+        softDeletedCompanies: await listSoftDeletedCompanies(),
+      })
+    : [];
 
   if (input.mode === 'dry-run') {
     return {
@@ -279,10 +305,26 @@ export const runActivityImportCompanyCreation = async (
       createdCount: 0,
       alreadyPresentCount: plan.alreadyPresentCount,
       plannedNames,
+      softDeletedNamesakes,
     };
   }
   if (!createCompany) {
     throw new Error('Activity import API cannot create companies');
+  }
+  // Creating over a soft-deleted namesake builds the exact trap that produced
+  // the BMG Advisors duplicate: invisible to the check now, a duplicate the
+  // moment someone restores it. Restoring or purging it is a human decision.
+  if (softDeletedNamesakes.length > 0) {
+    throw new Error(
+      softDeletedNamesakes
+        .map(
+          ({ name, companyIds }) =>
+            `Activity import company creation refused "${name}": ` +
+            `${companyIds.length} soft-deleted company already carries that name; ` +
+            'restore or purge it instead of creating a second record',
+        )
+        .join('\n'),
+    );
   }
 
   for (const creation of plan.creations) {
@@ -311,6 +353,7 @@ export const runActivityImportCompanyCreation = async (
     createdCount: plannedNames.length,
     alreadyPresentCount: plan.alreadyPresentCount,
     plannedNames,
+    softDeletedNamesakes,
   };
 };
 

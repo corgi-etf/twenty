@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import {
   formatMeetingBookedNotification,
+  isSuppressedMeetingCanaryBooking,
   readMeetingBookedNotificationSnapshot,
 } from 'src/modules/telegram/services/meeting-booked-notification.service';
 
@@ -83,5 +84,127 @@ describe('meeting booked notification snapshots', () => {
         readMeetingBooking: vi.fn().mockResolvedValue(invalidBooking),
       }),
     ).rejects.toThrow(/authoritative meeting booking/i);
+  });
+});
+
+describe('release canary suppression', () => {
+  const NOW = Date.parse('2026-09-10T05:30:00.000Z');
+  const PREFIX = 'CRM meeting canary 34500629643-2-';
+  const NONCE = '55555555-5555-4555-8555-555555555555';
+  const token = (overrides: Record<string, unknown> = {}) =>
+    JSON.stringify({
+      version: 1,
+      namePrefix: PREFIX,
+      notAfter: new Date(NOW + 5 * 60_000).toISOString(),
+      ...overrides,
+    });
+
+  it('suppresses only this run own canary booking', () => {
+    expect(
+      isSuppressedMeetingCanaryBooking({
+        name: `${PREFIX}${NONCE}`,
+        suppressionJson: token(),
+        now: NOW,
+      }),
+    ).toBe(true);
+  });
+
+  it('still alerts a genuine booking made inside the armed window', () => {
+    for (const name of [
+      'Quarterly review with Acme',
+      'CRM meeting canary',
+      `CRM meeting canary 34500629643-2-${NONCE}x`,
+      `CRM meeting canary 34500629643-2-not-a-uuid`,
+      // A different run may not borrow this run's armed token.
+      `CRM meeting canary 34500629644-2-${NONCE}`,
+      `CRM meeting canary 34500629643-1-${NONCE}`,
+      '',
+      null,
+    ]) {
+      expect(
+        isSuppressedMeetingCanaryBooking({
+          name,
+          suppressionJson: token(),
+          now: NOW,
+        }),
+      ).toBe(false);
+    }
+  });
+
+  it.each([
+    ['absent', undefined],
+    ['empty', ''],
+    ['not JSON', '{bad'],
+    ['an array', '[]'],
+    ['a wrong version', token({ version: 2 })],
+    ['an extra key', JSON.stringify({ version: 1, namePrefix: PREFIX, notAfter: new Date(NOW + 60_000).toISOString(), chatId: '-1001' })],
+    ['a missing key', JSON.stringify({ version: 1, namePrefix: PREFIX })],
+    ['an arbitrary prefix', token({ namePrefix: 'Quarterly review' })],
+    ['an open-ended prefix', token({ namePrefix: 'CRM meeting canary ' })],
+    ['a non-canonical instant', token({ notAfter: '2026-09-10T05:35:00Z' })],
+    ['an expired window', token({ notAfter: new Date(NOW - 1).toISOString() })],
+    ['a window beyond the cap', token({ notAfter: new Date(NOW + 31 * 60_000).toISOString() })],
+  ])('fails open on %s', (_label, suppressionJson) => {
+    expect(
+      isSuppressedMeetingCanaryBooking({
+        name: `${PREFIX}${NONCE}`,
+        suppressionJson,
+        now: NOW,
+      }),
+    ).toBe(false);
+  });
+});
+
+// The workflow arms the token and the app runtime reads it. A format drift
+// between the two sides would silently stop suppressing and fire a bogus
+// booking alert on every release, so pin them against each other.
+describe('canary suppression token compatibility with the release workflow', () => {
+  const NOW = Date.parse('2026-09-10T05:30:00.000Z');
+  const NONCE = '55555555-5555-4555-8555-555555555555';
+
+  it('accepts the token the arming step actually writes, for that run only', async () => {
+    // The release workflow arms the token from this script, so importing the
+    // real builder is what stops it drifting from the checker below. It is
+    // plain .mjs with no declarations, hence the explicit shape.
+    const { buildMeetingCanarySuppression } = (await import(
+      // @ts-expect-error -- plain .mjs with no declarations, imported on purpose
+      // so the real arming builder is pinned against the checker below.
+      '../../../../scripts/verify-production-install.mjs'
+    )) as unknown as {
+      buildMeetingCanarySuppression: (input: {
+        runId: string;
+        runAttempt: string;
+        now: number;
+      }) => string;
+    };
+    const suppressionJson = buildMeetingCanarySuppression({
+      runId: '34500629643',
+      runAttempt: '2',
+      now: NOW,
+    });
+    const suppresses = (name: string, now = NOW) =>
+      isSuppressedMeetingCanaryBooking({ name, suppressionJson, now });
+
+    expect(suppresses(`CRM meeting canary 34500629643-2-${NONCE}`)).toBe(true);
+    expect(suppresses(`CRM meeting canary 34500629644-2-${NONCE}`)).toBe(false);
+    expect(suppresses(`CRM meeting canary 34500629643-1-${NONCE}`)).toBe(false);
+    expect(suppresses('Quarterly review with Acme')).toBe(false);
+    // The armed window must outlive a slow canary and still expire on its own.
+    expect(
+      suppresses(`CRM meeting canary 34500629643-2-${NONCE}`, NOW + 19 * 60_000),
+    ).toBe(true);
+    expect(
+      suppresses(`CRM meeting canary 34500629643-2-${NONCE}`, NOW + 21 * 60_000),
+    ).toBe(false);
+  });
+
+  it('disarms to a value the runtime treats as unarmed', () => {
+    expect(
+      isSuppressedMeetingCanaryBooking({
+        name: `CRM meeting canary 34500629643-2-${NONCE}`,
+        suppressionJson: '',
+        now: NOW,
+      }),
+    ).toBe(false);
   });
 });

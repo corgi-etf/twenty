@@ -45,9 +45,12 @@ describe('production report runtime canary contract', () => {
       "'ExecuteInstalledReportRuntimeVerification'",
     );
     assert.ok(cleanup > 0 && cleanup < execution);
+    // Was `assertDisabled()`, which proved "no alert" via the proxy "the bot is
+    // off". The bot now stays live through a release, so the same property is
+    // proved directly: this run's own alert suppression is armed and unexpired.
     assert.match(
       canarySource.slice(cleanup, execution),
-      /await assertDisabled\(\)/,
+      /await assertAlertsSuppressed\(\)/,
     );
     assert.match(canarySource, /after exact meeting cleanup/);
     assert.match(canarySource, /executeOneFromSource in LIVE mode/);
