@@ -86,11 +86,16 @@ describe('CoreMeetingBookingReportRepository', () => {
         parse(`
       query ReadMeetingBookingsForReport($start: DateTime!, $end: DateTime!, $first: Int!, $after: String) {
         meetingBookings(
-          filter: { and: [{ bookedAt: { gte: $start } }, { bookedAt: { lt: $end } }] }
+          filter: {
+            and: [
+              { or: [{ bookedAt: { gte: $start } }, { createdAt: { gte: $start } }] }
+              { or: [{ bookedAt: { lt: $end } }, { createdAt: { lt: $end } }] }
+            ]
+          }
           first: $first
           after: $after
         ) {
-          edges { node { id bookedAt scheduledAt wholesalerId wholesaler { id name } } }
+          edges { node { id bookedAt createdAt scheduledAt wholesalerId wholesaler { id name } } }
           pageInfo { hasNextPage endCursor }
         }
       }
