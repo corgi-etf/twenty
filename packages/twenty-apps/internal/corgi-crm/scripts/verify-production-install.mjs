@@ -40,13 +40,55 @@ const requiredEnvironment = (name) => {
   return value;
 };
 
+// Only this fixed vocabulary may reach CI logs. Server messages, paths,
+// extensions, query variables, and partial response data may contain CRM PII.
+const GRAPHQL_ERROR_CODES = new Set([
+  'GRAPHQL_PARSE_FAILED', 'GRAPHQL_VALIDATION_FAILED', 'UNAUTHENTICATED',
+  'FORBIDDEN', 'BAD_USER_INPUT', 'NOT_FOUND', 'METHOD_NOT_ALLOWED', 'CONFLICT',
+  'TIMEOUT', 'INTERNAL_SERVER_ERROR', 'METADATA_VALIDATION_FAILED',
+  'APPLICATION_INSTALLATION_FAILED', 'RATE_LIMITED', 'QUOTA_EXHAUSTED',
+]);
+
+const classifyGraphqlError = (error) => {
+  const message = typeof error?.message === 'string' ? error.message : '';
+  if (/Variable .* of type .* used in position expecting type/i.test(message)) {
+    return 'schema_variable_type_mismatch';
+  }
+  if (/Cannot query field|Field .* is not defined by type/i.test(message)) {
+    return 'schema_unknown_field';
+  }
+  if (/Unknown type/i.test(message)) return 'schema_unknown_type';
+  if (/permission denied|not authorized|unauthenticated|forbidden/i.test(message)) {
+    return 'permission_denied';
+  }
+  if (/duplicate key|unique constraint|foreign key constraint/i.test(message)) {
+    return 'constraint_conflict';
+  }
+  if (/invalid filter|filter .* invalid|invalid argument: "filter"/i.test(message)) {
+    return 'invalid_filter';
+  }
+  return 'unexpected';
+};
+
+const summarizeGraphqlErrors = (errors) => {
+  const counts = new Map();
+  for (const error of errors) {
+    const code = GRAPHQL_ERROR_CODES.has(error?.extensions?.code)
+      ? error.extensions.code : 'UNKNOWN';
+    const key = `${code}/${classifyGraphqlError(error)}`;
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  return [...counts].sort(([left], [right]) => left.localeCompare(right))
+    .map(([key, count]) => `${key}=${count}`).join(', ');
+};
+
 const parseResponse = async (response, operationName) => {
   if (!response.ok) {
     throw new Error(`${operationName} failed with HTTP ${response.status}`);
   }
   const body = await response.json();
   if (Array.isArray(body.errors) && body.errors.length > 0) {
-    throw new Error(`${operationName} returned GraphQL errors`);
+    throw new Error(`${operationName} returned GraphQL errors: ${summarizeGraphqlErrors(body.errors)}`);
   }
   if (!body.data) throw new Error(`${operationName} returned no data`);
   return body.data;
@@ -1095,6 +1137,7 @@ if (
 
 export {
   inspectReconciliationPreflight,
+  parseResponse,
   resolveCorgiRoleObjectIdentifiers,
   verifyApplicationRoleContract,
   verifyMeetingApplicationContract,
