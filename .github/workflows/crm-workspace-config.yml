@@ -27,10 +27,6 @@ on:
         description: Immutable workspace member UUID approved for Grace's Chicago territory
         required: true
         type: string
-      kelly_workspace_member_id:
-        description: Immutable workspace member UUID approved for Kelly's Chicago territory
-        required: true
-        type: string
       nash_workspace_member_id:
         description: Immutable workspace member UUID approved for Nash's Florida territory
         required: true
@@ -106,7 +102,6 @@ jobs:
           ROW_COVERAGE_SHA256: ${{ inputs.row_coverage_sha256 }}
           BUSINESS_CONTENT_SHA256: ${{ inputs.business_content_sha256 }}
           GRACE_WORKSPACE_MEMBER_ID: ${{ inputs.grace_workspace_member_id }}
-          KELLY_WORKSPACE_MEMBER_ID: ${{ inputs.kelly_workspace_member_id }}
           NASH_WORKSPACE_MEMBER_ID: ${{ inputs.nash_workspace_member_id }}
           IDENTITY_RUN_ID: ${{ inputs.identity_discovery_run_id }}
           IDENTITY_RUN_ATTEMPT: ${{ inputs.identity_discovery_run_attempt }}
@@ -122,11 +117,8 @@ jobs:
           [[ "${ROW_COVERAGE_SHA256}" =~ ^[0-9a-f]{64}$ ]]
           [[ "${BUSINESS_CONTENT_SHA256}" =~ ^[0-9a-f]{64}$ ]]
           [[ "${GRACE_WORKSPACE_MEMBER_ID}" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$ ]]
-          [[ "${KELLY_WORKSPACE_MEMBER_ID}" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$ ]]
           [[ "${NASH_WORKSPACE_MEMBER_ID}" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$ ]]
-          [[ "${GRACE_WORKSPACE_MEMBER_ID}" != "${KELLY_WORKSPACE_MEMBER_ID}" ]]
           [[ "${GRACE_WORKSPACE_MEMBER_ID}" != "${NASH_WORKSPACE_MEMBER_ID}" ]]
-          [[ "${KELLY_WORKSPACE_MEMBER_ID}" != "${NASH_WORKSPACE_MEMBER_ID}" ]]
           [[ "${IDENTITY_RUN_ID}" =~ ^[1-9][0-9]*$ ]]
           [[ "${IDENTITY_RUN_ATTEMPT}" =~ ^[1-9][0-9]*$ ]]
           [[ "${CLEANUP_RUN_ID}" =~ ^[1-9][0-9]*$ ]]
@@ -404,7 +396,6 @@ jobs:
           CRM_CANONICALIZATION_ROW_COVERAGE_SHA256: ${{ inputs.row_coverage_sha256 }}
           CRM_CANONICALIZATION_BUSINESS_CONTENT_SHA256: ${{ inputs.business_content_sha256 }}
           CRM_GRACE_WORKSPACE_MEMBER_ID: ${{ inputs.grace_workspace_member_id }}
-          CRM_KELLY_WORKSPACE_MEMBER_ID: ${{ inputs.kelly_workspace_member_id }}
           CRM_NASH_WORKSPACE_MEMBER_ID: ${{ inputs.nash_workspace_member_id }}
           CRM_TERRITORY_IDENTITY_ARTIFACT_PATH: ${{ runner.temp }}/crm-territory-identity-discovery/workspace-member-identities.json
           CRM_METADATA_CLEANUP_JOURNAL_PATH: ${{ runner.temp }}/crm-cleanup-prerequisite/metadata-cleanup-journal.json

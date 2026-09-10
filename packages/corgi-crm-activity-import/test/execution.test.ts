@@ -15,12 +15,12 @@ import {
 
 const uuid = (digit: string): string =>
   `${digit.repeat(8)}-${digit.repeat(4)}-4${digit.repeat(3)}-8${digit.repeat(3)}-${digit.repeat(12)}`;
-const identities = { Grace: uuid('1'), Kelly: uuid('2'), Nash: uuid('3') };
+const identities = { Grace: uuid('1'), Nash: uuid('3') };
 const identityArtifact = {
   workspaceMemberIds: identities,
   aggregateIdentityHash: createHash('sha256')
     .update(
-      `Grace=${identities.Grace}\nKelly=${identities.Kelly}\nNash=${identities.Nash}`,
+      `Grace=${identities.Grace}\nNash=${identities.Nash}`,
     )
     .digest('hex'),
 };

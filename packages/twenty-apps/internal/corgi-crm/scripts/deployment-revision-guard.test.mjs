@@ -24,6 +24,18 @@ const ALLOWED_PATHS = [
   '.github/workflows/corgi-crm-app-production.yml',
   '.github/workflows/crm-outreach-activity-import.yml',
   '.github/workflows/crm-territory-identity-discovery.yml',
+  '.github/workflows/crm-workspace-config.yml',
+  'packages/corgi-crm-activity-import/src/execution.ts',
+  'packages/corgi-crm-activity-import/src/importer.ts',
+  'packages/corgi-crm-activity-import/test/artifacts.test.ts',
+  'packages/corgi-crm-activity-import/test/completed-action-normalizer.test.ts',
+  'packages/corgi-crm-activity-import/test/execution.test.ts',
+  'packages/corgi-crm-activity-import/test/importer.test.ts',
+  'packages/corgi-crm-workspace-config/src/planner.ts',
+  'packages/corgi-crm-workspace-config/src/territory-identity-discovery.ts',
+  'packages/corgi-crm-workspace-config/test/execution.test.ts',
+  'packages/corgi-crm-workspace-config/test/planner.test.ts',
+  'packages/corgi-crm-workspace-config/test/territory-identity-discovery.test.ts',
   'packages/corgi-crm-activity-import/test/workflow-contract.test.ts',
   'packages/corgi-crm-workspace-config/test/workflow-contract.test.ts',
   'packages/twenty-apps/internal/corgi-crm/scripts/deployment-revision-guard.mjs',
@@ -35,6 +47,9 @@ const ALLOWED_PATHS = [
   'packages/twenty-e2e-testing/tests/production/meetingBooking.maintenance.spec.ts',
   'packages/twenty-e2e-testing/tests/production/meetingBookingCanaryPreflight.contract.spec.ts',
   'packages/twenty-e2e-testing/tests/production/meetingBookingCanaryPreflight.ts',
+  'packages/twenty-apps/internal/corgi-crm/README.md',
+  'packages/twenty-e2e-testing/tests/production/activityImport.maintenance.spec.ts',
+  'packages/twenty-e2e-testing/tests/production/workspaceConfiguration.maintenance.spec.ts',
 ];
 
 const expectedGitCalls = (

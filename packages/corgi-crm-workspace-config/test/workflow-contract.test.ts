@@ -57,7 +57,7 @@ test('workspace configuration requires the exact deployed workflow revision', as
     workflow,
     /git merge-base --is-ancestor "\$\{DEPLOYED_SHA\}" "\$\{cleanup_head_sha\}"/,
   );
-  for (const identity of ['grace', 'kelly', 'nash']) {
+  for (const identity of ['grace', 'nash']) {
     assert.match(
       workflow,
       new RegExp(

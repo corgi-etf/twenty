@@ -83,11 +83,7 @@ test('runs a guarded, idempotent outreach activity import', async ({
     throw new Error('CRM_ACTIVITY_IMPORT_SOURCE_FORMAT is invalid');
   }
   const ownerLabel = requiredEnvironment('CRM_ACTIVITY_IMPORT_OWNER_LABEL');
-  if (
-    ownerLabel !== 'Grace' &&
-    ownerLabel !== 'Kelly' &&
-    ownerLabel !== 'Nash'
-  ) {
+  if (ownerLabel !== 'Grace' && ownerLabel !== 'Nash') {
     throw new Error('CRM_ACTIVITY_IMPORT_OWNER_LABEL is invalid');
   }
   const paths = await preflightActivityImportArtifacts({

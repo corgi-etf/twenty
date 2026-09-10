@@ -80,7 +80,7 @@ test('atomically writes only the PII-free result contract', async (t) => {
     manifest: {
       schemaVersion: 2,
       sourceFormat: 'completed-actions-v2',
-      ownerLabel: 'Kelly',
+      ownerLabel: 'Grace',
       sourceSha256: '1'.repeat(64),
       provenanceSha256: '2'.repeat(64),
       rowSequenceSha256: '3'.repeat(64),
@@ -126,7 +126,7 @@ test('rejects v2 result manifests with mismatched normalization receipts', async
       manifest: {
         schemaVersion: 2,
         sourceFormat: 'completed-actions-v2',
-        ownerLabel: 'Kelly',
+        ownerLabel: 'Grace',
         sourceSha256: '1'.repeat(64),
         provenanceSha256: '2'.repeat(64),
         rowSequenceSha256: '3'.repeat(64),

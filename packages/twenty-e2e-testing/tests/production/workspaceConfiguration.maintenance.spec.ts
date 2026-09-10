@@ -48,9 +48,6 @@ test('applies the territory-first workspace configuration', async ({
       graceWorkspaceMemberId: requiredEnvironmentValue(
         'CRM_GRACE_WORKSPACE_MEMBER_ID',
       ),
-      kellyWorkspaceMemberId: requiredEnvironmentValue(
-        'CRM_KELLY_WORKSPACE_MEMBER_ID',
-      ),
       nashWorkspaceMemberId: requiredEnvironmentValue(
         'CRM_NASH_WORKSPACE_MEMBER_ID',
       ),
@@ -61,8 +58,7 @@ test('applies the territory-first workspace configuration', async ({
     ),
     expectedWorkspaceMemberIds: {
       Grace: wholesalerTerritoryAssignments[0]!.workspaceMemberId,
-      Kelly: wholesalerTerritoryAssignments[1]!.workspaceMemberId,
-      Nash: wholesalerTerritoryAssignments[2]!.workspaceMemberId,
+      Nash: wholesalerTerritoryAssignments[1]!.workspaceMemberId,
     },
   });
   await assertCompletedMetadataCleanup({

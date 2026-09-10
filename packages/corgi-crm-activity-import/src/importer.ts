@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 export type ActivityImportSourceFormat =
   | 'legacy-nash-outreach-v1'
   | 'completed-actions-v2';
-export type ActivityOwnerLabel = 'Grace' | 'Kelly' | 'Nash';
+export type ActivityOwnerLabel = 'Grace' | 'Nash';
 export type CompletedActivityType = 'phone_call' | 'email';
 export type CanonicalActivityOutcome =
   | 'left_voicemail'
@@ -75,7 +75,7 @@ export type ActivityImportWholesaler = {
 export type OutreachActivityRecord = Record<string, unknown> & { id: string };
 
 export type TerritoryIdentityArtifact = {
-  workspaceMemberIds: { Grace: string; Kelly: string; Nash: string };
+  workspaceMemberIds: Record<ActivityOwnerLabel, string>;
   aggregateIdentityHash: string;
 };
 
@@ -118,7 +118,9 @@ const ACTIVITY_SOURCE_FORMATS = [
   'legacy-nash-outreach-v1',
   'completed-actions-v2',
 ] as const;
-const ACTIVITY_OWNER_LABELS = ['Grace', 'Kelly', 'Nash'] as const;
+const ACTIVITY_OWNER_LABELS = ['Grace', 'Nash'] as const;
+
+const CANONICAL_IDENTITY_KEYS = [...ACTIVITY_OWNER_LABELS].sort().join(',');
 const COMPLETED_ACTIVITY_TYPES = ['phone_call', 'email'] as const;
 const CANONICAL_ACTIVITY_OUTCOMES = [
   'left_voicemail',
@@ -602,13 +604,18 @@ export const assertTerritoryIdentityArtifact = (
   value: unknown,
 ): TerritoryIdentityArtifact => {
   const artifact = value as TerritoryIdentityArtifact;
-  const workspaceMemberIds = {
-    Grace: artifact?.workspaceMemberIds?.Grace,
-    Kelly: artifact?.workspaceMemberIds?.Kelly,
-    Nash: artifact?.workspaceMemberIds?.Nash,
-  };
+  // Derived from the owner label list rather than spelled out, so this copy of
+  // the identity contract cannot drift from corgi-crm-workspace-config.
+  const workspaceMemberIds = Object.fromEntries(
+    ACTIVITY_OWNER_LABELS.map((label) => [
+      label,
+      artifact?.workspaceMemberIds?.[label],
+    ]),
+  ) as TerritoryIdentityArtifact['workspaceMemberIds'];
   const expectedHash = sha256(
-    `Grace=${workspaceMemberIds.Grace}\nKelly=${workspaceMemberIds.Kelly}\nNash=${workspaceMemberIds.Nash}`,
+    ACTIVITY_OWNER_LABELS.map(
+      (label) => `${label}=${workspaceMemberIds[label]}`,
+    ).join('\n'),
   );
   if (
     Object.keys((value as Record<string, unknown> | null) ?? {})
@@ -616,19 +623,19 @@ export const assertTerritoryIdentityArtifact = (
       .join(',') !== 'aggregateIdentityHash,workspaceMemberIds' ||
     Object.keys(artifact?.workspaceMemberIds ?? {})
       .sort()
-      .join(',') !== 'Grace,Kelly,Nash' ||
+      .join(',') !== CANONICAL_IDENTITY_KEYS ||
     !Object.values(workspaceMemberIds).every(
       (id) => typeof id === 'string' && UUID_PATTERN.test(id),
     ) ||
-    new Set(Object.values(workspaceMemberIds)).size !== 3 ||
+    new Set(Object.values(workspaceMemberIds)).size !==
+      ACTIVITY_OWNER_LABELS.length ||
     artifact.aggregateIdentityHash !== expectedHash
   ) {
     throw new Error('Territory identity artifact is invalid');
   }
 
   return {
-    workspaceMemberIds:
-      workspaceMemberIds as TerritoryIdentityArtifact['workspaceMemberIds'],
+    workspaceMemberIds,
     aggregateIdentityHash: expectedHash,
   };
 };
