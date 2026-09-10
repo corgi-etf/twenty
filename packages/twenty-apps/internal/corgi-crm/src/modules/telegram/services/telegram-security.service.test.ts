@@ -12,6 +12,11 @@ const ALLOWED_GROUP_TOPICS = [
   { chatId: GROUP_CHAT_ID, messageThreadId: GROUP_THREAD_ID },
 ];
 
+// The refusal this bot replaced said only "must use a private chat", so a
+// /private/ assertion would pass against a regression back to refusing every
+// group. Every group-refusal test below matches the new wording specifically.
+const GROUP_REFUSED = /private chat or an allowed group topic/;
+
 const groupMessage = (messageOverrides: Record<string, unknown> = {}) => ({
   update_id: 42,
   message: {
@@ -99,7 +104,7 @@ describe('Telegram webhook security', () => {
           text: '/today',
         },
       }),
-    ).toThrow(/private/i);
+    ).toThrow(GROUP_REFUSED);
   });
 
   it('keeps a private update free of any group scope', () => {
@@ -135,25 +140,25 @@ describe('Telegram webhook security', () => {
 
   it('refuses every group that is not exactly allowlisted', () => {
     // No allowlist configured at all is the default production posture.
-    expect(() => parseTelegramUpdate(groupMessage())).toThrow(/private/i);
+    expect(() => parseTelegramUpdate(groupMessage())).toThrow(GROUP_REFUSED);
     expect(() =>
       parseTelegramUpdate(
         groupMessage({ chat: { id: -1002394851555, type: 'supergroup' } }),
         ALLOWED_GROUP_TOPICS,
       ),
-    ).toThrow(/private/i);
+    ).toThrow(GROUP_REFUSED);
     expect(() =>
       parseTelegramUpdate(
         groupMessage({ message_thread_id: GROUP_THREAD_ID + 1 }),
         ALLOWED_GROUP_TOPICS,
       ),
-    ).toThrow(/private/i);
+    ).toThrow(GROUP_REFUSED);
     expect(() =>
       parseTelegramUpdate(
         groupMessage({ chat: { id: Number(GROUP_CHAT_ID), type: 'group' } }),
         ALLOWED_GROUP_TOPICS,
       ),
-    ).toThrow(/private/i);
+    ).toThrow(GROUP_REFUSED);
   });
 
   it('refuses a supergroup message that carries no forum topic', () => {
@@ -164,13 +169,13 @@ describe('Telegram webhook security', () => {
         groupMessage({ message_thread_id: undefined }),
         ALLOWED_GROUP_TOPICS,
       ),
-    ).toThrow(/private/i);
+    ).toThrow(GROUP_REFUSED);
     expect(() =>
       parseTelegramUpdate(
         groupMessage({ message_thread_id: 0 }),
         ALLOWED_GROUP_TOPICS,
       ),
-    ).toThrow(/private/i);
+    ).toThrow(GROUP_REFUSED);
   });
 
   it('carries the group scope across the queue and defaults older jobs to private', () => {
