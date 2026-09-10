@@ -9,8 +9,8 @@ import {
   revokeDeploymentApiKey,
 } from './deployment-api-key.mjs';
 
-const workspaceId = 'eabf5d9d-fc99-4acb-b160-710ecb1db996';
-const userWorkspaceId = '767771e9-834d-4a89-88ca-1df32d101a40';
+const workspaceId = '11111111-1111-4111-8111-111111111111';
+const userWorkspaceId = '22222222-2222-4222-8222-222222222222';
 const REQUIRED_PERMISSION_FLAGS = [
   'API_KEYS_AND_WEBHOOKS',
   'APPLICATIONS',

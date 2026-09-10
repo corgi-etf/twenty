@@ -62,7 +62,7 @@ test('bootstraps and verifies only the CRM metadata needed by the app', async ({
     requireProductionEnvironment();
   const origin = new URL(FRONTEND_BASE_URL).origin;
   const requestGate = createWorkspaceConfigRequestGate();
-  await assertWorkspaceConfigTenant({
+  const tenant = await assertWorkspaceConfigTenant({
     request: page.request,
     origin,
     requestGate,
@@ -90,7 +90,10 @@ test('bootstraps and verifies only the CRM metadata needed by the app', async ({
   });
   await writeWorkspaceMetadataBootstrapArtifact(
     artifactPath,
-    buildWorkspaceMetadataBootstrapArtifact({ deployedSha }),
+    buildWorkspaceMetadataBootstrapArtifact({
+      deployedSha,
+      workspaceId: tenant.workspaceId,
+    }),
   );
 
   console.log(

@@ -12,6 +12,7 @@ import {
 } from '../src/metadata-bootstrap-artifact.ts';
 
 const deployedSha = 'a'.repeat(40);
+const workspaceId = '11111111-1111-4111-8111-111111111111';
 
 test('writes and verifies PII-free exact-SHA metadata bootstrap evidence', async () => {
   const runnerTemp = await mkdtemp(join(tmpdir(), 'crm-metadata-bootstrap-'));
@@ -22,13 +23,14 @@ test('writes and verifies PII-free exact-SHA metadata bootstrap evidence', async
     });
     await writeWorkspaceMetadataBootstrapArtifact(
       artifactPath,
-      buildWorkspaceMetadataBootstrapArtifact({ deployedSha }),
+      buildWorkspaceMetadataBootstrapArtifact({ deployedSha, workspaceId }),
     );
     const raw = await readFile(artifactPath, 'utf8');
     assert.doesNotMatch(raw, /@|email|fullName|firstName|lastName/i);
     const verified = await assertCompletedWorkspaceMetadataBootstrap({
       artifactPath,
       expectedDeployedSha: deployedSha,
+      expectedWorkspaceId: workspaceId,
     });
     assert.equal(verified.deployedSha, deployedSha);
     assert.match(verified.metadataContractHash, /^[0-9a-f]{64}$/);
@@ -37,6 +39,15 @@ test('writes and verifies PII-free exact-SHA metadata bootstrap evidence', async
       assertCompletedWorkspaceMetadataBootstrap({
         artifactPath,
         expectedDeployedSha: 'b'.repeat(40),
+        expectedWorkspaceId: workspaceId,
+      }),
+      /artifact is invalid/,
+    );
+    await assert.rejects(
+      assertCompletedWorkspaceMetadataBootstrap({
+        artifactPath,
+        expectedDeployedSha: deployedSha,
+        expectedWorkspaceId: '22222222-2222-4222-8222-222222222222',
       }),
       /artifact is invalid/,
     );

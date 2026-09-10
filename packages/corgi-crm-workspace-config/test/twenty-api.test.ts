@@ -14,9 +14,11 @@ import {
   preflightWorkspaceConfigCheckpoint,
   type WorkspaceConfigRequestContext,
   type WorkspaceConfigResponse,
-  WORKSPACE_CONFIG_APPROVED_USER_WORKSPACE_ID,
-  WORKSPACE_CONFIG_APPROVED_WORKSPACE_ID,
 } from '../src/twenty-api.ts';
+
+const WORKSPACE_ID = '11111111-1111-4111-8111-111111111111';
+const USER_ID = '22222222-2222-4222-8222-222222222222';
+const USER_WORKSPACE_ID = '33333333-3333-4333-8333-333333333333';
 
 const response = (
   body: unknown,
@@ -60,22 +62,36 @@ const immediateGate = createWorkspaceConfigRequestGate({
 });
 
 const tenantPreflightBody = ({
-  userWorkspaceId = WORKSPACE_CONFIG_APPROVED_USER_WORKSPACE_ID,
+  workspaceId = WORKSPACE_ID,
+  workspaceActivationStatus = 'ACTIVE',
+  userId = USER_ID,
+  membershipUserId = userId,
+  userWorkspaceId = USER_WORKSPACE_ID,
+  deletedAt = null,
   permissionFlags = ['DATA_MODEL'],
   isImpersonating = false,
 }: {
+  workspaceId?: string;
+  workspaceActivationStatus?: string;
+  userId?: string;
+  membershipUserId?: string;
   userWorkspaceId?: string;
+  deletedAt?: string | null;
   permissionFlags?: string[];
   isImpersonating?: boolean;
 } = {}) => ({
   data: {
     currentUser: {
+      id: userId,
       currentWorkspace: {
-        id: WORKSPACE_CONFIG_APPROVED_WORKSPACE_ID,
+        id: workspaceId,
         displayName: 'Corgi ETF',
+        activationStatus: workspaceActivationStatus,
       },
       currentUserWorkspace: {
         id: userWorkspaceId,
+        userId: membershipUserId,
+        deletedAt,
         permissionFlags,
         isImpersonating,
       },
@@ -87,11 +103,13 @@ test('tenant preflight trusts the exact approved effective membership', async ()
   const request = new FakeRequest();
   request.responses.push(response(tenantPreflightBody()));
 
-  await assertWorkspaceConfigTenant({
+  const tenant = await assertWorkspaceConfigTenant({
     request,
     origin: 'https://crm.corgiinvest.com',
     requestGate: immediateGate,
   });
+  assert.equal(tenant.workspaceId, WORKSPACE_ID);
+  assert.equal(tenant.userWorkspaceId, USER_WORKSPACE_ID);
   assert.equal(request.calls.length, 1);
   assert.equal(request.calls[0]?.url, 'https://crm.corgiinvest.com/metadata');
   const query = String((request.calls[0]?.data as { query?: unknown }).query);
@@ -99,9 +117,48 @@ test('tenant preflight trusts the exact approved effective membership', async ()
   assert.doesNotMatch(query, /getRoles/);
 });
 
+test('tenant preflight rejects a malformed authenticated workspace identity', async () => {
+  const request = new FakeRequest();
+  request.responses.push(
+    response(tenantPreflightBody({ workspaceId: 'not-a-uuid' })),
+  );
+
+  await assert.rejects(
+    assertWorkspaceConfigTenant({
+      request,
+      origin: 'https://crm.corgiinvest.com',
+      requestGate: immediateGate,
+    }),
+    /tenant is not approved/,
+  );
+});
+
+test('tenant preflight rejects inactive or unbound memberships', async () => {
+  const invalidSessions = [
+    tenantPreflightBody({ workspaceActivationStatus: 'SUSPENDED' }),
+    tenantPreflightBody({
+      membershipUserId: '44444444-4444-4444-8444-444444444444',
+    }),
+    tenantPreflightBody({ userWorkspaceId: 'not-a-uuid' }),
+    tenantPreflightBody({ deletedAt: '2026-09-09T22:00:00.000Z' }),
+  ];
+
+  for (const body of invalidSessions) {
+    const request = new FakeRequest();
+    request.responses.push(response(body));
+    await assert.rejects(
+      assertWorkspaceConfigTenant({
+        request,
+        origin: 'https://crm.corgiinvest.com',
+        requestGate: immediateGate,
+      }),
+      /tenant is not approved|session lacks metadata permission/,
+    );
+  }
+});
+
 test('tenant preflight rejects the wrong member, missing permission, and impersonation', async () => {
   const invalidSessions = [
-    tenantPreflightBody({ userWorkspaceId: 'wrong-user-workspace-id' }),
     tenantPreflightBody({ permissionFlags: [] }),
     tenantPreflightBody({ isImpersonating: true }),
   ];
