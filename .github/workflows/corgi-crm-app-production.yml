@@ -3,8 +3,16 @@ name: Publish and install Corgi CRM app in production
 on:
   workflow_dispatch:
     inputs:
+      operation:
+        description: Publish the app, or configure an already verified installed release
+        required: true
+        default: publish-and-install
+        type: choice
+        options:
+          - publish-and-install
+          - configure-telegram
       confirmation:
-        description: Type PUBLISH_AND_INSTALL_CORGI_CRM_APP
+        description: Type PUBLISH_AND_INSTALL_CORGI_CRM_APP or CONFIGURE_CORGI_CRM_TELEGRAM for the selected operation
         required: true
         type: string
       deployed_sha:
@@ -72,13 +80,19 @@ jobs:
       - name: Validate explicit production approval and revision
         shell: bash
         env:
+          OPERATION: ${{ inputs.operation }}
           CONFIRMATION: ${{ inputs.confirmation }}
           DEPLOYED_SHA: ${{ inputs.deployed_sha }}
           BOOTSTRAP_RUN_ID: ${{ inputs.metadata_bootstrap_run_id }}
           BOOTSTRAP_RUN_ATTEMPT: ${{ inputs.metadata_bootstrap_run_attempt }}
         run: |
           set -euo pipefail
-          [[ "${CONFIRMATION}" == "PUBLISH_AND_INSTALL_CORGI_CRM_APP" ]]
+          if [[ "${OPERATION}" == "configure-telegram" ]]; then
+            [[ "${CONFIRMATION}" == "CONFIGURE_CORGI_CRM_TELEGRAM" ]]
+          else
+            [[ "${OPERATION}" == "publish-and-install" ]]
+            [[ "${CONFIRMATION}" == "PUBLISH_AND_INSTALL_CORGI_CRM_APP" ]]
+          fi
           [[ "${DEPLOYED_SHA}" =~ ^[0-9a-f]{40}$ ]]
           [[ "${DEPLOYED_SHA}" == "${GITHUB_SHA}" ]]
           [[ "${BOOTSTRAP_RUN_ID}" =~ ^[1-9][0-9]*$ ]]
@@ -294,7 +308,15 @@ jobs:
           CORGI_CRM_ROLE_ENV_PATH: ${{ github.env }}
         run: node "${APP_PATH}/scripts/verify-production-install.mjs" role-env
 
+      - name: Verify the installed release before configuration-only changes
+        if: inputs.operation == 'configure-telegram'
+        env:
+          CORGI_CRM_API_KEY: ${{ steps.credential.outputs.token }}
+          CORGI_CRM_EXPECTED_VERSION: ${{ steps.app.outputs.version }}
+        run: node "${APP_PATH}/scripts/verify-production-install.mjs" installed
+
       - name: Publish the private Corgi CRM app
+        if: inputs.operation != 'configure-telegram'
         uses: ./.github/actions/deploy-twenty-app
         with:
           api-url: ${{ env.CORGI_CRM_API_URL }}
@@ -302,6 +324,7 @@ jobs:
           app-path: ${{ env.APP_PATH }}
 
       - name: Install or upgrade the Corgi CRM app
+        if: inputs.operation != 'configure-telegram'
         uses: ./.github/actions/install-twenty-app
         with:
           api-url: ${{ env.CORGI_CRM_API_URL }}
