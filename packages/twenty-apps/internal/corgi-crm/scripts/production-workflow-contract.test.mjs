@@ -42,6 +42,19 @@ const parseRunnerEnvironment = (contents) =>
   );
 
 describe('Corgi CRM production app workflow contract', () => {
+  it('allows only guarded maintenance drift from the deployed runtime revision', () => {
+    assert.doesNotMatch(
+      workflow,
+      /\[\[ "\$\{DEPLOYED_SHA\}" == "\$\{GITHUB_SHA\}" \]\]/,
+    );
+    assert.match(
+      workflow,
+      /node "\$\{APP_PATH\}\/scripts\/deployment-revision-guard\.mjs" \\\n\s+"\$\{DEPLOYED_SHA\}" "\$\{GITHUB_SHA\}"/,
+    );
+    assert.match(workflow, /\.head_sha == \$deployed_sha/);
+    assert.match(workflow, /imageTag=git-\$\{DEPLOYED_SHA\}/);
+  });
+
   it('derives the workspace ID from integrity-validated bootstrap evidence without a UUID literal', () => {
     assert.doesNotMatch(
       workflow,
@@ -207,13 +220,33 @@ describe('Corgi CRM production app workflow contract', () => {
     assert.match(cleanup, /exit 1/);
   });
 
-  it('gates app installation on native meeting verification before provider activation', () => {
+  it('gates publish and configure recovery on installed-version and native report verification before provider activation', () => {
+    const installed = position(
+      'Verify the installed release before configuration-only changes',
+    );
+    const configureDisabled = position('Configure Telegram disabled');
     const stage = position('configure-telegram.mjs" stage');
     const canary = position('Verify native CRM meeting booking while Telegram is disabled');
     const register = position('Register and verify the live Telegram provider');
-    assert.ok(stage < canary && canary < register);
+    assert.ok(
+      installed < configureDisabled &&
+        configureDisabled < stage &&
+        stage < canary &&
+        canary < register,
+    );
+    const installedBlock = workflow.slice(installed, configureDisabled);
+    assert.match(installedBlock, /if: inputs\.operation == 'configure-telegram'/);
+    assert.match(
+      installedBlock,
+      /CORGI_CRM_EXPECTED_VERSION:\s*\$\{\{ steps\.app\.outputs\.version \}\}/,
+    );
+    assert.match(
+      installedBlock,
+      /verify-production-install\.mjs" installed/,
+    );
     const canaryBlock = workflow.slice(canary, register);
-    assert.match(canaryBlock, /if: inputs\.operation == 'publish-and-install'/);
+    assert.doesNotMatch(canaryBlock, /^\s*if:/m);
+    assert.doesNotMatch(canaryBlock, /inputs\.operation == 'publish-and-install'/);
     assert.doesNotMatch(canaryBlock, /if: inputs\.telegram_enable/);
     assert.match(canaryBlock, /CRM_MEETING_CANARY_ENABLED: 'true'/);
     assert.match(canaryBlock, /VERIFY_NATIVE_CRM_MEETING_WITH_TELEGRAM_DISABLED/);
