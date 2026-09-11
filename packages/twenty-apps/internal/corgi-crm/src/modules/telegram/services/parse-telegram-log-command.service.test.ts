@@ -11,7 +11,7 @@ describe('parseTelegramLogCommand', () => {
       ),
     ).toEqual({
       activityId: 'activity-from-update-42',
-      activityType: 'phone_call',
+      activityType: 'PHONE_CALL',
       companyQuery: 'Acme Holdings',
       outcome: 'connected',
       notes: 'renewal chat',
@@ -26,7 +26,7 @@ describe('parseTelegramLogCommand', () => {
       ),
     ).toEqual({
       activityId: 'activity-from-update-43',
-      activityType: 'meeting',
+      activityType: 'MEETING',
       companyQuery: 'Acme',
       contactQuery: 'Jane Doe',
       outcome: 'follow_up_scheduled',

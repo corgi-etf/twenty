@@ -81,19 +81,23 @@ const REPORT_DAYS: Record<ReportPeriod, number> = {
   weekly: 7,
   monthly: 30,
 };
+// The title says what the window actually is. "Last 24 hours" outlived the
+// window it described, and a label that survives its subject is how a report
+// starts lying to the people who trust it.
 const REPORT_TITLES: Record<ReportPeriod, string> = {
-  daily: 'Daily outreach report',
-  weekly: 'Weekly outreach report — excluding Saturday/Sunday',
-  monthly: 'Monthly outreach report',
+  daily: 'Daily outreach report — 5am to 5am',
+  weekly:
+    'Weekly outreach report — 7 days, 5am to 5am, excluding Saturday/Sunday',
+  monthly: 'Monthly outreach report — 30 days, 5am to 5am',
 };
 
-// The three ranked channels. Production stores exactly these values, so they
-// are matched exactly: anything else still counts toward the total and simply
-// falls outside the triple rather than being silently rebucketed.
+// The three ranked channels, keyed by the UPPER_CASE SELECT values the CRM
+// stores. MEETING, OTHER and any value this app was never taught still count
+// toward the total and simply fall outside the triple.
 const ACTIVITY_CHANNELS: Record<string, 'calls' | 'emails' | 'linkedin'> = {
-  phone_call: 'calls',
-  email: 'emails',
-  linkedin: 'linkedin',
+  PHONE_CALL: 'calls',
+  EMAIL: 'emails',
+  LINKEDIN: 'linkedin',
 };
 
 const cleanLabel = (value: string, fallback: string) =>
@@ -154,7 +158,7 @@ export const PLACEHOLDER_ATTRIBUTED_ANNUAL_RECURRING_REVENUE = 0;
 const ACTIVITY_LEADERBOARD_HEADING =
   '🏆 Activity leaderboard (calls/emails/linkedin)';
 const EXTERNAL_WHOLESALER_MEETINGS_HEADING = 'Meetings taken by EW';
-const EXTERNAL_WHOLESALER_REVENUE_HEADING = '💰 ARR attributed per EW';
+const EXTERNAL_WHOLESALER_REVENUE_HEADING = 'ARR attributed per EW';
 // True whether nobody carries the role or an EW simply did nothing in the
 // window -- the EW set is derived from who appears in this report.
 const NO_EXTERNAL_WHOLESALER_MEETINGS_NOTE =
@@ -428,7 +432,11 @@ export const buildReportSummary = ({
     seenIds.add(activity.id);
     const owner = addOwnerRow(owners, activity);
     owner.count += 1;
-    const channel = ACTIVITY_CHANNELS[activity.activityType];
+    // Matched case-insensitively and trimmed: rows written before activityType
+    // became a SELECT still carry the lower snake_case value, and both
+    // spellings have to reach the same bucket for as long as both exist.
+    const channel =
+      ACTIVITY_CHANNELS[(activity.activityType ?? '').trim().toUpperCase()];
     if (channel) owner[channel] += 1;
   }
 

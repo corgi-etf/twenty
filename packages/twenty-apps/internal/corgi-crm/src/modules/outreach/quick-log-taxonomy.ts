@@ -1,9 +1,13 @@
+// UPPER_CASE because activityType is a SELECT in the CRM and Twenty rejects
+// option values that are not upper snake_case. These are the stored values, so
+// the taxonomy speaks the same language as the column. outcome is still TEXT,
+// so its values stay lower snake_case.
 export const QUICK_LOG_ACTIVITY_TYPES = [
-  'phone_call',
-  'email',
-  'linkedin',
-  'meeting',
-  'other',
+  'PHONE_CALL',
+  'EMAIL',
+  'LINKEDIN',
+  'MEETING',
+  'OTHER',
 ] as const;
 
 export type QuickLogActivityType = (typeof QUICK_LOG_ACTIVITY_TYPES)[number];
@@ -20,11 +24,11 @@ export const QUICK_LOG_OUTCOMES = [
 export type QuickLogOutcome = (typeof QUICK_LOG_OUTCOMES)[number];
 
 export const QUICK_LOG_ACTIVITY_LABELS: Record<QuickLogActivityType, string> = {
-  phone_call: 'Phone call',
-  email: 'Email',
-  linkedin: 'LinkedIn',
-  meeting: 'Meeting',
-  other: 'Other',
+  PHONE_CALL: 'Phone call',
+  EMAIL: 'Email',
+  LINKEDIN: 'LinkedIn',
+  MEETING: 'Meeting',
+  OTHER: 'Other',
 };
 
 export const QUICK_LOG_OUTCOME_LABELS: Record<QuickLogOutcome, string> = {

@@ -364,7 +364,7 @@ describe('CoreOutreachRepository.createActivity', () => {
     name: 'Phone call — Acme',
     companyId: 'company-1',
     wholesalerId: 'wholesaler-1',
-    activityType: 'phone_call' as const,
+    activityType: 'PHONE_CALL' as const,
     outcome: 'connected' as const,
     occurredAt: '2026-09-10T04:59:00.000Z',
   };
