@@ -160,6 +160,43 @@ export class CoreMeetingBookingRepository {
     );
   }
 
+  public async assignUnassignedOwner({
+    id,
+    wholesalerId,
+  }: {
+    id: string;
+    wholesalerId: string;
+  }): Promise<boolean> {
+    try {
+      const result = await this.client.mutation({
+        updateMeetingBookings: {
+          __args: {
+            // The still-empty owner is the whole guard. An updatedAt precondition
+            // would also fail on an unrelated concurrent edit, leaving the
+            // meeting unassigned for the reason this trigger exists to fix.
+            filter: {
+              and: [{ id: { eq: id } }, { wholesalerId: { is: 'NULL' } }],
+            },
+            data: { wholesalerId },
+          },
+          ...selection,
+        },
+      });
+      const rows = result.updateMeetingBookings;
+      if (Array.isArray(rows) && rows.length === 1) {
+        const updated = parseMeetingBooking(rows[0]);
+        if (updated?.id === id && updated.wholesalerId === wholesalerId) {
+          return true;
+        }
+      }
+    } catch {
+      // See stampBooked: a committed mutation can still lose its response, and
+      // readback is the only way to tell that from a competing owner selection.
+    }
+    const persisted = await this.get(id);
+    return persisted?.wholesalerId === wholesalerId;
+  }
+
   public async rejectInvalidBooking({
     id,
     message,
