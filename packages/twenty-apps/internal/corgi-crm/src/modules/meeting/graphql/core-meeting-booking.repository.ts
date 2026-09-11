@@ -197,6 +197,42 @@ export class CoreMeetingBookingRepository {
     return persisted?.wholesalerId === wholesalerId;
   }
 
+  public async assignUnassignedBookedBy({
+    id,
+    bookedById,
+  }: {
+    id: string;
+    bookedById: string;
+  }): Promise<boolean> {
+    try {
+      const result = await this.client.mutation({
+        updateMeetingBookings: {
+          __args: {
+            // Same shape as assignUnassignedOwner: the still-empty value is
+            // the whole guard, so someone booking on another's behalf keeps
+            // the person they picked.
+            filter: {
+              and: [{ id: { eq: id } }, { bookedById: { is: 'NULL' } }],
+            },
+            data: { bookedById },
+          },
+          ...selection,
+        },
+      });
+      const rows = result.updateMeetingBookings;
+      if (Array.isArray(rows) && rows.length === 1) {
+        const updated = parseMeetingBooking(rows[0]);
+        if (updated?.id === id && updated.bookedById === bookedById) {
+          return true;
+        }
+      }
+    } catch {
+      // See stampBooked: a committed mutation can still lose its response.
+    }
+    const persisted = await this.get(id);
+    return persisted?.bookedById === bookedById;
+  }
+
   public async rejectInvalidBooking({
     id,
     message,

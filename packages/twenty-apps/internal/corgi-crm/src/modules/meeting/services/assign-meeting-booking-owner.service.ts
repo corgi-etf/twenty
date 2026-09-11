@@ -6,6 +6,7 @@ const UUID_PATTERN =
 export type MeetingBookingOwner = {
   id: string;
   wholesalerId: string | null;
+  bookedById: string | null;
 };
 
 export type MeetingBookingOwnerRepository = {
@@ -13,6 +14,10 @@ export type MeetingBookingOwnerRepository = {
   assignUnassignedOwner(input: {
     id: string;
     wholesalerId: string;
+  }): Promise<boolean>;
+  assignUnassignedBookedBy(input: {
+    id: string;
+    bookedById: string;
   }): Promise<boolean>;
 };
 
@@ -28,11 +33,17 @@ export type AssignMeetingBookingOwnerSkipReason =
   (typeof ASSIGN_MEETING_BOOKING_OWNER_SKIP_REASONS)[number];
 
 export type AssignMeetingBookingOwnerResult =
-  | { status: 'assigned'; meetingId: string; wholesalerId: string }
+  | {
+      status: 'assigned';
+      meetingId: string;
+      wholesalerId: string;
+      bookedByAssigned: boolean;
+    }
   | {
       status: 'skipped';
       meetingId: string;
       reason: AssignMeetingBookingOwnerSkipReason;
+      bookedByAssigned: boolean;
     };
 
 export const assignMeetingBookingOwner = async ({
@@ -48,18 +59,45 @@ export const assignMeetingBookingOwner = async ({
 }): Promise<AssignMeetingBookingOwnerResult> => {
   const record = await meetingRepository.get(meetingId);
   if (!record) {
-    return { status: 'skipped', meetingId, reason: 'meeting_not_found' };
+    return {
+      status: 'skipped',
+      meetingId,
+      reason: 'meeting_not_found',
+      bookedByAssigned: false,
+    };
   }
+  // Booked-by is claimed independently of the owner: it identifies the person,
+  // not their wholesaler, so a creator without one must still be recorded. As
+  // with the owner, a value already present is never overwritten.
+  const bookedByAssigned =
+    !record.bookedById &&
+    !!creatorWorkspaceMemberId &&
+    UUID_PATTERN.test(creatorWorkspaceMemberId)
+      ? await meetingRepository.assignUnassignedBookedBy({
+          id: meetingId,
+          bookedById: creatorWorkspaceMemberId,
+        })
+      : false;
   // A wholesaler someone chose always wins. A re-delivered create event must
   // read the record as it is now, never as the event described it.
   if (record.wholesalerId) {
-    return { status: 'skipped', meetingId, reason: 'already_assigned' };
+    return {
+      status: 'skipped',
+      meetingId,
+      reason: 'already_assigned',
+      bookedByAssigned,
+    };
   }
   if (
     !creatorWorkspaceMemberId ||
     !UUID_PATTERN.test(creatorWorkspaceMemberId)
   ) {
-    return { status: 'skipped', meetingId, reason: 'unknown_creator' };
+    return {
+      status: 'skipped',
+      meetingId,
+      reason: 'unknown_creator',
+      bookedByAssigned,
+    };
   }
 
   const wholesalers = (
@@ -72,6 +110,7 @@ export const assignMeetingBookingOwner = async ({
       status: 'skipped',
       meetingId,
       reason: 'creator_has_no_wholesaler',
+      bookedByAssigned,
     };
   }
   if (wholesalers.length > 1) {
@@ -81,6 +120,7 @@ export const assignMeetingBookingOwner = async ({
       status: 'skipped',
       meetingId,
       reason: 'ambiguous_creator_wholesaler',
+      bookedByAssigned,
     };
   }
 
@@ -89,11 +129,17 @@ export const assignMeetingBookingOwner = async ({
     id: meetingId,
     wholesalerId,
   });
-  if (assigned) return { status: 'assigned', meetingId, wholesalerId };
+  if (assigned)
+    return { status: 'assigned', meetingId, wholesalerId, bookedByAssigned };
 
   const persisted = await meetingRepository.get(meetingId);
   if (persisted?.wholesalerId) {
-    return { status: 'skipped', meetingId, reason: 'already_assigned' };
+    return {
+      status: 'skipped',
+      meetingId,
+      reason: 'already_assigned',
+      bookedByAssigned,
+    };
   }
   throw new Error('Meeting booking owner assignment did not persist');
 };

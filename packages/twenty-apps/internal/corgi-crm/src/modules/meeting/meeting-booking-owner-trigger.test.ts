@@ -84,11 +84,7 @@ describe('meeting booking owner assignment trigger', () => {
   });
 
   it('passes the creating workspace member from the record attribution', async () => {
-    vi.mocked(assignMeetingBookingOwner).mockResolvedValue({
-      status: 'assigned',
-      meetingId: MEETING_ID,
-      wholesalerId: WHOLESALER_ID,
-    });
+    vi.mocked(assignMeetingBookingOwner).mockResolvedValue({ status: 'assigned', meetingId: MEETING_ID, wholesalerId: WHOLESALER_ID, bookedByAssigned: true });
 
     await expect(
       handler(
@@ -98,11 +94,7 @@ describe('meeting booking owner assignment trigger', () => {
           createdBy: { workspaceMemberId: MEMBER_ID },
         }),
       ),
-    ).resolves.toEqual({
-      status: 'assigned',
-      meetingId: MEETING_ID,
-      wholesalerId: WHOLESALER_ID,
-    });
+    ).resolves.toEqual({ status: 'assigned', meetingId: MEETING_ID, wholesalerId: WHOLESALER_ID, bookedByAssigned: true });
     expect(assignMeetingBookingOwner).toHaveBeenCalledWith({
       meetingId: MEETING_ID,
       creatorWorkspaceMemberId: MEMBER_ID,
@@ -112,11 +104,7 @@ describe('meeting booking owner assignment trigger', () => {
   });
 
   it('falls back to the event actor when the record carries no attribution', async () => {
-    vi.mocked(assignMeetingBookingOwner).mockResolvedValue({
-      status: 'assigned',
-      meetingId: MEETING_ID,
-      wholesalerId: WHOLESALER_ID,
-    });
+    vi.mocked(assignMeetingBookingOwner).mockResolvedValue({ status: 'assigned', meetingId: MEETING_ID, wholesalerId: WHOLESALER_ID, bookedByAssigned: true });
 
     await handler(
       event(
@@ -130,11 +118,7 @@ describe('meeting booking owner assignment trigger', () => {
   });
 
   it('reports an unknown creator rather than inventing one', async () => {
-    vi.mocked(assignMeetingBookingOwner).mockResolvedValue({
-      status: 'skipped',
-      meetingId: MEETING_ID,
-      reason: 'unknown_creator',
-    });
+    vi.mocked(assignMeetingBookingOwner).mockResolvedValue({ status: 'skipped', meetingId: MEETING_ID, reason: 'unknown_creator', bookedByAssigned: false });
 
     await handler(event({ id: MEETING_ID }));
     expect(assignMeetingBookingOwner).toHaveBeenCalledWith(
@@ -168,11 +152,7 @@ describe('meeting booking owner assignment trigger', () => {
   });
 
   it('assigns regardless of the status the meeting was created in', async () => {
-    vi.mocked(assignMeetingBookingOwner).mockResolvedValue({
-      status: 'assigned',
-      meetingId: MEETING_ID,
-      wholesalerId: WHOLESALER_ID,
-    });
+    vi.mocked(assignMeetingBookingOwner).mockResolvedValue({ status: 'assigned', meetingId: MEETING_ID, wholesalerId: WHOLESALER_ID, bookedByAssigned: true });
 
     for (const status of ['DRAFT', 'BOOKED']) {
       await handler(
@@ -195,20 +175,12 @@ describe('meeting booking owner assignment trigger', () => {
     });
     vi.mocked(assignMeetingBookingOwner)
       .mockRejectedValueOnce(new Error('Owner assignment did not persist'))
-      .mockResolvedValueOnce({
-        status: 'skipped',
-        meetingId: MEETING_ID,
-        reason: 'already_assigned',
-      });
+      .mockResolvedValueOnce({ status: 'skipped', meetingId: MEETING_ID, reason: 'already_assigned', bookedByAssigned: false });
 
     await expect(handler(created)).rejects.toBeInstanceOf(
       RetryableLogicFunctionError,
     );
-    await expect(handler(created)).resolves.toEqual({
-      status: 'skipped',
-      meetingId: MEETING_ID,
-      reason: 'already_assigned',
-    });
+    await expect(handler(created)).resolves.toEqual({ status: 'skipped', meetingId: MEETING_ID, reason: 'already_assigned', bookedByAssigned: false });
     expect(assignMeetingBookingOwner).toHaveBeenCalledTimes(2);
     for (const [input] of vi.mocked(assignMeetingBookingOwner).mock.calls) {
       expect(input).toMatchObject({

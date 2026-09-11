@@ -21,11 +21,13 @@ const creatorWholesaler: WholesalerRecord = {
 };
 
 const meetingRepository = ({
-  owners = [{ id: MEETING_ID, wholesalerId: null }],
+  owners = [{ id: MEETING_ID, wholesalerId: null, bookedById: null }],
   assigned = true,
+  bookedByAssigned = true,
 }: {
   owners?: Array<MeetingBookingOwner | null>;
   assigned?: boolean;
+  bookedByAssigned?: boolean;
 } = {}): MeetingBookingOwnerRepository => {
   const queue = [...owners];
   return {
@@ -35,6 +37,7 @@ const meetingRepository = ({
         queue.length > 1 ? queue.shift()! : queue[0]!,
       ),
     assignUnassignedOwner: vi.fn().mockResolvedValue(assigned),
+    assignUnassignedBookedBy: vi.fn().mockResolvedValue(bookedByAssigned),
   };
 };
 
@@ -58,6 +61,7 @@ describe('assignMeetingBookingOwner', () => {
       status: 'assigned',
       meetingId: MEETING_ID,
       wholesalerId: WHOLESALER_ID,
+      bookedByAssigned: true,
     });
     expect(wholesalers.findByWorkspaceMemberId).toHaveBeenCalledWith(MEMBER_ID);
     expect(meetings.assignUnassignedOwner).toHaveBeenCalledWith({
@@ -68,7 +72,7 @@ describe('assignMeetingBookingOwner', () => {
 
   it('never replaces a wholesaler that was already selected', async () => {
     const meetings = meetingRepository({
-      owners: [{ id: MEETING_ID, wholesalerId: OTHER_WHOLESALER_ID }],
+      owners: [{ id: MEETING_ID, wholesalerId: OTHER_WHOLESALER_ID, bookedById: null }],
     });
     const wholesalers = wholesalerRepository([creatorWholesaler]);
 
@@ -83,6 +87,7 @@ describe('assignMeetingBookingOwner', () => {
       status: 'skipped',
       meetingId: MEETING_ID,
       reason: 'already_assigned',
+      bookedByAssigned: true,
     });
     expect(meetings.assignUnassignedOwner).not.toHaveBeenCalled();
     expect(wholesalers.findByWorkspaceMemberId).not.toHaveBeenCalled();
@@ -91,7 +96,7 @@ describe('assignMeetingBookingOwner', () => {
   it('reads the live owner rather than trusting a stale create event', async () => {
     // The create event said the slot was empty; by delivery someone had chosen.
     const meetings = meetingRepository({
-      owners: [{ id: MEETING_ID, wholesalerId: OTHER_WHOLESALER_ID }],
+      owners: [{ id: MEETING_ID, wholesalerId: OTHER_WHOLESALER_ID, bookedById: null }],
     });
 
     await expect(
@@ -105,6 +110,7 @@ describe('assignMeetingBookingOwner', () => {
       status: 'skipped',
       meetingId: MEETING_ID,
       reason: 'already_assigned',
+      bookedByAssigned: true,
     });
     expect(meetings.get).toHaveBeenCalledWith(MEETING_ID);
   });
@@ -123,6 +129,7 @@ describe('assignMeetingBookingOwner', () => {
       status: 'skipped',
       meetingId: MEETING_ID,
       reason: 'creator_has_no_wholesaler',
+      bookedByAssigned: true,
     });
     expect(meetings.assignUnassignedOwner).not.toHaveBeenCalled();
   });
@@ -143,6 +150,7 @@ describe('assignMeetingBookingOwner', () => {
       status: 'skipped',
       meetingId: MEETING_ID,
       reason: 'creator_has_no_wholesaler',
+      bookedByAssigned: true,
     });
     expect(meetings.assignUnassignedOwner).not.toHaveBeenCalled();
   });
@@ -164,6 +172,7 @@ describe('assignMeetingBookingOwner', () => {
       status: 'skipped',
       meetingId: MEETING_ID,
       reason: 'ambiguous_creator_wholesaler',
+      bookedByAssigned: true,
     });
     expect(meetings.assignUnassignedOwner).not.toHaveBeenCalled();
   });
@@ -185,7 +194,8 @@ describe('assignMeetingBookingOwner', () => {
         status: 'skipped',
         meetingId: MEETING_ID,
         reason: 'unknown_creator',
-      });
+      bookedByAssigned: false,
+    });
       expect(wholesalers.findByWorkspaceMemberId).not.toHaveBeenCalled();
     },
   );
@@ -204,12 +214,16 @@ describe('assignMeetingBookingOwner', () => {
       status: 'skipped',
       meetingId: MEETING_ID,
       reason: 'meeting_not_found',
+      bookedByAssigned: false,
     });
     expect(meetings.assignUnassignedOwner).not.toHaveBeenCalled();
   });
 
   it('is idempotent across a re-delivered create event', async () => {
-    const store = { wholesalerId: null as string | null };
+    const store = {
+      wholesalerId: null as string | null,
+      bookedById: null as string | null,
+    };
     const meetings: MeetingBookingOwnerRepository = {
       get: vi
         .fn()
@@ -219,6 +233,13 @@ describe('assignMeetingBookingOwner', () => {
         .mockImplementation(async ({ wholesalerId }) => {
           if (store.wholesalerId) return store.wholesalerId === wholesalerId;
           store.wholesalerId = wholesalerId;
+          return true;
+        }),
+      assignUnassignedBookedBy: vi
+        .fn()
+        .mockImplementation(async ({ bookedById }) => {
+          if (store.bookedById) return store.bookedById === bookedById;
+          store.bookedById = bookedById;
           return true;
         }),
     };
@@ -233,21 +254,26 @@ describe('assignMeetingBookingOwner', () => {
       status: 'assigned',
       meetingId: MEETING_ID,
       wholesalerId: WHOLESALER_ID,
+      bookedByAssigned: true,
     });
+    // The redelivery re-claims neither value: both are already set.
     await expect(assignMeetingBookingOwner(input)).resolves.toEqual({
       status: 'skipped',
       meetingId: MEETING_ID,
       reason: 'already_assigned',
+      bookedByAssigned: false,
     });
     expect(meetings.assignUnassignedOwner).toHaveBeenCalledTimes(1);
+    expect(meetings.assignUnassignedBookedBy).toHaveBeenCalledTimes(1);
     expect(store.wholesalerId).toBe(WHOLESALER_ID);
+    expect(store.bookedById).toBe(MEMBER_ID);
   });
 
   it('accepts a concurrent explicit owner that won the empty slot', async () => {
     const meetings = meetingRepository({
       owners: [
-        { id: MEETING_ID, wholesalerId: null },
-        { id: MEETING_ID, wholesalerId: OTHER_WHOLESALER_ID },
+        { id: MEETING_ID, wholesalerId: null, bookedById: null },
+        { id: MEETING_ID, wholesalerId: OTHER_WHOLESALER_ID, bookedById: null },
       ],
       assigned: false,
     });
@@ -263,6 +289,7 @@ describe('assignMeetingBookingOwner', () => {
       status: 'skipped',
       meetingId: MEETING_ID,
       reason: 'already_assigned',
+      bookedByAssigned: true,
     });
   });
 
