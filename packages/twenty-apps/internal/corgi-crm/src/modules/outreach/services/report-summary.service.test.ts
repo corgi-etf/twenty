@@ -1019,4 +1019,30 @@ describe('report delivery', () => {
       vi.useRealTimers();
     }
   });
+
+  it('lists an EW with no activity in the window', async () => {
+    // The bug this pins: the directory was built only from wholesalers who
+    // appeared in the period's data, so an EW who made no calls that day
+    // silently vanished from both EW sections.
+    const text = await readReportSummary({
+      ...defaults,
+      repository: {
+        listActivities: vi.fn().mockResolvedValue([activity('1')]),
+      },
+      meetingRepository: { listMeetingBookings: vi.fn().mockResolvedValue([]) },
+      wholesalerRoleReader: {
+        findRolesByIds: vi.fn().mockResolvedValue([]),
+        listAllRoles: vi
+          .fn()
+          .mockResolvedValue([
+            wholesaler('owner-derek', 'EW', 'Derek Radcliff'),
+            wholesaler('owner-kevin', 'EW', 'Kevin Hennessy'),
+            wholesaler('owner-nash', 'BDR', 'Nash Hill'),
+          ]),
+      },
+    });
+
+    expect(text).toContain('Derek Radcliff');
+    expect(text).toContain('Kevin Hennessy');
+  });
 });

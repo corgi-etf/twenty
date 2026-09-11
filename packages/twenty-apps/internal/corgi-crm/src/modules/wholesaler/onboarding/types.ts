@@ -29,6 +29,9 @@ export type WorkspaceMemberPage = {
 // only on this, and nothing that reads roles for the report may oblige an
 // onboarding test double to grow a method it never calls.
 export type WholesalerRoleReader = {
+  // Optional so a caller with only the by-ids lookup still type-checks; the
+  // report prefers this and degrades to the narrower read when it is absent.
+  listAllRoles?: () => Promise<WholesalerRecord[]>;
   findRolesByIds(wholesalerIds: string[]): Promise<WholesalerRecord[]>;
 };
 
