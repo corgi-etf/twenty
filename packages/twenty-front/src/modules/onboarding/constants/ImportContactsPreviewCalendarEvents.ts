@@ -7,14 +7,14 @@ export type ImportContactsPreviewCalendarEvent = {
 
 export const IMPORT_CONTACTS_PREVIEW_CALENDAR_EVENTS = [
   {
-    id: 'tim-apple-anthropic',
-    title: 'Tim Apple x Anthropic',
+    id: 'intro-call',
+    title: 'Intro call x Northgate Advisors',
     time: '10:00am',
     color: 'orange',
   },
   {
-    id: 'dario-amodei',
-    title: 'Dario Amodei',
+    id: 'riley-chen',
+    title: 'Riley Chen',
     time: '3:00pm',
     color: 'sky',
   },
