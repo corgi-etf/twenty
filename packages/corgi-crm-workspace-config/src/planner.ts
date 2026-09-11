@@ -1275,17 +1275,15 @@ export const buildWorkspaceConfigPlan = (
       targetObjectMetadataId: objectsByName.get('wholesaler')!.id,
       position: 2,
     },
-    {
-      key: 'salesTeam',
-      type: 'OBJECT' as const,
-      targetObjectMetadataId: objectsByName.get('salesTeam')!.id,
-      position: 3,
-    },
+    // Sales teams is not navigable: the object and its team memberships are
+    // both empty, and membershipRole duplicates wholesalerRole. The objects
+    // stay provisioned so their fields and relations keep converging; they
+    // just no longer take a slot in the sidebar.
     {
       key: 'followUps',
       type: 'VIEW' as const,
       viewId: followUpViewId,
-      position: 4,
+      position: 3,
     },
   ];
   const workspaceItems = snapshot.navigationMenuItems.filter(
