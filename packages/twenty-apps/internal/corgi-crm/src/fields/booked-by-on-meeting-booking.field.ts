@@ -22,8 +22,11 @@ export default defineField({
   label: 'Booked by',
   icon: 'IconUserCheck',
   isNullable: true,
-  isUIEditable: false,
-  writability: MetadataWritability.APPLICATION,
+  // Defaulted to the creator on write, but a booking is routinely logged by
+  // one person on another's behalf, so the value has to stay correctable.
+  // writability is server-enforced; isUIEditable only hides the control.
+  isUIEditable: true,
+  writability: MetadataWritability.OPEN,
   relationTargetObjectMetadataUniversalIdentifier:
     STANDARD_OBJECT_UNIVERSAL_IDENTIFIERS.workspaceMember.universalIdentifier,
   relationTargetFieldMetadataUniversalIdentifier:

@@ -5,6 +5,8 @@ import {
   type MeetingBookingRecord,
 } from 'src/modules/meeting/graphql/core-meeting-booking.repository';
 
+const OWNER_ID = '66666666-6666-4666-8666-666666666666';
+
 const meeting: MeetingBookingRecord = {
   id: '11111111-1111-4111-8111-111111111111',
   name: 'Portfolio review',
@@ -143,6 +145,63 @@ describe('CoreMeetingBookingRepository', () => {
         bookedAt: '2026-09-10T13:15:00.000Z',
         bookedById: null,
         expectedUpdatedAt: meeting.updatedAt,
+      }),
+    ).resolves.toBe(false);
+  });
+
+  it('assigns an owner only while the slot is still empty', async () => {
+    const mutation = vi.fn().mockResolvedValue({
+      updateMeetingBookings: [{ ...meeting, wholesalerId: OWNER_ID }],
+    });
+    const repository = new CoreMeetingBookingRepository({
+      mutation,
+      query: vi.fn(),
+    } as never);
+
+    await expect(
+      repository.assignUnassignedOwner({
+        id: meeting.id,
+        wholesalerId: OWNER_ID,
+      }),
+    ).resolves.toBe(true);
+    expect(mutation.mock.calls[0]?.[0].updateMeetingBookings.__args).toEqual({
+      filter: {
+        and: [{ id: { eq: meeting.id } }, { wholesalerId: { is: 'NULL' } }],
+      },
+      data: { wholesalerId: OWNER_ID },
+    });
+  });
+
+  it('confirms a lost owner mutation response only from the persisted owner', async () => {
+    const repository = new CoreMeetingBookingRepository({
+      mutation: vi.fn().mockRejectedValue(new Error('response lost')),
+      query: vi.fn().mockResolvedValue({
+        meetingBookings: {
+          edges: [{ node: { ...meeting, wholesalerId: OWNER_ID } }],
+        },
+      }),
+    } as never);
+
+    await expect(
+      repository.assignUnassignedOwner({
+        id: meeting.id,
+        wholesalerId: OWNER_ID,
+      }),
+    ).resolves.toBe(true);
+  });
+
+  it('reports no assignment when another owner won the empty slot', async () => {
+    const repository = new CoreMeetingBookingRepository({
+      mutation: vi.fn().mockResolvedValue({ updateMeetingBookings: [] }),
+      query: vi.fn().mockResolvedValue({
+        meetingBookings: { edges: [{ node: meeting }] },
+      }),
+    } as never);
+
+    await expect(
+      repository.assignUnassignedOwner({
+        id: meeting.id,
+        wholesalerId: OWNER_ID,
       }),
     ).resolves.toBe(false);
   });
