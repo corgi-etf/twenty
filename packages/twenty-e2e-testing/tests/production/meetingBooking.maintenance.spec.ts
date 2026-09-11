@@ -916,6 +916,7 @@ test('books and reschedules a native CRM meeting with alerts suppressed', async 
     period: string;
     activityCount: number;
     meetingCount: number;
+    windowDays: number;
     windowHours: number;
   }>;
   try {
@@ -1018,17 +1019,24 @@ test('books and reschedules a native CRM meeting with alerts suppressed', async 
       'period',
       'activityCount',
       'meetingCount',
+      'windowDays',
       'windowHours',
+      'windowBoundaryLocalHour',
       'allOwners',
       'activityLeaderboard',
+      'meetingsTakenByExternalWholesalers',
       'weeklyExcludesWeekends',
     ];
+    // Each period covers whole 5am-to-5am local reporting days. The nominal
+    // hour count still holds, to within the hour a daylight saving transition
+    // adds to or takes from one of those days.
     reportRuntime = [
-      ['daily', 24],
-      ['weekly', 168],
-      ['monthly', 720],
-    ].map(([period, windowHours], index) => {
+      ['daily', 1, 24],
+      ['weekly', 7, 168],
+      ['monthly', 30, 720],
+    ].map(([period, windowDays, nominalWindowHours], index) => {
       const report: unknown = reports[index];
+      const windowHours = isRecord(report) ? report.windowHours : undefined;
       if (
         !isRecord(report) ||
         Object.keys(report).length !== reportKeys.length ||
@@ -1036,9 +1044,13 @@ test('books and reschedules a native CRM meeting with alerts suppressed', async 
           Object.prototype.hasOwnProperty.call(report, key),
         ) ||
         report.period !== period ||
-        report.windowHours !== windowHours ||
+        report.windowDays !== windowDays ||
+        typeof windowHours !== 'number' ||
+        Math.abs(windowHours - Number(nominalWindowHours)) > 1 ||
+        report.windowBoundaryLocalHour !== 5 ||
         report.allOwners !== true ||
         report.activityLeaderboard !== true ||
+        report.meetingsTakenByExternalWholesalers !== true ||
         report.weeklyExcludesWeekends !== (period === 'weekly') ||
         typeof report.activityCount !== 'number' ||
         !Number.isSafeInteger(report.activityCount) ||
@@ -1050,7 +1062,8 @@ test('books and reschedules a native CRM meeting with alerts suppressed', async 
         throw new Error('Report runtime returned invalid period evidence');
       return {
         period: String(period),
-        windowHours: Number(windowHours),
+        windowDays: Number(windowDays),
+        windowHours,
         activityCount: report.activityCount,
         meetingCount: report.meetingCount,
       };

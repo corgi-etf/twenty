@@ -11,10 +11,12 @@ const required = (value: string | undefined, label: string): string => {
   return normalized;
 };
 
+// Senders type words, not stored values: 'call' is the one word that is not the
+// activity type it names, and every other spelling differs from the stored
+// UPPER_CASE value only in case.
 const canonicalActivityType = (value: string): QuickLogActivityType => {
-  const canonical = value.trim().toLowerCase() === 'call'
-    ? 'phone_call'
-    : value.trim().toLowerCase();
+  const spoken = value.trim().toLowerCase();
+  const canonical = (spoken === 'call' ? 'phone_call' : spoken).toUpperCase();
   if (!isQuickLogActivityType(canonical)) {
     throw new Error(`Unsupported activity type: ${value}`);
   }

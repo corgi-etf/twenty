@@ -68,8 +68,12 @@ export const buildDailySummaries = (
 // Mirrors report-summary.service.ts's taxonomy mapping so /today reads the
 // same as /daily, /weekly and /monthly instead of showing raw stored values
 // (e.g. "phone_call") next to their friendly labels (e.g. "Phone call").
-const activityLabel = (value: string) =>
-  isQuickLogActivityType(value) ? QUICK_LOG_ACTIVITY_LABELS[value] : value;
+const activityLabel = (value: string) => {
+  const canonical = value.trim().toUpperCase();
+  return isQuickLogActivityType(canonical)
+    ? QUICK_LOG_ACTIVITY_LABELS[canonical]
+    : value;
+};
 const outcomeLabel = (value: string) =>
   isQuickLogOutcome(value) ? QUICK_LOG_OUTCOME_LABELS[value] : value;
 

@@ -3,6 +3,7 @@ import {
   type MeetingBookingReportRepository,
   type ReportMeetingBooking,
 } from 'src/modules/outreach/report-meeting-booking.types';
+import { getLocalDayBoundaryWindow } from 'src/modules/outreach/services/day-window.service';
 import {
   type OutreachActivity,
   type OutreachRepository,
@@ -21,38 +22,82 @@ export type ReportSummary = {
   end: Date;
   total: number;
   totalMeetingsSet: number;
-  leaderboard: OwnerCount[];
+  leaderboard: LeaderboardGroup[];
+  meetingsTakenByExternalWholesalers: ExternalWholesalerMeetingsSection;
   externalWholesalerRevenue: ExternalWholesalerRevenueSection;
 };
 
-export type ExternalWholesalerRevenue = {
+export type ExternalWholesaler = {
   wholesalerId: string;
   name: string;
+};
+
+export type ExternalWholesalerMeetings = ExternalWholesaler & {
+  meetings: number;
+};
+
+export type ExternalWholesalerRevenue = ExternalWholesaler & {
   attributedAnnualRecurringRevenue: number;
 };
 
 // 'unavailable' is an outcome, not an error: role data the report could not
-// obtain degrades this section and must reach no other part of the report.
+// obtain degrades the sections built from it and must reach no other part of
+// the report.
+export type ExternalWholesalerDirectory =
+  | { status: 'resolved'; wholesalers: ExternalWholesaler[] }
+  | { status: 'unavailable' };
+
+export type ExternalWholesalerMeetingsSection =
+  | { status: 'resolved'; wholesalers: ExternalWholesalerMeetings[] }
+  | { status: 'unavailable' };
+
 export type ExternalWholesalerRevenueSection =
   | { status: 'resolved'; wholesalers: ExternalWholesalerRevenue[] }
   | { status: 'unavailable' };
 
-type OwnerCount = {
+export type OwnerCount = {
   ownerId: string;
   name: string;
   count: number;
+  calls: number;
+  emails: number;
+  linkedin: number;
   meetingsSet: number;
 };
 
+// A null label is the degraded shape: with roles unreadable the report ranks
+// everyone in one ungrouped list rather than filing people under a role nobody
+// proved.
+export type LeaderboardGroup = {
+  label: 'BDR' | 'EW' | null;
+  owners: OwnerCount[];
+};
+
+// The owner reports on a working day that starts at 5am local, not on a rolling
+// 24 hours, so every period covers a whole number of these days.
+export const REPORT_DAY_BOUNDARY_HOUR = 5;
 const REPORT_DAYS: Record<ReportPeriod, number> = {
   daily: 1,
   weekly: 7,
   monthly: 30,
 };
+// The title says what the window actually is. "Last 24 hours" outlived the
+// window it described, and a label that survives its subject is how a report
+// starts lying to the people who trust it.
 const REPORT_TITLES: Record<ReportPeriod, string> = {
-  daily: 'Daily outreach report — last 24 hours',
-  weekly: 'Weekly outreach report — last 7 days, excluding Saturday/Sunday',
-  monthly: 'Monthly outreach report — last 30 days',
+  daily: 'Daily outreach report — 5am to 5am',
+  weekly:
+    'Weekly outreach report — 7 days, 5am to 5am, excluding Saturday/Sunday',
+  monthly: 'Monthly outreach report — 30 days, 5am to 5am',
+};
+
+// The three ranked channels, keyed by the UPPER_CASE SELECT values the CRM
+// stores. MEETING, OTHER and any value this app was never taught still count
+// toward the total and simply fall outside the triple.
+const ACTIVITY_CHANNELS: Record<string, 'calls' | 'emails' | 'linkedin'> = {
+  PHONE_CALL: 'calls',
+  EMAIL: 'emails',
+  LINKEDIN: 'linkedin',
 };
 
 const cleanLabel = (value: string, fallback: string) =>
@@ -64,46 +109,64 @@ const cleanLabel = (value: string, fallback: string) =>
 export const getReportWindow = ({
   period,
   now,
+  timeZone,
 }: {
   period: ReportPeriod;
   now: Date;
-}) => ({
-  start: new Date(now.getTime() - REPORT_DAYS[period] * 24 * 60 * 60 * 1000),
-  end: new Date(now.getTime()),
+  timeZone: string;
+}) =>
+  getLocalDayBoundaryWindow({
+    now,
+    timeZone,
+    boundaryHour: REPORT_DAY_BOUNDARY_HOUR,
+    days: REPORT_DAYS[period],
+  });
+
+const emptyOwner = (ownerId: string, name: string): OwnerCount => ({
+  ownerId,
+  name,
+  count: 0,
+  calls: 0,
+  emails: 0,
+  linkedin: 0,
+  meetingsSet: 0,
 });
 
 // Activities and bookings share one owner row, so someone who booked a meeting
 // without logging an activity is still counted rather than dropped.
-const addOwnerCount = (
+const addOwnerRow = (
   owners: Map<string, OwnerCount>,
   record: { wholesalerId: string; wholesalerName: string },
-  field: 'count' | 'meetingsSet',
-) => {
+): OwnerCount => {
   const ownerId = record.wholesalerId.trim() || 'unassigned';
   const name = cleanLabel(record.wholesalerName, 'Unassigned');
   const owner = owners.get(ownerId);
-  if (owner) {
-    owner[field] += 1;
-    // Owner labels can differ between query pages; retain a stable choice.
-    if (name.localeCompare(owner.name, 'en') < 0) owner.name = name;
-  } else {
-    const created: OwnerCount = { ownerId, name, count: 0, meetingsSet: 0 };
-    created[field] = 1;
+  if (!owner) {
+    const created = emptyOwner(ownerId, name);
     owners.set(ownerId, created);
+    return created;
   }
+  // Owner labels can differ between query pages; retain a stable choice.
+  if (name.localeCompare(owner.name, 'en') < 0) owner.name = name;
+  return owner;
 };
 
 // No system attributes revenue to a wholesaler yet, so every EW reads the same
 // figure; wiring a real source replaces this single reader.
 export const PLACEHOLDER_ATTRIBUTED_ANNUAL_RECURRING_REVENUE = 0;
 
-const EXTERNAL_WHOLESALER_REVENUE_HEADING = '💰 ARR attributed per EW';
-const EXTERNAL_WHOLESALER_REVENUE_ZERO_NOTE =
-  'No ARR source is connected yet, so every figure reads $0.';
+const ACTIVITY_LEADERBOARD_HEADING =
+  '🏆 Activity leaderboard (calls/emails/linkedin)';
+const EXTERNAL_WHOLESALER_MEETINGS_HEADING = 'Meetings taken by EW';
+const EXTERNAL_WHOLESALER_REVENUE_HEADING = 'ARR attributed per EW';
 // True whether nobody carries the role or an EW simply did nothing in the
 // window -- the EW set is derived from who appears in this report.
+const NO_EXTERNAL_WHOLESALER_MEETINGS_NOTE =
+  'No wholesaler with the EW role appears in this period.';
 const NO_EXTERNAL_WHOLESALER_NOTE =
   'No wholesaler with the EW role appears in this period, so there is nothing to attribute.';
+const EXTERNAL_WHOLESALER_MEETINGS_UNAVAILABLE_NOTE =
+  'Wholesaler roles could not be read for this report, so meetings taken by EW are unavailable.';
 const EXTERNAL_WHOLESALER_ROLE_UNAVAILABLE_NOTE =
   'Wholesaler roles could not be read for this report, so the EW breakdown is unavailable.';
 
@@ -140,9 +203,16 @@ const isWholesalerRoleRecord = (record: WholesalerRecord) =>
   isNullableString(record.name) &&
   isNullableString(record.wholesalerRole);
 
-export const buildExternalWholesalerRevenueSection = (
+const compareExternalWholesalers = (
+  left: ExternalWholesaler,
+  right: ExternalWholesaler,
+) =>
+  left.name.localeCompare(right.name, 'en') ||
+  left.wholesalerId.localeCompare(right.wholesalerId, 'en');
+
+export const buildExternalWholesalerDirectory = (
   wholesalerRoles: WholesalerRecord[],
-): ExternalWholesalerRevenueSection => {
+): ExternalWholesalerDirectory => {
   // A roster that is not a well-formed list of wholesalers is a failed read,
   // never a truthful "nobody carries the EW role".
   if (
@@ -158,14 +228,8 @@ export const buildExternalWholesalerRevenueSection = (
       .map(({ id, name }) => ({
         wholesalerId: id,
         name: cleanLabel(name ?? '', 'Unnamed external wholesaler'),
-        attributedAnnualRecurringRevenue:
-          PLACEHOLDER_ATTRIBUTED_ANNUAL_RECURRING_REVENUE,
       }))
-      .sort(
-        (left, right) =>
-          left.name.localeCompare(right.name, 'en') ||
-          left.wholesalerId.localeCompare(right.wholesalerId, 'en'),
-      ),
+      .sort(compareExternalWholesalers),
   };
 };
 
@@ -211,8 +275,8 @@ const withReadBudget = <TValue>(
 // readReportSummary throw, which failed the installed-report runtime
 // verification and deleted the live Telegram webhook. Every failure mode --
 // a rejection, malformed data, or a read that never returns -- lands on the
-// same degraded section and the rest of the report is unaffected.
-export const readExternalWholesalerRevenue = async ({
+// same degraded directory and the rest of the report is unaffected.
+export const readExternalWholesalerDirectory = async ({
   wholesalerRoleReader,
   activities,
   meetingBookings,
@@ -220,7 +284,7 @@ export const readExternalWholesalerRevenue = async ({
   wholesalerRoleReader: WholesalerRoleReader | undefined;
   activities: OutreachActivity[];
   meetingBookings: ReportMeetingBooking[];
-}): Promise<ExternalWholesalerRevenueSection> => {
+}): Promise<ExternalWholesalerDirectory> => {
   if (!wholesalerRoleReader) return { status: 'unavailable' };
   try {
     const wholesalerIds = collectWholesalerIds(activities, meetingBookings);
@@ -231,7 +295,7 @@ export const readExternalWholesalerRevenue = async ({
       wholesalerRoleReader.findRolesByIds(wholesalerIds),
       EXTERNAL_WHOLESALER_ROLE_READ_TIMEOUT_MILLISECONDS,
     );
-    return buildExternalWholesalerRevenueSection(wholesalerRoles);
+    return buildExternalWholesalerDirectory(wholesalerRoles);
   } catch {
     // Swallowed on purpose: see above. No error detail is rendered either --
     // this text is delivered to a Telegram group.
@@ -239,23 +303,106 @@ export const readExternalWholesalerRevenue = async ({
   }
 };
 
+// The owner ranks on meetings set. Activities break the tie because they are
+// the other thing the row reports, then name and ID make the order total, so
+// the same data always renders in the same order.
 const compareOwners = (left: OwnerCount, right: OwnerCount) =>
-  right.count - left.count ||
   right.meetingsSet - left.meetingsSet ||
+  right.count - left.count ||
   left.name.localeCompare(right.name, 'en') ||
   left.ownerId.localeCompare(right.ownerId, 'en');
+
+// Everyone the report saw is ranked. A wholesaler whose role is neither BDR nor
+// EW -- unset, the legacy default, or a word this app was never taught --
+// belongs to the BDR group instead of disappearing from the leaderboard.
+const buildLeaderboard = (
+  owners: OwnerCount[],
+  externalWholesalers: ExternalWholesalerDirectory,
+): LeaderboardGroup[] => {
+  const ranked = [...owners].sort(compareOwners);
+  if (externalWholesalers.status !== 'resolved') {
+    return [{ label: null, owners: ranked }];
+  }
+  const externalIds = new Set(
+    externalWholesalers.wholesalers.map(({ wholesalerId }) => wholesalerId),
+  );
+  return [
+    {
+      label: 'BDR' as const,
+      owners: ranked.filter(({ ownerId }) => !externalIds.has(ownerId)),
+    },
+    {
+      label: 'EW' as const,
+      owners: ranked.filter(({ ownerId }) => externalIds.has(ownerId)),
+    },
+  ].filter(({ owners: groupOwners }) => groupOwners.length > 0);
+};
+
+// A meeting booking carries one owner, so a meeting is taken by the EW it
+// belongs to. Nothing the report reads records a second person on a meeting.
+const buildExternalWholesalerMeetings = (
+  owners: Map<string, OwnerCount>,
+  externalWholesalers: ExternalWholesalerDirectory,
+): ExternalWholesalerMeetingsSection => {
+  if (externalWholesalers.status !== 'resolved') {
+    return { status: 'unavailable' };
+  }
+  return {
+    status: 'resolved',
+    wholesalers: externalWholesalers.wholesalers
+      .map(({ wholesalerId, name }) => {
+        const owner = owners.get(wholesalerId);
+        return {
+          wholesalerId,
+          // The label the rest of the report already shows for this person.
+          name: owner?.name ?? name,
+          meetings: owner?.meetingsSet ?? 0,
+        };
+      })
+      .sort(
+        (left, right) =>
+          right.meetings - left.meetings ||
+          compareExternalWholesalers(left, right),
+      ),
+  };
+};
+
+const buildExternalWholesalerRevenue = (
+  owners: Map<string, OwnerCount>,
+  externalWholesalers: ExternalWholesalerDirectory,
+): ExternalWholesalerRevenueSection => {
+  if (externalWholesalers.status !== 'resolved') {
+    return { status: 'unavailable' };
+  }
+  return {
+    status: 'resolved',
+    wholesalers: externalWholesalers.wholesalers
+      .map(({ wholesalerId, name }) => ({
+        wholesalerId,
+        name: owners.get(wholesalerId)?.name ?? name,
+        attributedAnnualRecurringRevenue:
+          PLACEHOLDER_ATTRIBUTED_ANNUAL_RECURRING_REVENUE,
+      }))
+      .sort(
+        (left, right) =>
+          right.attributedAnnualRecurringRevenue -
+            left.attributedAnnualRecurringRevenue ||
+          compareExternalWholesalers(left, right),
+      ),
+  };
+};
 
 export const buildReportSummary = ({
   activities,
   meetingBookings,
-  externalWholesalerRevenue,
+  externalWholesalers,
   period,
   now,
   timeZone,
 }: {
   activities: OutreachActivity[];
   meetingBookings: ReportMeetingBooking[];
-  externalWholesalerRevenue?: ExternalWholesalerRevenueSection;
+  externalWholesalers?: ExternalWholesalerDirectory;
   period: ReportPeriod;
   now: Date;
   timeZone: string;
@@ -263,7 +410,7 @@ export const buildReportSummary = ({
   if (!Array.isArray(meetingBookings)) {
     throw new Error('Meeting booking report data is unavailable');
   }
-  const { start, end } = getReportWindow({ period, now });
+  const { start, end } = getReportWindow({ period, now, timeZone });
   const weekday = new Intl.DateTimeFormat('en-US', {
     timeZone,
     weekday: 'short',
@@ -281,17 +428,29 @@ export const buildReportSummary = ({
   };
 
   for (const activity of activities) {
-    if (!isIncluded(activity.occurredAt) || seenIds.has(activity.id))
-      continue;
+    if (!isIncluded(activity.occurredAt) || seenIds.has(activity.id)) continue;
     seenIds.add(activity.id);
-    addOwnerCount(owners, activity, 'count');
+    const owner = addOwnerRow(owners, activity);
+    owner.count += 1;
+    // Matched case-insensitively and trimmed: rows written before activityType
+    // became a SELECT still carry the lower snake_case value, and both
+    // spellings have to reach the same bucket for as long as both exist.
+    const channel =
+      ACTIVITY_CHANNELS[(activity.activityType ?? '').trim().toUpperCase()];
+    if (channel) owner[channel] += 1;
   }
 
   for (const booking of meetingBookings) {
-    if (!isIncluded(booking.bookedAt) || seenBookingIds.has(booking.id)) continue;
+    if (!isIncluded(booking.bookedAt) || seenBookingIds.has(booking.id))
+      continue;
     seenBookingIds.add(booking.id);
-    addOwnerCount(owners, booking, 'meetingsSet');
+    addOwnerRow(owners, booking).meetingsSet += 1;
   }
+
+  // An absent directory means the role data was never obtained, never "no EW".
+  const directory: ExternalWholesalerDirectory = externalWholesalers ?? {
+    status: 'unavailable',
+  };
 
   return {
     period,
@@ -300,18 +459,39 @@ export const buildReportSummary = ({
     end,
     total: seenIds.size,
     totalMeetingsSet: seenBookingIds.size,
-    leaderboard: [...owners.values()].sort(compareOwners),
-    // An absent section means the role data was never obtained, never "no EW".
-    externalWholesalerRevenue: externalWholesalerRevenue ?? {
-      status: 'unavailable',
-    },
+    leaderboard: buildLeaderboard([...owners.values()], directory),
+    meetingsTakenByExternalWholesalers: buildExternalWholesalerMeetings(
+      owners,
+      directory,
+    ),
+    externalWholesalerRevenue: buildExternalWholesalerRevenue(
+      owners,
+      directory,
+    ),
   };
 };
 
-const formatExternalWholesalerRevenue = (
-  section: ExternalWholesalerRevenueSection | undefined,
+const formatRank = (index: number) =>
+  ['🥇', '🥈', '🥉'][index] ?? `${index + 1}.`;
+
+const formatExternalWholesalerMeetings = (
+  section: ExternalWholesalerMeetingsSection,
 ): string[] => {
-  if (section?.status !== 'resolved') {
+  if (section.status !== 'resolved') {
+    return [EXTERNAL_WHOLESALER_MEETINGS_UNAVAILABLE_NOTE];
+  }
+  if (section.wholesalers.length === 0) {
+    return [NO_EXTERNAL_WHOLESALER_MEETINGS_NOTE];
+  }
+  return section.wholesalers.map(
+    ({ name, meetings }, index) => `${formatRank(index)} ${name}: ${meetings}`,
+  );
+};
+
+const formatExternalWholesalerRevenue = (
+  section: ExternalWholesalerRevenueSection,
+): string[] => {
+  if (section.status !== 'resolved') {
     return [EXTERNAL_WHOLESALER_ROLE_UNAVAILABLE_NOTE];
   }
   if (section.wholesalers.length === 0) return [NO_EXTERNAL_WHOLESALER_NOTE];
@@ -321,22 +501,10 @@ const formatExternalWholesalerRevenue = (
     minimumFractionDigits: 0,
     maximumFractionDigits: 0,
   });
-  // Summed from the same figures printed above rather than stated separately,
-  // so the total cannot disagree with its parts once a real ARR source
-  // replaces the placeholder.
-  const total = section.wholesalers.reduce(
-    (running, { attributedAnnualRecurringRevenue }) =>
-      running + attributedAnnualRecurringRevenue,
-    0,
+  return section.wholesalers.map(
+    ({ name, attributedAnnualRecurringRevenue }, index) =>
+      `${formatRank(index)} ${name}: ${money.format(attributedAnnualRecurringRevenue)}`,
   );
-  return [
-    EXTERNAL_WHOLESALER_REVENUE_ZERO_NOTE,
-    ...section.wholesalers.map(
-      ({ name, attributedAnnualRecurringRevenue }) =>
-        `\u2022 ${name}: ${money.format(attributedAnnualRecurringRevenue)}`,
-    ),
-    `Total ARR: ${money.format(total)}`,
-  ];
 };
 
 export const formatReportSummary = (summary: ReportSummary): string => {
@@ -349,8 +517,6 @@ export const formatReportSummary = (summary: ReportSummary): string => {
     minute: '2-digit',
     timeZoneName: 'short',
   });
-  const formatRank = (index: number) =>
-    ['🥇', '🥈', '🥉'][index] ?? `${index + 1}.`;
   const formatMeetings = (count: number) =>
     `${count} ${count === 1 ? 'meeting' : 'meetings'} set`;
 
@@ -361,20 +527,28 @@ export const formatReportSummary = (summary: ReportSummary): string => {
     '',
     `📊 Total activities: ${summary.total}`,
     `📅 Meetings set: ${summary.totalMeetingsSet}`,
-    'Meetings counted when booked, not when scheduled.',
     '',
-    '🏆 Activity leaderboard',
-    ...summary.leaderboard.map(
-      ({ name, count, meetingsSet }, index) =>
-        `${formatRank(index)} ${name}: ${count} ${count === 1 ? 'activity' : 'activities'} · ${formatMeetings(meetingsSet)}`,
-    ),
+    ACTIVITY_LEADERBOARD_HEADING,
+    ...summary.leaderboard.flatMap(({ label, owners }) => [
+      ...(label ? [label] : []),
+      ...owners.map(
+        ({ name, calls, emails, linkedin, meetingsSet }, index) =>
+          `${formatRank(index)} ${name}: (${calls}/${emails}/${linkedin}) · ${formatMeetings(meetingsSet)}`,
+      ),
+    ]),
     ...(summary.total === 0 ? ['No outreach logged in this period.'] : []),
     ...(summary.totalMeetingsSet === 0
       ? ['No meetings booked in this period.']
       : []),
     '',
-    // Always rendered, in all three states: a section that disappears when role
-    // data is missing reads as a bug, and the report has to say which it is.
+    // Both EW sections are always rendered, in all three states: a section that
+    // disappears when role data is missing reads as a bug, and the report has
+    // to say which it is.
+    EXTERNAL_WHOLESALER_MEETINGS_HEADING,
+    ...formatExternalWholesalerMeetings(
+      summary.meetingsTakenByExternalWholesalers,
+    ),
+    '',
     EXTERNAL_WHOLESALER_REVENUE_HEADING,
     ...formatExternalWholesalerRevenue(summary.externalWholesalerRevenue),
   ].join('\n');
@@ -395,7 +569,7 @@ export const readReportSummary = async ({
   now: Date;
   timeZone: string;
 }): Promise<string> => {
-  const window = getReportWindow({ period, now });
+  const window = getReportWindow({ period, now, timeZone });
   const input = {
     start: window.start.toISOString(),
     end: window.end.toISOString(),
@@ -406,7 +580,7 @@ export const readReportSummary = async ({
   ]);
   // Sequenced after the two reads on purpose: the role read is scoped to the
   // wholesalers those reads already returned, so it never grows with the roster.
-  const externalWholesalerRevenue = await readExternalWholesalerRevenue({
+  const externalWholesalers = await readExternalWholesalerDirectory({
     wholesalerRoleReader,
     activities,
     meetingBookings,
@@ -415,7 +589,7 @@ export const readReportSummary = async ({
     buildReportSummary({
       activities,
       meetingBookings,
-      externalWholesalerRevenue,
+      externalWholesalers,
       period,
       now,
       timeZone,

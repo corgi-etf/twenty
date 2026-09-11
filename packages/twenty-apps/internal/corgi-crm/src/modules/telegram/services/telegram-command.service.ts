@@ -39,9 +39,9 @@ const HELP = [
   '/link CODE — securely link your CRM identity',
   LOG_USAGE,
   '/today — your activity breakdown for the current local day',
-  '/daily — all owners, last 24 hours',
-  '/weekly — all owners, last 7 days excluding Saturday/Sunday',
-  '/monthly — all owners, last 30 days',
+  '/daily — all owners, the 5am-to-5am day',
+  '/weekly — all owners, 7 such days excluding Saturday/Sunday',
+  '/monthly — all owners, 30 such days',
   '/help — show this guide',
 ].join('\n');
 
@@ -53,9 +53,9 @@ const GROUP_TOPIC_COMMANDS = ['/help', '/daily', '/weekly', '/monthly'];
 
 const GROUP_HELP = [
   'Corgi CRM outreach bot — group topic',
-  '/daily — all owners, last 24 hours',
-  '/weekly — all owners, last 7 days excluding Saturday/Sunday',
-  '/monthly — all owners, last 30 days',
+  '/daily — all owners, the 5am-to-5am day',
+  '/weekly — all owners, 7 such days excluding Saturday/Sunday',
+  '/monthly — all owners, 30 such days',
   '/help — show this guide',
   'Send /link, /log and /today in a direct message to the bot: they write or reveal one person’s CRM identity, which a group cannot establish.',
 ].join('\n');

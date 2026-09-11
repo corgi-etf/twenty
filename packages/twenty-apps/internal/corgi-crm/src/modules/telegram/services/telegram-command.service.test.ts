@@ -99,17 +99,17 @@ describe('processTelegramCommand', () => {
   });
 
   it.each([
-    ['/daily', 'daily', '2026-09-08T16:30:00.000Z', 'Daily outreach report'],
+    ['/daily', 'daily', '2026-09-09T10:00:00.000Z', 'Daily outreach report'],
     [
       '/weekly@CorgiCrmBot',
       'weekly',
-      '2026-09-02T16:30:00.000Z',
+      '2026-09-03T10:00:00.000Z',
       'Weekly outreach report',
     ],
     [
       '/monthly',
       'monthly',
-      '2026-08-10T16:30:00.000Z',
+      '2026-08-11T10:00:00.000Z',
       'Monthly outreach report',
     ],
   ])(
@@ -142,20 +142,20 @@ describe('processTelegramCommand', () => {
       ).resolves.toEqual({ status: 'report', period });
       expect(dependencies.repository.listActivities).toHaveBeenCalledWith({
         start,
-        end: '2026-09-09T16:30:00.000Z',
+        end: '2026-09-10T10:00:00.000Z',
       });
       expect(dependencies.meetingRepository.listMeetingBookings).toHaveBeenCalledWith({
         start,
-        end: '2026-09-09T16:30:00.000Z',
+        end: '2026-09-10T10:00:00.000Z',
       });
       const message = dependencies.send.mock.calls
         .map(([, text]) => text)
         .join('\n');
       expect(message).toContain(title);
       expect(message).toContain('Total activities: 1');
-      expect(message).toContain('🥇 Jordan: 1');
+      expect(message).toContain('🥇 Casey: (0/0/0) · 1 meeting set');
       expect(message).toContain('Meetings set: 1');
-      expect(message).toContain('🥈 Casey: 0 activities · 1 meeting set');
+      expect(message).toContain('🥈 Jordan: (1/0/0) · 0 meetings set');
       expect(message).not.toContain('Private');
     },
   );
@@ -250,7 +250,7 @@ describe('processTelegramCommand', () => {
       .join('\n');
     expect(message).toContain('Total activities: 1');
     expect(message).toContain('\u{1f3c6} Activity leaderboard');
-    expect(message).toContain('\u{1f4b0} ARR attributed per EW');
+    expect(message).toContain('ARR attributed per EW');
     expect(message).toContain(
       'Wholesaler roles could not be read for this report, so the EW breakdown is unavailable.',
     );
@@ -290,8 +290,9 @@ describe('processTelegramCommand', () => {
     expect(dependencies.wholesalerRoleReader.findRolesByIds).toHaveBeenCalledWith([
       '11111111-1111-4111-8111-111111111111',
     ]);
-    expect(message).toContain('\u{1f4b0} ARR attributed per EW');
-    expect(message).toContain('\u2022 Jordan: $0');
+    expect(message).toContain('ARR attributed per EW');
+    expect(message).toContain('\u{1f947} Jordan: $0');
+    expect(message).toContain('Meetings taken by EW');
     expect(message).not.toContain('Sam');
   });
 
@@ -328,10 +329,10 @@ describe('processTelegramCommand', () => {
     for (let index = 0; index < 400; index += 1) {
       const rank = ['🥇', '🥈', '🥉'][index] ?? `${index + 1}.`;
       expect(text).toContain(
-        `${rank} Owner ${String(index).padStart(3, '0')}: 1 activity · 0 meetings set`,
+        `${index + 401}. Owner ${String(index).padStart(3, '0')}: (1/0/0) · 0 meetings set`,
       );
       expect(text).toContain(
-        `${index + 401}. Booker ${String(index).padStart(3, '0')}: 0 activities · 1 meeting set`,
+        `${rank} Booker ${String(index).padStart(3, '0')}: (0/0/0) · 1 meeting set`,
       );
     }
   });

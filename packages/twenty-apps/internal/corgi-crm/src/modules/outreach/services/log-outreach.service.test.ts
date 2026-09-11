@@ -20,7 +20,7 @@ describe('logOutreach', () => {
       logOutreach({
         input: {
           activityId: 'activity-from-update-42',
-          activityType: 'phone_call',
+          activityType: 'PHONE_CALL',
           companyQuery: 'Acme',
           outcome: 'connected',
           notes: 'renewal chat',
@@ -39,7 +39,7 @@ describe('logOutreach', () => {
       name: 'Phone call · Connected',
       companyId: 'company-1',
       wholesalerId: 'wholesaler-1',
-      activityType: 'phone_call',
+      activityType: 'PHONE_CALL',
       outcome: 'connected',
       notes: 'renewal chat',
       occurredAt: '2026-09-09T16:30:00.000Z',
@@ -57,7 +57,7 @@ describe('logOutreach', () => {
       logOutreach({
         input: {
           activityId: 'activity-from-update-42',
-          activityType: 'phone_call',
+          activityType: 'PHONE_CALL',
           companyQuery: 'Acme',
           outcome: 'connected',
         },

@@ -40,7 +40,7 @@ describe('scheduled Telegram team report', () => {
     expect(listMeetingBookings).toHaveBeenCalledOnce();
   });
 
-  it('uses the exact rolling 24-hour window and all activity owners', async () => {
+  it('uses the exact 5am-to-5am local window and all activity owners', async () => {
     const listActivities = vi.fn().mockResolvedValue([
       {
         id: 'activity-1',
@@ -49,7 +49,7 @@ describe('scheduled Telegram team report', () => {
         companyName: 'One',
         activityType: 'phone_call',
         outcome: 'connected',
-        occurredAt: '2026-09-09T17:00:00.000Z',
+        occurredAt: '2026-09-10T10:00:00.000Z',
       },
       {
         id: 'activity-2',
@@ -58,7 +58,7 @@ describe('scheduled Telegram team report', () => {
         companyName: 'Two',
         activityType: 'email',
         outcome: 'no_response',
-        occurredAt: '2026-09-10T16:59:59.000Z',
+        occurredAt: '2026-09-11T09:59:59.000Z',
       },
     ]);
     const listMeetingBookings = vi.fn().mockResolvedValue([{
@@ -83,18 +83,17 @@ describe('scheduled Telegram team report', () => {
     });
 
     expect(listActivities).toHaveBeenCalledWith({
-      start: '2026-09-09T17:00:00.000Z',
-      end: '2026-09-10T17:00:00.000Z',
+      start: '2026-09-10T10:00:00.000Z',
+      end: '2026-09-11T10:00:00.000Z',
     });
     expect(listMeetingBookings).toHaveBeenCalledWith({
-      start: '2026-09-09T17:00:00.000Z',
-      end: '2026-09-10T17:00:00.000Z',
+      start: '2026-09-10T10:00:00.000Z',
+      end: '2026-09-11T10:00:00.000Z',
     });
     expect(text).toContain('Total activities: 2');
-    expect(text).toContain('🥇 Alex: 1');
-    expect(text).toContain('🥈 Nash: 1');
     expect(text).toContain('Meetings set: 1');
-    expect(text).toContain('🥇 Alex: 1 activity · 1 meeting set');
+    expect(text).toContain('🥇 Alex: (0/1/0) · 1 meeting set');
+    expect(text).toContain('🥈 Nash: (1/0/0) · 0 meetings set');
   });
 
   it('keeps concurrent member jobs and their retries on separate immutable reports', async () => {

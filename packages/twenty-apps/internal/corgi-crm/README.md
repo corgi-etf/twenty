@@ -296,25 +296,36 @@ optional contact and follow-up:
 ```
 
 `/today` (or `/summary`) returns that person's current local-day breakdown.
-`/daily`, `/weekly`, and `/monthly` return separate whole-workspace activity and
-meeting-booking totals, activity and outcome breakdowns, an activity leaderboard,
-and a meeting-booking leaderboard for the rolling last 24 hours, 7 days (local
-weekend events excluded), or 30 days. Owners come from the records themselves;
-there is no fixed people list. Meeting-only owners appear on the booking
-leaderboard. Each report ends with an ARR-attributed-per-EW section listing every
-Wholesaler whose `wholesalerRole` reads `EW`, compared case-insensitively and
-trimmed because the value is human-entered; the set is derived from the records,
-not a fixed list. Every figure is `$0` because no ARR source is connected yet,
-and `PLACEHOLDER_ATTRIBUTED_ANNUAL_RECURRING_REVENUE` in
+`/daily`, `/weekly`, and `/monthly` return whole-workspace activity and
+meeting-booking totals plus one leaderboard, over 1, 7 (local weekend events
+excluded), or 30 reporting days. A reporting day runs from 5am to 5am in
+`CORGI_CRM_TELEGRAM_TIME_ZONE`, so it follows the wall clock rather than a
+rolling count of hours and is 23 or 25 hours long across a daylight saving
+transition; every period ends at the next 5am boundary, so the day under way is
+included and every earlier day is whole. Each leaderboard row carries that
+person's calls/emails/linkedin triple and their meetings set, and rows are
+ranked by meetings set, then activities, then name, then ID. `activityType`
+values outside `phone_call`, `email` and `linkedin` still count toward the total
+and are simply absent from the triple. Owners come from the records themselves;
+there is no fixed people list, and meeting-only owners are ranked too. The
+leaderboard splits into `BDR` and `EW` from `wholesalerRole` alone, compared
+case-insensitively and trimmed because the value is human-entered; anyone whose
+role is neither -- unset, the legacy default, or a word this app was never
+taught -- is ranked in the `BDR` group rather than dropped. Two EW sections
+follow: meetings taken by each EW, and ARR attributed per EW. Every ARR figure
+is `$0` because no ARR source is connected yet, and
+`PLACEHOLDER_ATTRIBUTED_ANNUAL_RECURRING_REVENUE` in
 `report-summary.service.ts` is the single place a real source replaces. When no
-record carries the role the section keeps its heading and says so, so an
-unpopulated field does not read as a missing feature. These three aggregate
-reports are available without a CRM link only
+record carries the role both sections keep their heading and say so, and when
+the role read fails they say that instead -- an unpopulated field never reads as
+a missing feature, and an unreadable one never reads as an empty one. With roles
+unreadable the leaderboard stays a single ungrouped ranking. These three
+aggregate reports are available without a CRM link only
 when `CORGI_CRM_TELEGRAM_PUBLIC_REPORTS_ENABLED` is exactly `true`; Telegram's
 signed webhook, private-chat-or-allowlisted-topic restriction, workspace fence,
 update deduplication, and durable reply delivery still apply. `/help` shows the syntax;
 there is no `/cancel` command because the bot does not hold mutable drafts. The
-cron sends the same whole-workspace rolling-24-hour report to each securely
+cron sends the same whole-workspace reporting-day report to each securely
 linked recipient. It runs every 15 minutes. From the configured local
 time until that local date ends, every tick addresses the same deterministic
 per-member job, so missed ticks and restarts catch up without creating a second

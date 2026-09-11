@@ -24,12 +24,16 @@ const partsAt = (instant: Date, timeZone: string) => {
   >;
 };
 
-const localMidnightToUtc = (date: CalendarDate, timeZone: string): Date => {
-  const localAsUtc = Date.UTC(date.year, date.month - 1, date.day);
+const localWallTimeToUtc = (
+  date: CalendarDate,
+  hour: number,
+  timeZone: string,
+): { instant: Date; exact: boolean } => {
+  const localAsUtc = Date.UTC(date.year, date.month - 1, date.day, hour);
   let candidate = localAsUtc;
 
   // Time-zone offsets can change near the candidate. Iterating converges on
-  // the instant whose formatted wall clock is the requested local midnight.
+  // the instant whose formatted wall clock is the requested local time.
   for (let iteration = 0; iteration < 4; iteration += 1) {
     const parts = partsAt(new Date(candidate), timeZone);
     const representedAsUtc = Date.UTC(
@@ -41,30 +45,40 @@ const localMidnightToUtc = (date: CalendarDate, timeZone: string): Date => {
       parts.second,
     );
     const next = candidate + (localAsUtc - representedAsUtc);
-    if (next === candidate) return new Date(candidate);
+    if (next === candidate) return { instant: new Date(candidate), exact: true };
     candidate = next;
   }
 
-  const result = new Date(candidate);
-  const parts = partsAt(result, timeZone);
-  if (
-    parts.year !== date.year ||
-    parts.month !== date.month ||
-    parts.day !== date.day ||
-    parts.hour !== 0 ||
-    parts.minute !== 0
-  ) {
-    throw new Error(`Could not resolve local midnight in ${timeZone}`);
-  }
-  return result;
+  // Reached only when the requested wall time does not exist in the zone, so
+  // no instant formats back to it and the iteration oscillates around the gap.
+  const instant = new Date(candidate);
+  const parts = partsAt(instant, timeZone);
+  return {
+    instant,
+    exact:
+      parts.year === date.year &&
+      parts.month === date.month &&
+      parts.day === date.day &&
+      parts.hour === hour &&
+      parts.minute === 0,
+  };
 };
 
-const nextCalendarDate = ({ year, month, day }: CalendarDate): CalendarDate => {
-  const next = new Date(Date.UTC(year, month - 1, day + 1));
+const localMidnightToUtc = (date: CalendarDate, timeZone: string): Date => {
+  const { instant, exact } = localWallTimeToUtc(date, 0, timeZone);
+  if (!exact) throw new Error(`Could not resolve local midnight in ${timeZone}`);
+  return instant;
+};
+
+const shiftCalendarDate = (
+  { year, month, day }: CalendarDate,
+  days: number,
+): CalendarDate => {
+  const shifted = new Date(Date.UTC(year, month - 1, day + days));
   return {
-    year: next.getUTCFullYear(),
-    month: next.getUTCMonth() + 1,
-    day: next.getUTCDate(),
+    year: shifted.getUTCFullYear(),
+    month: shifted.getUTCMonth() + 1,
+    day: shifted.getUTCDate(),
   };
 };
 
@@ -83,7 +97,49 @@ export const getZonedDayWindow = ({
   return {
     localDate: `${year}-${pad(month)}-${pad(day)}`,
     start: localMidnightToUtc(date, timeZone),
-    end: localMidnightToUtc(nextCalendarDate(date), timeZone),
+    end: localMidnightToUtc(shiftCalendarDate(date, 1), timeZone),
+  };
+};
+
+// A reporting day runs from a fixed local hour to that same hour, so the window
+// follows the wall clock instead of a fixed number of hours: one such day is 23
+// or 25 hours long across a daylight saving transition. `days` whole reporting
+// days end at the next boundary after `now`, so the day under way is included
+// and every earlier day is whole.
+export const getLocalDayBoundaryWindow = ({
+  now,
+  timeZone,
+  boundaryHour,
+  days,
+}: {
+  now: Date;
+  timeZone: string;
+  boundaryHour: number;
+  days: number;
+}): { start: Date; end: Date } => {
+  if (!Number.isInteger(boundaryHour) || boundaryHour < 0 || boundaryHour > 23) {
+    throw new Error('Report day boundary must be a whole local hour');
+  }
+  if (!Number.isInteger(days) || days < 1) {
+    throw new Error('Report window must span whole days');
+  }
+  const parts = partsAt(now, timeZone);
+  const today = { year: parts.year, month: parts.month, day: parts.day };
+  // Before the boundary hour the reporting day under way began yesterday.
+  const currentDay =
+    parts.hour < boundaryHour ? shiftCalendarDate(today, -1) : today;
+
+  return {
+    start: localWallTimeToUtc(
+      shiftCalendarDate(currentDay, 1 - days),
+      boundaryHour,
+      timeZone,
+    ).instant,
+    end: localWallTimeToUtc(
+      shiftCalendarDate(currentDay, 1),
+      boundaryHour,
+      timeZone,
+    ).instant,
   };
 };
 

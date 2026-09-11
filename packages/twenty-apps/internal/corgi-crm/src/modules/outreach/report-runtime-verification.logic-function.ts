@@ -30,10 +30,27 @@ const UUID_PATTERN =
 const isUuid = (value: unknown): value is string =>
   typeof value === 'string' && UUID_PATTERN.test(value);
 const EXPECTED_TITLES: Record<ReportPeriod, string> = {
-  daily: '🎉 Daily outreach report — last 24 hours',
-  weekly: '🎉 Weekly outreach report — last 7 days, excluding Saturday/Sunday',
-  monthly: '🎉 Monthly outreach report — last 30 days',
+  daily: '🎉 Daily outreach report — 5am to 5am',
+  weekly:
+    '🎉 Weekly outreach report — 7 days, 5am to 5am, excluding Saturday/Sunday',
+  monthly: '🎉 Monthly outreach report — 30 days, 5am to 5am',
 };
+const EXPECTED_SECTIONS = [
+  'All CRM owners',
+  '🏆 Activity leaderboard (calls/emails/linkedin)',
+  'Meetings taken by EW',
+];
+// The report window is a whole number of 5am-to-5am local days, which is 23 or
+// 25 hours long across a daylight saving transition rather than exactly 24.
+const REPORT_WINDOW_BOUNDARY_HOUR = 5;
+const localHour = (instant: Date, timeZone: string) =>
+  Number(
+    new Intl.DateTimeFormat('en-US', {
+      timeZone,
+      hourCycle: 'h23',
+      hour: '2-digit',
+    }).format(instant),
+  );
 const PAYLOAD_KEYS = [
   'confirmation',
   'expectedUserWorkspaceId',
@@ -106,9 +123,9 @@ export const handleReportRuntimeVerification = async (
     try {
       // No wholesalerRoleReader on purpose. This gate runs with Telegram
       // disabled and deletes the live webhook when it fails, so it reads
-      // exactly what it asserts on and nothing more: the ARR section degrades
-      // to its explanatory line here and is asserted on by neither the
-      // section checks below nor the counts.
+      // exactly what it asserts on and nothing more: with no role data the
+      // leaderboard stays ungrouped and both EW sections render their
+      // unavailable line, none of which the assertions below depend on.
       const report = await readReportSummary({
         repository,
         meetingRepository,
@@ -119,19 +136,33 @@ export const handleReportRuntimeVerification = async (
       const lines = report.split('\n');
       if (
         lines[0] !== EXPECTED_TITLES[period] ||
-        !lines.includes('All CRM owners') ||
-        !lines.includes('🏆 Activity leaderboard')
+        !EXPECTED_SECTIONS.every((section) => lines.includes(section))
       ) {
         throw new Error('Report sections are unavailable');
       }
-      const { start, end } = getReportWindow({ period, now });
+      const timeZone = dependencies.timeZone;
+      const { start, end } = getReportWindow({ period, now, timeZone });
+      const windowHours = (end.getTime() - start.getTime()) / 3_600_000;
+      const windowDays = Math.round(windowHours / 24);
+      const windowBoundaryLocalHour = localHour(start, timeZone);
+      if (
+        windowDays < 1 ||
+        Math.abs(windowHours - windowDays * 24) > 1 ||
+        windowBoundaryLocalHour !== REPORT_WINDOW_BOUNDARY_HOUR ||
+        localHour(end, timeZone) !== REPORT_WINDOW_BOUNDARY_HOUR
+      ) {
+        throw new Error('Report window is not whole local reporting days');
+      }
       reports.push({
         period,
         activityCount: readCount(lines, '📊 Total activities: '),
         meetingCount: readCount(lines, '📅 Meetings set: '),
-        windowHours: (end.getTime() - start.getTime()) / 3_600_000,
+        windowDays,
+        windowHours,
+        windowBoundaryLocalHour,
         allOwners: true,
         activityLeaderboard: true,
+        meetingsTakenByExternalWholesalers: true,
         weeklyExcludesWeekends: period === 'weekly',
       });
     } catch {
