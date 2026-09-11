@@ -14,6 +14,25 @@ const USER_WORKSPACE_ID = '22222222-2222-4222-8222-222222222222';
 const WORKSPACE_MEMBER_ID = '33333333-3333-4333-8333-333333333333';
 const OTHER_ID = '44444444-4444-4444-8444-444444444444';
 const NOW = new Date('2026-09-09T16:30:00.000Z');
+const SUPPRESSION_ARMED = JSON.stringify({
+  version: 1,
+  namePrefix: 'CRM meeting canary 12-1-',
+  notAfter: new Date(NOW.getTime() + 10 * 60_000).toISOString(),
+});
+const SUPPRESSION_EXPIRED = JSON.stringify({
+  version: 1,
+  namePrefix: 'CRM meeting canary 12-1-',
+  notAfter: new Date(NOW.getTime() - 1_000).toISOString(),
+});
+const SUPPRESSION_WRONG_VERSION = JSON.stringify({
+  version: 2,
+  namePrefix: 'CRM meeting canary 12-1-',
+  notAfter: new Date(NOW.getTime() + 10 * 60_000).toISOString(),
+});
+const SUPPRESSION_NO_EXPIRY = JSON.stringify({
+  version: 1,
+  namePrefix: 'CRM meeting canary 12-1-',
+});
 // Every period ends at the next 5am America/Chicago boundary after NOW.
 const END = '2026-09-10T10:00:00.000Z';
 const context: LogicFunctionExecutionContext = {
@@ -99,6 +118,7 @@ const fixtures = () => {
   const dependencies = {
     expectedWorkspaceId: WORKSPACE_ID as string | undefined,
     enabled: 'false' as string | undefined,
+    canarySuppression: undefined as string | undefined,
     timeZone: 'America/Chicago' as string | undefined,
     now: () => NOW,
     createCrmClient,
@@ -275,6 +295,30 @@ describe('internal read-only production report verification', () => {
     ['empty workspace binding', { expectedWorkspaceId: '' }],
     ['invalid workspace binding', { expectedWorkspaceId: 'not-a-uuid' }],
     ['Telegram enabled', { enabled: 'true' }],
+    [
+      'expired canary suppression',
+      { enabled: 'true', canarySuppression: SUPPRESSION_EXPIRED },
+    ],
+    [
+      'canary suppression of an unknown version',
+      { enabled: 'true', canarySuppression: SUPPRESSION_WRONG_VERSION },
+    ],
+    [
+      'canary suppression without an expiry',
+      { enabled: 'true', canarySuppression: SUPPRESSION_NO_EXPIRY },
+    ],
+    [
+      'unparseable canary suppression',
+      { enabled: 'true', canarySuppression: 'not-json' },
+    ],
+    [
+      'armed canary suppression read through an unusable clock',
+      {
+        enabled: 'true',
+        canarySuppression: SUPPRESSION_ARMED,
+        now: () => new Date('invalid'),
+      },
+    ],
     ['missing delivery gate', { enabled: undefined }],
     ['ambiguous delivery gate', { enabled: 'FALSE' }],
     ['missing time zone', { timeZone: undefined }],
@@ -351,6 +395,20 @@ describe('internal read-only production report verification', () => {
     expect(request).toHaveBeenCalledTimes(6);
     expect(query).not.toHaveBeenCalled();
     expect(mutation).not.toHaveBeenCalled();
+  });
+
+  // The release installs before the canary runs but disables Telegram after
+  // it, so this is the state every real canary run is actually in.
+  it('verifies while Telegram is still live if canary suppression is armed', async () => {
+    const { dependencies, createCrmClient } = fixtures();
+    const result = await handleReportRuntimeVerification(payload, context, {
+      ...dependencies,
+      enabled: 'true',
+      canarySuppression: SUPPRESSION_ARMED,
+    });
+    expect(result.status).toBe('verified');
+    expect(result.reports).toHaveLength(3);
+    expect(createCrmClient).toHaveBeenCalled();
   });
 
   it('sanitizes client-construction failures without attempting any read', async () => {
