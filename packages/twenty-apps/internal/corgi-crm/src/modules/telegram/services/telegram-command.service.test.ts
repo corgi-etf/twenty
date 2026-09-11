@@ -250,7 +250,7 @@ describe('processTelegramCommand', () => {
       .join('\n');
     expect(message).toContain('Total activities: 1');
     expect(message).toContain('\u{1f3c6} Activity leaderboard');
-    expect(message).toContain('\u{1f4b0} ARR attributed per EW');
+    expect(message).toContain('ARR attributed per EW');
     expect(message).toContain(
       'Wholesaler roles could not be read for this report, so the EW breakdown is unavailable.',
     );
@@ -290,7 +290,7 @@ describe('processTelegramCommand', () => {
     expect(dependencies.wholesalerRoleReader.findRolesByIds).toHaveBeenCalledWith([
       '11111111-1111-4111-8111-111111111111',
     ]);
-    expect(message).toContain('\u{1f4b0} ARR attributed per EW');
+    expect(message).toContain('ARR attributed per EW');
     expect(message).toContain('\u{1f947} Jordan: $0');
     expect(message).toContain('Meetings taken by EW');
     expect(message).not.toContain('Sam');

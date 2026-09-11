@@ -30,9 +30,10 @@ const UUID_PATTERN =
 const isUuid = (value: unknown): value is string =>
   typeof value === 'string' && UUID_PATTERN.test(value);
 const EXPECTED_TITLES: Record<ReportPeriod, string> = {
-  daily: '🎉 Daily outreach report',
-  weekly: '🎉 Weekly outreach report — excluding Saturday/Sunday',
-  monthly: '🎉 Monthly outreach report',
+  daily: '🎉 Daily outreach report — 5am to 5am',
+  weekly:
+    '🎉 Weekly outreach report — 7 days, 5am to 5am, excluding Saturday/Sunday',
+  monthly: '🎉 Monthly outreach report — 30 days, 5am to 5am',
 };
 const EXPECTED_SECTIONS = [
   'All CRM owners',

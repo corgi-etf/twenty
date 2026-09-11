@@ -236,14 +236,14 @@ describe('outreach report summaries', () => {
 
   it('splits each per-person count into calls, emails and LinkedIn without losing the total', () => {
     const types = [
+      'PHONE_CALL',
       'phone_call',
-      'phone_call',
-      'email',
+      'EMAIL',
       'linkedin',
-      'meeting',
+      'MEETING',
       'other',
       'Phone_Call',
-      'phone_call ',
+      ' phone_call ',
       '',
     ];
     const summary = buildReportSummary({
@@ -256,14 +256,14 @@ describe('outreach report summaries', () => {
     expect(summary.total).toBe(types.length);
     expect(summary.leaderboard[0]?.owners[0]).toMatchObject({
       count: 9,
-      calls: 2,
+      calls: 4,
       emails: 1,
       linkedin: 1,
     });
-    // Everything outside the three channels still counts toward the total and
-    // is simply absent from the triple.
+    // MEETING, OTHER and the empty value still count toward the total and are
+    // simply absent from the triple.
     expect(formatReportSummary(summary)).toContain(
-      '🥇 Jordan: (2/1/1) · 0 meetings set',
+      '🥇 Jordan: (4/1/1) · 0 meetings set',
     );
   });
 
@@ -664,7 +664,7 @@ describe('external wholesaler sections', () => {
       '🥇 Derek: 2',
       '🥈 Kevin: 1',
       '',
-      '💰 ARR attributed per EW',
+      'ARR attributed per EW',
       '🥇 Derek: $0',
       '🥈 Kevin: $0',
     ]);
@@ -686,7 +686,7 @@ describe('external wholesaler sections', () => {
       '🥇 Derek: 0',
       '🥈 Kevin: 0',
       '',
-      '💰 ARR attributed per EW',
+      'ARR attributed per EW',
       '🥇 Derek: $0',
       '🥈 Kevin: $0',
     ]);
@@ -704,7 +704,7 @@ describe('external wholesaler sections', () => {
       'Meetings taken by EW',
       'No wholesaler with the EW role appears in this period.',
       '',
-      '💰 ARR attributed per EW',
+      'ARR attributed per EW',
       'No wholesaler with the EW role appears in this period, so there is nothing to attribute.',
     ]);
     expect(lines.join('\n')).not.toContain('$0');
@@ -718,7 +718,7 @@ describe('external wholesaler sections', () => {
       'Meetings taken by EW',
       'Wholesaler roles could not be read for this report, so meetings taken by EW are unavailable.',
       '',
-      '💰 ARR attributed per EW',
+      'ARR attributed per EW',
       'Wholesaler roles could not be read for this report, so the EW breakdown is unavailable.',
     ]);
     expect(lines.join('\n')).not.toContain('nothing to attribute');
@@ -835,7 +835,7 @@ describe('report delivery', () => {
 
     expect(text).toBe(
       [
-        '🎉 Daily outreach report',
+        '🎉 Daily outreach report — 5am to 5am',
         'Sep 9, 2026, 05:00 AM CDT → Sep 10, 2026, 05:00 AM CDT (America/Chicago)',
         'All CRM owners',
         '',
@@ -857,7 +857,7 @@ describe('report delivery', () => {
         '🥇 Derek Radcliff: 3',
         '🥈 Kevin Hennessy: 0',
         '',
-        '💰 ARR attributed per EW',
+        'ARR attributed per EW',
         '🥇 Derek Radcliff: $0',
         '🥈 Kevin Hennessy: $0',
       ].join('\n'),
@@ -877,7 +877,7 @@ describe('report delivery', () => {
     expect(findRolesByIds).not.toHaveBeenCalled();
     expect(text).toBe(
       [
-        '🎉 Daily outreach report',
+        '🎉 Daily outreach report — 5am to 5am',
         'Sep 9, 2026, 05:00 AM CDT → Sep 10, 2026, 05:00 AM CDT (America/Chicago)',
         'All CRM owners',
         '',
@@ -891,7 +891,7 @@ describe('report delivery', () => {
         'Meetings taken by EW',
         'No wholesaler with the EW role appears in this period.',
         '',
-        '💰 ARR attributed per EW',
+        'ARR attributed per EW',
         'No wholesaler with the EW role appears in this period, so there is nothing to attribute.',
       ].join('\n'),
     );
@@ -905,8 +905,8 @@ describe('report delivery', () => {
       );
       expect(text.split('\n')[0]).toBe(
         period === 'weekly'
-          ? '🎉 Weekly outreach report — excluding Saturday/Sunday'
-          : '🎉 Monthly outreach report',
+          ? '🎉 Weekly outreach report — 7 days, 5am to 5am, excluding Saturday/Sunday'
+          : '🎉 Monthly outreach report — 30 days, 5am to 5am',
       );
       expect(text).not.toMatch(/last \d+ (?:hours|days)/);
     },
@@ -978,7 +978,7 @@ describe('report delivery', () => {
         wholesalerRoleReader: { findRolesByIds: createReader() },
       });
 
-      expect(text).toContain('🎉 Daily outreach report');
+      expect(text).toContain('🎉 Daily outreach report — 5am to 5am');
       expect(text).toContain('📊 Total activities: 1');
       expect(text).toContain('📅 Meetings set: 1');
       expect(text).toContain('🏆 Activity leaderboard (calls/emails/linkedin)');
