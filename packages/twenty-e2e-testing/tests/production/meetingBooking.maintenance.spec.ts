@@ -679,10 +679,14 @@ test('books and reschedules a native CRM meeting with alerts suppressed', async 
       .poll(
         async () => {
           const meeting = await readMeeting();
+          // bookedById is claimed at creation from the creator, so it is no
+          // longer part of the booking stamp and is expected to be set here.
+          // bookedAt remains the marker that a booking actually completed --
+          // production meetings reach COMPLETED without ever passing through
+          // BOOKED, so the stamp alone never attributes them.
           return (
             meeting?.status === 'DRAFT' &&
             meeting.bookedAt === null &&
-            meeting.bookedById === null &&
             Boolean(meeting.bookingValidationMessage)
           );
         },
