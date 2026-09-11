@@ -6,11 +6,9 @@ import {
 } from 'twenty-sdk/define';
 import { RetryableLogicFunctionError } from 'twenty-sdk/logic-function';
 
-import { RawCoreGraphqlTransport } from 'src/modules/core/graphql/raw-core-graphql.transport';
 import { CoreMeetingBookingRepository } from 'src/modules/meeting/graphql/core-meeting-booking.repository';
 import { MEETING_BOOKING_OWNER_ASSIGNMENT_FUNCTION_UNIVERSAL_IDENTIFIER } from 'src/modules/meeting/meeting-identifiers';
 import { assignMeetingBookingOwner } from 'src/modules/meeting/services/assign-meeting-booking-owner.service';
-import { CoreWholesalerRepository } from 'src/modules/wholesaler/onboarding/graphql/core-wholesaler.repository';
 
 type MeetingBookingEventRecord = {
   id?: string | null;
@@ -37,9 +35,9 @@ export const handler = async (
   // Saves a Core round trip for the common already-owned create. Correctness
   // does not rest on it: the service re-reads the live owner and its write
   // filters on a still-empty one, so an absent event field only costs a read.
-  if (after?.wholesalerId) {
-    return { status: 'skipped', reason: 'already_assigned' } as const;
-  }
+  // Deliberately not short-circuiting on an existing owner: every real
+  // meeting is created with one, so doing that would skip the booked-by
+  // claim on exactly the records that need it.
   // createdBy is the record's own attribution and survives re-delivery; the
   // event actor only fills in when the create predates that stamp.
   const creatorWorkspaceMemberId =
@@ -50,10 +48,6 @@ export const handler = async (
       meetingId,
       creatorWorkspaceMemberId,
       meetingRepository: new CoreMeetingBookingRepository(client),
-      wholesalerRepository: new CoreWholesalerRepository(
-        client,
-        new RawCoreGraphqlTransport(),
-      ),
     });
   } catch {
     throw new RetryableLogicFunctionError(

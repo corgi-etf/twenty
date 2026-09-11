@@ -84,7 +84,7 @@ describe('meeting booking owner assignment trigger', () => {
   });
 
   it('passes the creating workspace member from the record attribution', async () => {
-    vi.mocked(assignMeetingBookingOwner).mockResolvedValue({ status: 'assigned', meetingId: MEETING_ID, wholesalerId: WHOLESALER_ID, bookedByAssigned: true });
+    vi.mocked(assignMeetingBookingOwner).mockResolvedValue({ status: 'claimed', meetingId: MEETING_ID, bookedByAssigned: true });
 
     await expect(
       handler(
@@ -94,17 +94,16 @@ describe('meeting booking owner assignment trigger', () => {
           createdBy: { workspaceMemberId: MEMBER_ID },
         }),
       ),
-    ).resolves.toEqual({ status: 'assigned', meetingId: MEETING_ID, wholesalerId: WHOLESALER_ID, bookedByAssigned: true });
+    ).resolves.toEqual({ status: 'claimed', meetingId: MEETING_ID, bookedByAssigned: true });
     expect(assignMeetingBookingOwner).toHaveBeenCalledWith({
       meetingId: MEETING_ID,
       creatorWorkspaceMemberId: MEMBER_ID,
       meetingRepository: expect.anything(),
-      wholesalerRepository: expect.anything(),
     });
   });
 
   it('falls back to the event actor when the record carries no attribution', async () => {
-    vi.mocked(assignMeetingBookingOwner).mockResolvedValue({ status: 'assigned', meetingId: MEETING_ID, wholesalerId: WHOLESALER_ID, bookedByAssigned: true });
+    vi.mocked(assignMeetingBookingOwner).mockResolvedValue({ status: 'claimed', meetingId: MEETING_ID, bookedByAssigned: true });
 
     await handler(
       event(
@@ -126,17 +125,19 @@ describe('meeting booking owner assignment trigger', () => {
     );
   });
 
-  it('leaves an explicitly owned meeting untouched without reading Core', async () => {
-    await expect(
-      handler(
-        event({
-          id: MEETING_ID,
-          wholesalerId: WHOLESALER_ID,
-          createdBy: { workspaceMemberId: MEMBER_ID },
-        }),
-      ),
-    ).resolves.toEqual({ status: 'skipped', reason: 'already_assigned' });
-    expect(assignMeetingBookingOwner).not.toHaveBeenCalled();
+  // Every real meeting is created with an owner, so short-circuiting on one
+  // would skip the booked-by claim on exactly the records that need it.
+  it('still claims booked-by on a meeting that already has an owner', async () => {
+    await handler(
+      event({
+        id: MEETING_ID,
+        wholesalerId: WHOLESALER_ID,
+        createdBy: { workspaceMemberId: MEMBER_ID },
+      }),
+    );
+    expect(assignMeetingBookingOwner).toHaveBeenCalledWith(
+      expect.objectContaining({ creatorWorkspaceMemberId: MEMBER_ID }),
+    );
   });
 
   it('skips an event that carries no record identity', async () => {
@@ -152,7 +153,7 @@ describe('meeting booking owner assignment trigger', () => {
   });
 
   it('assigns regardless of the status the meeting was created in', async () => {
-    vi.mocked(assignMeetingBookingOwner).mockResolvedValue({ status: 'assigned', meetingId: MEETING_ID, wholesalerId: WHOLESALER_ID, bookedByAssigned: true });
+    vi.mocked(assignMeetingBookingOwner).mockResolvedValue({ status: 'claimed', meetingId: MEETING_ID, bookedByAssigned: true });
 
     for (const status of ['DRAFT', 'BOOKED']) {
       await handler(
@@ -175,12 +176,12 @@ describe('meeting booking owner assignment trigger', () => {
     });
     vi.mocked(assignMeetingBookingOwner)
       .mockRejectedValueOnce(new Error('Owner assignment did not persist'))
-      .mockResolvedValueOnce({ status: 'skipped', meetingId: MEETING_ID, reason: 'already_assigned', bookedByAssigned: false });
+      .mockResolvedValueOnce({ status: 'skipped', meetingId: MEETING_ID, reason: 'unknown_creator', bookedByAssigned: false });
 
     await expect(handler(created)).rejects.toBeInstanceOf(
       RetryableLogicFunctionError,
     );
-    await expect(handler(created)).resolves.toEqual({ status: 'skipped', meetingId: MEETING_ID, reason: 'already_assigned', bookedByAssigned: false });
+    await expect(handler(created)).resolves.toEqual({ status: 'skipped', meetingId: MEETING_ID, reason: 'unknown_creator', bookedByAssigned: false });
     expect(assignMeetingBookingOwner).toHaveBeenCalledTimes(2);
     for (const [input] of vi.mocked(assignMeetingBookingOwner).mock.calls) {
       expect(input).toMatchObject({
