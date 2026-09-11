@@ -287,6 +287,18 @@ export const readExternalWholesalerDirectory = async ({
 }): Promise<ExternalWholesalerDirectory> => {
   if (!wholesalerRoleReader) return { status: 'unavailable' };
   try {
+    // Prefer the whole roster so an EW with no activity in the window is still
+    // listed. Fall back to the period's own owners if that read is unavailable
+    // -- a narrower directory is worse than a full one but far better than
+    // degrading the section entirely.
+    const rosterRoles = wholesalerRoleReader.listAllRoles
+      ? await withReadBudget(
+          wholesalerRoleReader.listAllRoles(),
+          EXTERNAL_WHOLESALER_ROLE_READ_TIMEOUT_MILLISECONDS,
+        ).catch(() => undefined)
+      : undefined;
+    if (rosterRoles) return buildExternalWholesalerDirectory(rosterRoles);
+
     const wholesalerIds = collectWholesalerIds(activities, meetingBookings);
     if (wholesalerIds.length === 0) {
       return { status: 'resolved', wholesalers: [] };

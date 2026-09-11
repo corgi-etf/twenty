@@ -83,3 +83,23 @@ export const findWholesalerRolesByIds = (
     document: FIND_WHOLESALER_ROLES_BY_IDS_DOCUMENT,
     variables: { wholesalerIds, first: wholesalerIds.length },
   });
+
+// Same root query and field subset as the by-ids lookup above, without the id
+// filter: an EW with no activity in the window must still be listed, and the
+// period's own owners can never surface someone who did nothing that day.
+export const LIST_WHOLESALER_ROLES_DOCUMENT = `
+  query CorgiListWholesalerRoles($first: Int!) {
+    wholesalers(first: $first) {
+      edges {
+        node { id name wholesalerRole }
+      }
+    }
+  }
+`;
+
+export const listWholesalerRoles = (client: RawCoreRequester, first: number) =>
+  client.request<FindWholesalerRolesData, { first: number }>({
+    operationName: 'CorgiListWholesalerRoles',
+    document: LIST_WHOLESALER_ROLES_DOCUMENT,
+    variables: { first },
+  });

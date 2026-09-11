@@ -4,6 +4,7 @@ import { type RawCoreGraphqlTransport } from 'src/modules/core/graphql/raw-core-
 import {
   findWholesalerRolesByIds,
   findWholesalersByEmail,
+  listWholesalerRoles,
   findWholesalersByWorkspaceMemberId,
 } from 'src/modules/wholesaler/onboarding/graphql/queries/find-wholesalers';
 import { findWorkspaceMemberById } from 'src/modules/wholesaler/onboarding/graphql/queries/find-workspace-member';
@@ -96,6 +97,18 @@ export class CoreWholesalerRepository implements WholesalerRepository {
   public async findByEmail(email: string): Promise<WholesalerRecord[]> {
     return nodes(await findWholesalersByEmail(this.rawClient, email)).filter(
       (record) => normalizeEmail(record.email ?? '') === email,
+    );
+  }
+
+  // Every classified wholesaler, not only those active in the window: an EW
+  // with no calls that day still belongs in the EW sections, and the period's
+  // own owners can never surface someone who did nothing.
+  public async listAllRoles(): Promise<WholesalerRecord[]> {
+    return nodes(
+      await listWholesalerRoles(
+        this.rawClient,
+        ROLE_LOOKUP_BATCH_SIZE * MAX_ROLE_LOOKUP_BATCHES,
+      ),
     );
   }
 
