@@ -84,6 +84,87 @@ const REPORT_DAYS: Record<ReportPeriod, number> = {
 // The title says what the window actually is. "Last 24 hours" outlived the
 // window it described, and a label that survives its subject is how a report
 // starts lying to the people who trust it.
+const GTM_REPORT_TITLES: Record<ReportPeriod, string> = {
+  daily: '📈 Daily GTM Report',
+  weekly: '📈 Weekly GTM Report',
+  monthly: '📈 Monthly GTM Report',
+};
+
+const FUNNEL_WIDTH = 24;
+const FUNNEL_GENERATED_ONLY = '░';
+const FUNNEL_TAKEN = '▒';
+const FUNNEL_CLOSED = '▓';
+
+// The bar divides the generated total into what happened to it, so the widths
+// are shares of `generated` rather than three independent measures. A stage
+// that cannot be resolved contributes nothing rather than guessing a share.
+const buildFunnelBar = ({
+  generated,
+  taken,
+  closed,
+}: {
+  generated: number;
+  taken: number;
+  closed: number;
+}) => {
+  if (generated <= 0) return '';
+  const share = (count: number) =>
+    Math.round((Math.max(count, 0) / generated) * FUNNEL_WIDTH);
+  const closedWidth = Math.min(share(closed), FUNNEL_WIDTH);
+  const takenWidth = Math.min(
+    share(Math.max(taken - closed, 0)),
+    FUNNEL_WIDTH - closedWidth,
+  );
+  const generatedOnlyWidth = Math.max(
+    FUNNEL_WIDTH - closedWidth - takenWidth,
+    0,
+  );
+  return (
+    FUNNEL_GENERATED_ONLY.repeat(generatedOnlyWidth) +
+    FUNNEL_TAKEN.repeat(takenWidth) +
+    FUNNEL_CLOSED.repeat(closedWidth)
+  );
+};
+
+const buildFunnelSection = (summary: ReportSummary, range: string) => {
+  const generated = summary.totalMeetingsSet;
+  const takenSection = summary.meetingsTakenByExternalWholesalers;
+  const taken =
+    takenSection.status === 'resolved'
+      ? takenSection.wholesalers.reduce(
+          (total, { meetings }) => total + meetings,
+          0,
+        )
+      : undefined;
+  const revenueSection = summary.externalWholesalerRevenue;
+  // Closed is counted from attributed revenue, so it stays honest the moment
+  // an ARR source is connected rather than being pinned at zero in code.
+  const closed =
+    revenueSection.status === 'resolved'
+      ? revenueSection.wholesalers.filter(
+          ({ attributedAnnualRecurringRevenue }) =>
+            attributedAnnualRecurringRevenue > 0,
+        ).length
+      : undefined;
+  const bar = buildFunnelBar({
+    generated,
+    taken: taken ?? 0,
+    closed: closed ?? 0,
+  });
+  const stage = (count: number | undefined, label: string) =>
+    `${count === undefined ? '—' : count} ${label}`;
+  return [
+    `${GTM_REPORT_TITLES[summary.period]}`,
+    range,
+    '',
+    'Funnel',
+    ...(bar ? [bar] : []),
+    `${stage(generated, 'Generated')} → ${stage(taken, 'Taken')} → ${stage(closed, 'Closed')}`,
+    `${FUNNEL_GENERATED_ONLY} Generated only · ${FUNNEL_TAKEN} Taken · ${FUNNEL_CLOSED} Closed`,
+    '',
+  ];
+};
+
 const REPORT_TITLES: Record<ReportPeriod, string> = {
   daily: 'Daily outreach report — 5am to 5am',
   weekly:
@@ -532,7 +613,19 @@ export const formatReportSummary = (summary: ReportSummary): string => {
   const formatMeetings = (count: number) =>
     `${count} ${count === 1 ? 'meeting' : 'meetings'} set`;
 
+  // Short range for the funnel header: the existing line below still carries
+  // the full timestamps and the zone.
+  const funnelRange = new Intl.DateTimeFormat('en-US', {
+    timeZone: summary.timeZone,
+    month: 'short',
+    day: 'numeric',
+  });
+
   return [
+    ...buildFunnelSection(
+      summary,
+      `${funnelRange.format(summary.start)} → ${funnelRange.format(summary.end)}`,
+    ),
     `🎉 ${REPORT_TITLES[summary.period]}`,
     `${timestamp.format(summary.start)} → ${timestamp.format(summary.end)} (${summary.timeZone})`,
     'All CRM owners',

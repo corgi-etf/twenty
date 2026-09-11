@@ -12,7 +12,8 @@ import {
   QUICK_LOG_ACTIVITY_LABELS,
   QUICK_LOG_ACTIVITY_TYPES,
   QUICK_LOG_OUTCOME_LABELS,
-  QUICK_LOG_OUTCOMES,
+  QUICK_LOG_OUTCOMES_BY_ACTIVITY_TYPE,
+  type QuickLogActivityType,
 } from 'src/modules/outreach/quick-log-taxonomy';
 
 const STYLES = {
@@ -31,10 +32,12 @@ const STYLES = {
 
 export const LogActivityForm = () => {
   const companyId = useRecordId();
-  const [activityType, setActivityType] = useState<string>(
+  const [activityType, setActivityType] = useState<QuickLogActivityType>(
     QUICK_LOG_ACTIVITY_TYPES[0],
   );
-  const [outcome, setOutcome] = useState<string>(QUICK_LOG_OUTCOMES[0]);
+  // Outcomes follow the channel: a voicemail is only reachable from a call.
+  const outcomes = QUICK_LOG_OUTCOMES_BY_ACTIVITY_TYPE[activityType];
+  const [outcome, setOutcome] = useState<string>(outcomes[0]!);
   const [notes, setNotes] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
@@ -91,7 +94,16 @@ export const LogActivityForm = () => {
         <select
           style={STYLES.control}
           value={activityType}
-          onChange={(event) => setActivityType(event.target.value)}
+          onChange={(event) => {
+            const nextType = event.target.value as QuickLogActivityType;
+            setActivityType(nextType);
+            const nextOutcomes = QUICK_LOG_OUTCOMES_BY_ACTIVITY_TYPE[nextType];
+            // Carry the choice across when the new channel still offers it,
+            // so switching type does not silently rewrite a chosen outcome.
+            if (!nextOutcomes.includes(outcome as never)) {
+              setOutcome(nextOutcomes[0]!);
+            }
+          }}
         >
           {/* Options come from the shared taxonomy, so the form can only ever
               offer values the server already accepts. */}
@@ -109,7 +121,7 @@ export const LogActivityForm = () => {
           value={outcome}
           onChange={(event) => setOutcome(event.target.value)}
         >
-          {QUICK_LOG_OUTCOMES.map((value) => (
+          {outcomes.map((value) => (
             <option key={value} value={value}>
               {QUICK_LOG_OUTCOME_LABELS[value]}
             </option>

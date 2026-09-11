@@ -534,7 +534,13 @@ describe('leaderboard role groups', () => {
       ['BDR', ['Robin', 'Sam']],
       ['EW', ['Alex']],
     ]);
-    expect(formatReportSummary(summary).split('\n').slice(7, 13)).toEqual([
+    // Anchored to the leaderboard heading rather than a fixed offset, so the
+    // funnel header above it cannot silently shift what this asserts.
+    const lines = formatReportSummary(summary).split('\n');
+    const leaderboardAt = lines.indexOf(
+      '🏆 Activity leaderboard (calls/emails/linkedin)',
+    );
+    expect(lines.slice(leaderboardAt, leaderboardAt + 6)).toEqual([
       '🏆 Activity leaderboard (calls/emails/linkedin)',
       'BDR',
       '🥇 Robin: (0/0/1) · 0 meetings set',
@@ -835,6 +841,14 @@ describe('report delivery', () => {
 
     expect(text).toBe(
       [
+        '📈 Daily GTM Report',
+        'Sep 9 → Sep 10',
+        '',
+        'Funnel',
+        '░░░░░░░░░░░░░░▒▒▒▒▒▒▒▒▒▒',
+        '7 Generated → 3 Taken → 0 Closed',
+        '░ Generated only · ▒ Taken · ▓ Closed',
+        '',
         '🎉 Daily outreach report — 5am to 5am',
         'Sep 9, 2026, 05:00 AM CDT → Sep 10, 2026, 05:00 AM CDT (America/Chicago)',
         'All CRM owners',
@@ -877,6 +891,13 @@ describe('report delivery', () => {
     expect(findRolesByIds).not.toHaveBeenCalled();
     expect(text).toBe(
       [
+        '📈 Daily GTM Report',
+        'Sep 9 → Sep 10',
+        '',
+        'Funnel',
+        '0 Generated → 0 Taken → 0 Closed',
+        '░ Generated only · ▒ Taken · ▓ Closed',
+        '',
         '🎉 Daily outreach report — 5am to 5am',
         'Sep 9, 2026, 05:00 AM CDT → Sep 10, 2026, 05:00 AM CDT (America/Chicago)',
         'All CRM owners',
@@ -904,6 +925,9 @@ describe('report delivery', () => {
         buildReportSummary({ ...defaults, period, activities: [] }),
       );
       expect(text.split('\n')[0]).toBe(
+        period === 'weekly' ? '📈 Weekly GTM Report' : '📈 Monthly GTM Report',
+      );
+      expect(text).toContain(
         period === 'weekly'
           ? '🎉 Weekly outreach report — 7 days, 5am to 5am, excluding Saturday/Sunday'
           : '🎉 Monthly outreach report — 30 days, 5am to 5am',
