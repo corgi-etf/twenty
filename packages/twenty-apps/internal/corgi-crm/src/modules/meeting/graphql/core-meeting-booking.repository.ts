@@ -197,6 +197,38 @@ export class CoreMeetingBookingRepository {
     return persisted?.wholesalerId === wholesalerId;
   }
 
+  // Distinct from assignUnassignedBookedBy: this one deliberately overwrites,
+  // because correcting an attribution is the whole point of the action that
+  // calls it. The claim path must never overwrite; this path always may.
+  public async setBookedBy({
+    id,
+    bookedById,
+  }: {
+    id: string;
+    bookedById: string;
+  }): Promise<boolean> {
+    try {
+      const result = await this.client.mutation({
+        updateMeetingBookings: {
+          __args: {
+            filter: { and: [{ id: { eq: id } }] },
+            data: { bookedById },
+          },
+          ...selection,
+        },
+      });
+      const rows = result.updateMeetingBookings;
+      if (Array.isArray(rows) && rows.length === 1) {
+        const updated = parseMeetingBooking(rows[0]);
+        if (updated?.id === id && updated.bookedById === bookedById) return true;
+      }
+    } catch {
+      // See stampBooked: a committed mutation can still lose its response.
+    }
+    const persisted = await this.get(id);
+    return persisted?.bookedById === bookedById;
+  }
+
   public async assignUnassignedBookedBy({
     id,
     bookedById,
