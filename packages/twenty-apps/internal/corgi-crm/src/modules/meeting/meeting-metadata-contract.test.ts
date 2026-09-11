@@ -91,7 +91,7 @@ describe('Meeting booking metadata', () => {
     expect(field('scheduledAt')?.isNullable).toBe(true);
   });
 
-  it('links every booking to its RIA, owner, and immutable booking actor', () => {
+  it('links every booking to its RIA, owner, and correctable booking actor', () => {
     expect(companyOnMeetingBooking.config).toMatchObject({
       name: 'company',
       objectUniversalIdentifier:
@@ -113,8 +113,11 @@ describe('Meeting booking metadata', () => {
     );
     expect(bookedByOnMeetingBooking.config).toMatchObject({
       name: 'bookedBy',
-      isUIEditable: false,
-      writability: MetadataWritability.APPLICATION,
+      // Attribution, not audit: a booking is often logged by one person on
+      // another's behalf, so this stays correctable. createdBy remains the
+      // immutable record of who actually wrote the row.
+      isUIEditable: true,
+      writability: MetadataWritability.OPEN,
       relationTargetObjectMetadataUniversalIdentifier:
         STANDARD_OBJECT_UNIVERSAL_IDENTIFIERS.workspaceMember
           .universalIdentifier,
