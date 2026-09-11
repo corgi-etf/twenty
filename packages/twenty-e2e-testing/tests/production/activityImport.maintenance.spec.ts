@@ -263,26 +263,49 @@ test('runs a guarded, idempotent outreach activity import', async ({
       // server did not expand is indistinguishable from an empty one -- and
       // reading that as empty is exactly what would delete real history.
       const counted: Record<string, unknown> = {};
+      const absentCollections: string[] = [];
       for (const { collection, foreignKey } of COMPANY_LINK_COLLECTIONS) {
         const query = new URLSearchParams({
           filter: `${foreignKey}[eq]:${companyId}`,
           limit: '1',
           depth: '0',
         });
-        const body = (
-          await readRest(
-            new URL(
-              `/rest/${collection}?${query.toString()}`,
-              BACKEND_BASE_URL,
-            ).toString(),
-            `List ${collection}`,
-          )
-        ).data;
+        // A 400 here means this workspace has no such object -- the REST layer
+        // rejects the path outright rather than returning an empty page. That
+        // is genuinely "no relation to check", unlike a 5xx or an auth failure,
+        // which still have to block: an unreadable relation is indistinguishable
+        // from an empty one. The absent collection is reported, never silently
+        // treated as proof of emptiness.
+        let body;
+        try {
+          body = (
+            await readRest(
+              new URL(
+                `/rest/${collection}?${query.toString()}`,
+                BACKEND_BASE_URL,
+              ).toString(),
+              `List ${collection}`,
+            )
+          ).data;
+        } catch (error) {
+          if (!/failed with HTTP 400$/.test((error as Error).message)) throw error;
+          absentCollections.push(collection);
+          counted[collection] = [];
+          continue;
+        }
         const records = body?.[collection];
         if (!Array.isArray(records)) {
           throw new Error(`List ${collection} response has an invalid shape`);
         }
         counted[collection] = records;
+      }
+
+      if (absentCollections.length > 0) {
+        console.log(
+          JSON.stringify({
+            companyLinkProbe: { companyId, absentCollections },
+          }),
+        );
       }
 
       return { ...company, ...counted };
