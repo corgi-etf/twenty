@@ -47,3 +47,38 @@ export const isQuickLogActivityType = (
 
 export const isQuickLogOutcome = (value: string): value is QuickLogOutcome =>
   (QUICK_LOG_OUTCOMES as readonly string[]).includes(value);
+
+// Which outcomes a channel can actually produce. Only calls can end in a
+// voicemail, so offering it against an email is noise the logger has to read
+// past every time. This narrows what the form offers; the server still accepts
+// any outcome in QUICK_LOG_OUTCOMES, because the Telegram command predates
+// this and must keep working unchanged.
+export const QUICK_LOG_OUTCOMES_BY_ACTIVITY_TYPE: Record<
+  QuickLogActivityType,
+  readonly QuickLogOutcome[]
+> = {
+  PHONE_CALL: [
+    'connected',
+    'left_voicemail',
+    'no_response',
+    'follow_up_scheduled',
+    'not_interested',
+    'other',
+  ],
+  EMAIL: [
+    'connected',
+    'no_response',
+    'follow_up_scheduled',
+    'not_interested',
+    'other',
+  ],
+  LINKEDIN: [
+    'connected',
+    'no_response',
+    'follow_up_scheduled',
+    'not_interested',
+    'other',
+  ],
+  MEETING: ['connected', 'follow_up_scheduled', 'not_interested', 'other'],
+  OTHER: QUICK_LOG_OUTCOMES,
+};

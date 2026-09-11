@@ -30,13 +30,23 @@ const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const isUuid = (value: unknown): value is string =>
   typeof value === 'string' && UUID_PATTERN.test(value);
+// The GTM funnel header is the first line now; the outreach title it used to
+// occupy still has to be present below it, so both are asserted rather than
+// trading one for the other.
 const EXPECTED_TITLES: Record<ReportPeriod, string> = {
+  daily: '📈 Daily GTM Report',
+  weekly: '📈 Weekly GTM Report',
+  monthly: '📈 Monthly GTM Report',
+};
+const EXPECTED_OUTREACH_TITLES: Record<ReportPeriod, string> = {
   daily: '🎉 Daily outreach report — 5am to 5am',
   weekly:
     '🎉 Weekly outreach report — 7 days, 5am to 5am, excluding Saturday/Sunday',
   monthly: '🎉 Monthly outreach report — 30 days, 5am to 5am',
 };
 const EXPECTED_SECTIONS = [
+  'Funnel',
+  '░ Generated only · ▒ Taken · ▓ Closed',
   'All CRM owners',
   '🏆 Activity leaderboard (calls/emails/linkedin)',
   'Meetings taken by EW',
@@ -171,6 +181,7 @@ export const handleReportRuntimeVerification = async (
       const lines = report.split('\n');
       if (
         lines[0] !== EXPECTED_TITLES[period] ||
+        !lines.includes(EXPECTED_OUTREACH_TITLES[period]) ||
         !EXPECTED_SECTIONS.every((section) => lines.includes(section))
       ) {
         throw new Error('Report sections are unavailable');
