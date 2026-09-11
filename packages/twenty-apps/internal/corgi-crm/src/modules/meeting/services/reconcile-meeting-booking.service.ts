@@ -55,11 +55,16 @@ export const reconcileMeetingBooking = async ({
   repository: MeetingBookingRepository;
 }): Promise<ReconcileMeetingBookingResult> => {
   const record = await repository.get(meetingId);
-  if (
-    !record ||
-    record.status !== MEETING_BOOKING_STATUS.BOOKED ||
-    record.bookedAt !== null
-  ) {
+  // Completed counts as booked for stamping purposes. A meeting cannot have
+  // been completed without having been set, and in practice people move
+  // straight from Draft to Completed -- so keying only on Booked left bookedAt
+  // null on every real meeting, and the alert that watches bookedAt never
+  // fired once. Booked still stamps at the moment it is set, which is earlier
+  // and remains the better path.
+  const isStampableStatus =
+    record?.status === MEETING_BOOKING_STATUS.BOOKED ||
+    record?.status === MEETING_BOOKING_STATUS.COMPLETED;
+  if (!record || !isStampableStatus || record.bookedAt !== null) {
     return { status: 'ignored', meetingId };
   }
 

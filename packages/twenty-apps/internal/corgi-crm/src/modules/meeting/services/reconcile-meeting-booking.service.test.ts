@@ -90,6 +90,57 @@ describe('reconcileMeetingBooking', () => {
     expect(repo.stampBooked).not.toHaveBeenCalled();
   });
 
+  // People move straight from Draft to Completed, so keying only on Booked
+  // left bookedAt null on every real meeting and the alert never fired.
+  it('stamps a meeting that reached completed without passing through booked', async () => {
+    const repo = repository({ ...meeting, status: 'COMPLETED' });
+
+    await expect(
+      reconcileMeetingBooking({
+        meetingId: meeting.id,
+        eventOccurredAt: '2026-09-10T13:15:00.000Z',
+        actorWorkspaceMemberId: '44444444-4444-4444-8444-444444444444',
+        repository: repo,
+      }),
+    ).resolves.toEqual({ status: 'booked', meetingId: meeting.id });
+    expect(repo.stampBooked).toHaveBeenCalled();
+  });
+
+  it.each(['DRAFT', 'CANCELLED', 'NO_SHOW'] as const)(
+    'leaves a %s meeting unstamped, so it raises no alert',
+    async (status) => {
+      const repo = repository({ ...meeting, status });
+
+      await expect(
+        reconcileMeetingBooking({
+          meetingId: meeting.id,
+          eventOccurredAt: '2026-09-10T13:15:00.000Z',
+          actorWorkspaceMemberId: '44444444-4444-4444-8444-444444444444',
+          repository: repo,
+        }),
+      ).resolves.toEqual({ status: 'ignored', meetingId: meeting.id });
+      expect(repo.stampBooked).not.toHaveBeenCalled();
+    },
+  );
+
+  it('still refuses to stamp a completed meeting that is missing its time', async () => {
+    const repo = repository({
+      ...meeting,
+      status: 'COMPLETED',
+      scheduledAt: null,
+    });
+
+    await expect(
+      reconcileMeetingBooking({
+        meetingId: meeting.id,
+        eventOccurredAt: '2026-09-10T13:15:00.000Z',
+        actorWorkspaceMemberId: '44444444-4444-4444-8444-444444444444',
+        repository: repo,
+      }),
+    ).resolves.toMatchObject({ status: 'invalid' });
+    expect(repo.stampBooked).not.toHaveBeenCalled();
+  });
+
   it('fails for retry when compare-and-set loses an unconfirmed race', async () => {
     const repo = repository();
     vi.mocked(repo.stampBooked).mockResolvedValue(false);
