@@ -567,10 +567,10 @@ test('converges navigation, Follow-ups, company fields, and state sorting', () =
       type,
       position,
     })),
+    // Sales teams lost its sidebar slot; the object itself is still planned.
     [
       { type: 'OBJECT', position: 2 },
-      { type: 'OBJECT', position: 3 },
-      { type: 'VIEW', position: 4 },
+      { type: 'VIEW', position: 3 },
     ],
   );
   assert.deepEqual(plan.layout.navigationItemIdsToDelete.sort(), [

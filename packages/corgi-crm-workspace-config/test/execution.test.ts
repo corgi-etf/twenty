@@ -416,16 +416,54 @@ class FakeApi implements WorkspaceConfigApi {
     this.events.push('view-sort-create');
   }
 
-  async deleteNavigationItems(): Promise<void> {
+  // Actually removes them: a no-op here made the convergence check unable to
+  // observe a navigation item ever being retired, so any change that retires
+  // one looked like non-convergence.
+  async deleteNavigationItems(ids: string[]): Promise<void> {
     this.events.push('navigation-delete');
+    const removed = new Set(ids);
+    this.snapshot.navigationMenuItems =
+      this.snapshot.navigationMenuItems.filter(
+        (item: { id: string }) => !removed.has(item.id),
+      );
   }
 
-  async createNavigationItems(): Promise<void> {
+  // Like deleteNavigationItems, these mutate the snapshot. No-ops made the
+  // convergence check blind to navigation ever changing, so any reordering or
+  // addition read as non-convergence rather than as work that was applied.
+  async createNavigationItems(
+    inputs: Array<{
+      id?: string;
+      type: 'OBJECT' | 'VIEW';
+      targetObjectMetadataId?: string;
+      viewId?: string;
+      position: number;
+    }>,
+  ): Promise<void> {
     this.events.push('navigation-create');
+    for (const input of inputs) {
+      this.snapshot.navigationMenuItems.push({
+        id: input.id ?? `created-nav-${input.position}`,
+        type: input.type,
+        userWorkspaceId: null,
+        targetObjectMetadataId: input.targetObjectMetadataId ?? null,
+        viewId: input.viewId ?? null,
+        folderId: null,
+        position: input.position,
+      });
+    }
   }
 
-  async updateNavigationItems(): Promise<void> {
+  async updateNavigationItems(
+    inputs: Array<{ id: string; update: { position: number; folderId: null } }>,
+  ): Promise<void> {
     this.events.push('navigation-update');
+    for (const { id, update } of inputs) {
+      const item = this.snapshot.navigationMenuItems.find(
+        (candidate: { id: string }) => candidate.id === id,
+      );
+      if (item) Object.assign(item, update);
+    }
   }
 
   async readCheckpoint() {
@@ -447,15 +485,19 @@ test('backfills companies and seeded territories before layout and records a ver
     wholesalerTerritoryAssignments,
   });
 
+  // The snapshot still carries the retired sales-teams entry, so this run
+  // retires it and closes the gap it left behind. Both are one-time.
   assert.deepEqual(api.events, [
     'company:company-1',
     'territory:grace-id',
     'territory:nash-id',
+    'navigation-delete',
+    'navigation-update',
   ]);
   assert.equal(result.companyMutations, 1);
   assert.equal(result.territoryMutations, 2);
   assert.equal(result.wholesalerCount, 2);
-  assert.equal(result.layoutMutations, 0);
+  assert.equal(result.layoutMutations, 2);
   assert.equal(api.checkpoint?.status, 'complete');
   assert.equal(api.checkpoint?.expectedCompanyCount, 1);
   assert.match(api.checkpoint?.expectedProjectionHash ?? '', /^[a-f0-9]{64}$/);
