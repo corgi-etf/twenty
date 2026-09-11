@@ -54,9 +54,19 @@ describe('production report runtime canary contract', () => {
     );
     assert.match(canarySource, /after exact meeting cleanup/);
     assert.match(canarySource, /executeOneFromSource in LIVE mode/);
-    assert.match(canarySource, /\['daily', 24\]/);
-    assert.match(canarySource, /\['weekly', 168\]/);
-    assert.match(canarySource, /\['monthly', 720\]/);
+    // Migrated from an exact 24/168/720 hour assertion when the report moved
+    // from rolling hours to whole 5am-to-5am local days: the day count is now
+    // exact, the nominal hours hold to within the hour daylight saving moves,
+    // and the 5am boundary itself is pinned.
+    assert.match(canarySource, /\['daily', 1, 24\]/);
+    assert.match(canarySource, /\['weekly', 7, 168\]/);
+    assert.match(canarySource, /\['monthly', 30, 720\]/);
+    assert.match(canarySource, /report\.windowDays !== windowDays/);
+    assert.match(
+      canarySource,
+      /Math\.abs\(windowHours - Number\(nominalWindowHours\)\) > 1/,
+    );
+    assert.match(canarySource, /report\.windowBoundaryLocalHour !== 5/);
     assert.doesNotMatch(
       canarySource.slice(cleanup),
       /test\.skip|continue-on-error/,

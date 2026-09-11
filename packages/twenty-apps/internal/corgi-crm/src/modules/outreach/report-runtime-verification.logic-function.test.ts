@@ -14,6 +14,8 @@ const USER_WORKSPACE_ID = '22222222-2222-4222-8222-222222222222';
 const WORKSPACE_MEMBER_ID = '33333333-3333-4333-8333-333333333333';
 const OTHER_ID = '44444444-4444-4444-8444-444444444444';
 const NOW = new Date('2026-09-09T16:30:00.000Z');
+// Every period ends at the next 5am America/Chicago boundary after NOW.
+const END = '2026-09-10T10:00:00.000Z';
 const context: LogicFunctionExecutionContext = {
   workspaceId: WORKSPACE_ID,
   userWorkspaceId: USER_WORKSPACE_ID,
@@ -150,27 +152,36 @@ describe('internal read-only production report verification', () => {
           period: 'daily',
           activityCount: 1,
           meetingCount: 1,
+          windowDays: 1,
           windowHours: 24,
+          windowBoundaryLocalHour: 5,
           allOwners: true,
           activityLeaderboard: true,
+          meetingsTakenByExternalWholesalers: true,
           weeklyExcludesWeekends: false,
         },
         {
           period: 'weekly',
           activityCount: 1,
           meetingCount: 1,
+          windowDays: 7,
           windowHours: 168,
+          windowBoundaryLocalHour: 5,
           allOwners: true,
           activityLeaderboard: true,
+          meetingsTakenByExternalWholesalers: true,
           weeklyExcludesWeekends: true,
         },
         {
           period: 'monthly',
           activityCount: 3,
           meetingCount: 3,
+          windowDays: 30,
           windowHours: 720,
+          windowBoundaryLocalHour: 5,
           allOwners: true,
           activityLeaderboard: true,
+          meetingsTakenByExternalWholesalers: true,
           weeklyExcludesWeekends: false,
         },
       ],
@@ -180,9 +191,9 @@ describe('internal read-only production report verification', () => {
     expect(query).not.toHaveBeenCalled();
     expect(request).toHaveBeenCalledTimes(6);
     for (const [index, start] of [
-      '2026-09-08T16:30:00.000Z',
-      '2026-09-02T16:30:00.000Z',
-      '2026-08-10T16:30:00.000Z',
+      '2026-09-09T10:00:00.000Z',
+      '2026-09-03T10:00:00.000Z',
+      '2026-08-11T10:00:00.000Z',
     ].entries()) {
       for (const [offset, field, timestamp] of [
         [0, 'outreachActivities', 'occurredAt'],
@@ -203,8 +214,8 @@ describe('internal read-only production report verification', () => {
                     },
                     {
                       or: [
-                        { [timestamp]: { lt: NOW.toISOString() } },
-                        { createdAt: { lt: NOW.toISOString() } },
+                        { [timestamp]: { lt: END } },
+                        { createdAt: { lt: END } },
                       ],
                     },
                   ],
@@ -212,7 +223,7 @@ describe('internal read-only production report verification', () => {
                 first: 100,
                 after: null,
               }
-            : { start, end: NOW.toISOString(), first: 100, after: null },
+            : { start, end: END, first: 100, after: null },
         );
       }
     }
