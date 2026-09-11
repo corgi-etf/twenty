@@ -14,6 +14,7 @@ import {
 type VerificationDependencies = {
   expectedWorkspaceId: string | undefined;
   enabled: string | undefined;
+  canarySuppression: string | undefined;
   timeZone: string | undefined;
   now(): Date;
   createCrmClient(): CoreApiClient;
@@ -68,6 +69,29 @@ const readCount = (lines: string[], prefix: string) => {
   return count;
 };
 
+// The release installs the new version before the meeting canary runs, but
+// Telegram is only disabled after it. Gating this verification on the disabled
+// flag therefore deadlocks any release that starts with the bot live: the
+// canary fails, the failure policy restores Telegram enabled, and the next run
+// fails identically. Armed canary suppression is the property that actually
+// matters here -- it is what keeps a report from reaching Telegram -- so honour
+// it as an equivalent gate, and only while it is genuinely unexpired.
+const isCanarySuppressionArmed = (raw: string | undefined, nowMs: number) => {
+  if (typeof raw !== 'string' || !raw) return false;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return false;
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed))
+    return false;
+  const { version, notAfter } = parsed as Record<string, unknown>;
+  if (version !== 1 || typeof notAfter !== 'string') return false;
+  const expiry = Date.parse(notAfter);
+  return Number.isFinite(expiry) && expiry > nowMs;
+};
+
 export const handleReportRuntimeVerification = async (
   payload: unknown,
   context: LogicFunctionExecutionContext | undefined,
@@ -77,12 +101,23 @@ export const handleReportRuntimeVerification = async (
     payload && typeof payload === 'object' && !Array.isArray(payload)
       ? (payload as Record<string, unknown>)
       : undefined;
+  // Read through the injected clock so the gate has a single time source; an
+  // unusable clock yields NaN, which fails every expiry comparison below.
+  const nowMs = (() => {
+    try {
+      const value = dependencies.now().getTime();
+      return Number.isFinite(value) ? value : Number.NaN;
+    } catch {
+      return Number.NaN;
+    }
+  })();
   if (
     !isUuid(dependencies.expectedWorkspaceId) ||
     context?.workspaceId !== dependencies.expectedWorkspaceId ||
     !isUuid(context.userWorkspaceId) ||
     !isUuid(context.workspaceMemberId) ||
-    dependencies.enabled !== 'false' ||
+    (dependencies.enabled !== 'false' &&
+      !isCanarySuppressionArmed(dependencies.canarySuppression, nowMs)) ||
     !input ||
     Object.keys(input).length !== PAYLOAD_KEYS.length ||
     !PAYLOAD_KEYS.every((key) =>
@@ -180,6 +215,7 @@ export const handler = async (
   handleReportRuntimeVerification(payload, context, {
     expectedWorkspaceId: process.env.CORGI_CRM_WORKSPACE_ID,
     enabled: process.env.CORGI_CRM_TELEGRAM_ENABLED,
+    canarySuppression: process.env.CORGI_CRM_MEETING_CANARY_SUPPRESSION,
     timeZone: process.env.CORGI_CRM_TELEGRAM_TIME_ZONE,
     now: () => new Date(),
     createCrmClient: () => new CoreApiClient(),

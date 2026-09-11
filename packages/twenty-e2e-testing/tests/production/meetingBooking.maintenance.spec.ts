@@ -1069,9 +1069,13 @@ test('books and reschedules a native CRM meeting with alerts suppressed', async 
       };
     });
     await assertAlertsSuppressed();
-  } catch {
+  } catch (cause) {
+    // Preserving the cause matters: this catch previously discarded the real
+    // reason, so a hard gate failure looked identical to a flake for hours.
     throw new Error(
-      'Installed report runtime verification failed after exact meeting cleanup',
+      `Installed report runtime verification failed after exact meeting cleanup: ${
+        cause instanceof Error ? cause.message : String(cause)
+      }`,
     );
   }
   console.log(
