@@ -1,20 +1,13 @@
-import { type WholesalerRepository } from 'src/modules/wholesaler/onboarding/types';
-
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 export type MeetingBookingOwner = {
   id: string;
-  wholesalerId: string | null;
   bookedById: string | null;
 };
 
 export type MeetingBookingOwnerRepository = {
   get(id: string): Promise<MeetingBookingOwner | null>;
-  assignUnassignedOwner(input: {
-    id: string;
-    wholesalerId: string;
-  }): Promise<boolean>;
   assignUnassignedBookedBy(input: {
     id: string;
     bookedById: string;
@@ -23,10 +16,7 @@ export type MeetingBookingOwnerRepository = {
 
 export const ASSIGN_MEETING_BOOKING_OWNER_SKIP_REASONS = [
   'meeting_not_found',
-  'already_assigned',
   'unknown_creator',
-  'creator_has_no_wholesaler',
-  'ambiguous_creator_wholesaler',
 ] as const;
 
 export type AssignMeetingBookingOwnerSkipReason =
@@ -34,9 +24,8 @@ export type AssignMeetingBookingOwnerSkipReason =
 
 export type AssignMeetingBookingOwnerResult =
   | {
-      status: 'assigned';
+      status: 'claimed';
       meetingId: string;
-      wholesalerId: string;
       bookedByAssigned: boolean;
     }
   | {
@@ -50,12 +39,10 @@ export const assignMeetingBookingOwner = async ({
   meetingId,
   creatorWorkspaceMemberId,
   meetingRepository,
-  wholesalerRepository,
 }: {
   meetingId: string;
   creatorWorkspaceMemberId: string | null;
   meetingRepository: MeetingBookingOwnerRepository;
-  wholesalerRepository: Pick<WholesalerRepository, 'findByWorkspaceMemberId'>;
 }): Promise<AssignMeetingBookingOwnerResult> => {
   const record = await meetingRepository.get(meetingId);
   if (!record) {
@@ -66,9 +53,11 @@ export const assignMeetingBookingOwner = async ({
       bookedByAssigned: false,
     };
   }
-  // Booked-by is claimed independently of the owner: it identifies the person,
-  // not their wholesaler, so a creator without one must still be recorded. As
-  // with the owner, a value already present is never overwritten.
+  // Only booked-by is claimed. The owner is deliberately left alone: every
+  // meeting in production already carries an owner equal to its creator,
+  // because people set it when they create the meeting. Filling it in
+  // automatically changed nothing real and removed the owner-selection step
+  // the release canary exercises.
   const bookedByAssigned =
     !record.bookedById &&
     !!creatorWorkspaceMemberId &&
@@ -78,68 +67,14 @@ export const assignMeetingBookingOwner = async ({
           bookedById: creatorWorkspaceMemberId,
         })
       : false;
-  // A wholesaler someone chose always wins. A re-delivered create event must
-  // read the record as it is now, never as the event described it.
-  if (record.wholesalerId) {
-    return {
-      status: 'skipped',
-      meetingId,
-      reason: 'already_assigned',
-      bookedByAssigned,
-    };
-  }
-  if (
-    !creatorWorkspaceMemberId ||
-    !UUID_PATTERN.test(creatorWorkspaceMemberId)
-  ) {
+
+  if (!creatorWorkspaceMemberId || !UUID_PATTERN.test(creatorWorkspaceMemberId))
     return {
       status: 'skipped',
       meetingId,
       reason: 'unknown_creator',
       bookedByAssigned,
     };
-  }
 
-  const wholesalers = (
-    await wholesalerRepository.findByWorkspaceMemberId(creatorWorkspaceMemberId)
-  ).filter(
-    (wholesaler) => wholesaler.workspaceMemberId === creatorWorkspaceMemberId,
-  );
-  if (wholesalers.length === 0) {
-    return {
-      status: 'skipped',
-      meetingId,
-      reason: 'creator_has_no_wholesaler',
-      bookedByAssigned,
-    };
-  }
-  if (wholesalers.length > 1) {
-    // Fail closed: onboarding reconciliation keeps this one-to-one, so a
-    // duplicate link is a data fault to repair, not an owner to guess.
-    return {
-      status: 'skipped',
-      meetingId,
-      reason: 'ambiguous_creator_wholesaler',
-      bookedByAssigned,
-    };
-  }
-
-  const wholesalerId = wholesalers[0]!.id;
-  const assigned = await meetingRepository.assignUnassignedOwner({
-    id: meetingId,
-    wholesalerId,
-  });
-  if (assigned)
-    return { status: 'assigned', meetingId, wholesalerId, bookedByAssigned };
-
-  const persisted = await meetingRepository.get(meetingId);
-  if (persisted?.wholesalerId) {
-    return {
-      status: 'skipped',
-      meetingId,
-      reason: 'already_assigned',
-      bookedByAssigned,
-    };
-  }
-  throw new Error('Meeting booking owner assignment did not persist');
+  return { status: 'claimed', meetingId, bookedByAssigned };
 };
