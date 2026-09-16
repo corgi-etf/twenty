@@ -1280,10 +1280,16 @@ export const buildWorkspaceConfigPlan = (
     // stay provisioned so their fields and relations keep converging; they
     // just no longer take a slot in the sidebar.
     {
+      key: 'companyAllocation',
+      type: 'OBJECT' as const,
+      targetObjectMetadataId: objectsByName.get('companyAllocation')!.id,
+      position: 3,
+    },
+    {
       key: 'followUps',
       type: 'VIEW' as const,
       viewId: followUpViewId,
-      position: 3,
+      position: 4,
     },
   ];
   const workspaceItems = snapshot.navigationMenuItems.filter(
