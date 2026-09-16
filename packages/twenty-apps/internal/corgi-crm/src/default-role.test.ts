@@ -45,7 +45,7 @@ describe('Corgi CRM function role', () => {
     expect(defaultRole.config.rowLevelPermissionPredicateGroups).toEqual([]);
   });
 
-  it('reads only the eight required objects and writes only scoped operational data', () => {
+  it('reads only the ten required objects and writes only scoped operational data', () => {
     const readOnly = [
       STANDARD_OBJECT_UNIVERSAL_IDENTIFIERS.workspaceMember
         .universalIdentifier,
@@ -67,6 +67,10 @@ describe('Corgi CRM function role', () => {
       TELEGRAM_DELIVERY_OBJECT_UNIVERSAL_IDENTIFIER,
       TELEGRAM_DELIVERY_AUDIT_OBJECT_UNIVERSAL_IDENTIFIER,
       MEETING_BOOKING_OBJECT_UNIVERSAL_IDENTIFIER,
+      // Writable so an outreach activity can raise its follow-up task and
+      // link it to the company; still no delete of either.
+      STANDARD_OBJECT_UNIVERSAL_IDENTIFIERS.task.universalIdentifier,
+      STANDARD_OBJECT_UNIVERSAL_IDENTIFIERS.taskTarget.universalIdentifier,
     ]) {
       expect(permissionFor(objectUniversalIdentifier)).toEqual({
         objectUniversalIdentifier,
@@ -76,6 +80,6 @@ describe('Corgi CRM function role', () => {
         canDestroyObjectRecords: false,
       });
     }
-    expect(defaultRole.config.objectPermissions).toHaveLength(8);
+    expect(defaultRole.config.objectPermissions).toHaveLength(10);
   });
 });

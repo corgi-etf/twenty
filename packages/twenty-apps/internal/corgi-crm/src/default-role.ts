@@ -29,7 +29,7 @@ export default defineApplicationRole({
   universalIdentifier: DEFAULT_ROLE_UNIVERSAL_IDENTIFIER,
   label: 'Corgi CRM function role',
   description:
-    'Reads CRM identities and outreach context; writes Wholesaler identities, Outreach Activities, Meeting Bookings, and app-owned Telegram delivery records.',
+    'Reads CRM identities and outreach context; writes Wholesaler identities, Outreach Activities, Meeting Bookings, follow-up Tasks, and app-owned Telegram delivery records.',
   canReadAllObjectRecords: false,
   canUpdateAllObjectRecords: false,
   canSoftDeleteAllObjectRecords: false,
@@ -58,6 +58,17 @@ export default defineApplicationRole({
     permission(TELEGRAM_DELIVERY_OBJECT_UNIVERSAL_IDENTIFIER, true),
     permission(TELEGRAM_DELIVERY_AUDIT_OBJECT_UNIVERSAL_IDENTIFIER, true),
     permission(MEETING_BOOKING_OBJECT_UNIVERSAL_IDENTIFIER, true),
+    // Raising a follow-up task from an outreach activity writes both the task
+    // and the target row that links it to the company. Without these the
+    // trigger runs, is refused, and the follow-up silently never appears.
+    permission(
+      STANDARD_OBJECT_UNIVERSAL_IDENTIFIERS.task.universalIdentifier,
+      true,
+    ),
+    permission(
+      STANDARD_OBJECT_UNIVERSAL_IDENTIFIERS.taskTarget.universalIdentifier,
+      true,
+    ),
   ],
   fieldPermissions: [],
   permissionFlagUniversalIdentifiers: [],

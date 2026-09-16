@@ -315,9 +315,9 @@ const verifyApplicationRoleContract = (role, objects) => {
     }
   }
   const permissions = role.objectPermissions ?? [];
-  if (permissions.length !== 8) {
+  if (permissions.length !== 10) {
     throw new Error(
-      'Installed application role must have exactly eight object permissions',
+      'Installed application role must have exactly ten object permissions',
     );
   }
   const expected = new Map(
@@ -330,6 +330,10 @@ const verifyApplicationRoleContract = (role, objects) => {
       ['telegramDelivery', true],
       ['telegramDeliveryAudit', true],
       ['meetingBooking', true],
+      // Writable so an outreach activity can raise its follow-up task and link
+      // it to the company; neither is deletable by the app.
+      ['task', true],
+      ['taskTarget', true],
     ].map(([nameSingular, writable]) => {
       const object = exactlyOne(
         objects,
