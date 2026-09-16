@@ -138,6 +138,18 @@ describe('Company allocation metadata', () => {
   // A relation needs both sides declared. Declaring only the owning side syncs
   // as FIELD_METADATA_NOT_FOUND and takes the whole release down with it,
   // which is exactly how v1.2.33 failed to install.
+  const relationLinks = (definition: { config: unknown }) => {
+    // it.each widens the manifest union and drops the RELATION narrowing, so
+    // the relation-only keys are read through an explicit shape.
+    const config = definition.config as {
+      universalIdentifier: string;
+      relationTargetFieldMetadataUniversalIdentifier?: string;
+      relationTargetObjectMetadataUniversalIdentifier?: string;
+      universalSettings?: { relationType?: string };
+    };
+    return config;
+  };
+
   it.each([
     ['meeting', meetingOnCompanyAllocation, companyAllocationsOnMeeting],
     [
@@ -145,26 +157,27 @@ describe('Company allocation metadata', () => {
       externalWholesalerOnCompanyAllocation,
       companyAllocationsOnWholesaler,
     ],
-  ])('declares both sides of the %s relation, pointing at each other', (
-    _name,
-    owning,
-    inverse,
-  ) => {
-    expect(owning.success).toBe(true);
-    expect(inverse.success).toBe(true);
-    expect(owning.config.relationTargetFieldMetadataUniversalIdentifier).toBe(
-      inverse.config.universalIdentifier,
-    );
-    expect(inverse.config.relationTargetFieldMetadataUniversalIdentifier).toBe(
-      owning.config.universalIdentifier,
-    );
-    expect(inverse.config.relationTargetObjectMetadataUniversalIdentifier).toBe(
-      allocationIdentifiers.COMPANY_ALLOCATION_OBJECT_UNIVERSAL_IDENTIFIER,
-    );
-    expect(inverse.config.universalSettings).toMatchObject({
-      relationType: RelationType.ONE_TO_MANY,
-    });
-  });
+  ])(
+    'declares both sides of the %s relation, pointing at each other',
+    (_name, owning, inverse) => {
+      expect(owning.success).toBe(true);
+      expect(inverse.success).toBe(true);
+      const owned = relationLinks(owning);
+      const inversed = relationLinks(inverse);
+      expect(owned.relationTargetFieldMetadataUniversalIdentifier).toBe(
+        inversed.universalIdentifier,
+      );
+      expect(inversed.relationTargetFieldMetadataUniversalIdentifier).toBe(
+        owned.universalIdentifier,
+      );
+      expect(inversed.relationTargetObjectMetadataUniversalIdentifier).toBe(
+        allocationIdentifiers.COMPANY_ALLOCATION_OBJECT_UNIVERSAL_IDENTIFIER,
+      );
+      expect(inversed.universalSettings).toMatchObject({
+        relationType: RelationType.ONE_TO_MANY,
+      });
+    },
+  );
 
   it('leaves both allocation inputs editable by CRM users', () => {
     for (const name of [
