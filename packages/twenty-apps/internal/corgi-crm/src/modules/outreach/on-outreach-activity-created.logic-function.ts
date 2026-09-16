@@ -9,7 +9,9 @@ import { RetryableLogicFunctionError } from 'twenty-sdk/logic-function';
 import { RawCoreGraphqlTransport } from 'src/modules/core/graphql/raw-core-graphql.transport';
 import { CoreOutreachRepository } from 'src/modules/outreach/graphql/core-outreach.repository';
 import { OUTREACH_ACTIVITY_CREATED_FUNCTION_UNIVERSAL_IDENTIFIER } from 'src/modules/outreach/outreach-identifiers';
+import { CoreFollowUpTaskRepository } from 'src/modules/outreach/graphql/core-follow-up-task.repository';
 import { assignOutreachActivityOwner } from 'src/modules/outreach/services/assign-outreach-activity-owner.service';
+import { createFollowUpTask } from 'src/modules/outreach/services/create-follow-up-task.service';
 import { CoreWholesalerRepository } from 'src/modules/wholesaler/onboarding/graphql/core-wholesaler.repository';
 
 type OutreachActivityEventRecord = {
@@ -37,9 +39,6 @@ export const handler = async (
   // Saves a Core round trip for the common already-owned create. Correctness
   // does not rest on it: the service re-reads the live owner and its write
   // filters on a still-empty one, so an absent event field only costs a read.
-  if (after?.wholesalerId) {
-    return { status: 'skipped', reason: 'already_assigned' } as const;
-  }
   // createdBy is the record's own attribution and survives re-delivery; the
   // event actor only fills in when the create predates that stamp.
   const creatorWorkspaceMemberId =
@@ -47,12 +46,23 @@ export const handler = async (
   try {
     const client = new CoreApiClient();
     const transport = new RawCoreGraphqlTransport();
-    return await assignOutreachActivityOwner({
+    // Owner assignment is skipped for an activity that already has one, but
+    // the follow-up task is not: almost every activity is logged with an
+    // owner, so gating the task on that would skip it on exactly the records
+    // that need it.
+    const ownership = after?.wholesalerId
+      ? ({ status: 'skipped', reason: 'already_assigned' } as const)
+      : await assignOutreachActivityOwner({
+          activityId,
+          creatorWorkspaceMemberId,
+          activityRepository: new CoreOutreachRepository(client, transport),
+          wholesalerRepository: new CoreWholesalerRepository(client, transport),
+        });
+    const followUp = await createFollowUpTask({
       activityId,
-      creatorWorkspaceMemberId,
-      activityRepository: new CoreOutreachRepository(client, transport),
-      wholesalerRepository: new CoreWholesalerRepository(client, transport),
+      repository: new CoreFollowUpTaskRepository(transport),
     });
+    return { status: 'handled', ownership, followUp } as const;
   } catch {
     throw new RetryableLogicFunctionError(
       'Outreach activity owner assignment did not complete',
@@ -64,7 +74,7 @@ export default defineLogicFunction({
   universalIdentifier: OUTREACH_ACTIVITY_CREATED_FUNCTION_UNIVERSAL_IDENTIFIER,
   name: 'on-outreach-activity-created',
   description:
-    'Assigns a new outreach activity to the wholesaler of the workspace member who created it, and never replaces an explicitly chosen owner.',
+    'Assigns a new outreach activity to the wholesaler of the workspace member who created it, never replacing an explicitly chosen owner, and raises its follow-up task when one is due.',
   timeoutSeconds: 30,
   handler,
   databaseEventTriggerSettings: { eventName: 'outreachActivity.created' },

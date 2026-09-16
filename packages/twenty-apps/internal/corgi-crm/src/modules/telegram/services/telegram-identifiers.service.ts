@@ -1,15 +1,8 @@
-import { createHash } from 'node:crypto';
+import { deterministicCorgiUuid } from 'src/modules/core/deterministic-uuid';
 
-export const deterministicTelegramUuid = (kind: string, value: string): string => {
-  const bytes = createHash('sha256')
-    .update(`corgi-crm:${kind}\0${value}`, 'utf8')
-    .digest()
-    .subarray(0, 16);
-  bytes[6] = (bytes[6]! & 0x0f) | 0x50;
-  bytes[8] = (bytes[8]! & 0x3f) | 0x80;
-  const hex = bytes.toString('hex');
-  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
-};
+// Kept as the Telegram-facing name over the shared construction, so existing
+// ids stay byte-identical while the same derivation is reusable elsewhere.
+export const deterministicTelegramUuid = deterministicCorgiUuid;
 
 export const getTelegramActivityId = (updateId: number): string => {
   if (!Number.isSafeInteger(updateId) || updateId < 0) {
