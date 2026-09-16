@@ -8,6 +8,7 @@ import { describe, expect, it } from 'vitest';
 
 import companyAllocationsOnCompany from 'src/fields/company-allocations-on-company.field';
 import companyOnCompanyAllocation from 'src/fields/company-on-company-allocation.field';
+import companyAllocationsOnMeeting from 'src/fields/company-allocations-on-meeting.field';
 import meetingOnCompanyAllocation from 'src/fields/meeting-on-company-allocation.field';
 import * as allocationIdentifiers from 'src/modules/allocation/allocation-identifiers';
 import * as meetingIdentifiers from 'src/modules/meeting/meeting-identifiers';
@@ -25,6 +26,9 @@ process.env.CORGI_CRM_OUTREACH_ACTIVITY_OBJECT_UNIVERSAL_IDENTIFIER =
 
 const { default: externalWholesalerOnCompanyAllocation } = await import(
   'src/fields/external-wholesaler-on-company-allocation.field'
+);
+const { default: companyAllocationsOnWholesaler } = await import(
+  'src/fields/company-allocations-on-wholesaler.field'
 );
 
 const UUID_PATTERN =
@@ -128,6 +132,37 @@ describe('Company allocation metadata', () => {
         onDelete: OnDeleteAction.SET_NULL,
         joinColumnName: 'externalWholesalerId',
       },
+    });
+  });
+
+  // A relation needs both sides declared. Declaring only the owning side syncs
+  // as FIELD_METADATA_NOT_FOUND and takes the whole release down with it,
+  // which is exactly how v1.2.33 failed to install.
+  it.each([
+    ['meeting', meetingOnCompanyAllocation, companyAllocationsOnMeeting],
+    [
+      'external wholesaler',
+      externalWholesalerOnCompanyAllocation,
+      companyAllocationsOnWholesaler,
+    ],
+  ])('declares both sides of the %s relation, pointing at each other', (
+    _name,
+    owning,
+    inverse,
+  ) => {
+    expect(owning.success).toBe(true);
+    expect(inverse.success).toBe(true);
+    expect(owning.config.relationTargetFieldMetadataUniversalIdentifier).toBe(
+      inverse.config.universalIdentifier,
+    );
+    expect(inverse.config.relationTargetFieldMetadataUniversalIdentifier).toBe(
+      owning.config.universalIdentifier,
+    );
+    expect(inverse.config.relationTargetObjectMetadataUniversalIdentifier).toBe(
+      allocationIdentifiers.COMPANY_ALLOCATION_OBJECT_UNIVERSAL_IDENTIFIER,
+    );
+    expect(inverse.config.universalSettings).toMatchObject({
+      relationType: RelationType.ONE_TO_MANY,
     });
   });
 
