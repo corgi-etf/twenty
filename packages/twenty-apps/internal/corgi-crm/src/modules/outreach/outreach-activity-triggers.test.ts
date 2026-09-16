@@ -4,6 +4,7 @@ import { RetryableLogicFunctionError } from 'twenty-sdk/logic-function';
 import createdFunction, { handler } from 'src/modules/outreach/on-outreach-activity-created.logic-function';
 import { OUTREACH_ACTIVITY_CREATED_FUNCTION_UNIVERSAL_IDENTIFIER } from 'src/modules/outreach/outreach-identifiers';
 import { assignOutreachActivityOwner } from 'src/modules/outreach/services/assign-outreach-activity-owner.service';
+import { createFollowUpTask } from 'src/modules/outreach/services/create-follow-up-task.service';
 
 vi.mock('twenty-client-sdk/core', () => ({ CoreApiClient: vi.fn() }));
 vi.mock('src/modules/core/graphql/raw-core-graphql.transport', () => ({
@@ -17,6 +18,12 @@ vi.mock('src/modules/wholesaler/onboarding/graphql/core-wholesaler.repository', 
 }));
 vi.mock('src/modules/outreach/services/assign-outreach-activity-owner.service', () => ({
   assignOutreachActivityOwner: vi.fn(),
+}));
+vi.mock('src/modules/outreach/graphql/core-follow-up-task.repository', () => ({
+  CoreFollowUpTaskRepository: vi.fn(),
+}));
+vi.mock('src/modules/outreach/services/create-follow-up-task.service', () => ({
+  createFollowUpTask: vi.fn(),
 }));
 
 const WORKSPACE_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
@@ -42,6 +49,11 @@ describe('outreach activity database trigger', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     process.env.CORGI_CRM_WORKSPACE_ID = WORKSPACE_ID;
+    vi.mocked(createFollowUpTask).mockResolvedValue({
+      status: 'skipped',
+      activityId: ACTIVITY_ID,
+      reason: 'no_follow_up_date',
+    });
   });
 
   afterEach(() => {
@@ -98,10 +110,13 @@ describe('outreach activity database trigger', () => {
           createdBy: { workspaceMemberId: MEMBER_ID },
         }),
       ),
-    ).resolves.toEqual({
-      status: 'assigned',
-      activityId: ACTIVITY_ID,
-      wholesalerId: WHOLESALER_ID,
+    ).resolves.toMatchObject({
+      status: 'handled',
+      ownership: {
+        status: 'assigned',
+        activityId: ACTIVITY_ID,
+        wholesalerId: WHOLESALER_ID,
+      },
     });
     expect(assignOutreachActivityOwner).toHaveBeenCalledWith({
       activityId: ACTIVITY_ID,
@@ -151,8 +166,16 @@ describe('outreach activity database trigger', () => {
           createdBy: { workspaceMemberId: MEMBER_ID },
         }),
       ),
-    ).resolves.toEqual({ status: 'skipped', reason: 'already_assigned' });
+    ).resolves.toMatchObject({
+      status: 'handled',
+      ownership: { status: 'skipped', reason: 'already_assigned' },
+    });
     expect(assignOutreachActivityOwner).not.toHaveBeenCalled();
+    // The follow-up must still be raised: almost every activity is logged
+    // with an owner, so gating it on that would skip it on nearly all of them.
+    expect(createFollowUpTask).toHaveBeenCalledWith(
+      expect.objectContaining({ activityId: ACTIVITY_ID }),
+    );
   });
 
   it('skips an event that carries no record identity', async () => {
@@ -184,10 +207,13 @@ describe('outreach activity database trigger', () => {
     await expect(handler(created)).rejects.toBeInstanceOf(
       RetryableLogicFunctionError,
     );
-    await expect(handler(created)).resolves.toEqual({
-      status: 'skipped',
-      activityId: ACTIVITY_ID,
-      reason: 'already_assigned',
+    await expect(handler(created)).resolves.toMatchObject({
+      status: 'handled',
+      ownership: {
+        status: 'skipped',
+        activityId: ACTIVITY_ID,
+        reason: 'already_assigned',
+      },
     });
     expect(assignOutreachActivityOwner).toHaveBeenCalledTimes(2);
     for (const [input] of vi.mocked(assignOutreachActivityOwner).mock.calls) {
