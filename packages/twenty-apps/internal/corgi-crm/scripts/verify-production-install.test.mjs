@@ -329,7 +329,7 @@ describe('application release contract', () => {
     const packageJson = JSON.parse(
       await fs.readFile(new URL('../package.json', import.meta.url), 'utf8'),
     );
-    assert.equal(packageJson.version, '1.2.35');
+    assert.equal(packageJson.version, '1.2.36');
   });
 
   it('resolves exact custom object universal identifiers from live metadata', () => {
@@ -377,8 +377,10 @@ describe('installed application role verification', () => {
     'telegramDelivery',
     'telegramDeliveryAudit',
     'meetingBooking',
+    'task',
+    'taskTarget',
   ].map((nameSingular, index) => ({
-    id: `00000000-0000-4000-8000-00000000000${index}`,
+    id: `00000000-0000-4000-8000-0000000000${String(index).padStart(2, '0')}`,
     nameSingular,
   }));
   const writable = new Set([
@@ -387,6 +389,8 @@ describe('installed application role verification', () => {
     'telegramDelivery',
     'telegramDeliveryAudit',
     'meetingBooking',
+    'task',
+    'taskTarget',
   ]);
   const role = {
     canAccessAllTools: false,
@@ -599,7 +603,7 @@ describe('installed application role verification', () => {
     );
   });
 
-  it('accepts only the exact eight-object least-privilege role', () => {
+  it('accepts only the exact ten-object least-privilege role', () => {
     assert.doesNotThrow(() => verifyApplicationRoleContract(role, objects));
   });
 
@@ -637,7 +641,7 @@ describe('installed application role verification', () => {
     }
   });
 
-  it('rejects duplicate object permissions even when the count remains eight', () => {
+  it('rejects duplicate object permissions even when the count remains ten', () => {
     assert.throws(
       () =>
         verifyApplicationRoleContract(
@@ -645,7 +649,7 @@ describe('installed application role verification', () => {
             ...role,
             objectPermissions: role.objectPermissions.map(
               (permission, index) =>
-                index === 7
+                index === 9
                   ? {
                       ...permission,
                       objectMetadataId:
@@ -687,7 +691,7 @@ describe('installed application role verification', () => {
           },
           objects,
         ),
-      /exactly eight/i,
+      /exactly ten/i,
     );
     assert.throws(
       () =>
