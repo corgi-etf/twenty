@@ -90,6 +90,8 @@ const snapshot = (): WorkspaceConfigSnapshot => {
     ]),
     object('workspaceMember'),
     object('importBatch'),
+    // Appended, not inserted: the fixture indexes objects positionally below.
+    object('companyAllocation'),
   ];
   const company = objects[0]!;
   const person = objects[1]!;
@@ -567,10 +569,11 @@ test('converges navigation, Follow-ups, company fields, and state sorting', () =
       type,
       position,
     })),
-    // Sales teams lost its sidebar slot; the object itself is still planned.
+    // Sales teams lost its sidebar slot; allocations gained one.
     [
       { type: 'OBJECT', position: 2 },
-      { type: 'VIEW', position: 3 },
+      { type: 'OBJECT', position: 3 },
+      { type: 'VIEW', position: 4 },
     ],
   );
   assert.deepEqual(plan.layout.navigationItemIdsToDelete.sort(), [

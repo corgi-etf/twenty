@@ -170,6 +170,12 @@ const fixture = (): WorkspaceConfigSnapshot => {
       fields: outreachFields,
     },
     {
+      id: 'companyAllocation-object-id',
+      nameSingular: 'companyAllocation',
+      namePlural: 'companyAllocations',
+      fields: [],
+    },
+    {
       id: 'workspaceMember-object-id',
       nameSingular: 'workspaceMember',
       namePlural: 'workspaceMembers',
@@ -492,7 +498,7 @@ test('backfills companies and seeded territories before layout and records a ver
     'territory:grace-id',
     'territory:nash-id',
     'navigation-delete',
-    'navigation-update',
+    'navigation-create',
   ]);
   assert.equal(result.companyMutations, 1);
   assert.equal(result.territoryMutations, 2);
