@@ -9,6 +9,21 @@ import {
 } from 'src/modules/corgi-crm/corgi-home.utils';
 
 describe('CRM calendar and pagination conventions', () => {
+  it('accepts explicit unassigned attribution and restricted-company drilldowns', () => {
+    expect(
+      parseCorgiHomeQuery({
+        section: 'allocations',
+        contactId: 'unassigned',
+        creditedWholesalerId: 'unassigned',
+      }),
+    ).toMatchObject({
+      contactId: 'unassigned',
+      creditedWholesalerId: 'unassigned',
+    });
+    expect(
+      parseCorgiHomeQuery({ section: 'followUps', companyId: 'restricted' }),
+    ).toMatchObject({ companyId: 'restricted' });
+  });
   it('uses Chicago midnight, including the 23-hour spring day', () => {
     expect(corgiDayRange('2026-03-08')).toEqual({
       date: '2026-03-08',

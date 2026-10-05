@@ -77,9 +77,13 @@ export const parseCorgiHomeQuery = (
     throw new BadRequestException('Invalid allTime');
   for (const id of [
     query.workspaceMemberId,
-    query.companyId === 'unlinked' ? undefined : query.companyId,
-    query.creditedWholesalerId,
-    query.contactId,
+    ['unlinked', 'restricted'].includes(query.companyId ?? '')
+      ? undefined
+      : query.companyId,
+    query.creditedWholesalerId === 'unassigned'
+      ? undefined
+      : query.creditedWholesalerId,
+    query.contactId === 'unassigned' ? undefined : query.contactId,
   ]) {
     if (
       id &&

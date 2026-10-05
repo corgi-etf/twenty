@@ -77,7 +77,7 @@ const makeService = (
   };
   const queries = {
     isInstalled: jest.fn(() => true),
-    canUpdate: jest.fn(() => true),
+    canUpdate: jest.fn((_object: string, _columns?: string[]) => true),
     query: jest.fn((object: string, columns: string[]) => {
       const query = new WorkspaceSelectQueryBuilder('r', {
         tableShape: shape(object, columns),
@@ -246,5 +246,46 @@ describe('CRM permission-scoped dashboard projections', () => {
     expect(statements[0].text).toContain('"r"."companyId" IS NULL');
     expect(statements[0].text).not.toContain('"r"."dueAt" <');
     expect(statements[0].values).not.toContain('OPEN');
+  });
+});
+
+describe('CRM corrected-record validity', () => {
+  it('applies business validity to allocation records and persisted wins before async reconciliation', async () => {
+    const { service, statements } = makeService();
+    await service.get({ section: 'allocations', allTime: 'true' });
+    await service.get({ section: 'liveWins' });
+    const allocationStatements = statements.filter((statement) =>
+      statement.text.includes('"companyAllocation"'),
+    );
+    expect(allocationStatements.length).toBeGreaterThan(2);
+    for (const statement of allocationStatements) {
+      expect(statement.text).toContain('"r"."companyId" IS NOT NULL');
+      expect(statement.text).toContain('BTRIM("r"."ticker")');
+      expect(statement.text).toContain('"r"."amountAmountMicros" > 0');
+      expect(statement.text).toContain('"r"."allocationValidationMessage"');
+    }
+  });
+
+  it('filters unassigned attribution using NULL without treating the sentinel as a UUID', async () => {
+    const { service, statements } = makeService();
+    await service.get({
+      section: 'allocations',
+      allTime: 'true',
+      contactId: 'unassigned',
+    });
+    expect(statements[0].text).toContain('"r"."contactId" IS NULL');
+    expect(statements[0].values).not.toContain('unassigned');
+  });
+
+  it('checks the actual completion fields before presenting a write action', async () => {
+    const { service, queries } = makeService((statement) =>
+      statement.text.includes('COUNT(')
+        ? [{ count: 1 }]
+        : [{ id: 'reminder', name: 'Call', status: 'OPEN' }],
+    );
+    await service.get({ section: 'followUps' });
+    expect(queries.canUpdate).toHaveBeenCalledWith('outreachFollowUp', [
+      'status',
+    ]);
   });
 });

@@ -251,8 +251,9 @@ export class CorgiHomeService {
       columns.push('status');
     const base = this.queries.query(object, columns);
 
-    if (key === 'allocations')
-      base.andWhere("COALESCE(r.allocationValidationMessage, '') = ''");
+    if (key === 'allocations') this.validAllocation(base);
+    if (key === 'meetingsSet' || key === 'meetingsTaken')
+      this.validMeeting(base);
 
     if (query.allTime === 'true') base.andWhere(`r.${timestamp} IS NOT NULL`);
     else this.dateFilter(base, timestamp, query);
@@ -275,7 +276,8 @@ export class CorgiHomeService {
       ] as const) {
         if (!value) continue;
         this.queries.query(object, [field]);
-        base.andWhere(`r.${field} = :${field}`, { [field]: value });
+        if (value === 'unassigned') base.andWhere(`r.${field} IS NULL`);
+        else base.andWhere(`r.${field} = :${field}`, { [field]: value });
       }
     }
     if (query.workspaceMemberId) {
@@ -301,6 +303,41 @@ export class CorgiHomeService {
     }
 
     return this.search(base, labelColumn(object), query);
+  }
+
+  private validAllocation(base: WorkspaceSelectQueryBuilder) {
+    this.queries.query('companyAllocation', [
+      'companyId',
+      'ticker',
+      'amountAmountMicros',
+      'amountCurrencyCode',
+      'loggedAt',
+      'allocationValidationMessage',
+    ]);
+
+    // Reconciliation is asynchronous. Recheck scalar business validity so a
+    // correction cannot briefly count or celebrate an invalid allocation.
+    return base
+      .andWhere('r.loggedAt IS NOT NULL')
+      .andWhere('r.companyId IS NOT NULL')
+      .andWhere("BTRIM(r.ticker) <> ''")
+      .andWhere('r.amountAmountMicros > 0')
+      .andWhere('r.amountAmountMicros = FLOOR(r.amountAmountMicros)')
+      .andWhere("r.amountCurrencyCode ~ '^[A-Z]{3}$'")
+      .andWhere("COALESCE(r.allocationValidationMessage, '') = ''");
+  }
+
+  private validMeeting(base: WorkspaceSelectQueryBuilder) {
+    this.queries.query('meetingBooking', [
+      'companyId',
+      'wholesalerId',
+      'scheduledAt',
+    ]);
+
+    return base
+      .andWhere('r.companyId IS NOT NULL')
+      .andWhere('r.wholesalerId IS NOT NULL')
+      .andWhere('r.scheduledAt IS NOT NULL');
   }
 
   private search(
@@ -390,7 +427,7 @@ export class CorgiHomeService {
 
     this.queries.query('company', ['id', 'name']);
     base.innerJoin('r.company', 'company').andWhere('r.loggedAt IS NOT NULL');
-    base.andWhere("COALESCE(r.allocationValidationMessage, '') = ''");
+    this.validAllocation(base);
     if (query.companyId)
       base.andWhere('company.id = :companyId', { companyId: query.companyId });
 
@@ -585,7 +622,8 @@ export class CorgiHomeService {
       activity,
       reason: nullableText(row.name),
       canComplete:
-        this.queries.canUpdate('outreachFollowUp') && row.status === 'OPEN',
+        this.queries.canUpdate('outreachFollowUp', ['status']) &&
+        row.status === 'OPEN',
     };
   }
 
@@ -747,7 +785,10 @@ export class CorgiHomeService {
           company: await this.related('company', row.companyId),
           contact: await this.related('person', row.contactId),
           owner: await this.related('wholesaler', row.wholesalerId),
-          canMarkTaken: this.queries.canUpdate('meetingBooking'),
+          canMarkTaken: this.queries.canUpdate('meetingBooking', [
+            'status',
+            'heldAt',
+          ]),
         })),
       );
 
@@ -1064,7 +1105,7 @@ export class CorgiHomeService {
         object: 'companyAllocation',
         kind: 'allocation-logged' as const,
         recorded: 'loggedAt',
-        effective: 'loggedAt',
+        effective: 'allocationDate',
         actor: 'loggedById',
       },
     ];
@@ -1086,6 +1127,17 @@ export class CorgiHomeService {
             .query(definition.object, columns)
             .where(`r.${definition.recorded} IS NOT NULL`);
 
+          if (definition.kind === 'allocation-logged')
+            this.validAllocation(base);
+          else {
+            this.validMeeting(base);
+            this.queries.query('meetingBooking', ['status']);
+            if (definition.kind === 'meeting-taken')
+              base.andWhere('r.status = :completed AND r.heldAt IS NOT NULL', {
+                completed: 'COMPLETED',
+              });
+            else base.andWhere('r.status <> :draft', { draft: 'DRAFT' });
+          }
           if (query.from || query.to)
             this.dateFilter(base, definition.recorded, query);
           const total = await base.clone().getCount();
@@ -1158,7 +1210,7 @@ export class CorgiHomeService {
       this.followUps({ scope: 'assigned', status: 'open' }),
       this.agenda({}),
       this.team({}),
-      this.metricRecords('allocations', {}),
+      this.metricRecords('allocations', { allTime: 'true' }),
       this.activeClients({}),
       this.wins({}),
     ]);

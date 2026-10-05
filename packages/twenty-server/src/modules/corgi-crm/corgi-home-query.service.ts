@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 
 import { type CorgiAvailability } from 'twenty-shared/types';
 
+import { getWorkspaceAuthContext } from 'src/engine/core-modules/auth/storage/workspace-auth-context.storage';
 import { PermissionsException } from 'src/engine/metadata-modules/permissions/permissions.exception';
 import { validateOperationIsPermittedOrThrow } from 'src/engine/twenty-orm/repository/permissions.utils';
 import { getWorkspaceContext } from 'src/engine/twenty-orm/storage/orm-workspace-context.storage';
@@ -12,10 +13,8 @@ export class CorgiHomeUnavailable extends Error {}
 export const corgiErrorAvailability = (error: unknown): CorgiAvailability =>
   error instanceof PermissionsException ? 'denied' : 'unavailable';
 
-/** All CRM projections run as the requesting principal, including relation joins.
- * Explicit permission checks include filter/group columns: they can disclose
- * data even when those columns are not part of the SELECT projection.
- */
+// All projections run as the requesting principal, including relation joins.
+// Check filter/group fields explicitly: they disclose data even outside SELECT.
 @Injectable()
 export class CorgiHomeQueryService {
   constructor(private readonly workspaceOrmManager: WorkspaceOrmManager) {}
@@ -70,14 +69,29 @@ export class CorgiHomeQueryService {
     return query;
   }
 
-  canUpdate(object: string): boolean {
-    const id = getWorkspaceContext().objectIdByNameSingular[object];
+  canUpdate(object: string, columns: string[]): boolean {
+    try {
+      const repository = this.workspaceOrmManager.getRepository(object);
+      const context = repository.getInternalContext();
 
-    return Boolean(
-      id &&
-      this.workspaceOrmManager.getRepository(object).objectRecordsPermissions[
-        id
-      ]?.canUpdateObjectRecords,
-    );
+      // A missing field is not writable, even if the role allows the object.
+      this.query(object, columns);
+      validateOperationIsPermittedOrThrow({
+        entityName: object,
+        operationType: 'update',
+        objectsPermissions: repository.objectRecordsPermissions,
+        flatObjectMetadataMaps: context.flatObjectMetadataMaps,
+        flatFieldMetadataMaps: context.flatFieldMetadataMaps,
+        objectIdByNameSingular: context.objectIdByNameSingular,
+        selectedColumns: columns,
+        updatedColumns: columns,
+        allFieldsSelected: false,
+        authContext: getWorkspaceAuthContext(),
+      });
+
+      return true;
+    } catch {
+      return false;
+    }
   }
 }
