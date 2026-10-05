@@ -190,6 +190,18 @@ jobs:
           tests/production/crmExperienceRollout.maintenance.spec.ts
           --project=production-chromium
 
+      - name: Verify the completed experience through the live UI
+        if: success() && inputs.operation == 'apply' && inputs.dataset == 'activities-allocations'
+        env:
+          CRM_E2E_LOGIN: ${{ secrets.CRM_E2E_LOGIN }}
+          CRM_E2E_PASSWORD: ${{ secrets.CRM_E2E_PASSWORD }}
+          CRM_E2E_WORKSPACE_NAME: ${{ secrets.CRM_E2E_WORKSPACE_NAME }}
+          CRM_EXPERIENCE_VERIFICATION_ENABLED: 'true'
+        run: >-
+          npx nx test:production twenty-e2e-testing --
+          tests/production/corgiExperience.production.spec.ts
+          --project=production-chromium --no-deps --retries=0
+
       - name: Upload private reviewed preview
         if: success() && inputs.operation == 'preview'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
