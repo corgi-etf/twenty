@@ -493,3 +493,41 @@ administrator identity in execution context and logs; the installed maintenance
 handler explicitly uses `TWENTY_APP_APPLICATION_ACCESS_TOKEN` for protected record
 writes. It refuses to fall back to a user token or an API key. Close the Nest
 context after the journal is flushed and approval cleanup is confirmed.
+
+## Guarded GitHub experience rollout
+
+`.github/workflows/crm-experience-rollout.yml` runs manually on `main` after both
+server and worker are stable on that exact workflow SHA and app 1.3.0 is installed.
+It uses the existing `CRM_E2E_LOGIN`, `CRM_E2E_PASSWORD`, and
+`CRM_E2E_WORKSPACE_NAME` administrator session through Chromium and `page.request`.
+It creates no API key. The authenticated workspace must be active **Corgi ETF**
+and the user must have Data model, Applications, and Workflows permissions.
+
+Choose one dataset per run:
+
+- `configuration`: additive client/accent metadata and profile/layout settings.
+  When the preview phase is `metadata`, apply it and create a new preview for
+  `layout`; never apply a derived layout that was absent from the reviewed file.
+- `ownership`: unique company/wholesaler links from authoritative legacy owner
+  mappings. Preview requires `expected_company_count`; ambiguous mappings stop
+  apply and require a corrected, fresh preview.
+- `activities-allocations`: blank activity names and eligible historical allocation
+  logging timestamps, using the owning-application maintenance function.
+
+Run `operation=preview` with the exact `deployed_sha`. Download the private
+`crm-experience-preview-DATASET-RUN_ID-ATTEMPT` artifact, review `manifest.json`
+including every operation and unresolved row, and retain its outer `digest`.
+Then run `operation=apply` with the same dataset/revision, `preview_run_id`,
+`preview_run_attempt`, `reviewed_digest`, and confirmation
+`APPLY_REVIEWED_CRM_EXPERIENCE`. The runner verifies that the artifact came from a
+successful same-revision attempt of this exact workflow, verifies both digest
+layers, and rechecks tenant/release and live source facts before writes.
+
+Runs serialize with deployment workflows. The workflow refuses public repositories,
+retains manifests/journals privately for seven days, and uploads only those explicit
+files. Session state, local artifacts, and browser results are deleted afterward;
+maintenance disables screenshots, traces, video, and automatic retries. It never
+changes Telegram configuration or sends test messages, and compares the Telegram
+configuration digest before and after each operation. A failure retains the private
+apply journal for review. Configuration/ownership partial failures require a fresh
+preview; activity/allocation operations use per-record compare-and-set fencing.

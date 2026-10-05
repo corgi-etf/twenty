@@ -170,8 +170,9 @@ export const validateBackfillManifest = (
   }
 };
 
-const createRepository = ({ url, token }) => {
+export const createExperienceBackfillRepository = ({ url, token, graphql }) => {
   const request = async (document, variables, endpoint = '/graphql') => {
+    if (graphql) return graphql(document, variables, endpoint);
     const response = await fetch(`${url.replace(/\/$/, '')}${endpoint}`, {
       method: 'POST',
       redirect: 'error',
@@ -298,7 +299,7 @@ const main = async () => {
     throw new Error(
       'Set CORGI_CRM_WORKSPACE_ID, CORGI_CRM_URL, and CORGI_CRM_ACCESS_TOKEN (preview also accepts CORGI_CRM_API_KEY)',
     );
-  const repository = createRepository({ url, token });
+  const repository = createExperienceBackfillRepository({ url, token });
   if (mode === 'preview') {
     const activities = await repository.list('outreachActivity');
     const allocations = await repository.list('companyAllocation');
@@ -330,8 +331,8 @@ const main = async () => {
     throw new Error(
       'A different backfill manifest is approved; review it before replacing the approval',
     );
-  await repository.approve(applicationId, approvedDigest);
   try {
+    await repository.approve(applicationId, approvedDigest);
     for (let index = 0; index < manifest.operations.length; index++) {
       await appendFile(
         journalPath,

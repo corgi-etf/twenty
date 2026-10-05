@@ -1,0 +1,220 @@
+name: Preview or apply reviewed CRM experience rollout
+
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: Preview is read-only; apply requires a reviewed preview artifact
+        required: true
+        default: preview
+        type: choice
+        options: [preview, apply]
+      dataset:
+        description: Configuration metadata and layout each require their own preview
+        required: true
+        type: choice
+        options: [configuration, ownership, activities-allocations]
+      deployed_sha:
+        description: Exact current workflow SHA deployed to both CRM services
+        required: true
+        type: string
+      expected_company_count:
+        description: Required exact company inventory count for ownership preview
+        required: false
+        type: string
+      preview_run_id:
+        description: Successful preview workflow run to apply
+        required: false
+        type: string
+      preview_run_attempt:
+        description: Successful preview attempt to apply
+        required: false
+        type: string
+      reviewed_digest:
+        description: SHA-256 digest of the reviewed manifest bundle
+        required: false
+        type: string
+      confirmation:
+        description: Apply requires APPLY_REVIEWED_CRM_EXPERIENCE
+        required: false
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+  id-token: write
+
+concurrency:
+  group: crm-production-deploy
+  cancel-in-progress: false
+
+env:
+  AWS_ACCOUNT_ID: '182018075072'
+  AWS_REGION: us-east-2
+  AWS_ROLE_ARN: arn:aws:iam::182018075072:role/crm-production-github-deploy
+  ECS_CLUSTER: crm-production
+  ECR_REPOSITORY: crm-production-twenty
+  FRONTEND_BASE_URL: https://crm.corgiinvest.com
+  BACKEND_BASE_URL: https://crm.corgiinvest.com
+  NX_DAEMON: 'false'
+
+jobs:
+  rollout:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    environment: production
+    steps:
+      - name: Check out the exact workflow revision
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - name: Validate selected operation and reviewed preview provenance
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY_PRIVATE: ${{ github.event.repository.private }}
+          OPERATION: ${{ inputs.operation }}
+          DATASET: ${{ inputs.dataset }}
+          DEPLOYED_SHA: ${{ inputs.deployed_sha }}
+          COMPANY_COUNT: ${{ inputs.expected_company_count }}
+          PREVIEW_RUN_ID: ${{ inputs.preview_run_id }}
+          PREVIEW_RUN_ATTEMPT: ${{ inputs.preview_run_attempt }}
+          REVIEWED_DIGEST: ${{ inputs.reviewed_digest }}
+          CONFIRMATION: ${{ inputs.confirmation }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "${REPOSITORY_PRIVATE}" == true ]]
+          [[ "${DEPLOYED_SHA}" =~ ^[0-9a-f]{40}$ && "${DEPLOYED_SHA}" == "${GITHUB_SHA}" ]]
+          [[ "${DATASET}" == configuration || "${DATASET}" == ownership || "${DATASET}" == activities-allocations ]]
+          [[ "$(jq -r '.version' packages/twenty-apps/internal/corgi-crm/package.json)" == 1.3.0 ]]
+          if [[ "${OPERATION}" == preview ]]; then
+            [[ -z "${PREVIEW_RUN_ID}${PREVIEW_RUN_ATTEMPT}${REVIEWED_DIGEST}${CONFIRMATION}" ]]
+            if [[ "${DATASET}" == ownership ]]; then
+              [[ "${COMPANY_COUNT}" =~ ^[1-9][0-9]*$ ]]
+            fi
+          else
+            [[ "${OPERATION}" == apply && "${CONFIRMATION}" == APPLY_REVIEWED_CRM_EXPERIENCE ]]
+            [[ "${PREVIEW_RUN_ID}" =~ ^[1-9][0-9]*$ && "${PREVIEW_RUN_ATTEMPT}" =~ ^[1-9][0-9]*$ ]]
+            [[ "${REVIEWED_DIGEST}" =~ ^[0-9a-f]{64}$ ]]
+            gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${PREVIEW_RUN_ID}/attempts/${PREVIEW_RUN_ATTEMPT}" > "${RUNNER_TEMP}/experience-preview-run.json"
+            jq -e --arg sha "${DEPLOYED_SHA}" --argjson attempt "${PREVIEW_RUN_ATTEMPT}" '
+              .event == "workflow_dispatch" and .conclusion == "success" and
+              .head_branch == "main" and .head_sha == $sha and .run_attempt == $attempt and
+              .path == ".github/workflows/crm-experience-rollout.yml"
+            ' "${RUNNER_TEMP}/experience-preview-run.json" >/dev/null
+            gh api --paginate --slurp "repos/${GITHUB_REPOSITORY}/actions/runs/${PREVIEW_RUN_ID}/artifacts?per_page=100" > "${RUNNER_TEMP}/experience-preview-artifacts.json"
+            artifact_name="crm-experience-preview-${DATASET}-${PREVIEW_RUN_ID}-${PREVIEW_RUN_ATTEMPT}"
+            jq -e --arg name "${artifact_name}" '
+              [.[] | .artifacts[] | select(.name == $name and .expired == false)] | length == 1
+            ' "${RUNNER_TEMP}/experience-preview-artifacts.json" >/dev/null
+          fi
+
+      - name: Download only the selected successful preview
+        if: inputs.operation == 'apply'
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.preview_run_id }}
+          name: crm-experience-preview-${{ inputs.dataset }}-${{ inputs.preview_run_id }}-${{ inputs.preview_run_attempt }}
+          path: ${{ runner.temp }}/crm-experience-reviewed
+
+      - name: Install pinned repository dependencies
+        uses: ./.github/actions/crm-yarn-install
+
+      - name: Verify maintenance contracts before authentication
+        run: node --test packages/twenty-apps/internal/corgi-crm/scripts/experience-rollout.test.mjs
+
+      - name: Install the production authentication browser
+        run: npx playwright install --with-deps chromium
+
+      - name: Configure read-only live deployment inspection
+        uses: aws-actions/configure-aws-credentials@61815dcd50bd041e203e49132bacad1fd04d2708 # v5.1.1
+        with:
+          role-to-assume: ${{ env.AWS_ROLE_ARN }}
+          role-duration-seconds: 1800
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Prove both services are stable on the exact deployed image
+        env:
+          DEPLOYED_SHA: ${{ inputs.deployed_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$(aws sts get-caller-identity --query Account --output text)" == "${AWS_ACCOUNT_ID}" ]]
+          expected_digest="$(aws ecr describe-images --repository-name "${ECR_REPOSITORY}" --image-ids "imageTag=git-${DEPLOYED_SHA}" --query 'imageDetails[0].imageDigest' --output text)"
+          [[ "${expected_digest}" =~ ^sha256:[0-9a-f]{64}$ ]]
+          for container in server worker; do
+            service="crm-production-${container}"
+            service_path="${RUNNER_TEMP}/experience-${container}-service.json"
+            tasks_path="${RUNNER_TEMP}/experience-${container}-tasks.json"
+            aws ecs describe-services --cluster "${ECS_CLUSTER}" --services "${service}" > "${service_path}"
+            jq -e '
+              (.failures | length) == 0 and (.services | length) == 1 and
+              .services[0].status == "ACTIVE" and .services[0].desiredCount > 0 and
+              .services[0].runningCount == .services[0].desiredCount and .services[0].pendingCount == 0 and
+              ([.services[0].deployments[] | select(.status == "PRIMARY")] | length) == 1 and
+              ([.services[0].deployments[] | select(.status == "ACTIVE")] | length) == 0
+            ' "${service_path}" >/dev/null
+            desired="$(jq -r '.services[0].desiredCount' "${service_path}")"
+            task_definition="$(jq -er '.services[0].taskDefinition' "${service_path}")"
+            task_arns="$(aws ecs list-tasks --cluster "${ECS_CLUSTER}" --service-name "${service}" --desired-status RUNNING --query taskArns --output text)"
+            [[ -n "${task_arns}" && "${task_arns}" != None ]]
+            # AWS returns a whitespace-delimited list of task ARNs.
+            # shellcheck disable=SC2086
+            aws ecs describe-tasks --cluster "${ECS_CLUSTER}" --tasks ${task_arns} > "${tasks_path}"
+            jq -e --arg container "${container}" --arg digest "${expected_digest}" --arg definition "${task_definition}" --argjson desired "${desired}" '
+              (.failures | length) == 0 and (.tasks | length) == $desired and
+              all(.tasks[]; .lastStatus == "RUNNING" and .taskDefinitionArn == $definition) and
+              all(.tasks[]; ([.containers[] | select(.name == $container and .lastStatus == "RUNNING" and .imageDigest == $digest)] | length) == 1)
+            ' "${tasks_path}" >/dev/null
+          done
+
+      - name: Run only the selected reviewed maintenance operation
+        env:
+          CRM_E2E_LOGIN: ${{ secrets.CRM_E2E_LOGIN }}
+          CRM_E2E_PASSWORD: ${{ secrets.CRM_E2E_PASSWORD }}
+          CRM_E2E_WORKSPACE_NAME: ${{ secrets.CRM_E2E_WORKSPACE_NAME }}
+          CRM_EXPERIENCE_ROLLOUT_ENABLED: 'true'
+          CRM_EXPERIENCE_OPERATION: ${{ inputs.operation }}
+          CRM_EXPERIENCE_DATASET: ${{ inputs.dataset }}
+          CRM_DEPLOYED_SHA: ${{ inputs.deployed_sha }}
+          CRM_EXPERIENCE_COMPANY_COUNT: ${{ inputs.expected_company_count }}
+          CRM_EXPERIENCE_PREVIEW_RUN_ID: ${{ inputs.preview_run_id }}
+          CRM_EXPERIENCE_PREVIEW_RUN_ATTEMPT: ${{ inputs.preview_run_attempt }}
+          CRM_EXPERIENCE_REVIEWED_DIGEST: ${{ inputs.reviewed_digest }}
+          CRM_EXPERIENCE_CONFIRMATION: ${{ inputs.confirmation }}
+          CRM_EXPERIENCE_MANIFEST_PATH: ${{ runner.temp }}/crm-experience-reviewed/manifest.json
+          CRM_EXPERIENCE_OUTPUT_DIRECTORY: ${{ runner.temp }}/crm-experience-output
+        run: >-
+          npx nx test:production twenty-e2e-testing --
+          tests/production/crmExperienceRollout.maintenance.spec.ts
+          --project=production-chromium
+
+      - name: Upload private reviewed preview
+        if: success() && inputs.operation == 'preview'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: crm-experience-preview-${{ inputs.dataset }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/crm-experience-output/manifest.json
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Preserve private apply journal even after failure
+        if: always() && inputs.operation == 'apply'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: crm-experience-apply-${{ inputs.dataset }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/crm-experience-output/journal.jsonl
+            ${{ runner.temp }}/crm-experience-output/result.json
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Remove session state and local private artifacts
+        if: always()
+        shell: bash
+        run: |
+          rm -rf packages/twenty-e2e-testing/.auth packages/twenty-e2e-testing/run_results/production
+          rm -rf "${RUNNER_TEMP}/crm-experience-output" "${RUNNER_TEMP}/crm-experience-reviewed"
+          rm -f "${RUNNER_TEMP}/experience-preview-run.json" "${RUNNER_TEMP}/experience-preview-artifacts.json"
+          rm -f "${RUNNER_TEMP}/experience-server-service.json" "${RUNNER_TEMP}/experience-server-tasks.json" "${RUNNER_TEMP}/experience-worker-service.json" "${RUNNER_TEMP}/experience-worker-tasks.json"
