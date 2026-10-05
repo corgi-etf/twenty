@@ -1,7 +1,8 @@
 import { createHash } from 'node:crypto';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import definition, {
   executeExperienceBackfill,
+  handler,
 } from './execute-experience-backfill.logic-function';
 const workspaceId = '11111111-1111-4111-8111-111111111111';
 const source = {
@@ -49,6 +50,32 @@ const fixture = () => {
   return { manifest, dependencies, context: { workspaceId } };
 };
 describe('approved owning-application backfill', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.restoreAllMocks();
+  });
+  it('uses only the owning application token even when an admin session triggered execution', async () => {
+    const input = fixture();
+    vi.stubEnv('CORGI_CRM_WORKSPACE_ID', workspaceId);
+    vi.stubEnv('CORGI_CRM_EXPERIENCE_BACKFILL_DIGEST', input.manifest.digest);
+    vi.stubEnv('TWENTY_API_URL', 'https://crm.example');
+    vi.stubEnv('TWENTY_APP_ACCESS_TOKEN', 'delegated-session');
+    vi.stubEnv('TWENTY_APP_APPLICATION_ACCESS_TOKEN', 'owning-application');
+    const fetch = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(
+        new Response(JSON.stringify({ data: { outreachActivity: null } }), {
+          status: 200,
+        }),
+      );
+    await handler(
+      { manifest: input.manifest, index: 0 },
+      input.context as never,
+    );
+    expect(fetch.mock.calls[0]![1]?.headers).toMatchObject({
+      Authorization: 'Bearer owning-application',
+    });
+  });
   it('has no public, automatic, workflow or tool trigger', () => {
     for (const field of [
       'httpRouteTriggerSettings',

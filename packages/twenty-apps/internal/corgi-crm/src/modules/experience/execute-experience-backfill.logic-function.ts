@@ -157,7 +157,17 @@ export const handler = (
   payload: Payload,
   context?: LogicFunctionExecutionContext,
 ) => {
-  const transport = new RawCoreGraphqlTransport();
+  const applicationToken = process.env.TWENTY_APP_APPLICATION_ACCESS_TOKEN;
+  if (!applicationToken?.trim())
+    throw new Error(
+      'Owning application access token is required for maintenance',
+    );
+  const transport = new RawCoreGraphqlTransport({
+    env: {
+      TWENTY_API_URL: process.env.TWENTY_API_URL,
+      TWENTY_APP_ACCESS_TOKEN: applicationToken,
+    },
+  });
   return executeExperienceBackfill(payload, context, {
     workspaceId: process.env.CORGI_CRM_WORKSPACE_ID,
     approvedDigest: process.env.CORGI_CRM_EXPERIENCE_BACKFILL_DIGEST,

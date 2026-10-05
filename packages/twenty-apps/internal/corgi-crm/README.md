@@ -439,3 +439,57 @@ The approval variable is cleared on normal completion or a handled failure; if t
 process is forcibly stopped, clear `CORGI_CRM_EXPERIENCE_BACKFILL_DIGEST` in app
 settings before starting unrelated maintenance. Rollback requires a separately
 reviewed owning-application operation against the journal's saved timestamps.
+
+### Controlled server-task alternative
+
+When no browser session is available, an authorized operator can run the same
+manifest from an existing server Nest application context. Keep execution in the
+installed CRM release, with the same identity, digest, current-workspace checks,
+and journal as the CLI. Do not alter resolver guards or create another admin.
+Resolve the existing authorized administrator's `core.user.id` and matching active
+`core.userWorkspace.id` for this workspace. Neither is a `workspaceMember` UUID.
+
+Use these server providers (source module paths relative to `twenty-server`):
+
+```ts
+import { ApplicationVariableEntityService } from 'src/engine/core-modules/application/application-variable/application-variable.service';
+import { LogicFunctionFromSourceService } from 'src/engine/metadata-modules/logic-function/services/logic-function-from-source.service';
+```
+
+After resolving the installed application and function by the universal identifiers
+checked in `experience-backfill.mjs`, the exact provider calls are:
+
+```ts
+await applicationVariables.update({
+  key: 'CORGI_CRM_EXPERIENCE_BACKFILL_DIGEST',
+  plainTextValue: approvedDigest,
+  applicationId,
+  workspaceId,
+});
+try {
+  // Record journal intent before each operation and result immediately after it.
+  const result = await logicFunctions.executeOneFromSource({
+    id: installedFunctionId,
+    payload: { manifest, index },
+    workspaceId,
+    userId: authorizedAdminUserId,
+    userWorkspaceId: authorizedAdminUserWorkspaceId,
+  });
+  // Require result.status === 'SUCCESS'; retain result.data in the journal.
+} finally {
+  await applicationVariables.update({
+    key: 'CORGI_CRM_EXPERIENCE_BACKFILL_DIGEST',
+    plainTextValue: '',
+    applicationId,
+    workspaceId,
+  });
+}
+```
+
+`plainTextValue` has the server's branded `PlaintextString` type; apply that type at
+the already-validated digest boundary in a typed command. The variable service
+updates encryption and cache coherently. The execution service preserves the
+administrator identity in execution context and logs; the installed maintenance
+handler explicitly uses `TWENTY_APP_APPLICATION_ACCESS_TOKEN` for protected record
+writes. It refuses to fall back to a user token or an API key. Close the Nest
+context after the journal is flushed and approval cleanup is confirmed.
