@@ -21,6 +21,8 @@ const MANAGED_FOLLOW_UP_VIEW_FIELD_IDS = [
   'c0671000-0000-4000-8000-000000000014',
   'c0671000-0000-4000-8000-000000000015',
   'c0671000-0000-4000-8000-000000000016',
+  'c0671000-0000-4000-8000-000000000017',
+  'c0671000-0000-4000-8000-000000000018',
 ] as const;
 
 const TERRITORY_FIELD_DEFINITIONS = [
@@ -74,23 +76,60 @@ const REQUIRED_OBJECT_NAMES = [
 ] as const;
 
 const FOLLOW_UP_VIEW_FIELD_NAMES = [
+  'activityType',
+  'name',
   'company',
   'contact',
   'wholesaler',
+  'occurredAt',
   'outcome',
   'followUpDate',
-  'occurredAt',
   'notes',
 ] as const;
 
 const QUICK_LOG_SCALAR_FIELD_DEFINITIONS = [
-  { name: 'activityType', label: 'Activity type', type: 'SELECT', options: [
-    { id: 'c0671100-0000-4000-8000-000000000001', value: 'PHONE_CALL', label: 'Phone call', position: 0, color: 'blue' },
-    { id: 'c0671100-0000-4000-8000-000000000002', value: 'EMAIL', label: 'Email', position: 1, color: 'green' },
-    { id: 'c0671100-0000-4000-8000-000000000003', value: 'LINKEDIN', label: 'LinkedIn', position: 2, color: 'turquoise' },
-    { id: 'c0671100-0000-4000-8000-000000000004', value: 'MEETING', label: 'Meeting', position: 3, color: 'purple' },
-    { id: 'c0671100-0000-4000-8000-000000000005', value: 'OTHER', label: 'Other', position: 4, color: 'gray' },
-  ] },
+  {
+    name: 'activityType',
+    label: 'Activity type',
+    type: 'SELECT',
+    options: [
+      {
+        id: 'c0671100-0000-4000-8000-000000000001',
+        value: 'PHONE_CALL',
+        label: 'Phone call',
+        position: 0,
+        color: 'blue',
+      },
+      {
+        id: 'c0671100-0000-4000-8000-000000000002',
+        value: 'EMAIL',
+        label: 'Email',
+        position: 1,
+        color: 'green',
+      },
+      {
+        id: 'c0671100-0000-4000-8000-000000000003',
+        value: 'LINKEDIN',
+        label: 'LinkedIn',
+        position: 2,
+        color: 'turquoise',
+      },
+      {
+        id: 'c0671100-0000-4000-8000-000000000004',
+        value: 'MEETING',
+        label: 'Meeting',
+        position: 3,
+        color: 'purple',
+      },
+      {
+        id: 'c0671100-0000-4000-8000-000000000005',
+        value: 'OTHER',
+        label: 'Other',
+        position: 4,
+        color: 'gray',
+      },
+    ],
+  },
   { name: 'outcome', label: 'Outcome', type: 'TEXT' },
   { name: 'notes', label: 'Notes', type: 'TEXT' },
   { name: 'occurredAt', label: 'Occurred At', type: 'DATE_TIME' },
@@ -271,7 +310,13 @@ export type MetadataFieldCreate = {
   label: string;
   type: string;
   defaultValue?: boolean;
-  options?: ReadonlyArray<{ id: string; value: string; label: string; position: number; color: string }>;
+  options?: ReadonlyArray<{
+    id: string;
+    value: string;
+    label: string;
+    position: number;
+    color: string;
+  }>;
   relationCreationPayload?: {
     targetObjectMetadataId: string;
     targetFieldLabel: string;
@@ -788,16 +833,35 @@ export const buildWorkspaceMetadataBootstrapPlan = (
     const object = objectsByName.get(objectName)!;
     const activeClient = uniqueFieldMap(object).get('activeClient');
     if (!activeClient) {
-      metadataFieldsToCreate.push({ objectMetadataId: object.id, name: 'activeClient', label: 'Active client', type: 'BOOLEAN', defaultValue: false });
+      metadataFieldsToCreate.push({
+        objectMetadataId: object.id,
+        name: 'activeClient',
+        label: 'Active client',
+        type: 'BOOLEAN',
+        defaultValue: false,
+      });
     } else if (activeClient.type !== 'BOOLEAN') {
       throw new Error(`${objectName}.activeClient must be BOOLEAN`);
     } else if (activeClient.label !== 'Active client') {
-      metadataFieldsToUpdate.push({ id: activeClient.id, label: 'Active client' });
+      metadataFieldsToUpdate.push({
+        id: activeClient.id,
+        label: 'Active client',
+      });
     }
   }
 
   const wholesaler = objectsByName.get('wholesaler')!;
   const workspaceMember = objectsByName.get('workspaceMember')!;
+  const accentPalette = uniqueFieldMap(workspaceMember).get('accentPalette');
+  if (!accentPalette)
+    metadataFieldsToCreate.push({
+      objectMetadataId: workspaceMember.id,
+      name: 'accentPalette',
+      label: 'Accent palette',
+      type: 'TEXT',
+    });
+  else if (accentPalette.type !== 'TEXT')
+    throw new Error('Workspace member accentPalette must be TEXT');
 
   const historicalOwner = companyFields.get('historicalOwner');
   if (!historicalOwner) {
@@ -969,7 +1033,10 @@ export const buildWorkspaceConfigPlan = (
   const outreachFields = uniqueFieldMap(outreachActivity);
 
   for (const fieldName of VISIBLE_COMPANY_FIELD_NAMES) {
-    if (!companyFields.has(fieldName) && !['domainName', 'firmType', 'companyOwnerships'].includes(fieldName)) {
+    if (
+      !companyFields.has(fieldName) &&
+      !['domainName', 'firmType', 'companyOwnerships'].includes(fieldName)
+    ) {
       throw new Error(`Required company field ${fieldName} is missing`);
     }
   }
@@ -992,7 +1059,9 @@ export const buildWorkspaceConfigPlan = (
     throw new Error('Exactly one Company index view is required');
   }
   const companyIndexView = companyIndexViews[0]!;
-  const visibleCompanyFieldNames = VISIBLE_COMPANY_FIELD_NAMES.filter((name) => companyFields.has(name));
+  const visibleCompanyFieldNames = VISIBLE_COMPANY_FIELD_NAMES.filter((name) =>
+    companyFields.has(name),
+  );
   const desiredPositionByFieldId = new Map(
     visibleCompanyFieldNames.map((name, position) => [
       companyFields.get(name)!.id,
@@ -1234,15 +1303,48 @@ export const buildWorkspaceConfigPlan = (
       }
     }
   }
-  const activityFieldNames = ['activityType', 'name', 'company', 'contact', 'wholesaler', 'occurredAt', 'outcome', 'followUpDate'];
-  for (const view of snapshot.views.filter((candidate) => candidate.objectMetadataId === outreachActivity.id && candidate.id !== followUpViewId && !candidate.createdByUserWorkspaceId && candidate.visibility === 'WORKSPACE')) {
+  const activityFieldNames = [
+    'activityType',
+    'name',
+    'company',
+    'contact',
+    'wholesaler',
+    'occurredAt',
+    'outcome',
+    'followUpDate',
+  ];
+  for (const view of snapshot.views.filter(
+    (candidate) =>
+      candidate.objectMetadataId === outreachActivity.id &&
+      candidate.id !== followUpViewId &&
+      !candidate.createdByUserWorkspaceId &&
+      candidate.visibility === 'WORKSPACE',
+  )) {
     for (const field of outreachActivity.fields) {
       const position = activityFieldNames.indexOf(field.name);
-      const existing = view.viewFields.find((candidate) => candidate.fieldMetadataId === field.id);
+      const existing = view.viewFields.find(
+        (candidate) => candidate.fieldMetadataId === field.id,
+      );
       if (!existing && position >= 0) {
-        viewFieldsToCreate.push({ fieldMetadataId: field.id, viewId: view.id, isVisible: true, position, size: field.name === 'name' ? 280 : 150 });
-      } else if (existing && (existing.isVisible !== (position >= 0) || (position >= 0 && existing.position !== position))) {
-        viewFieldUpdates.push({ id: existing.id, update: { isVisible: position >= 0, ...(position >= 0 ? { position } : {}) } });
+        viewFieldsToCreate.push({
+          fieldMetadataId: field.id,
+          viewId: view.id,
+          isVisible: true,
+          position,
+          size: field.name === 'name' ? 280 : 150,
+        });
+      } else if (
+        existing &&
+        (existing.isVisible !== position >= 0 ||
+          (position >= 0 && existing.position !== position))
+      ) {
+        viewFieldUpdates.push({
+          id: existing.id,
+          update: {
+            isVisible: position >= 0,
+            ...(position >= 0 ? { position } : {}),
+          },
+        });
       }
     }
   }
@@ -1295,11 +1397,37 @@ export const buildWorkspaceConfigPlan = (
   }
 
   const desiredNavigation = [
-    { key: 'outreachActivity', type: 'OBJECT' as const, targetObjectMetadataId: outreachActivity.id, position: 1 },
-    { key: 'followUps', type: 'VIEW' as const, viewId: followUpViewId, position: 2 },
-    ...['meetingBooking', 'company', 'person', 'wholesaler', 'companyAllocation', 'dashboard'].flatMap((name, index) => {
+    {
+      key: 'outreachActivity',
+      type: 'OBJECT' as const,
+      targetObjectMetadataId: outreachActivity.id,
+      position: 1,
+    },
+    {
+      key: 'followUps',
+      type: 'VIEW' as const,
+      viewId: followUpViewId,
+      position: 2,
+    },
+    ...[
+      'meetingBooking',
+      'company',
+      'person',
+      'wholesaler',
+      'companyAllocation',
+      'dashboard',
+    ].flatMap((name, index) => {
       const object = objectsByName.get(name);
-      return object ? [{ key: name, type: 'OBJECT' as const, targetObjectMetadataId: object.id, position: index + 3 }] : [];
+      return object
+        ? [
+            {
+              key: name,
+              type: 'OBJECT' as const,
+              targetObjectMetadataId: object.id,
+              position: index + 3,
+            },
+          ]
+        : [];
     }),
   ];
   const workspaceItems = snapshot.navigationMenuItems.filter(
@@ -1341,13 +1469,21 @@ export const buildWorkspaceConfigPlan = (
       });
     }
   }
-  const managedObjectIds = new Set(desiredNavigation.flatMap((item) => item.type === 'OBJECT' ? [item.targetObjectMetadataId] : []));
+  const managedObjectIds = new Set(
+    desiredNavigation.flatMap((item) =>
+      item.type === 'OBJECT' ? [item.targetObjectMetadataId] : [],
+    ),
+  );
   const noteObjectId = objectsByName.get('note')?.id;
   const navigationItemIdsToDelete = workspaceItems
-    .filter((item) => !retainedIds.has(item.id) && (
-      (item.targetObjectMetadataId && (item.targetObjectMetadataId === noteObjectId || managedObjectIds.has(item.targetObjectMetadataId))) ||
-      item.viewId === followUpViewId
-    ))
+    .filter(
+      (item) =>
+        !retainedIds.has(item.id) &&
+        ((item.targetObjectMetadataId &&
+          (item.targetObjectMetadataId === noteObjectId ||
+            managedObjectIds.has(item.targetObjectMetadataId))) ||
+          item.viewId === followUpViewId),
+    )
     .map(({ id }) => id);
 
   return {

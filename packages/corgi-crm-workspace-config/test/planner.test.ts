@@ -78,6 +78,7 @@ const snapshot = (): WorkspaceConfigSnapshot => {
       ['bodyV2', 'RICH_TEXT_V2'],
     ]),
     object('outreachActivity', [
+      ['name', 'TEXT'],
       ['company', 'RELATION'],
       ['contact', 'RELATION'],
       ['wholesaler', 'RELATION'],
@@ -239,7 +240,14 @@ const snapshot = (): WorkspaceConfigSnapshot => {
 
 const addWorkspaceMemberRelation = (value: WorkspaceConfigSnapshot): void => {
   for (const objectName of ['company', 'person']) {
-    value.objects.find(({nameSingular}) => nameSingular === objectName)!.fields.push({ id: `${objectName}-activeClient-field-id`, name: 'activeClient', label: 'Active client', type: 'BOOLEAN' });
+    value.objects
+      .find(({ nameSingular }) => nameSingular === objectName)!
+      .fields.push({
+        id: `${objectName}-activeClient-field-id`,
+        name: 'activeClient',
+        label: 'Active client',
+        type: 'BOOLEAN',
+      });
   }
   const wholesaler = value.objects[2]!;
   const workspaceMember = value.objects[7]!;
@@ -268,6 +276,12 @@ const addWorkspaceMemberRelation = (value: WorkspaceConfigSnapshot): void => {
     relationTargetObjectMetadataId: wholesaler.id,
     relationTargetFieldMetadataId: 'wholesaler-workspaceMember-field-id',
     settings: { relationType: 'ONE_TO_MANY' },
+  });
+  workspaceMember.fields.push({
+    id: 'workspaceMember-accentPalette-field-id',
+    name: 'accentPalette',
+    label: 'Accent palette',
+    type: 'TEXT',
   });
 };
 
@@ -484,6 +498,7 @@ test('bootstraps territory fields before planning the exact sales layout', () =>
       { name: 'postalCode', label: 'ZIP Code', type: 'TEXT' },
       { name: 'activeClient', label: 'Active client', type: 'BOOLEAN' },
       { name: 'activeClient', label: 'Active client', type: 'BOOLEAN' },
+      { name: 'accentPalette', label: 'Accent palette', type: 'TEXT' },
       {
         name: 'territory',
         label: 'Territory',
@@ -612,17 +627,19 @@ test('converges navigation, Follow-ups, company fields, and state sorting', () =
       .filter(({ viewId }) => viewId === 'c0671000-0000-4000-8000-000000000001')
       .map(({ fieldMetadataId, position }) => ({ fieldMetadataId, position })),
     [
-      { fieldMetadataId: 'outreachActivity-company-field-id', position: 0 },
-      { fieldMetadataId: 'outreachActivity-contact-field-id', position: 1 },
-      { fieldMetadataId: 'outreachActivity-wholesaler-field-id', position: 2 },
-      { fieldMetadataId: 'outreachActivity-outcome-field-id', position: 3 },
-      {
-        fieldMetadataId: 'outreachActivity-followUpDate-field-id',
-        position: 4,
-      },
-      { fieldMetadataId: 'outreachActivity-occurredAt-field-id', position: 5 },
-      { fieldMetadataId: 'outreachActivity-notes-field-id', position: 6 },
-    ],
+      'activityType',
+      'name',
+      'company',
+      'contact',
+      'wholesaler',
+      'occurredAt',
+      'outcome',
+      'followUpDate',
+      'notes',
+    ].map((name, position) => ({
+      fieldMetadataId: `outreachActivity-${name}-field-id`,
+      position,
+    })),
   );
 });
 
@@ -735,7 +752,9 @@ test('requires the exact quick-log scalar field types before planning mutations'
       ({ name }) => name !== 'activityType',
     );
   const bootstrapPlan = buildWorkspaceConfigPlan(missingActivityType);
-  const activityType = bootstrapPlan.metadataFieldsToCreate.find(({name}) => name === 'activityType')!;
+  const activityType = bootstrapPlan.metadataFieldsToCreate.find(
+    ({ name }) => name === 'activityType',
+  )!;
   assert.equal(activityType.type, 'SELECT');
   assert.equal(activityType.options?.length, 5);
   assert.equal(bootstrapPlan.layout, null);
@@ -879,6 +898,8 @@ test('converges company and Follow-ups column widths', () => {
     outreachActivity.fields
       .filter((field) =>
         [
+          'activityType',
+          'name',
           'company',
           'contact',
           'wholesaler',
@@ -995,10 +1016,26 @@ test('rejects an inverse relation linked back to a different source field', () =
 
 test('accepts the live activity SELECT and adds only manual client metadata', () => {
   const value = snapshot();
-  value.objects[6]!.fields.find(({ name }) => name === 'activityType')!.type = 'SELECT';
+  value.objects[6]!.fields.find(({ name }) => name === 'activityType')!.type =
+    'SELECT';
   const plan = buildWorkspaceConfigPlan(value);
-  assert.deepEqual(plan.metadataFieldsToCreate.filter(({ name }) => name === 'activeClient'), [
-    { objectMetadataId: 'company-object-id', name: 'activeClient', label: 'Active client', type: 'BOOLEAN', defaultValue: false },
-    { objectMetadataId: 'person-object-id', name: 'activeClient', label: 'Active client', type: 'BOOLEAN', defaultValue: false },
-  ]);
+  assert.deepEqual(
+    plan.metadataFieldsToCreate.filter(({ name }) => name === 'activeClient'),
+    [
+      {
+        objectMetadataId: 'company-object-id',
+        name: 'activeClient',
+        label: 'Active client',
+        type: 'BOOLEAN',
+        defaultValue: false,
+      },
+      {
+        objectMetadataId: 'person-object-id',
+        name: 'activeClient',
+        label: 'Active client',
+        type: 'BOOLEAN',
+        defaultValue: false,
+      },
+    ],
+  );
 });

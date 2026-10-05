@@ -32,33 +32,35 @@ const fixture = (): WorkspaceConfigSnapshot => {
     id: `${objectName}-${name}-field-id`,
     name,
     label:
-      name === 'activeClient' ? 'Active client' : name === 'stateRegion'
-        ? 'State'
-        : name === 'postalCode'
-          ? 'ZIP Code'
-          : name === 'territory'
-            ? 'Territory'
-            : name === 'workspaceMember'
-              ? 'Workspace Member'
-              : name === 'historicalOwner'
-                ? 'Wholesaler'
-                : name === 'activityType'
-                  ? 'Activity type'
-                  : name === 'followUpDate'
-                    ? 'Follow-up Date'
-                    : name === 'occurredAt'
-                      ? 'Occurred At'
-                      : name === 'company'
-                        ? 'Company'
-                        : name === 'contact'
-                          ? 'Contact'
-                          : name === 'wholesaler'
-                            ? 'Wholesaler'
-                            : name === 'notes'
-                              ? 'Notes'
-                              : name === 'outcome'
-                                ? 'Outcome'
-                                : name,
+      name === 'activeClient'
+        ? 'Active client'
+        : name === 'stateRegion'
+          ? 'State'
+          : name === 'postalCode'
+            ? 'ZIP Code'
+            : name === 'territory'
+              ? 'Territory'
+              : name === 'workspaceMember'
+                ? 'Workspace Member'
+                : name === 'historicalOwner'
+                  ? 'Wholesaler'
+                  : name === 'activityType'
+                    ? 'Activity type'
+                    : name === 'followUpDate'
+                      ? 'Follow-up Date'
+                      : name === 'occurredAt'
+                        ? 'Occurred At'
+                        : name === 'company'
+                          ? 'Company'
+                          : name === 'contact'
+                            ? 'Contact'
+                            : name === 'wholesaler'
+                              ? 'Wholesaler'
+                              : name === 'notes'
+                                ? 'Notes'
+                                : name === 'outcome'
+                                  ? 'Outcome'
+                                  : name,
     type,
   });
   const companyFields = [
@@ -118,6 +120,7 @@ const fixture = (): WorkspaceConfigSnapshot => {
     field('outreachActivity', 'occurredAt', 'DATE_TIME'),
     field('outreachActivity', 'notes', 'TEXT'),
     field('outreachActivity', 'activityType', 'SELECT'),
+    field('outreachActivity', 'name', 'TEXT'),
   ];
   const objects = [
     {
@@ -182,6 +185,7 @@ const fixture = (): WorkspaceConfigSnapshot => {
       nameSingular: 'workspaceMember',
       namePlural: 'workspaceMembers',
       fields: [
+        field('workspaceMember', 'accentPalette', 'TEXT'),
         {
           id: 'workspaceMember-wholesalerProfiles-field-id',
           name: 'wholesalerProfiles',
@@ -400,11 +404,27 @@ class FakeApi implements WorkspaceConfigApi {
     this.events.push('view-update');
   }
 
-  async createViewField(): Promise<void> {
+  async createViewField(input: {
+    id?: string;
+    fieldMetadataId: string;
+    viewId: string;
+    isVisible: boolean;
+    position: number;
+    size: number;
+  }): Promise<void> {
     this.events.push('view-field-create');
+    this.snapshot.views
+      .find(({ id }) => id === input.viewId)!
+      .viewFields.push({
+        ...input,
+        id: input.id ?? `created-view-field-${input.fieldMetadataId}`,
+      });
   }
 
-  async updateViewField(id: string, update: { isVisible: boolean; position?: number; size?: number }): Promise<void> {
+  async updateViewField(
+    id: string,
+    update: { isVisible: boolean; position?: number; size?: number },
+  ): Promise<void> {
     this.events.push('view-field-update');
     for (const view of this.snapshot.views) {
       const field = view.viewFields.find((candidate) => candidate.id === id);
@@ -497,7 +517,11 @@ test('backfills companies and seeded territories before layout and records a ver
     wholesalerTerritoryAssignments,
   });
 
-  assert.deepEqual(api.events.slice(0, 3), ['company:company-1', 'territory:grace-id', 'territory:nash-id']);
+  assert.deepEqual(api.events.slice(0, 3), [
+    'company:company-1',
+    'territory:grace-id',
+    'territory:nash-id',
+  ]);
   assert.ok(api.events.includes('navigation-create'));
   assert.ok(!api.events.includes('navigation-delete'));
   assert.equal(result.companyMutations, 1);
@@ -629,12 +653,12 @@ test('metadata bootstrap converges from no quick-log or member relation and is i
   };
 
   const first = await runWorkspaceMetadataBootstrap(api, options);
-  assert.equal(first.metadataMutations, 12);
+  assert.equal(first.metadataMutations, 13);
   assert.match(first.metadataContractHash, /^[0-9a-f]{64}$/);
   assert.equal(api.events.filter((event) => event === 'snapshot').length, 2);
   assert.equal(
     api.events.filter((event) => event.startsWith('metadata-create:')).length,
-    12,
+    13,
   );
   assert.equal(
     api.snapshot.objects
