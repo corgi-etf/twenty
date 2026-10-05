@@ -38,6 +38,7 @@ export type CorgiMetric = {
 };
 
 export type CorgiFollowUp = CorgiBusinessRecord & {
+  companyStatus?: 'unlinked' | 'restricted';
   dueAt: string | null;
   status: 'OPEN' | 'COMPLETED' | 'CANCELLED';
   company: CorgiRecordLink | null;
@@ -48,6 +49,7 @@ export type CorgiFollowUp = CorgiBusinessRecord & {
 };
 
 export type CorgiFollowUpCompany = {
+  companyStatus?: 'unlinked' | 'restricted';
   company: CorgiRecordLink | null;
   nextDueAt: string | null;
   lastActivityAt: string | null;

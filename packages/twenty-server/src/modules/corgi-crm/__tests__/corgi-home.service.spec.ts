@@ -289,3 +289,100 @@ describe('CRM corrected-record validity', () => {
     ]);
   });
 });
+
+describe('CRM batched relationships and company visibility', () => {
+  it('resolves a full follow-up page in five queries, not three lookups per reminder', async () => {
+    const { service, statements } = makeService((statement) => {
+      if (statement.text.includes('COUNT(')) return [{ count: 25 }];
+      if (statement.text.includes('"outreachFollowUp"'))
+        return Array.from({ length: 25 }, (_, index) => ({
+          id: `followup-${index}`,
+          name: 'Call',
+          status: 'OPEN',
+          companyId: `company-${index}`,
+          contactId: `contact-${index}`,
+          activityId: `activity-${index}`,
+        }));
+      return [];
+    });
+    const result = await service.get({ section: 'followUps' });
+    expect(result).toMatchObject({ totalCount: 25 });
+    expect(statements).toHaveLength(5);
+    expect(
+      statements
+        .slice(2)
+        .every((statement) => statement.text.includes(' IN (')),
+    ).toBe(true);
+  });
+
+  it('preserves restricted companies separately from the needs-company-link queue', async () => {
+    const { service, statements } = makeService((statement) => {
+      if (statement.text.includes('COUNT(DISTINCT')) return [{ count: 2 }];
+      if (statement.text.includes('AS "reminderIds"'))
+        return [
+          {
+            id: null,
+            unlinked: false,
+            reminderIds: ['restricted-reminder'],
+            openCount: 1,
+            totalCount: 1,
+          },
+          {
+            id: null,
+            unlinked: true,
+            reminderIds: ['unlinked-reminder'],
+            openCount: 1,
+            totalCount: 1,
+          },
+        ];
+      if (
+        statement.text.includes('"outreachFollowUp"') &&
+        statement.text.includes(' IN (')
+      )
+        return [
+          {
+            id: 'restricted-reminder',
+            companyId: 'hidden-company',
+            name: 'Private call',
+            status: 'OPEN',
+          },
+          {
+            id: 'unlinked-reminder',
+            companyId: null,
+            name: 'Link a company',
+            status: 'OPEN',
+          },
+        ];
+      return [];
+    });
+    const result = await service.get({ section: 'followUpCompanies' });
+    expect(result).toMatchObject({
+      records: [
+        {
+          company: null,
+          companyStatus: 'restricted',
+          reminders: [
+            { id: 'restricted-reminder', companyStatus: 'restricted' },
+          ],
+        },
+        {
+          company: null,
+          companyStatus: 'unlinked',
+          reminders: [{ id: 'unlinked-reminder', companyStatus: 'unlinked' }],
+        },
+      ],
+    });
+    expect(statements[0].text).toContain('CASE WHEN');
+    expect(statements[1].text).toContain('[1 : 5]');
+    expect(statements.length).toBeLessThanOrEqual(7);
+  });
+
+  it('filters the restricted-company drilldown using the permitted relation join', async () => {
+    const { service, statements } = makeService();
+    await service.get({ section: 'followUps', companyId: 'restricted' });
+    expect(statements[0].text).toContain('LEFT JOIN');
+    expect(statements[0].text).toContain('"r"."companyId" IS NOT NULL');
+    expect(statements[0].text).toContain('"visibleCompany"."id" IS NULL');
+    expect(statements[0].values).not.toContain('restricted');
+  });
+});

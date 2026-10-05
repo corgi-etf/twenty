@@ -550,22 +550,21 @@ export class CorgiHomeService {
     );
   }
 
-  private async related(
-    object: string,
-    id: unknown,
-  ): Promise<CorgiRecordLink | null> {
-    if (!id) return null;
-    try {
-      const row = await this.queries
-        .query(object, ['id', ...labelColumns(object)])
-        .where('r.id = :id', { id })
-        .getRawOne<Row>();
+  private async relatedBatch(object: string, values: unknown[]) {
+    const ids = [...new Set(values.map(text).filter(Boolean))];
 
-      return row ? link(object, row) : null;
+    if (!ids.length) return new Map<string, CorgiRecordLink>();
+    try {
+      const rows = await this.queries
+        .query(object, ['id', ...labelColumns(object)])
+        .where('r.id IN (:...ids)', { ids })
+        .getRawMany<Row>();
+
+      return new Map(rows.map((row) => [text(row.id), link(object, row)]));
     } catch (error) {
       this.report(error);
 
-      return null;
+      return new Map<string, CorgiRecordLink>();
     }
   }
 
@@ -595,36 +594,60 @@ export class CorgiHomeService {
         status: query.status === 'completed' ? 'COMPLETED' : 'OPEN',
       });
     if (query.companyId === 'unlinked') base.andWhere('r.companyId IS NULL');
-    else if (query.companyId)
+    else if (query.companyId === 'restricted') {
+      this.queries.query('company', ['id']);
+      base
+        .leftJoin('r.company', 'visibleCompany')
+        .andWhere('r.companyId IS NOT NULL AND visibleCompany.id IS NULL');
+    } else if (query.companyId)
       base.andWhere('r.companyId = :companyId', { companyId: query.companyId });
 
     return this.search(base, 'name', query);
   }
 
-  private async followUpRecord(row: Row): Promise<CorgiFollowUp> {
-    const [company, contact, activity] = await Promise.all([
-      this.related('company', row.companyId),
-      this.related('person', row.contactId),
-      this.related('outreachActivity', row.activityId),
+  private async followUpRecords(rows: Row[]): Promise<CorgiFollowUp[]> {
+    const [companies, contacts, activities] = await Promise.all([
+      this.relatedBatch(
+        'company',
+        rows.map((row) => row.companyId),
+      ),
+      this.relatedBatch(
+        'person',
+        rows.map((row) => row.contactId),
+      ),
+      this.relatedBatch(
+        'outreachActivity',
+        rows.map((row) => row.activityId),
+      ),
     ]);
+    const canComplete = this.queries.canUpdate('outreachFollowUp', ['status']);
 
-    return {
-      ...this.businessRecord('outreachFollowUp', row),
-      status:
-        row.status === 'COMPLETED'
-          ? 'COMPLETED'
-          : row.status === 'CANCELLED'
-            ? 'CANCELLED'
-            : 'OPEN',
-      dueAt: nullableText(row.dueAt),
-      company,
-      contact,
-      activity,
-      reason: nullableText(row.name),
-      canComplete:
-        this.queries.canUpdate('outreachFollowUp', ['status']) &&
-        row.status === 'OPEN',
-    };
+    return rows.map((row) => {
+      const company = companies.get(text(row.companyId)) ?? null;
+
+      return {
+        ...this.businessRecord('outreachFollowUp', row),
+        status:
+          row.status === 'COMPLETED'
+            ? 'COMPLETED'
+            : row.status === 'CANCELLED'
+              ? 'CANCELLED'
+              : 'OPEN',
+        dueAt: nullableText(row.dueAt),
+        company,
+        ...(company
+          ? {}
+          : {
+              companyStatus: row.companyId
+                ? ('restricted' as const)
+                : ('unlinked' as const),
+            }),
+        contact: contacts.get(text(row.contactId)) ?? null,
+        activity: activities.get(text(row.activityId)) ?? null,
+        reason: nullableText(row.name),
+        canComplete: canComplete && row.status === 'OPEN',
+      };
+    });
   }
 
   private async followUps(
@@ -640,11 +663,7 @@ export class CorgiHomeService {
         .limit(CORGI_PAGE_SIZE)
         .getRawMany<Row>();
 
-      return page(
-        await Promise.all(rows.map((row) => this.followUpRecord(row))),
-        total,
-        query,
-      );
+      return page(await this.followUpRecords(rows), total, query);
     });
   }
 
@@ -662,83 +681,113 @@ export class CorgiHomeService {
           companySearch: `%${query.search.replace(/[\\%_]/g, '\\$&')}%`,
         });
       }
+      const companyKey =
+        "COALESCE(company.id::text, CASE WHEN r.companyId IS NULL THEN 'unlinked' ELSE 'restricted' END)";
       const total = await base
         .clone()
-        .select(
-          "COUNT(DISTINCT COALESCE(company.id::text, 'unlinked'))",
-          'count',
-        )
+        .select(`COUNT(DISTINCT ${companyKey})`, 'count')
         .getRawOne<Row>();
       const rows = await base
         .clone()
         .select('company.id', 'id')
         .addSelect('company.name', 'name')
+        .addSelect('r.companyId IS NULL', 'unlinked')
         .addSelect(
           "MIN(CASE WHEN r.status = 'OPEN' THEN r.dueAt END)",
           'nextDueAt',
         )
         .addSelect("COUNT(*) FILTER (WHERE r.status = 'OPEN')", 'openCount')
         .addSelect('COUNT(r.id)', 'totalCount')
+        // Only the first five IDs per visible group leave the database. Fetch
+        // those records in one further scoped query instead of one per group.
+        .addSelect(
+          '(ARRAY_AGG(r.id ORDER BY r.dueAt ASC NULLS LAST, r.id ASC))[1 : 5]',
+          'reminderIds',
+        )
         .groupBy('company.id')
         .addGroupBy('company.name')
+        .addGroupBy('r.companyId IS NULL')
         .orderBy(
           "MIN(CASE WHEN r.status = 'OPEN' THEN r.dueAt END)",
           'ASC',
           'NULLS LAST',
         )
-        .addOrderBy('company.id', 'ASC')
+        .addOrderBy(companyKey, 'ASC')
         .offset(readCorgiOffset(query))
         .limit(CORGI_PAGE_SIZE)
         .getRawMany<Row>();
-      const records: CorgiFollowUpCompany[] = [];
+      const reminderIds = rows.flatMap((row) =>
+        Array.isArray(row.reminderIds) ? row.reminderIds.map(text) : [],
+      );
+      const reminderRows = reminderIds.length
+        ? await this.followUpBase({ ...query, search: undefined })
+            .andWhere('r.id IN (:...reminderIds)', { reminderIds })
+            .getRawMany<Row>()
+        : [];
+      const reminders = new Map(
+        (await this.followUpRecords(reminderRows)).map((reminder) => [
+          reminder.id,
+          reminder,
+        ]),
+      );
+      const companyIds = rows.map((row) => text(row.id)).filter(Boolean);
+      const lastActivities = new Map<string, string | null>();
 
-      for (const row of rows) {
+      if (companyIds.length) {
+        try {
+          const lastRows = await this.queries
+            .query('outreachActivity', [
+              'id',
+              'companyId',
+              'occurredAt',
+              'createdAt',
+            ])
+            .where('r.companyId IN (:...companyIds)', { companyIds })
+            .select('r.companyId', 'companyId')
+            .addSelect('MAX(COALESCE(r.occurredAt, r.createdAt))', 'lastAt')
+            .groupBy('r.companyId')
+            .getRawMany<Row>();
+
+          for (const row of lastRows)
+            lastActivities.set(text(row.companyId), nullableText(row.lastAt));
+        } catch (error) {
+          this.report(error);
+        }
+      }
+      const records: CorgiFollowUpCompany[] = rows.map((row) => {
         const companyId = text(row.id);
+        const companyStatus = row.unlinked
+          ? ('unlinked' as const)
+          : ('restricted' as const);
         const remindersQuery = {
           ...query,
           section: 'followUps' as const,
-          companyId: companyId || 'unlinked',
+          companyId: companyId || companyStatus,
           cursor: undefined,
           search: undefined,
         };
-        const remindersBase = this.followUpBase(remindersQuery);
 
-        if (!companyId) remindersBase.andWhere('r.companyId IS NULL');
-        const reminderRows = await remindersBase
-          .orderBy('r.dueAt', 'ASC', 'NULLS LAST')
-          .addOrderBy('r.id', 'ASC')
-          .limit(5)
-          .getRawMany<Row>();
-        let lastActivityAt: string | null = null;
-
-        if (companyId) {
-          try {
-            const last = await this.queries
-              .query('outreachActivity', ['id', 'companyId', 'occurredAt'])
-              .where('r.companyId = :companyId', { companyId })
-              .select('MAX(r.occurredAt)', 'lastAt')
-              .getRawOne<Row>();
-
-            lastActivityAt = nullableText(last?.lastAt);
-          } catch (error) {
-            this.report(error);
-          }
-        }
-        records.push({
+        return {
           company: companyId ? link('company', row) : null,
+          ...(companyId ? {} : { companyStatus }),
           nextDueAt: nullableText(row.nextDueAt),
-          lastActivityAt,
+          lastActivityAt: lastActivities.get(companyId) ?? null,
           openCount: count(row.openCount),
           totalCount: count(row.totalCount),
-          reminders: await Promise.all(
-            reminderRows.map((reminder) => this.followUpRecord(reminder)),
-          ),
+          reminders: (Array.isArray(row.reminderIds)
+            ? row.reminderIds.map(text)
+            : []
+          ).flatMap((id) => {
+            const reminder = reminders.get(id);
+
+            return reminder ? [reminder] : [];
+          }),
           nextReminderCursor:
             count(row.totalCount) > 5
               ? corgiPageCursor(5, remindersQuery)
               : null,
-        });
-      }
+        };
+      });
 
       return page(records, count(total?.count), query);
     });
@@ -778,19 +827,32 @@ export class CorgiHomeService {
         .offset(readCorgiOffset(query))
         .limit(CORGI_PAGE_SIZE)
         .getRawMany<Row>();
-      const records: CorgiMeeting[] = await Promise.all(
-        rows.map(async (row) => ({
-          ...this.businessRecord('meetingBooking', row),
-          scheduledAt: text(row.scheduledAt),
-          company: await this.related('company', row.companyId),
-          contact: await this.related('person', row.contactId),
-          owner: await this.related('wholesaler', row.wholesalerId),
-          canMarkTaken: this.queries.canUpdate('meetingBooking', [
-            'status',
-            'heldAt',
-          ]),
-        })),
-      );
+      const [companies, contacts, owners] = await Promise.all([
+        this.relatedBatch(
+          'company',
+          rows.map((row) => row.companyId),
+        ),
+        this.relatedBatch(
+          'person',
+          rows.map((row) => row.contactId),
+        ),
+        this.relatedBatch(
+          'wholesaler',
+          rows.map((row) => row.wholesalerId),
+        ),
+      ]);
+      const canMarkTaken = this.queries.canUpdate('meetingBooking', [
+        'status',
+        'heldAt',
+      ]);
+      const records: CorgiMeeting[] = rows.map((row) => ({
+        ...this.businessRecord('meetingBooking', row),
+        scheduledAt: text(row.scheduledAt),
+        company: companies.get(text(row.companyId)) ?? null,
+        contact: contacts.get(text(row.contactId)) ?? null,
+        owner: owners.get(text(row.wholesalerId)) ?? null,
+        canMarkTaken: canMarkTaken && row.status === 'BOOKED',
+      }));
 
       return page(records, total, query);
     });
@@ -926,39 +988,47 @@ export class CorgiHomeService {
           }
         }),
       );
-      const records = await Promise.all(
-        members.map(async (member) => {
-          let person: CorgiRecordLink | null = null;
+      const people = new Map<string, CorgiRecordLink | null>();
 
-          try {
-            const wholesaler = await this.queries
-              .query('wholesaler', ['id', 'name', 'workspaceMemberId'])
-              .where('r.workspaceMemberId = :memberId', { memberId: member.id })
-              .getRawOne<Row>();
+      if (ids.length) {
+        try {
+          const wholesalers = await this.queries
+            .query('wholesaler', ['id', 'name', 'workspaceMemberId'])
+            .where('r.workspaceMemberId IN (:...ids)', { ids })
+            .getRawMany<Row>();
 
-            person = wholesaler ? link('wholesaler', wholesaler) : null;
-          } catch (error) {
-            this.report(error);
+          for (const wholesaler of wholesalers) {
+            const memberId = text(wholesaler.workspaceMemberId);
+
+            people.set(
+              memberId,
+              people.has(memberId) ? null : link('wholesaler', wholesaler),
+            );
           }
-          const metrics = Object.fromEntries(
-            keys.map((key, index) => [
-              key,
-              grouped[index].values.get(text(member.id)) ?? {
-                status: grouped[index].status,
-                count: grouped[index].status === 'available' ? 0 : null,
-                ...(key === 'allocations' ? { amounts: [] } : {}),
-              },
-            ]),
-          ) as Pick<CorgiTeamMember, (typeof keys)[number]>;
+        } catch (error) {
+          this.report(error);
+        }
+      }
+      const records = members.map((member) => {
+        const person = people.get(text(member.id)) ?? null;
+        const metrics = Object.fromEntries(
+          keys.map((key, index) => [
+            key,
+            grouped[index].values.get(text(member.id)) ?? {
+              status: grouped[index].status,
+              count: grouped[index].status === 'available' ? 0 : null,
+              ...(key === 'allocations' ? { amounts: [] } : {}),
+            },
+          ]),
+        ) as Pick<CorgiTeamMember, (typeof keys)[number]>;
 
-          return {
-            workspaceMemberId: text(member.id),
-            person,
-            name: label('workspaceMember', member),
-            ...metrics,
-          };
-        }),
-      );
+        return {
+          workspaceMemberId: text(member.id),
+          person,
+          name: label('workspaceMember', member),
+          ...metrics,
+        };
+      });
 
       return page(records, total, query);
     });
@@ -1146,20 +1216,20 @@ export class CorgiHomeService {
             .addOrderBy('r.id', 'DESC')
             .limit(offset + CORGI_PAGE_SIZE)
             .getRawMany<Row>();
-          const records = await Promise.all(
-            rows.map(async (row) => ({
-              id: `${definition.kind}:${text(row.id)}`,
-              kind: definition.kind,
-              record: link(definition.object, row),
-              actorName:
-                (await this.related('workspaceMember', row[definition.actor]))
-                  ?.label ?? null,
-              actorWorkspaceMemberId: nullableText(row[definition.actor]),
-              recordedAt: text(row[definition.recorded]),
-              effectiveAt: text(row[definition.effective]),
-              isCreation: definition.kind !== 'meeting-taken',
-            })),
+          const actors = await this.relatedBatch(
+            'workspaceMember',
+            rows.map((row) => row[definition.actor]),
           );
+          const records = rows.map((row) => ({
+            id: `${definition.kind}:${text(row.id)}`,
+            kind: definition.kind,
+            record: link(definition.object, row),
+            actorName: actors.get(text(row[definition.actor]))?.label ?? null,
+            actorWorkspaceMemberId: nullableText(row[definition.actor]),
+            recordedAt: text(row[definition.recorded]),
+            effectiveAt: text(row[definition.effective]),
+            isCreation: definition.kind !== 'meeting-taken',
+          }));
 
           return page(records, total, {});
         }),
