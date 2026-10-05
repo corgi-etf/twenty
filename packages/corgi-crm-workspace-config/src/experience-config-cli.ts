@@ -27,8 +27,8 @@ export const runExperienceConfigCli = async () => {
     },
   });
   if (values.help) {
-    console.log(
-      'Preview: --manifest <RUNNER_TEMP/new-preview.json>\nApply: --apply --manifest <reviewed.json> --reviewed-digest <sha256> --journal <RUNNER_TEMP/new-journal.jsonl>\nRequires admin CORGI_CRM_ACCESS_TOKEN and RUNNER_TEMP. Metadata then layout each require a new reviewed preview. No company/territory data writes.',
+    process.stdout.write(
+      'Preview: --manifest <RUNNER_TEMP/new-preview.json>\nApply: --apply --manifest <reviewed.json> --reviewed-digest <sha256> --journal <RUNNER_TEMP/new-journal.jsonl>\nRequires admin CORGI_CRM_ACCESS_TOKEN and RUNNER_TEMP. Metadata then layout each require a new reviewed preview. No company/territory data writes.\n',
     );
     return;
   }
@@ -49,14 +49,14 @@ export const runExperienceConfigCli = async () => {
       connection.workspaceId,
     );
     await writeNewArtifact(values.manifest, manifest);
-    console.log(
-      JSON.stringify({
+    process.stdout.write(
+      `${JSON.stringify({
         mode: 'preview',
         phase: manifest.phase,
         operations: manifest.operations.length,
         digest: ownershipManifestDigest(manifest),
         manifest: values.manifest,
-      }),
+      })}\n`,
     );
     return;
   }
@@ -100,8 +100,8 @@ export const runExperienceConfigCli = async () => {
           }
         },
       });
-      console.log(
-        JSON.stringify({ mode: 'applied', ...result, journal: journalPath }),
+      process.stdout.write(
+        `${JSON.stringify({ mode: 'applied', ...result, journal: journalPath })}\n`,
       );
     } finally {
       await journal.close();
@@ -113,10 +113,12 @@ export const runExperienceConfigCli = async () => {
 };
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href)
   runExperienceConfigCli().catch((error: unknown) => {
-    console.error(
-      error instanceof Error
-        ? error.message
-        : 'Experience configuration failed',
+    process.stderr.write(
+      `${
+        error instanceof Error
+          ? error.message
+          : 'Experience configuration failed'
+      }\n`,
     );
     process.exitCode = 1;
   });

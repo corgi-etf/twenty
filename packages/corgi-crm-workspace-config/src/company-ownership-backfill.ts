@@ -29,9 +29,7 @@ export type OwnershipJournalEntry = {
 };
 export type OwnershipBackfillApi = {
   readSnapshot(): Promise<OwnershipSnapshot>;
-  readGuardState?(
-    companyId: string,
-  ): Promise<{
+  readGuardState?(companyId: string): Promise<{
     company: OwnerCompany;
     wholesalers: OwnerWholesaler[];
     ownerships: Ownership[];

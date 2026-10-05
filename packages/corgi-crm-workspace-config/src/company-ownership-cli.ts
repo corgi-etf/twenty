@@ -28,8 +28,8 @@ export const runOwnershipCli = async () => {
     },
   });
   if (values.help) {
-    console.log(
-      'Dry run: --manifest <RUNNER_TEMP/path.json> --expected-company-count <n>\nApply: --apply --manifest <reviewed.json> --reviewed-digest <sha256> --journal <RUNNER_TEMP/path.jsonl>\nRequires admin CORGI_CRM_ACCESS_TOKEN and RUNNER_TEMP. Writes only companyOwnership rows. Guarded comparisons are not atomic.',
+    process.stdout.write(
+      'Dry run: --manifest <RUNNER_TEMP/path.json> --expected-company-count <n>\nApply: --apply --manifest <reviewed.json> --reviewed-digest <sha256> --journal <RUNNER_TEMP/path.jsonl>\nRequires admin CORGI_CRM_ACCESS_TOKEN and RUNNER_TEMP. Writes only companyOwnership rows. Guarded comparisons are not atomic.\n',
     );
     return;
   }
@@ -51,8 +51,8 @@ export const runOwnershipCli = async () => {
       expectedCompanyCount,
     });
     await writeNewArtifact(values.manifest, manifest);
-    console.log(
-      JSON.stringify({
+    process.stdout.write(
+      `${JSON.stringify({
         mode: 'preview',
         manifest: values.manifest,
         digest: ownershipManifestDigest(manifest),
@@ -64,7 +64,7 @@ export const runOwnershipCli = async () => {
         informational: manifest.preview.review.filter(
           ({ severity }) => severity === 'informational',
         ).length,
-      }),
+      })}\n`,
     );
     return;
   }
@@ -84,8 +84,8 @@ export const runOwnershipCli = async () => {
         journal: journal.entries,
         appendJournal: journal.append,
       });
-      console.log(
-        JSON.stringify({ mode: 'applied', ...result, journal: journalPath }),
+      process.stdout.write(
+        `${JSON.stringify({ mode: 'applied', ...result, journal: journalPath })}\n`,
       );
     } finally {
       await journal.close();
@@ -97,8 +97,8 @@ export const runOwnershipCli = async () => {
 };
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href)
   runOwnershipCli().catch((error: unknown) => {
-    console.error(
-      error instanceof Error ? error.message : 'Ownership operation failed',
+    process.stderr.write(
+      `${error instanceof Error ? error.message : 'Ownership operation failed'}\n`,
     );
     process.exitCode = 1;
   });

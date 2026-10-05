@@ -13,11 +13,8 @@ import {
 } from '../src/execution.ts';
 import {
   buildApprovedWholesalerTerritoryAssignments,
-  MANAGED_FOLLOW_UP_VIEW_ID,
-  MANAGED_FOLLOW_UP_VIEW_UNIVERSAL_IDENTIFIER,
   type CompanyTerritoryRecord,
   type WholesalerTerritoryRecord,
-  type WorkspaceConfigSnapshot,
 } from '../src/planner.ts';
 
 const graceWorkspaceMemberId = '11111111-1111-4111-8111-111111111111';

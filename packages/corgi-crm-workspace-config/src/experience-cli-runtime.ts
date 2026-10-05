@@ -42,7 +42,13 @@ export const connectExperienceCli = async () => {
     return {
       ok: () => response.ok,
       status: () => response.status,
-      headers: () => Object.fromEntries(response.headers),
+      headers: () => {
+        const headers: Record<string, string> = {};
+        response.headers.forEach((value, key) => {
+          headers[key] = value;
+        });
+        return headers;
+      },
       json: () => response.json(),
       dispose: async () => {
         if (!response.bodyUsed) await response.body?.cancel();
