@@ -36,6 +36,28 @@ describe('CRM Home presentation', () => {
     ).toBe('$125.50 · €50.00');
   });
 
+  it('rounds int64 micros exactly at the currency precision without converting the amount to Number', () => {
+    expect(
+      formatCorgiMoney([
+        { currencyCode: 'USD', amountMicros: '9223372036854774999' },
+      ]),
+    ).toBe('$9,223,372,036,854.77');
+    expect(
+      formatCorgiMoney([
+        { currencyCode: 'USD', amountMicros: '9223372036854775000' },
+      ]),
+    ).toBe('$9,223,372,036,854.78');
+    expect(
+      formatCorgiMoney([{ currencyCode: 'USD', amountMicros: '-500000' }]),
+    ).toBe('-$0.50');
+    expect(
+      formatCorgiMoney([
+        { currencyCode: 'JPY', amountMicros: '1500000' },
+        { currencyCode: 'KWD', amountMicros: '1234567' },
+      ]),
+    ).toBe('¥2 · KWD\u00a01.235');
+  });
+
   it('creates full record deep links with encoded path components', () => {
     expect(
       getCorgiRecordPath({

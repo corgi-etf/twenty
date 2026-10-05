@@ -33,12 +33,32 @@ export const getCorgiDrilldownPath = (query: CorgiHomeQuery) => {
 
 export const formatCorgiMoney = (amounts: CorgiMoney[]) =>
   amounts
-    .map(({ currencyCode, amountMicros }) =>
-      new Intl.NumberFormat('en-US', {
+    .map(({ currencyCode, amountMicros }) => {
+      const formatter = new Intl.NumberFormat('en-US', {
         style: 'currency',
         currency: currencyCode,
-      }).format(Number(amountMicros) / 1_000_000),
-    )
+      });
+      const fractionDigits = formatter.resolvedOptions().maximumFractionDigits;
+      const micros = BigInt(amountMicros);
+      const absoluteMicros = micros < 0n ? -micros : micros;
+      const minorScale = 10n ** BigInt(fractionDigits);
+      const microsPerMinor = 10n ** BigInt(Math.max(0, 6 - fractionDigits));
+      const roundedMinor =
+        fractionDigits > 6
+          ? absoluteMicros * 10n ** BigInt(fractionDigits - 6)
+          : (absoluteMicros + microsPerMinor / 2n) / microsPerMinor;
+      const whole = roundedMinor / minorScale;
+      const fraction = (roundedMinor % minorScale)
+        .toString()
+        .padStart(fractionDigits, '0');
+      // Keep the sign for negative amounts below one unit without a float conversion.
+      const signedWhole = micros < 0n ? (whole === 0n ? -0 : -whole) : whole;
+
+      return formatter
+        .formatToParts(signedWhole)
+        .map((part) => (part.type === 'fraction' ? fraction : part.value))
+        .join('');
+    })
     .join(' · ');
 
 export const formatCorgiDateTime = (date: string) =>
