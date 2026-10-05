@@ -38,7 +38,8 @@ export const formatCorgiMoney = (amounts: CorgiMoney[]) =>
         style: 'currency',
         currency: currencyCode,
       });
-      const fractionDigits = formatter.resolvedOptions().maximumFractionDigits;
+      const fractionDigits =
+        formatter.resolvedOptions().maximumFractionDigits ?? 2;
       const micros = BigInt(amountMicros);
       const absoluteMicros = micros < 0n ? -micros : micros;
       const minorScale = 10n ** BigInt(fractionDigits);
