@@ -765,18 +765,12 @@ export class CorgiHomeService {
 
       this.search(base, 'name', query);
       if (query.workspaceMemberId) {
-        this.queries.query('company', ['accountOwnerId']);
         this.queries.query('companyOwnership', ['companyId', 'wholesalerId']);
         this.queries.query('wholesaler', ['workspaceMemberId']);
         base.andWhere({
-          whereFactory: (where) =>
-            where
-              .where({ accountOwnerId: query.workspaceMemberId })
-              .orWhere({
-                companyOwnerships: {
-                  wholesaler: { workspaceMemberId: query.workspaceMemberId },
-                },
-              }),
+          companyOwnerships: {
+            wholesaler: { workspaceMemberId: query.workspaceMemberId },
+          },
         });
       }
       const total = await base.clone().getCount();
