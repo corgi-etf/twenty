@@ -257,7 +257,18 @@ export const CorgiCreateRecordDialog = ({
     setIsSaving(true);
     setError(undefined);
     try {
-      const input = { ...draft };
+      const writableNames = new Set(
+        objectMetadataItem.fields.map((field) =>
+          field.type === 'RELATION' ? `${field.name}Id` : field.name,
+        ),
+      );
+      // Related profile actions share context across several record types.
+      // Send only fields belonging to the target object's current schema.
+      const input = Object.fromEntries(
+        Object.entries(draft).filter(
+          ([name]) => name === 'id' || writableNames.has(name),
+        ),
+      );
       if (isCompany && owners.length) {
         input.historicalOwnerId = owners[0].id;
         if (owners[0].workspaceMember?.id)
@@ -265,7 +276,8 @@ export const CorgiCreateRecordDialog = ({
       }
       if (
         dialog.objectNameSingular === 'outreachActivity' &&
-        input.followUpDate
+        input.followUpDate &&
+        writableNames.has('followUpRequestKey')
       )
         input.followUpRequestKey = v4();
       if (

@@ -53,7 +53,7 @@ jest.mock('@/corgi-crm/settings/components/CorgiAccentPalettePicker', () => ({
 jest.mock('@/corgi-crm/relations/components/CorgiRelationPicker', () => ({
   CorgiRelationPicker: () => null,
 }));
-const show = () =>
+const show = (initialValues?: Record<string, unknown>) =>
   render(
     <I18nProvider i18n={i18n}>
       <CorgiCreateRecordDialog
@@ -62,6 +62,7 @@ const show = () =>
           objectNameSingular: 'company',
           resolve: jest.fn(),
           trigger: null,
+          initialValues,
         }}
         active
         close={mockClose}
@@ -130,4 +131,22 @@ it('does not expose a field denied by field permissions', () => {
   mockRestrictedFields = { active: { canRead: false, canUpdate: false } };
   show();
   expect(screen.queryByLabelText('Active client')).not.toBeInTheDocument();
+});
+
+it('saves a contextual draft without relationship fields from another object', async () => {
+  const user = userEvent.setup();
+  mockCreate.mockResolvedValueOnce({ id: 'saved', name: 'Linked company' });
+  show({
+    name: 'Linked company',
+    activeClient: true,
+    meetingId: 'source-meeting',
+    externalWholesalerId: 'source-wholesaler',
+  });
+  await user.click(screen.getByRole('button', { name: 'Save' }));
+  await waitFor(() => expect(mockClose).toHaveBeenCalled());
+  expect(mockCreate).toHaveBeenCalledWith({
+    id: expect.any(String),
+    name: 'Linked company',
+    activeClient: true,
+  });
 });
