@@ -1,3 +1,4 @@
+import { formatActivityName } from './activity-name.ts';
 import { createHash } from 'node:crypto';
 
 export type ActivityImportSourceFormat =
@@ -797,7 +798,7 @@ const resolveContactId = ({
 
 const collisionProjection = (record: OutreachActivityRecord) => ({
   id: record.id,
-  name: record.name,
+  // Titles may be customized after import; immutable source fields identify a replay.
   companyId: record.companyId,
   wholesalerId: record.wholesalerId,
   activityType: record.activityType,
@@ -806,19 +807,6 @@ const collisionProjection = (record: OutreachActivityRecord) => ({
   contactId: record.contactId ?? null,
   outcome: record.outcome ?? null,
 });
-
-const ACTIVITY_TYPE_LABELS: Record<CompletedActivityType, string> = {
-  phone_call: 'Phone call',
-  email: 'Email',
-};
-const ACTIVITY_OUTCOME_LABELS: Record<CanonicalActivityOutcome, string> = {
-  left_voicemail: 'Left voicemail',
-  no_response: 'No response',
-  connected: 'Connected',
-  follow_up_scheduled: 'Follow-up scheduled',
-  not_interested: 'Not interested',
-  other: 'Other',
-};
 
 // Both source parsers already trim and NFKC each company name, and the importer
 // keys existing companies the same way. Creation must reuse this exact key: a
@@ -1287,7 +1275,7 @@ export const buildDuplicateCompanyResolutionPlan = (input: {
       if (record.decision === 'remove') {
         removals.push({
           companyId: record.companyId,
-          name: record.name,
+          // Titles may be customized after import; immutable source fields identify a replay.
           reason: record.reason,
         });
       }
@@ -1377,7 +1365,10 @@ export const buildActivityImportPlan = (input: {
         .toLowerCase()
         .replace(/&/g, ' and ')
         .replace(/[,.'"|/()-]/g, ' ')
-        .replace(/\b(llc|l l c|inc|incorporated|corp|corporation|ltd|limited|lp|llp|pc|pllc|co|company)\b/g, ' ')
+        .replace(
+          /\b(llc|l l c|inc|incorporated|corp|corporation|ltd|limited|lp|llp|pc|pllc|co|company)\b/g,
+          ' ',
+        )
         .replace(/\s+/g, ' ')
         .trim();
     const byLoose = new Map<string, string[]>();
@@ -1390,7 +1381,9 @@ export const buildActivityImportPlan = (input: {
       unmatched
         .map(({ row, count }) => {
           const near = byLoose.get(loosen(row.companyName)) ?? [];
-          const hint = near.length ? ` near: ${near.slice(0, 3).join(' | ')}` : ' near: none';
+          const hint = near.length
+            ? ` near: ${near.slice(0, 3).join(' | ')}`
+            : ' near: none';
           return (
             `Activity import row ${row.rowNumber} must match exactly one company ` +
             `("${row.companyName}" matched ${count};${hint})`
@@ -1418,7 +1411,11 @@ export const buildActivityImportPlan = (input: {
             activityType: row.activityType!,
             outcome: row.outcome!,
           }),
-          name: `${ACTIVITY_TYPE_LABELS[row.activityType!]} · ${ACTIVITY_OUTCOME_LABELS[row.outcome!]}`,
+          name: formatActivityName({
+            activityType: row.activityType,
+            companyName: row.companyName,
+            occurredAt: row.occurredAt,
+          }),
           companyId,
           wholesalerId,
           activityType: row.activityType,
@@ -1429,7 +1426,11 @@ export const buildActivityImportPlan = (input: {
         }
       : {
           id: deterministicActivityId(input.csvOptions.importId, activityKey),
-          name: 'Call',
+          name: formatActivityName({
+            activityType: 'PHONE_CALL',
+            companyName: row.companyName,
+            occurredAt: row.occurredAt,
+          }),
           companyId,
           wholesalerId,
           activityType: 'call',

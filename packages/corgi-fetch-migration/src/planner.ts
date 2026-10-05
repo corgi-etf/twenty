@@ -1,3 +1,4 @@
+import { formatActivityName } from '../../corgi-crm-activity-import/src/activity-name.ts';
 import { deterministicId } from './deterministic-id.ts';
 import { migrationSourceHmac } from './transform-contract.ts';
 
@@ -360,6 +361,9 @@ export const buildPlan = (
   options: { migrationRunId: string; hmacKey: string },
 ): MinimalPlan => {
   const companies = sortById(snapshot.companies);
+  const companyNames = new Map(
+    companies.map((company) => [company.id, company.name]),
+  );
   const contacts = sortById(snapshot.contacts);
   const warnings: MigrationWarning[] = [];
 
@@ -661,7 +665,12 @@ export const buildPlan = (
   );
   const outreachActivities = sortById(snapshot.activities ?? []).map((row) =>
     customRecord('outreachActivities', 'outreachActivity', row, {
-      name: `${row.activity_type ?? 'Activity'} ${row.occurred_at ?? row.id}`,
+      name: formatActivityName({
+        activityType: row.activity_type,
+        companyName: companyNames.get(row.company_id),
+        occurredAt: row.occurred_at,
+        createdAt: row.created_at,
+      }),
       companyId: deterministicId('company', row.company_id),
       contactId: row.contact_id
         ? deterministicId('person', row.contact_id)

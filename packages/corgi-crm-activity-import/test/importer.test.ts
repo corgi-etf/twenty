@@ -33,10 +33,7 @@ const identities = {
 const identityArtifact = {
   workspaceMemberIds: identities,
   aggregateIdentityHash: createHash('sha256')
-    .update(
-      `Grace=${identities.Grace}\nNash=${identities.Nash}`,
-      'utf8',
-    )
+    .update(`Grace=${identities.Grace}\nNash=${identities.Nash}`, 'utf8')
     .digest('hex'),
 };
 
@@ -345,7 +342,7 @@ test('plans one call per row with exact company and Nash ownership only', () => 
   assert.equal(plan.activities.length, 2);
   assert.deepEqual(plan.activities[0]?.record, {
     id: deterministicActivityId(options().importId, 1),
-    name: 'Call',
+    name: 'Phone call - Acme, Inc. - 2026-09-09',
     companyId: uuid('4'),
     wholesalerId: uuid('6'),
     activityType: 'call',
@@ -384,7 +381,7 @@ test('plans canonical completed actions for one explicitly selected owner', () =
           activityType: 'phone_call',
           outcome: 'left_voicemail',
         }),
-        name: 'Phone call · Left voicemail',
+        name: 'Phone call - Acme, Inc. - 2026-09-09',
         companyId: uuid('4'),
         wholesalerId: uuid('7'),
         activityType: 'phone_call',
@@ -402,7 +399,7 @@ test('plans canonical completed actions for one explicitly selected owner', () =
           activityType: 'email',
           outcome: 'other',
         }),
-        name: 'Email · Other',
+        name: 'Email - Acme, Inc. - 2026-09-09',
         companyId: uuid('4'),
         wholesalerId: uuid('7'),
         activityType: 'email',
@@ -966,7 +963,9 @@ test('two duplicates that both carry links are blocked for a human', () => {
   const first = company('4', OLDER);
   const second = company('5', NEWER);
   const plan = planFor([first, second], {
-    [first.id]: probeRecord(first.id, { outreachActivities: [{ id: uuid('7') }] }),
+    [first.id]: probeRecord(first.id, {
+      outreachActivities: [{ id: uuid('7') }],
+    }),
     [second.id]: probeRecord(second.id, { meetings: [{ id: uuid('8') }] }),
   });
 
@@ -974,7 +973,10 @@ test('two duplicates that both carry links are blocked for a human', () => {
   assert.deepEqual(plan.resolvedNames, []);
   assert.equal(plan.blockedGroupCount, 1);
   assert.equal(plan.groups[0]?.blocked, true);
-  assert.match(plan.groups[0]?.blockedReason ?? '', /2 of 2 duplicates carry linked records/);
+  assert.match(
+    plan.groups[0]?.blockedReason ?? '',
+    /2 of 2 duplicates carry linked records/,
+  );
   assert.deepEqual(
     plan.groups[0]?.records.map(({ decision }) => decision),
     ['blocked', 'blocked'],
