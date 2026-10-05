@@ -11,9 +11,12 @@ import {
   MEETING_BOOKING_CREATED_FUNCTION_UNIVERSAL_IDENTIFIER,
   MEETING_BOOKING_STATUS,
 } from 'src/modules/meeting/meeting-identifiers';
-import { reconcileMeetingBooking } from 'src/modules/meeting/services/reconcile-meeting-booking.service';
+import {
+  reconcileMeetingBooking,
+  type MeetingBookingEventSnapshot,
+} from 'src/modules/meeting/services/reconcile-meeting-booking.service';
 
-type MeetingBookingEventRecord = {
+type MeetingBookingEventRecord = MeetingBookingEventSnapshot & {
   id?: string | null;
   updatedAt?: string | null;
   updatedBy?: { workspaceMemberId?: string | null } | null;
@@ -48,7 +51,9 @@ export const handler = async (
     return await reconcileMeetingBooking({
       meetingId,
       eventOccurredAt: after.updatedAt,
-      actorWorkspaceMemberId: after.updatedBy?.workspaceMemberId ?? null,
+      eventSnapshot: after,
+      actorWorkspaceMemberId:
+        payload.workspaceMemberId ?? after.updatedBy?.workspaceMemberId ?? null,
       repository: new CoreMeetingBookingRepository(new CoreApiClient()),
     });
   } catch {

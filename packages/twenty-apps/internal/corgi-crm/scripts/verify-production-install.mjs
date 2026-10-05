@@ -532,7 +532,13 @@ const verifyMeetingApplicationContract = (application) => {
     name: 'on-meeting-booking-status-updated',
     settings: {
       eventName: 'meetingBooking.updated',
-      updatedFields: ['status'],
+      updatedFields: [
+        'status',
+        'name',
+        'companyId',
+        'wholesalerId',
+        'scheduledAt',
+      ],
     },
     label: 'Meeting status reconciliation',
   });

@@ -28,13 +28,19 @@ describe('meeting booking database triggers', () => {
     process.env.CORGI_CRM_WORKSPACE_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
   });
 
-  it('runs create reconciliation once and status reconciliation only on status changes', () => {
+  it('runs create reconciliation once and booking reconciliation on status or required input changes', () => {
     expect(createdFunction.config.databaseEventTriggerSettings).toEqual({
       eventName: 'meetingBooking.created',
     });
     expect(statusUpdatedFunction.config.databaseEventTriggerSettings).toEqual({
       eventName: 'meetingBooking.updated',
-      updatedFields: ['status'],
+      updatedFields: [
+        'status',
+        'name',
+        'companyId',
+        'wholesalerId',
+        'scheduledAt',
+      ],
     });
   });
 
@@ -104,6 +110,10 @@ describe('meeting booking database triggers', () => {
         meetingId: '11111111-1111-4111-8111-111111111111',
         eventOccurredAt: '2026-09-10T13:15:00.000Z',
         actorWorkspaceMemberId: '44444444-4444-4444-8444-444444444444',
+        eventSnapshot: expect.objectContaining({
+          status: 'BOOKED',
+          updatedAt: '2026-09-10T13:15:00.000Z',
+        }),
         repository: expect.anything(),
       });
     },
