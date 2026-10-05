@@ -1,3 +1,5 @@
+import { formatCorgiMoney } from '@/corgi-crm/utils/corgiHomePresentation';
+import { CorgiCompanyTypeBadge } from '@/corgi-crm/profiles/components/CorgiCompanyTypeBadge';
 import { CorgiCompanyOwners } from '@/corgi-crm/profiles/components/CorgiCompanyOwners';
 import { useState } from 'react';
 import { styled } from '@linaria/react';
@@ -139,10 +141,14 @@ const CorgiRelatedRecords = ({
                     )}
                     {record.amount?.currencyCode && (
                       <span>
-                        {new Intl.NumberFormat(undefined, {
-                          style: 'currency',
-                          currency: record.amount.currencyCode,
-                        }).format((record.amount.amountMicros ?? 0) / 1000000)}
+                        {formatCorgiMoney([
+                          {
+                            currencyCode: record.amount.currencyCode,
+                            amountMicros: String(
+                              record.amount.amountMicros ?? 0,
+                            ),
+                          },
+                        ])}
                       </span>
                     )}
                     {record.occurredAt && (
@@ -306,6 +312,15 @@ const ReadyCorgiProfileOverview = ({
           </button>
         </div>
       )}
+      {objectNameSingular === 'company' &&
+        canReadField('firmType') &&
+        typeof record.firmType === 'string' &&
+        record.firmType.trim() && (
+          <div>
+            <Trans>Company type:</Trans>{' '}
+            <CorgiCompanyTypeBadge value={record.firmType} />
+          </div>
+        )}
       {record.territory && (
         <p>
           <Trans>Territory:</Trans> {record.territory}
