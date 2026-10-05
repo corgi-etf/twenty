@@ -58,6 +58,9 @@ const makeService = (
           contact: 'person',
           externalWholesaler: 'wholesaler',
           wholesaler: 'wholesaler',
+          followUpTask: 'task',
+          task: 'task',
+          activity: 'outreachActivity',
         }).map(([relation, target]) => [
           relation,
           {
@@ -72,6 +75,15 @@ const makeService = (
       ),
     };
 
+    if (object === 'task' || object === 'outreachActivity') {
+      result.relationShapeByFieldName.followUps = {
+        fieldName: 'followUps',
+        fieldMetadataId: `${object}-followUps`,
+        targetFieldMetadataId: object === 'task' ? 'task' : 'activity',
+        targetObjectMetadataId: 'outreachFollowUp',
+        relationType: RelationType.ONE_TO_MANY,
+      };
+    }
     shapes.set(object, result);
 
     return result;
@@ -506,5 +518,99 @@ describe('CRM team aggregate query bounds', () => {
     expect(
       statements.filter((statement) => statement.text.includes('GROUP BY')),
     ).toHaveLength(5);
+  });
+});
+
+describe('CRM earlier follow-up history', () => {
+  it('returns a denied section without running source queries when native task attribution cannot be read', async () => {
+    const { service, queries, statements } = makeService();
+    const originalQuery = queries.query.getMockImplementation()!;
+
+    queries.query.mockImplementation((object, columns) => {
+      if (object === 'task')
+        throw new PermissionsException(
+          'Task assignee is restricted',
+          PermissionsExceptionCode.PERMISSION_DENIED,
+        );
+
+      return originalQuery(object, columns);
+    });
+    expect(await service.get({ section: 'legacyFollowUps' })).toEqual({
+      status: 'denied',
+      records: [],
+      totalCount: null,
+      nextCursor: null,
+    });
+    expect(statements).toHaveLength(0);
+  });
+
+  it('scopes earlier work only by native task assignee and excludes the exact modern task, keeping its original due time', async () => {
+    const { service, statements } = makeService((statement) => {
+      if (statement.text.includes('COUNT(')) return [{ count: 1 }];
+      return [
+        {
+          id: 'activity',
+          name: 'Earlier outreach',
+          companyId: 'company',
+          companyRecordId: 'company',
+          companyName: 'Original company',
+          taskId: 'task',
+          taskTitle: 'Earlier reminder',
+          taskStatus: 'TODO',
+          taskDueAt: '2026-12-01T15:00:00.000Z',
+          followUpDate: '2027-01-01',
+        },
+      ];
+    });
+    const result = await service.get({
+      section: 'legacyFollowUps',
+      workspaceMemberId: '10000000-0000-4000-8000-000000000001',
+      status: 'all',
+    });
+    expect(result).toMatchObject({
+      totalCount: 1,
+      records: [
+        {
+          activity: { id: 'activity' },
+          task: { id: 'task' },
+          company: { id: 'company' },
+          dueAt: '2026-12-01T15:00:00.000Z',
+          status: 'TODO',
+          schedulerStatus: 'unknown',
+        },
+      ],
+    });
+    expect(statements).toHaveLength(2);
+    for (const statement of statements) {
+      expect(statement.text).toContain('"legacyTask"."assigneeId"');
+      expect(statement.text).toContain('"modernTask"."taskId"');
+      expect(statement.text).toContain('"modernTask"."id" IS NULL');
+      expect(statement.text).not.toContain('"r"."wholesalerId"');
+      expect(statement.text).not.toContain('"r"."scheduledById"');
+      expect(statement.text).not.toContain('"legacyTask"."dueAt" <');
+      expect(statement.values).toContain('row-hidden-by-policy');
+    }
+  });
+
+  it('keeps missing-task work in a shared queue without assigning it to a guessed person', async () => {
+    const { service, statements } = makeService();
+    await service.get({
+      section: 'legacyFollowUps',
+      legacyScope: 'unassigned',
+      status: 'all',
+    });
+    expect(statements[0].text).toContain('"r"."followUpTaskId" IS NULL');
+    expect(statements[0].text).toContain('"legacyTask"."assigneeId" IS NULL');
+    expect(statements[0].text).toContain('"modernActivity"."id" IS NULL');
+    expect(statements[0].values).not.toContain(
+      '10000000-0000-4000-8000-000000000001',
+    );
+    await expect(
+      service.get({
+        section: 'legacyFollowUps',
+        legacyScope: 'unassigned',
+        workspaceMemberId: '10000000-0000-4000-8000-000000000001',
+      }),
+    ).rejects.toThrow();
   });
 });

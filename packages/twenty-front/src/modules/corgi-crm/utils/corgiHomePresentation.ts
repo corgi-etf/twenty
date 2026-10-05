@@ -95,6 +95,7 @@ export const getCorgiSectionLabel = (
     currentClients: t`Current clients`,
     followUps: t`Follow-ups`,
     followUpCompanies: t`Follow-up companies`,
+    legacyFollowUps: t`Legacy follow-ups`,
     agenda: t`Meeting agenda`,
     team: t`Team performance`,
     trends: t`Activity trends`,

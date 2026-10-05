@@ -59,6 +59,18 @@ export type CorgiFollowUpCompany = {
   nextReminderCursor: string | null;
 };
 
+export type CorgiLegacyFollowUp = {
+  activity: CorgiRecordLink;
+  task: CorgiRecordLink | null;
+  taskAvailability?: 'unlinked' | 'restricted';
+  company: CorgiRecordLink | null;
+  companyStatus?: 'unlinked' | 'restricted';
+  dueAt: string | null;
+  followUpDate: string | null;
+  status: 'TODO' | 'IN_PROGRESS' | 'DONE' | null;
+  schedulerStatus: 'unknown';
+};
+
 export type CorgiMeeting = CorgiBusinessRecord & {
   scheduledAt: string;
   company: CorgiRecordLink | null;
@@ -130,6 +142,7 @@ export type CorgiHomeQuery = {
     | CorgiMetricKey
     | 'followUps'
     | 'followUpCompanies'
+    | 'legacyFollowUps'
     | 'agenda'
     | 'team'
     | 'trends'
@@ -141,6 +154,7 @@ export type CorgiHomeQuery = {
   workspaceMemberId?: string;
   status?: 'open' | 'completed' | 'all';
   scope?: 'scheduled' | 'assigned';
+  legacyScope?: 'assigned' | 'unassigned';
   companyId?: string;
   allTime?: 'true';
   creditedWholesalerId?: string;

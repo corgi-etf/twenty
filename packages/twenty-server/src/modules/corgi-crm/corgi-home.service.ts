@@ -11,6 +11,7 @@ import {
   type CorgiHomeQuery,
   type CorgiHomeSummary,
   type CorgiMeeting,
+  type CorgiLegacyFollowUp,
   type CorgiMetric,
   type CorgiMetricKey,
   type CorgiMoney,
@@ -820,6 +821,134 @@ export class CorgiHomeService {
     });
   }
 
+  private async legacyFollowUps(
+    query: CorgiHomeQuery,
+  ): Promise<CorgiPage<CorgiLegacyFollowUp>> {
+    return this.safePage(async () => {
+      const memberId = query.workspaceMemberId ?? this.actorId();
+
+      if (query.legacyScope !== 'unassigned' && !memberId)
+        throw new CorgiHomeUnavailable(
+          'Choose a workspace member to see earlier assigned follow-ups',
+        );
+      const base = this.queries.query('outreachActivity', [
+        'id',
+        'name',
+        'companyId',
+        'followUpTaskId',
+        'followUpDate',
+      ]);
+
+      this.queries.query('task', [
+        'id',
+        'title',
+        'dueAt',
+        'status',
+        'assigneeId',
+      ]);
+      this.queries.query('outreachFollowUp', ['id', 'taskId', 'activityId']);
+      this.queries.query('company', ['id', 'name']);
+      base
+        .leftJoin('r.followUpTask', 'legacyTask')
+        .leftJoin(
+          'legacyTask.followUps',
+          'modernTask',
+          '"modernTask"."taskId" = "r"."followUpTaskId"',
+        )
+        .leftJoin(
+          'r.followUps',
+          'modernActivity',
+          '"r"."id" = "modernActivity"."activityId" AND "r"."followUpTaskId" IS NULL',
+        )
+        .leftJoin('r.company', 'legacyCompany')
+        .addSelect('legacyTask.id', 'taskId')
+        .addSelect('legacyTask.title', 'taskTitle')
+        .addSelect('legacyTask.dueAt', 'taskDueAt')
+        .addSelect('legacyTask.status', 'taskStatus')
+        .addSelect('legacyCompany.id', 'companyRecordId')
+        .addSelect('legacyCompany.name', 'companyName')
+        .andWhere(
+          '(r.followUpDate IS NOT NULL OR r.followUpTaskId IS NOT NULL)',
+        )
+        // A later occurrence on the same activity must not hide its older task.
+        // When no task exists, a modern activity occurrence already owns the request.
+        .andWhere('modernTask.id IS NULL')
+        .andWhere(
+          '(r.followUpTaskId IS NOT NULL OR modernActivity.id IS NULL)',
+        );
+      if (query.legacyScope === 'unassigned')
+        base.andWhere(
+          '(legacyTask.id IS NULL OR legacyTask.assigneeId IS NULL)',
+        );
+      else
+        base.andWhere('legacyTask.assigneeId = :legacyMemberId', {
+          legacyMemberId: memberId,
+        });
+      if (query.status === 'completed')
+        base.andWhere('legacyTask.status = :legacyStatus', {
+          legacyStatus: 'DONE',
+        });
+      else if (query.status !== 'all')
+        base.andWhere(
+          '(legacyTask.status IN (:...legacyStatuses) OR legacyTask.id IS NULL)',
+          { legacyStatuses: ['TODO', 'IN_PROGRESS'] },
+        );
+      this.filterCompany(base, 'outreachActivity', query);
+      if (query.search)
+        base.andWhere(
+          '(r.name ILIKE :legacySearch OR legacyTask.title ILIKE :legacySearch OR legacyCompany.name ILIKE :legacySearch)',
+          {
+            legacySearch: `%${query.search.replace(/[\\%_]/g, '\\$&')}%`,
+          },
+        );
+      const total = await base.clone().getCount();
+      const rows = await base
+        .orderBy(
+          "COALESCE(legacyTask.dueAt, r.followUpDate::timestamp AT TIME ZONE 'America/Chicago')",
+          'ASC',
+          'NULLS LAST',
+        )
+        .addOrderBy('r.id', 'ASC')
+        .offset(readCorgiOffset(query))
+        .limit(CORGI_PAGE_SIZE)
+        .getRawMany<Row>();
+      const records: CorgiLegacyFollowUp[] = rows.map((row) => ({
+        activity: link('outreachActivity', row),
+        task: row.taskId
+          ? link('task', { id: row.taskId, title: row.taskTitle })
+          : null,
+        ...(row.taskId
+          ? {}
+          : {
+              taskAvailability: row.followUpTaskId
+                ? ('restricted' as const)
+                : ('unlinked' as const),
+            }),
+        company: row.companyRecordId
+          ? link('company', { id: row.companyRecordId, name: row.companyName })
+          : null,
+        ...(row.companyRecordId
+          ? {}
+          : {
+              companyStatus: row.companyId
+                ? ('restricted' as const)
+                : ('unlinked' as const),
+            }),
+        dueAt: nullableText(row.taskDueAt),
+        followUpDate: nullableText(row.followUpDate),
+        status:
+          row.taskStatus === 'DONE' ||
+          row.taskStatus === 'IN_PROGRESS' ||
+          row.taskStatus === 'TODO'
+            ? row.taskStatus
+            : null,
+        schedulerStatus: 'unknown',
+      }));
+
+      return page(records, total, query);
+    });
+  }
+
   private async agenda(
     query: CorgiHomeQuery,
   ): Promise<CorgiPage<CorgiMeeting>> {
@@ -1387,6 +1516,8 @@ export class CorgiHomeService {
         return this.followUps(query);
       case 'followUpCompanies':
         return this.followUpCompanies(query);
+      case 'legacyFollowUps':
+        return this.legacyFollowUps(query);
       case 'agenda':
         return this.agenda(query);
       case 'team':

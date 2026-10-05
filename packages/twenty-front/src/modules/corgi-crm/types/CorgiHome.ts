@@ -9,6 +9,7 @@ export type {
   CorgiFollowUp,
   CorgiFollowUpCompany,
   CorgiMeeting,
+  CorgiLegacyFollowUp,
   CorgiTeamMember,
   CorgiTrendDay,
   CorgiAllocationAttribution,

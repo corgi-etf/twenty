@@ -15,6 +15,7 @@ const sections = new Set([
   'currentClients',
   'followUps',
   'followUpCompanies',
+  'legacyFollowUps',
   'agenda',
   'team',
   'trends',
@@ -47,6 +48,7 @@ export const parseCorgiHomeQuery = (
     'workspaceMemberId',
     'status',
     'scope',
+    'legacyScope',
     'companyId',
     'from',
     'to',
@@ -73,6 +75,15 @@ export const parseCorgiHomeQuery = (
     throw new BadRequestException('Invalid status');
   if (query.scope && !['scheduled', 'assigned'].includes(query.scope))
     throw new BadRequestException('Invalid scope');
+  if (
+    query.legacyScope &&
+    !['assigned', 'unassigned'].includes(query.legacyScope)
+  )
+    throw new BadRequestException('Invalid legacy follow-up scope');
+  if (query.legacyScope === 'unassigned' && query.workspaceMemberId)
+    throw new BadRequestException(
+      'Unassigned legacy follow-ups have no selected person',
+    );
   if (query.allTime && query.allTime !== 'true')
     throw new BadRequestException('Invalid allTime');
   for (const id of [

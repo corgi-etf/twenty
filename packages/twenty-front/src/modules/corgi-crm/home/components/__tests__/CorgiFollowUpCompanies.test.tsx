@@ -92,11 +92,16 @@ describe('Personal follow-up companies', () => {
         JSON.stringify({
           data: {
             status: 'available',
-            records: [
-              group(
-                new URL(request.url).searchParams.get('status') === 'completed',
-              ),
-            ],
+            records:
+              new URL(request.url).searchParams.get('section') ===
+              'legacyFollowUps'
+                ? []
+                : [
+                    group(
+                      new URL(request.url).searchParams.get('status') ===
+                        'completed',
+                    ),
+                  ],
             totalCount: 1,
             nextCursor: null,
           },

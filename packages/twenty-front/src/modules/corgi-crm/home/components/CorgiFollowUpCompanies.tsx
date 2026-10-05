@@ -1,3 +1,4 @@
+import { CorgiLegacyFollowUps } from '@/corgi-crm/home/components/CorgiLegacyFollowUps';
 import { CorgiFollowUpRow } from '@/corgi-crm/home/components/CorgiFollowUpRow';
 import {
   StyledCorgiActions,
@@ -51,52 +52,57 @@ export const CorgiFollowUpCompanies = ({
   const [scope, setScope] =
     useState<NonNullable<CorgiHomeQuery['scope']>>('scheduled');
   return (
-    <StyledCorgiPanel>
-      <StyledCorgiHeading>
-        {workspaceMemberId ? t`Follow-up companies` : t`My follow-up companies`}
-      </StyledCorgiHeading>
-      <StyledCorgiMuted>
-        <Trans>
-          Companies flagged by this person, including future reminders. History
-          remains after reassignment.
-        </Trans>
-      </StyledCorgiMuted>
-      <StyledCorgiActions>
-        <StyledCorgiInput
-          aria-label={t`Search follow-up companies`}
-          placeholder={t`Search companies`}
-          value={search}
-          onChange={(event) => setSearch(event.target.value)}
+    <StyledCorgiStack>
+      <StyledCorgiPanel>
+        <StyledCorgiHeading>
+          {workspaceMemberId
+            ? t`Follow-up companies`
+            : t`My follow-up companies`}
+        </StyledCorgiHeading>
+        <StyledCorgiMuted>
+          <Trans>
+            Companies flagged by this person, including future reminders.
+            History remains after reassignment.
+          </Trans>
+        </StyledCorgiMuted>
+        <StyledCorgiActions>
+          <StyledCorgiInput
+            aria-label={t`Search follow-up companies`}
+            placeholder={t`Search companies`}
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+          />
+          <StyledCorgiSelect
+            aria-label={t`Follow-up status`}
+            value={status}
+            onChange={(event) => setStatus(event.target.value as typeof status)}
+          >
+            <option value="open">{t`Open`}</option>
+            <option value="completed">{t`Completed`}</option>
+            <option value="all">{t`All history`}</option>
+          </StyledCorgiSelect>
+          <StyledCorgiSelect
+            aria-label={t`Follow-up attribution`}
+            value={scope}
+            onChange={(event) => setScope(event.target.value as typeof scope)}
+          >
+            <option value="scheduled">{t`Scheduled by this person`}</option>
+            <option value="assigned">{t`Assigned to this person`}</option>
+          </StyledCorgiSelect>
+        </StyledCorgiActions>
+        <CorgiFollowUpCompanyResults
+          key={`${workspaceMemberId}:${debouncedSearch}:${status}:${scope}`}
+          query={{
+            section: 'followUpCompanies',
+            workspaceMemberId,
+            search: debouncedSearch,
+            status,
+            scope,
+          }}
         />
-        <StyledCorgiSelect
-          aria-label={t`Follow-up status`}
-          value={status}
-          onChange={(event) => setStatus(event.target.value as typeof status)}
-        >
-          <option value="open">{t`Open`}</option>
-          <option value="completed">{t`Completed`}</option>
-          <option value="all">{t`All history`}</option>
-        </StyledCorgiSelect>
-        <StyledCorgiSelect
-          aria-label={t`Follow-up attribution`}
-          value={scope}
-          onChange={(event) => setScope(event.target.value as typeof scope)}
-        >
-          <option value="scheduled">{t`Scheduled by this person`}</option>
-          <option value="assigned">{t`Assigned to this person`}</option>
-        </StyledCorgiSelect>
-      </StyledCorgiActions>
-      <CorgiFollowUpCompanyResults
-        key={`${workspaceMemberId}:${debouncedSearch}:${status}:${scope}`}
-        query={{
-          section: 'followUpCompanies',
-          workspaceMemberId,
-          search: debouncedSearch,
-          status,
-          scope,
-        }}
-      />
-    </StyledCorgiPanel>
+      </StyledCorgiPanel>
+      <CorgiLegacyFollowUps workspaceMemberId={workspaceMemberId} />
+    </StyledCorgiStack>
   );
 };
 

@@ -1,6 +1,7 @@
 import { CorgiBusinessRecordRow } from '@/corgi-crm/home/components/CorgiBusinessRecordRow';
 import { CorgiClientCompanies } from '@/corgi-crm/home/components/CorgiClientCompanies';
 import { CorgiFollowUpCompanies } from '@/corgi-crm/home/components/CorgiFollowUpCompanies';
+import { CorgiLegacyFollowUps } from '@/corgi-crm/home/components/CorgiLegacyFollowUps';
 import { CorgiFollowUpRow } from '@/corgi-crm/home/components/CorgiFollowUpRow';
 import {
   StyledCorgiInput,
@@ -36,6 +37,13 @@ type DrilldownRecord =
 export const CorgiDrilldown = ({ query }: { query: CorgiHomeQuery }) => {
   const [search, setSearch] = useState('');
   const [debouncedSearch] = useDebounce(search, 250);
+  if (query.section === 'legacyFollowUps')
+    return (
+      <CorgiLegacyFollowUps
+        workspaceMemberId={query.workspaceMemberId}
+        initialScope={query.legacyScope}
+      />
+    );
   if (query.section === 'team')
     return <CorgiTeamPerformance workspaceMemberId={query.workspaceMemberId} />;
   if (query.section === 'followUpCompanies')
