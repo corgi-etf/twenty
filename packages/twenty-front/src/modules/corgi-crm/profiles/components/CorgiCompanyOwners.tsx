@@ -1,3 +1,5 @@
+import { useApolloCoreClient } from '@/object-metadata/hooks/useApolloCoreClient';
+import { useUpdateManyRecordsMutation } from '@/object-record/hooks/useUpdateManyRecordsMutation';
 import { useRef, useState } from 'react';
 import { Trans, useLingui } from '@lingui/react/macro';
 import { v5 } from 'uuid';
@@ -12,6 +14,10 @@ import { CorgiRelationPicker } from '@/corgi-crm/relations/components/CorgiRelat
 
 export const CorgiCompanyOwners = ({ companyId }: { companyId: string }) => {
   const { t } = useLingui();
+  const apolloCoreClient = useApolloCoreClient();
+  const { updateManyRecordsMutation } = useUpdateManyRecordsMutation({
+    objectNameSingular: 'companyOwnership',
+  });
   const { objectMetadataItem } = useObjectMetadataItem({
     objectNameSingular: 'companyOwnership',
   });
@@ -108,33 +114,67 @@ export const CorgiCompanyOwners = ({ companyId }: { companyId: string }) => {
           <Trans>Load more</Trans>
         </button>
       )}
-      {permission.canUpdateObjectRecords && !isSaving && (
-        <CorgiRelationPicker
-          objectNameSingular="wholesaler"
-          label={t`Link owner`}
-          onChange={(owner) => {
-            if (!owner) return;
-            const existing = records.find(
-              (ownership) =>
-                (ownership.wholesalerId ?? ownership.wholesaler?.id) ===
-                owner.id,
-            );
-            if (existing && !existing.deletedAt) return;
-            void updateLink(() =>
-              existing
-                ? restoreManyRecords({ idsToRestore: [existing.id] })
-                : createOneRecord({
+      {permission.canUpdateObjectRecords &&
+        !isSaving &&
+        !loading &&
+        !error &&
+        !hasNextPage && (
+          <CorgiRelationPicker
+            objectNameSingular="wholesaler"
+            label={t`Link owner`}
+            onChange={(owner) => {
+              if (!owner) return;
+              const existing = records.find(
+                (ownership) =>
+                  (ownership.wholesalerId ?? ownership.wholesaler?.id) ===
+                  owner.id,
+              );
+              if (existing && !existing.deletedAt) return;
+              void updateLink(async () => {
+                const isPrimary = !records.some(
+                  (ownership) => ownership.isPrimary && !ownership.deletedAt,
+                );
+                if (existing) {
+                  // Correct the tombstone before restoring it, so the old primary
+                  // flag cannot temporarily create two active primary owners.
+                  const response = await apolloCoreClient.mutate<{
+                    updateCompanyOwnerships: { id: string }[];
+                  }>({
+                    mutation: updateManyRecordsMutation,
+                    variables: {
+                      filter: {
+                        and: [
+                          { id: { eq: existing.id } },
+                          { companyId: { eq: companyId } },
+                          { deletedAt: { is: 'NOT_NULL' } },
+                          ...(existing.updatedAt
+                            ? [{ updatedAt: { eq: existing.updatedAt } }]
+                            : []),
+                        ],
+                      },
+                      data: { isPrimary },
+                    },
+                  });
+                  if (
+                    response.data?.updateCompanyOwnerships.length !== 1 ||
+                    response.data.updateCompanyOwnerships[0].id !== existing.id
+                  )
+                    throw new Error(
+                      t`This owner link changed. Refresh and try again.`,
+                    );
+                  await restoreManyRecords({ idsToRestore: [existing.id] });
+                } else {
+                  await createOneRecord({
                     id: v5(`${companyId}:${owner.id}`, v5.URL),
                     companyId,
                     wholesalerId: owner.id,
-                    isPrimary: !records.some(
-                      ({ isPrimary, deletedAt }) => isPrimary && !deletedAt,
-                    ),
-                  }),
-            );
-          }}
-        />
-      )}
+                    isPrimary,
+                  });
+                }
+              });
+            }}
+          />
+        )}
     </section>
   );
 };
