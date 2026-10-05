@@ -5,7 +5,6 @@ import { useFindOneRecord } from '@/object-record/hooks/useFindOneRecord';
 import { useObjectMetadataItems } from '@/object-metadata/hooks/useObjectMetadataItems';
 import { getCorgiActivityTitle } from '@/corgi-crm/forms/utils/getCorgiActivityTitle';
 
-import { QUICK_LOG_ACTIVITY_TYPES } from '@/activities/quick-log/constants/quickLogActivityTypes';
 import { type QuickLogActivityFormValues } from '@/activities/quick-log/types/QuickLogActivityFormValues';
 import { currentWorkspaceMemberState } from '@/auth/states/currentWorkspaceMemberState';
 import { useCreateOneRecord } from '@/object-record/hooks/useCreateOneRecord';
@@ -116,10 +115,6 @@ export const useQuickLogCompanyActivity = ({
       return false;
     }
 
-    const activityTypeOption =
-      QUICK_LOG_ACTIVITY_TYPES.find(
-        ({ value }) => value === values.activityType,
-      ) ?? QUICK_LOG_ACTIVITY_TYPES[0];
     const activityTypeField = activityMetadata?.fields.find(
       ({ name }) => name === 'activityType',
     );
@@ -146,8 +141,8 @@ export const useQuickLogCompanyActivity = ({
     try {
       await createOneRecord({
         name: getCorgiActivityTitle({
-          activityTypeLabel:
-            selectedOption?.label ?? t(activityTypeOption.label),
+          activityType: selectedOption?.value ?? values.activityType,
+          companyId,
           companyName: company?.name,
           occurredAt,
         }),

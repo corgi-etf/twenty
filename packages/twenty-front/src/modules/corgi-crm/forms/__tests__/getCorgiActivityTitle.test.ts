@@ -18,3 +18,24 @@ it('uses the reporting date at midnight and DST boundaries', () => {
     getCorgiActivityTitle({ occurredAt: '2026-11-01T07:30:00.000Z' }),
   ).toBe('Activity - Company not linked - 2026-11-01');
 });
+
+it('defers naming when a linked company has not loaded', () => {
+  expect(
+    getCorgiActivityTitle({
+      activityType: 'EMAIL',
+      companyId: 'company',
+      occurredAt: '2026-10-05T12:00:00Z',
+    }),
+  ).toBeUndefined();
+});
+
+it('uses the canonical stored activity type regardless of translated labels', () => {
+  expect(
+    getCorgiActivityTitle({
+      activityType: 'PHONE_CALL',
+      activityTypeLabel: 'Appel',
+      companyName: 'Acme',
+      occurredAt: '2026-10-05T12:00:00Z',
+    }),
+  ).toBe('Phone call - Acme - 2026-10-05');
+});

@@ -24,6 +24,7 @@ import { useObjectMetadataItems } from '@/object-metadata/hooks/useObjectMetadat
 import { useObjectMetadataItem } from '@/object-metadata/hooks/useObjectMetadataItem';
 import { useCreateOneRecord } from '@/object-record/hooks/useCreateOneRecord';
 import { useFindManyRecords } from '@/object-record/hooks/useFindManyRecords';
+import { useFindOneRecord } from '@/object-record/hooks/useFindOneRecord';
 import { useObjectPermissionsForObject } from '@/object-record/hooks/useObjectPermissionsForObject';
 import { type ObjectRecord } from '@/object-record/types/ObjectRecord';
 import { useAtomState } from '@/ui/utilities/state/jotai/hooks/useAtomState';
@@ -271,16 +272,12 @@ export const CorgiCreateRecordDialog = ({
           dialog.objectNameSingular,
         )
       ) {
-        const activityLabel =
-          objectMetadataItem.fields
-            .find(({ name }) => name === 'activityType')
-            ?.options?.find(({ value }) => value === input.activityType)
-            ?.label ?? 'Activity';
         input.name = getCorgiActivityTitle({
-          activityTypeLabel:
+          activityType:
             dialog.objectNameSingular === 'meetingBooking'
-              ? 'Meeting'
-              : activityLabel,
+              ? 'MEETING'
+              : input.activityType,
+          companyId: input.companyId,
           companyName: relations.company
             ? getCorgiRecordLabel(relations.company)
             : undefined,
@@ -363,6 +360,7 @@ export const CorgiCreateRecordDialog = ({
           <>
             <CorgiRelationPicker
               objectNameSingular="wholesaler"
+              openProfileInNewTab
               label={t`Owners`}
               onChange={(owner) => {
                 if (owner)
@@ -430,6 +428,12 @@ const CorgiCompanyCreateDialog = (props: CorgiCompanyCreateDialogProps) => {
   // Synchronous submission ledger: survives renders and prevents duplicate writes.
   // oxlint-disable-next-line twenty/no-state-useref
   const savedOwners = useRef(new Set<string>());
+  const { refetch: readOwnership } = useFindOneRecord({
+    objectNameSingular: 'companyOwnership',
+    objectRecordId: undefined,
+    skip: true,
+    recordGqlFields: { id: true, companyId: true, wholesalerId: true },
+  });
   return (
     <CorgiCreateRecordDialog
       dialog={props.dialog}
@@ -438,12 +442,26 @@ const CorgiCompanyCreateDialog = (props: CorgiCompanyCreateDialogProps) => {
       persistOwners={async (companyId, owners) => {
         for (const [index, wholesalerId] of owners.entries()) {
           if (savedOwners.current.has(wholesalerId)) continue;
-          await createOneRecord({
-            id: v5(`${companyId}:${wholesalerId}`, v5.URL),
-            companyId,
-            wholesalerId,
-            isPrimary: index === 0,
-          });
+          const id = v5(`${companyId}:${wholesalerId}`, v5.URL);
+          try {
+            await createOneRecord({
+              id,
+              companyId,
+              wholesalerId,
+              isPrimary: index === 0,
+            });
+          } catch (failure) {
+            // A lost response can hide a committed create. Verify its identity
+            // before retrying so a unique constraint does not strand the form.
+            const result = await readOwnership({ objectRecordId: id });
+            const existing = result.data?.companyOwnership;
+            if (
+              existing?.id !== id ||
+              existing.companyId !== companyId ||
+              existing.wholesalerId !== wholesalerId
+            )
+              throw failure;
+          }
           savedOwners.current.add(wholesalerId);
         }
       }}

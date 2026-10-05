@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
+import { Link } from 'react-router-dom';
+import { getLinkToShowPage } from '@/object-metadata/utils/getLinkToShowPage';
 import { Trans, useLingui } from '@lingui/react/macro';
 import { useObjectMetadataItem } from '@/object-metadata/hooks/useObjectMetadataItem';
 import { useFindManyRecords } from '@/object-record/hooks/useFindManyRecords';
@@ -16,6 +18,7 @@ type CorgiRelationPickerProps = {
   label: string;
   value?: string;
   companyId?: string;
+  openProfileInNewTab?: boolean;
   onChange: (record: ObjectRecord | undefined) => void;
 };
 
@@ -24,6 +27,7 @@ export const CorgiRelationPicker = ({
   label,
   value,
   companyId,
+  openProfileInNewTab = false,
   onChange,
 }: CorgiRelationPickerProps) => {
   const { t } = useLingui();
@@ -84,10 +88,21 @@ export const CorgiRelationPicker = ({
       {value && (
         <div>
           {selectedRecord ? (
-            <RecordChip
-              objectNameSingular={objectNameSingular}
-              record={selectedRecord}
-            />
+            openProfileInNewTab ? (
+              <Link
+                to={getLinkToShowPage(objectNameSingular, selectedRecord)}
+                target="_blank"
+                rel="noopener noreferrer"
+                title={t`Open profile in a new tab`}
+              >
+                {getCorgiRecordLabel(selectedRecord)}
+              </Link>
+            ) : (
+              <RecordChip
+                objectNameSingular={objectNameSingular}
+                record={selectedRecord}
+              />
+            )
           ) : (
             <span>
               <Trans>Record unavailable</Trans>

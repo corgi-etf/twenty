@@ -41,6 +41,7 @@ export const CorgiDraftField = ({
         label={field.label}
         value={typeof value === 'string' ? value : undefined}
         companyId={companyId}
+        openProfileInNewTab
         onChange={(record) => onChange(record?.id ?? null, record)}
       />
     );
