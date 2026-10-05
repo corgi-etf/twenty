@@ -361,6 +361,7 @@ export const CorgiCreateRecordDialog = ({
             <CorgiRelationPicker
               objectNameSingular="wholesaler"
               openProfileInNewTab
+              keepOpenOnSelect
               label={t`Owners`}
               onChange={(owner) => {
                 if (owner)

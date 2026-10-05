@@ -82,7 +82,8 @@ export const CorgiCompanyOwners = ({ companyId }: { companyId: string }) => {
             <li key={ownership.id}>
               {ownership.wholesaler ? (
                 <RecordChip
-                  objectNameSingular="wholesaler"
+          objectNameSingular="wholesaler"
+          keepOpenOnSelect
                   record={ownership.wholesaler}
                 />
               ) : (

@@ -19,6 +19,7 @@ type CorgiRelationPickerProps = {
   value?: string;
   companyId?: string;
   openProfileInNewTab?: boolean;
+  keepOpenOnSelect?: boolean;
   onChange: (record: ObjectRecord | undefined) => void;
 };
 
@@ -28,6 +29,7 @@ export const CorgiRelationPicker = ({
   value,
   companyId,
   openProfileInNewTab = false,
+  keepOpenOnSelect = false,
   onChange,
 }: CorgiRelationPickerProps) => {
   const { t } = useLingui();
@@ -79,7 +81,7 @@ export const CorgiRelationPicker = ({
 
   const select = (record: ObjectRecord) => {
     onChange(record);
-    setIsOpen(false);
+    setIsOpen(keepOpenOnSelect);
     setSearch('');
   };
   return (
