@@ -1,4 +1,4 @@
-import { defineField, FieldType, MetadataWritability } from 'twenty-sdk/define';
+import { defineField, FieldType } from 'twenty-sdk/define';
 import * as ids from 'src/modules/experience/experience-identifiers';
 import { MEETING_BOOKING_OBJECT_UNIVERSAL_IDENTIFIER } from 'src/modules/meeting/meeting-identifiers';
 export default defineField({

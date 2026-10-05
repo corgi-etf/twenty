@@ -1,7 +1,6 @@
 import {
   defineField,
   FieldType,
-  OnDeleteAction,
   RelationType,
   STANDARD_OBJECT_UNIVERSAL_IDENTIFIERS,
 } from 'twenty-sdk/define';

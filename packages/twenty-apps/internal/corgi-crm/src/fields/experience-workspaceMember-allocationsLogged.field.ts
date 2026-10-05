@@ -5,19 +5,20 @@ import {
   STANDARD_OBJECT_UNIVERSAL_IDENTIFIERS,
 } from 'twenty-sdk/define';
 import * as ids from 'src/modules/experience/experience-identifiers';
+import { COMPANY_ALLOCATION_OBJECT_UNIVERSAL_IDENTIFIER } from 'src/modules/allocation/allocation-identifiers';
 
 export default defineField({
-  universalIdentifier: ids.WORKSPACEMEMBER_FOLLOWUPSASSIGNED_ID,
+  universalIdentifier: ids.WORKSPACEMEMBER_ALLOCATIONSLOGGED_ID,
   objectUniversalIdentifier:
     STANDARD_OBJECT_UNIVERSAL_IDENTIFIERS.workspaceMember.universalIdentifier,
   type: FieldType.RELATION,
-  name: 'followUpsAssigned',
-  label: 'Follow ups assigned',
+  name: 'allocationsLogged',
+  label: 'Allocations logged',
   icon: 'IconLink',
   isNullable: true,
   relationTargetObjectMetadataUniversalIdentifier:
-    ids.OUTREACHFOLLOWUP_OBJECT_ID,
+    COMPANY_ALLOCATION_OBJECT_UNIVERSAL_IDENTIFIER,
   relationTargetFieldMetadataUniversalIdentifier:
-    ids.OUTREACHFOLLOWUP_ASSIGNEE_ID,
+    ids.COMPANYALLOCATION_LOGGEDBY_ID,
   universalSettings: { relationType: RelationType.ONE_TO_MANY },
 });

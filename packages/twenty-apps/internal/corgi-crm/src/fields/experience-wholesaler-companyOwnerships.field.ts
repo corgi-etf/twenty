@@ -1,10 +1,4 @@
-import {
-  defineField,
-  FieldType,
-  OnDeleteAction,
-  RelationType,
-  STANDARD_OBJECT_UNIVERSAL_IDENTIFIERS,
-} from 'twenty-sdk/define';
+import { defineField, FieldType, RelationType } from 'twenty-sdk/define';
 import * as ids from 'src/modules/experience/experience-identifiers';
 import { CORGI_CRM_WHOLESALER_OBJECT_UNIVERSAL_IDENTIFIER } from 'src/role-object-identifiers';
 
@@ -20,5 +14,8 @@ export default defineField({
     ids.COMPANYOWNERSHIP_OBJECT_ID,
   relationTargetFieldMetadataUniversalIdentifier:
     ids.COMPANYOWNERSHIP_WHOLESALER_ID,
-  universalSettings: { relationType: RelationType.ONE_TO_MANY },
+  universalSettings: {
+    relationType: RelationType.ONE_TO_MANY,
+    junctionTargetFieldUniversalIdentifier: ids.COMPANYOWNERSHIP_COMPANY_ID,
+  },
 });

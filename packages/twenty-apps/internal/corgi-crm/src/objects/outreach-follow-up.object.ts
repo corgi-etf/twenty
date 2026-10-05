@@ -1,11 +1,15 @@
-import { defineObject, FieldType, MetadataWritability } from 'twenty-sdk/define';
+import {
+  defineObject,
+  FieldType,
+  MetadataWritability,
+} from 'twenty-sdk/define';
 import * as ids from 'src/modules/experience/experience-identifiers';
 
 export default defineObject({
   universalIdentifier: ids.OUTREACHFOLLOWUP_OBJECT_ID,
   nameSingular: 'outreachFollowUp',
   namePlural: 'outreachFollowUps',
-  labelSingular: 'Follow-up check',
+  labelSingular: 'Follow-up',
   labelPlural: 'Follow-ups',
   icon: 'IconCalendarClock',
   isSearchable: true,
