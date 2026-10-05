@@ -435,6 +435,7 @@ jobs:
           [[ "${CORGI_CRM_EXPECTED_WORKSPACE_ID:-}" =~ ${uuid_pattern} ]]
           [[ "${CORGI_CRM_WHOLESALER_OBJECT_UNIVERSAL_IDENTIFIER:-}" =~ ${uuid_pattern} ]]
           [[ "${CORGI_CRM_OUTREACH_ACTIVITY_OBJECT_UNIVERSAL_IDENTIFIER:-}" =~ ${uuid_pattern} ]]
+          [[ "${CORGI_CRM_LEAD_ASSIGNMENT_OBJECT_UNIVERSAL_IDENTIFIER:-}" =~ ${uuid_pattern} ]]
 
       - name: Capture the Telegram baseline before any change
         id: telegram_baseline

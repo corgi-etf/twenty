@@ -21,13 +21,22 @@ import { AuthenticatedRequest } from 'src/engine/api/rest/types/authenticated-re
 import { CustomPermissionGuard } from 'src/engine/guards/custom-permission.guard';
 import { JwtAuthGuard } from 'src/engine/guards/jwt-auth.guard';
 import { WorkspaceAuthGuard } from 'src/engine/guards/workspace-auth.guard';
+import { CorgiHomeService } from 'src/modules/corgi-crm/corgi-home.service';
 
 @Controller(ApiPath.Rest)
 @UseGuards(JwtAuthGuard, WorkspaceAuthGuard, CustomPermissionGuard)
 @UseFilters(RestApiExceptionFilter)
 export class RestApiCoreController {
   private readonly logger = new Logger(RestApiCoreController.name);
-  constructor(private readonly restApiCoreService: RestApiCoreService) {}
+  constructor(
+    private readonly restApiCoreService: RestApiCoreService,
+    private readonly corgiHomeService: CorgiHomeService,
+  ) {}
+
+  @Get('corgi-crm/home')
+  async getCorgiHome(@Req() request: AuthenticatedRequest) {
+    return { data: await this.corgiHomeService.get(request.query) };
+  }
 
   @Post('batch/*path')
   async handleApiPostBatch(
