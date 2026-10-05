@@ -5,7 +5,7 @@ import { useQuery } from '@apollo/client/react';
 
 const CORGI_HOME_QUERY = gql`
   query CorgiHome($path: String!) {
-    corgiHome @rest(type: "CorgiHomeResponse", path: $path) {
+    corgiHome(path: $path) @rest(type: "CorgiHomeResponse", path: $path) {
       data
     }
   }

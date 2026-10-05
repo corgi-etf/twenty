@@ -2,7 +2,7 @@ import { useCorgiHomeEnabled } from '@/corgi-crm/home/hooks/useCorgiHomeEnabled'
 import { useCorgiHomeResource } from '@/corgi-crm/home/hooks/useCorgiHomeResource';
 import { ApolloClient, InMemoryCache } from '@apollo/client';
 import { ApolloProvider } from '@apollo/client/react';
-import { renderHook, waitFor } from '@testing-library/react';
+import { act, renderHook, waitFor } from '@testing-library/react';
 import { RestLink } from 'apollo-link-rest';
 import fetchMock from 'jest-fetch-mock';
 import { type ReactNode } from 'react';
@@ -50,6 +50,39 @@ describe('Corgi authenticated REST resource', () => {
       expect.objectContaining({ credentials: 'include' }),
     );
   });
+  it('isolates simultaneous sections and their refetches in the Apollo cache', async () => {
+    fetchMock.mockResponse((request) =>
+      Promise.resolve(
+        JSON.stringify({
+          data:
+            new URL(request.url).searchParams.get('section') ===
+            'currentClients'
+              ? { records: ['client'], totalCount: 1 }
+              : { enabled: true, today: { date: '2026-10-05' } },
+        }),
+      ),
+    );
+    const { result } = renderHook(
+      () => ({
+        summary: useCorgiHomeResource<{ enabled: boolean }>(),
+        clients: useCorgiHomeResource<{ records: string[] }>({
+          section: 'currentClients',
+        }),
+      }),
+      { wrapper: Wrapper },
+    );
+    await waitFor(() => {
+      expect(result.current.summary.data).toMatchObject({ enabled: true });
+      expect(result.current.clients.data).toMatchObject({
+        records: ['client'],
+      });
+    });
+    await act(async () => {
+      await result.current.clients.refetch();
+    });
+    expect(result.current.summary.data).toMatchObject({ enabled: true });
+  });
+
   it('makes no CRM request in a workspace without the installed schema', () => {
     jest.mocked(useCorgiHomeEnabled).mockReturnValue(false);
     renderHook(() => useCorgiHomeResource(), { wrapper: Wrapper });
