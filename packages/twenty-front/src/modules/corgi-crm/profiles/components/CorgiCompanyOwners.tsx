@@ -82,8 +82,7 @@ export const CorgiCompanyOwners = ({ companyId }: { companyId: string }) => {
             <li key={ownership.id}>
               {ownership.wholesaler ? (
                 <RecordChip
-          objectNameSingular="wholesaler"
-          keepOpenOnSelect
+                  objectNameSingular="wholesaler"
                   record={ownership.wholesaler}
                 />
               ) : (
@@ -122,6 +121,7 @@ export const CorgiCompanyOwners = ({ companyId }: { companyId: string }) => {
         !hasNextPage && (
           <CorgiRelationPicker
             objectNameSingular="wholesaler"
+            keepOpenOnSelect
             label={t`Link owner`}
             onChange={(owner) => {
               if (!owner) return;
