@@ -1,3 +1,4 @@
+import { CorgiProfileOverview } from '@/corgi-crm/profiles/components/CorgiProfileOverview';
 import { useParams } from 'react-router-dom';
 import { FeatureFlagKey } from 'twenty-shared/types';
 import { isDefined } from 'twenty-shared/utils';
@@ -79,6 +80,12 @@ const RecordShowPageContent = ({
         recordId: objectRecordId,
       }}
     >
+      {record && !isInSidePanel && (
+        <CorgiProfileOverview
+          objectNameSingular={objectNameSingular}
+          record={record}
+        />
+      )}
       <PageLayoutRecordPageRenderer
         targetRecordIdentifier={{
           id: objectRecordId,

@@ -1,3 +1,5 @@
+import { CorgiWorkspaceMemberChip } from '@/corgi-crm/relations/components/CorgiWorkspaceMemberChip';
+import { useObjectMetadataItems } from '@/object-metadata/hooks/useObjectMetadataItems';
 import { useOpenRecordInSidePanel } from '@/side-panel/hooks/useOpenRecordInSidePanel';
 import { getLinkToShowPage } from '@/object-metadata/utils/getLinkToShowPage';
 import { useRecordChipData } from '@/object-record/hooks/useRecordChipData';
@@ -48,6 +50,7 @@ export const RecordChip = ({
   triggerEvent = 'MOUSE_DOWN',
   onClick,
 }: RecordChipProps) => {
+  const { objectMetadataItems } = useObjectMetadataItems();
   const { recordChipData } = useRecordChipData({
     objectNameSingular,
     record,
@@ -68,7 +71,32 @@ export const RecordChip = ({
         }
       : undefined;
 
-  // TODO temporary until we create a record show page for Workspaces members
+  if (
+    !forceDisableClick &&
+    objectNameSingular === CoreObjectNameSingular.WorkspaceMember &&
+    objectMetadataItems.some(
+      ({ nameSingular, fields }) =>
+        nameSingular === 'wholesaler' &&
+        fields.some(({ name }) => name === 'workspaceMember'),
+    )
+  ) {
+    return (
+      <CorgiWorkspaceMemberChip
+        objectNameSingular={objectNameSingular}
+        record={record}
+        className={className}
+        variant={variant}
+        isBold={isBold}
+        maxWidth={maxWidth}
+        to={to}
+        size={size}
+        isLabelHidden={isLabelHidden}
+        isIconHidden={isIconHidden}
+        triggerEvent={triggerEvent}
+        onClick={onClick}
+      />
+    );
+  }
 
   if (
     forceDisableClick ||

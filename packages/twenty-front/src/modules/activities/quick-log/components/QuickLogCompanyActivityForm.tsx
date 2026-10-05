@@ -127,7 +127,7 @@ export const QuickLogCompanyActivityForm = ({
           type="submit"
           variant="primary"
           accent="blue"
-          title={t`Log follow-up`}
+          title={t`Log activity`}
           disabled={isSubmitDisabled}
           isLoading={quickLog.isSubmitting}
           fullWidth

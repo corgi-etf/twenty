@@ -1,3 +1,5 @@
+import { useCorgiCreateRecordDialog } from '@/corgi-crm/forms/hooks/useCorgiCreateRecordDialog';
+import { CORGI_CREATE_FIELDS } from '@/corgi-crm/forms/utils/corgiRecordDraft';
 import { type EnrichedObjectMetadataItem } from '@/object-metadata/types/EnrichedObjectMetadataItem';
 import { getLabelIdentifierFieldMetadataItem } from '@/object-metadata/utils/getLabelIdentifierFieldMetadataItem';
 import { useBuildRecordInputFromRLSPredicates } from '@/object-record/hooks/useBuildRecordInputFromRLSPredicates';
@@ -39,6 +41,7 @@ export const useCreateNewIndexRecord = ({
   );
 
   const store = useStore();
+  const { openCreateRecord, isCorgiWorkspace } = useCorgiCreateRecordDialog();
   const recordIndexRecordIdsByGroupCallbackState =
     useAtomComponentFamilyStateCallbackState(
       recordIndexRecordIdsByGroupComponentFamilyState,
@@ -87,6 +90,22 @@ export const useCreateNewIndexRecord = ({
         ...recordInputFromFilters,
         ...recordInput,
       };
+
+      if (
+        isCorgiWorkspace &&
+        CORGI_CREATE_FIELDS[objectMetadataItem.nameSingular]
+      ) {
+        return openCreateRecord({
+          objectNameSingular: objectMetadataItem.nameSingular,
+          initialValues: mergedRecordInput,
+          onCreated: (record) => {
+            navigate(AppPath.RecordShowPage, {
+              objectNameSingular: objectMetadataItem.nameSingular,
+              objectRecordId: record.id,
+            });
+          },
+        });
+      }
 
       const createdRecord = await createOneRecord({
         id: recordId,
@@ -165,6 +184,8 @@ export const useCreateNewIndexRecord = ({
     },
     [
       store,
+      openCreateRecord,
+      isCorgiWorkspace,
       buildRecordInputFromRLSPredicates,
       buildRecordInputFromFilters,
       createOneRecord,

@@ -27,6 +27,33 @@ jest.mock('@/object-record/hooks/useFindManyRecords', () => ({
     mockUseFindManyRecords(args),
 }));
 
+jest.mock('@/object-record/hooks/useFindOneRecord', () => ({
+  useFindOneRecord: () => ({
+    record: { id: 'company-1', name: 'Example Advisory' },
+    loading: false,
+  }),
+}));
+jest.mock('@/object-metadata/hooks/useObjectMetadataItems', () => ({
+  useObjectMetadataItems: () => ({
+    objectMetadataItems: [
+      {
+        nameSingular: 'outreachActivity',
+        fields: [
+          {
+            name: 'activityType',
+            type: 'SELECT',
+            options: [
+              { value: 'PHONE_CALL', label: 'Phone call' },
+              { value: 'EMAIL', label: 'Email' },
+            ],
+          },
+          { name: 'followUpRequestKey', type: 'TEXT' },
+        ],
+      },
+    ],
+  }),
+}));
+
 jest.mock('@/object-record/hooks/useCreateOneRecord', () => ({
   useCreateOneRecord: () => ({ createOneRecord: mockCreateOneRecord }),
 }));
@@ -100,18 +127,19 @@ describe('useQuickLogCompanyActivity', () => {
     });
 
     expect(mockCreateOneRecord).toHaveBeenCalledWith({
-      name: 'Phone call · Left voicemail',
+      name: 'Phone call - Example Advisory - 2026-09-09',
       companyId: 'company-1',
       wholesalerId: 'wholesaler-1',
       contactId: 'person-1',
-      activityType: 'phone_call',
+      activityType: 'PHONE_CALL',
       outcome: 'left_voicemail',
       occurredAt: '2026-09-09T15:30:00.000Z',
       notes: 'Call again next week.',
       followUpDate: '2026-09-16',
+      followUpRequestKey: expect.any(String),
     });
     expect(mockEnqueueSuccessSnackBar).toHaveBeenCalledWith({
-      message: 'Follow-up logged.',
+      message: 'Activity logged.',
     });
   });
 

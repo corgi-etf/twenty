@@ -128,7 +128,7 @@ describe('QuickLogCompanyActivityAction', () => {
 
     fireEvent.click(
       screen.getByRole('button', {
-        name: 'Log a follow-up for this company',
+        name: 'Log an activity for this company',
       }),
     );
 
