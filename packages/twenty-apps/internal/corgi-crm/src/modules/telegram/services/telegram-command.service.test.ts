@@ -89,13 +89,17 @@ describe('processTelegramCommand', () => {
     dependencies.repository.listActivities = vi
       .fn()
       .mockRejectedValue(new Error('must not requery'));
-    dependencies.meetingRepository.listMeetingBookings.mockRejectedValue(new Error('must not requery bookings'));
+    dependencies.meetingRepository.listMeetingBookings.mockRejectedValue(
+      new Error('must not requery bookings'),
+    );
     await expect(
       processTelegramCommand(update('/daily'), dependencies),
     ).resolves.toMatchObject({ status: 'report' });
     expect(dependencies.send.mock.calls[1]?.[1]).toBe(original);
     expect(dependencies.repository.listActivities).not.toHaveBeenCalled();
-    expect(dependencies.meetingRepository.listMeetingBookings).toHaveBeenCalledOnce();
+    expect(
+      dependencies.meetingRepository.listMeetingBookings,
+    ).toHaveBeenCalledOnce();
   });
 
   it.each([
@@ -129,13 +133,17 @@ describe('processTelegramCommand', () => {
           occurredAt: '2026-09-09T15:30:00.000Z',
         },
       ]);
-      dependencies.meetingRepository.listMeetingBookings.mockResolvedValue([{
-        id: 'booking-1',
-        bookedAt: '2026-09-09T15:30:00.000Z',
-        scheduledAt: '2026-10-01T15:00:00.000Z',
-        wholesalerId: 'owner-booker',
-        wholesalerName: 'Casey',
-      }]);
+      dependencies.meetingRepository.listMeetingBookings.mockResolvedValue([
+        {
+          id: 'booking-1',
+          bookedAt: '2026-09-09T15:30:00.000Z',
+          scheduledAt: '2026-10-01T15:00:00.000Z',
+          bookedByWholesalerId: 'owner-booker',
+          bookedByName: 'Casey',
+          wholesalerId: 'owner-booker',
+          wholesalerName: 'Casey',
+        },
+      ]);
 
       await expect(
         processTelegramCommand(update(command!), dependencies),
@@ -144,7 +152,9 @@ describe('processTelegramCommand', () => {
         start,
         end: '2026-09-10T10:00:00.000Z',
       });
-      expect(dependencies.meetingRepository.listMeetingBookings).toHaveBeenCalledWith({
+      expect(
+        dependencies.meetingRepository.listMeetingBookings,
+      ).toHaveBeenCalledWith({
         start,
         end: '2026-09-10T10:00:00.000Z',
       });
@@ -186,7 +196,9 @@ describe('processTelegramCommand', () => {
         processTelegramCommand(update(command), dependencies),
       ).resolves.toEqual({ status: 'not_linked' });
       expect(dependencies.repository.listActivities).not.toHaveBeenCalled();
-      expect(dependencies.meetingRepository.listMeetingBookings).not.toHaveBeenCalled();
+      expect(
+        dependencies.meetingRepository.listMeetingBookings,
+      ).not.toHaveBeenCalled();
     },
   );
 
@@ -208,19 +220,23 @@ describe('processTelegramCommand', () => {
       expect(
         dependencies.meetingRepository.listMeetingBookings,
       ).toHaveBeenCalledOnce();
-      expect(
-        dependencies.identity.findWorkspaceMember,
-      ).not.toHaveBeenCalled();
+      expect(dependencies.identity.findWorkspaceMember).not.toHaveBeenCalled();
       expect(dependencies.identity.findWholesalers).not.toHaveBeenCalled();
     },
   );
 
   it('does not send or persist a misleading zero when the meeting report read fails', async () => {
     const dependencies = base();
-    dependencies.meetingRepository.listMeetingBookings.mockRejectedValue(new Error('Meeting read unavailable'));
-    await expect(processTelegramCommand(update('/daily'), dependencies)).rejects.toThrow('Meeting read unavailable');
+    dependencies.meetingRepository.listMeetingBookings.mockRejectedValue(
+      new Error('Meeting read unavailable'),
+    );
+    await expect(
+      processTelegramCommand(update('/daily'), dependencies),
+    ).rejects.toThrow('Meeting read unavailable');
     expect(dependencies.send).not.toHaveBeenCalled();
-    expect(dependencies.values.has('telegram:report:interactive:42:/daily')).toBe(false);
+    expect(
+      dependencies.values.has('telegram:report:interactive:42:/daily'),
+    ).toBe(false);
   });
 
   // The regression that took the production bot down in v1.2.10: an unreadable
@@ -287,9 +303,9 @@ describe('processTelegramCommand', () => {
     const message = dependencies.send.mock.calls
       .map(([, text]) => text)
       .join('\n');
-    expect(dependencies.wholesalerRoleReader.findRolesByIds).toHaveBeenCalledWith([
-      '11111111-1111-4111-8111-111111111111',
-    ]);
+    expect(
+      dependencies.wholesalerRoleReader.findRolesByIds,
+    ).toHaveBeenCalledWith(['11111111-1111-4111-8111-111111111111']);
     expect(message).toContain('ARR attributed per EW');
     expect(message).toContain('\u{1f947} Jordan: $0');
     expect(message).toContain('Meetings taken by EW');
@@ -313,6 +329,8 @@ describe('processTelegramCommand', () => {
       Array.from({ length: 400 }, (_, index) => ({
         id: `booking-${index}`,
         bookedAt: '2026-09-09T15:30:00.000Z',
+        bookedByWholesalerId: `booker-${index}`,
+        bookedByName: `Booker ${String(index).padStart(3, '0')}`,
         wholesalerId: `booker-${index}`,
         wholesalerName: `Booker ${String(index).padStart(3, '0')}`,
       })),

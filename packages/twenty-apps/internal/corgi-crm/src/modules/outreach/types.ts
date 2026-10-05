@@ -21,6 +21,7 @@ export type OutreachActivityWrite = {
   notes?: string;
   occurredAt: string;
   followUpDate?: string;
+  followUpRequestedById?: string;
 };
 
 export type LogOutreachInput = {

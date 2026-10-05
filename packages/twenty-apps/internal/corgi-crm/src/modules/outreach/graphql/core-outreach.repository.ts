@@ -32,6 +32,7 @@ const FIND_OUTREACH_ACTIVITY_DOCUMENT = `
           notes
           occurredAt
           followUpDate
+          followUpRequestedById
         }
       }
       pageInfo {
@@ -158,9 +159,7 @@ type UpdateOutreachActivitiesResponse = {
 };
 
 type OutreachActivityOwnerFilter = {
-  and: Array<
-    { id: { eq: string } } | { wholesalerId: { is: 'NULL' } }
-  >;
+  and: Array<{ id: { eq: string } } | { wholesalerId: { is: 'NULL' } }>;
 };
 
 // Rows whose occurredAt is NULL fail every gte/lt comparison, so a bare
@@ -172,7 +171,11 @@ type ActivityDateBound = { gte: string } | { lt: string };
 
 type ActivityFilter = {
   and: Array<
-    | { or: Array<{ occurredAt: ActivityDateBound } | { createdAt: ActivityDateBound }> }
+    | {
+        or: Array<
+          { occurredAt: ActivityDateBound } | { createdAt: ActivityDateBound }
+        >;
+      }
     | { wholesalerId: { eq: string } }
   >;
 };
@@ -231,7 +234,9 @@ const parseActivityOwner = (value: unknown): OutreachActivityOwner => {
 
 const fullName = (
   name:
-    { firstName?: string | null; lastName?: string | null } | null | undefined,
+    | { firstName?: string | null; lastName?: string | null }
+    | null
+    | undefined,
 ) =>
   [name?.firstName, name?.lastName]
     .map((part) => part?.trim())
@@ -245,6 +250,19 @@ export class CoreOutreachRepository
     private readonly client: CoreApiClient,
     private readonly rawTransport: RawCoreGraphqlTransport,
   ) {}
+
+  public async getCompany(id: string): Promise<NamedRecord | null> {
+    const result = await this.client.query({
+      companies: {
+        __args: { filter: { id: { eq: id } }, first: 1 },
+        edges: { node: { id: true, name: true } },
+      },
+    });
+    const node = result.companies?.edges?.[0]?.node as
+      | { id?: string; name?: string }
+      | undefined;
+    return node?.id === id && node.name ? { id, name: node.name } : null;
+  }
 
   public async findCompanies(query: string): Promise<NamedRecord[]> {
     const result = await this.client.query({

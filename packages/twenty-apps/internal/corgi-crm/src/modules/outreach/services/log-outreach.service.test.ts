@@ -1,8 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import {
-  logOutreach,
-} from 'src/modules/outreach/services/log-outreach.service';
+import { logOutreach } from 'src/modules/outreach/services/log-outreach.service';
 import { type OutreachRepository } from 'src/modules/outreach/types';
 
 const repository = (): OutreachRepository => ({
@@ -36,7 +34,7 @@ describe('logOutreach', () => {
     });
     expect(repo.createActivity).toHaveBeenCalledWith({
       id: 'activity-from-update-42',
-      name: 'Phone call · Connected',
+      name: 'Phone call - Acme - 2026-09-09',
       companyId: 'company-1',
       wholesalerId: 'wholesaler-1',
       activityType: 'PHONE_CALL',
@@ -46,6 +44,28 @@ describe('logOutreach', () => {
     });
   });
 
+  it('persists the authenticated Telegram scheduler separately from activity ownership', async () => {
+    const repo = repository();
+    await logOutreach({
+      input: {
+        activityId: 'activity-1',
+        activityType: 'PHONE_CALL',
+        companyQuery: 'Acme',
+        outcome: 'connected',
+        followUpDate: '2026-10-06',
+      },
+      wholesalerId: 'owner-1',
+      schedulerWorkspaceMemberId: 'member-scheduler',
+      now: new Date('2026-10-05T12:00:00Z'),
+      repository: repo,
+    });
+    expect(repo.createActivity).toHaveBeenCalledWith(
+      expect.objectContaining({
+        followUpRequestedById: 'member-scheduler',
+        wholesalerId: 'owner-1',
+      }),
+    );
+  });
   it('fails closed without writing when a company lookup is ambiguous', async () => {
     const repo = repository();
     vi.mocked(repo.findCompanies).mockResolvedValue([

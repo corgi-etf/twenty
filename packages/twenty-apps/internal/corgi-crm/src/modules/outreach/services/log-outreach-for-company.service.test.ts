@@ -9,6 +9,7 @@ const WHOLESALER_ID = uuid('3');
 const NOW = new Date('2026-09-10T16:30:00.000Z');
 
 const repository = () => ({
+  getCompany: vi.fn().mockResolvedValue({ id: COMPANY_ID, name: 'Example' }),
   createActivity: vi.fn().mockResolvedValue({ id: ACTIVITY_ID }),
 });
 
@@ -34,7 +35,7 @@ describe('logOutreachForCompany', () => {
 
     expect(repo.createActivity).toHaveBeenCalledWith({
       id: ACTIVITY_ID,
-      name: 'Phone call · Connected',
+      name: 'Phone call - Example - 2026-09-10',
       companyId: COMPANY_ID,
       wholesalerId: WHOLESALER_ID,
       activityType: 'PHONE_CALL',
@@ -58,23 +59,34 @@ describe('logOutreachForCompany', () => {
   });
 
   it.each([
-    ['activity type', { activityType: 'cold_call' }, /unsupported activity type/i],
-    ['lower-case activity type', { activityType: 'phone_call' }, /unsupported activity type/i],
+    [
+      'activity type',
+      { activityType: 'cold_call' },
+      /unsupported activity type/i,
+    ],
+    [
+      'lower-case activity type',
+      { activityType: 'phone_call' },
+      /unsupported activity type/i,
+    ],
     ['outcome', { outcome: 'maybe' }, /unsupported outcome/i],
     ['activity id', { activityId: 'not-a-uuid' }, /Activity ID must be a UUID/],
     ['company id', { companyId: 'not-a-uuid' }, /Company ID must be a UUID/],
-  ])('rejects an invalid %s before writing anything', async (_n, override, message) => {
-    const repo = repository();
-    await expect(
-      logOutreachForCompany({
-        input: { ...input, ...override },
-        wholesalerId: WHOLESALER_ID,
-        now: NOW,
-        repository: repo,
-      }),
-    ).rejects.toThrow(message);
-    expect(repo.createActivity).not.toHaveBeenCalled();
-  });
+  ])(
+    'rejects an invalid %s before writing anything',
+    async (_n, override, message) => {
+      const repo = repository();
+      await expect(
+        logOutreachForCompany({
+          input: { ...input, ...override },
+          wholesalerId: WHOLESALER_ID,
+          now: NOW,
+          repository: repo,
+        }),
+      ).rejects.toThrow(message);
+      expect(repo.createActivity).not.toHaveBeenCalled();
+    },
+  );
 
   it('refuses an unresolved caller rather than writing an unowned activity', async () => {
     const repo = repository();

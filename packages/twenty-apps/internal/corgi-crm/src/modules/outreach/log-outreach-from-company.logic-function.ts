@@ -23,7 +23,8 @@ const PAYLOAD_KEYS = [
 
 const readBody = (payload: unknown): Record<string, unknown> | undefined => {
   const body = (payload as { body?: unknown } | undefined)?.body ?? payload;
-  if (!body || typeof body !== 'object' || Array.isArray(body)) return undefined;
+  if (!body || typeof body !== 'object' || Array.isArray(body))
+    return undefined;
   return body as Record<string, unknown>;
 };
 
@@ -36,7 +37,10 @@ export const handleLogOutreachFromCompany = async (
   dependencies: {
     expectedWorkspaceId: string | undefined;
     now(): Date;
-    createOutreachRepository(): Pick<CoreOutreachRepository, 'createActivity'>;
+    createOutreachRepository(): Pick<
+      CoreOutreachRepository,
+      'createActivity' | 'getCompany'
+    >;
     createWholesalerRepository(): Pick<
       CoreWholesalerRepository,
       'findByWorkspaceMemberId'

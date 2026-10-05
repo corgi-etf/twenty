@@ -17,19 +17,25 @@ const body = {
 };
 const context = { workspaceId: WORKSPACE_ID, workspaceMemberId: MEMBER_ID };
 
-const deps = (overrides: Record<string, unknown> = {}) => ({
-  expectedWorkspaceId: WORKSPACE_ID,
-  now: () => new Date('2026-09-10T16:30:00.000Z'),
-  createOutreachRepository: () => ({
-    createActivity: vi.fn().mockResolvedValue({ id: ACTIVITY_ID }),
-  }),
-  createWholesalerRepository: () => ({
-    findByWorkspaceMemberId: vi
-      .fn()
-      .mockResolvedValue([{ id: WHOLESALER_ID, workspaceMemberId: MEMBER_ID }]),
-  }),
-  ...overrides,
-}) as never;
+const deps = (overrides: Record<string, unknown> = {}) =>
+  ({
+    expectedWorkspaceId: WORKSPACE_ID,
+    now: () => new Date('2026-09-10T16:30:00.000Z'),
+    createOutreachRepository: () => ({
+      getCompany: vi
+        .fn()
+        .mockResolvedValue({ id: COMPANY_ID, name: 'Example' }),
+      createActivity: vi.fn().mockResolvedValue({ id: ACTIVITY_ID }),
+    }),
+    createWholesalerRepository: () => ({
+      findByWorkspaceMemberId: vi
+        .fn()
+        .mockResolvedValue([
+          { id: WHOLESALER_ID, workspaceMemberId: MEMBER_ID },
+        ]),
+    }),
+    ...overrides,
+  }) as never;
 
 describe('handleLogOutreachFromCompany', () => {
   it('logs the activity for the authenticated caller', async () => {
@@ -42,13 +48,25 @@ describe('handleLogOutreachFromCompany', () => {
   });
 
   it.each([
-    ['a foreign workspace', { workspaceId: uuid('9'), workspaceMemberId: MEMBER_ID }],
+    [
+      'a foreign workspace',
+      { workspaceId: uuid('9'), workspaceMemberId: MEMBER_ID },
+    ],
     ['no workspace member', { workspaceId: WORKSPACE_ID }],
   ])('denies %s', async (_n, ctx) => {
-    const repo = { createActivity: vi.fn() };
-    const response = await handleLogOutreachFromCompany({ body }, ctx as never, deps({
-      createOutreachRepository: () => repo,
-    }));
+    const repo = {
+      getCompany: vi
+        .fn()
+        .mockResolvedValue({ id: COMPANY_ID, name: 'Example' }),
+      createActivity: vi.fn(),
+    };
+    const response = await handleLogOutreachFromCompany(
+      { body },
+      ctx as never,
+      deps({
+        createOutreachRepository: () => repo,
+      }),
+    );
     expect(response).toMatchObject({ status: 403 });
     expect(repo.createActivity).not.toHaveBeenCalled();
   });
@@ -64,21 +82,36 @@ describe('handleLogOutreachFromCompany', () => {
 
   it.each([
     ['an unresolved caller', []],
-    ['an ambiguously linked caller', [
-      { id: WHOLESALER_ID, workspaceMemberId: MEMBER_ID },
-      { id: uuid('7'), workspaceMemberId: MEMBER_ID },
-    ]],
-  ])('fails closed for %s instead of writing an unowned activity', async (_n, rows) => {
-    const repo = { createActivity: vi.fn() };
-    const response = await handleLogOutreachFromCompany({ body }, context as never, deps({
-      createOutreachRepository: () => repo,
-      createWholesalerRepository: () => ({
-        findByWorkspaceMemberId: vi.fn().mockResolvedValue(rows),
-      }),
-    }));
-    expect(response).toMatchObject({ status: 409 });
-    expect(repo.createActivity).not.toHaveBeenCalled();
-  });
+    [
+      'an ambiguously linked caller',
+      [
+        { id: WHOLESALER_ID, workspaceMemberId: MEMBER_ID },
+        { id: uuid('7'), workspaceMemberId: MEMBER_ID },
+      ],
+    ],
+  ])(
+    'fails closed for %s instead of writing an unowned activity',
+    async (_n, rows) => {
+      const repo = {
+        getCompany: vi
+          .fn()
+          .mockResolvedValue({ id: COMPANY_ID, name: 'Example' }),
+        createActivity: vi.fn(),
+      };
+      const response = await handleLogOutreachFromCompany(
+        { body },
+        context as never,
+        deps({
+          createOutreachRepository: () => repo,
+          createWholesalerRepository: () => ({
+            findByWorkspaceMemberId: vi.fn().mockResolvedValue(rows),
+          }),
+        }),
+      );
+      expect(response).toMatchObject({ status: 409 });
+      expect(repo.createActivity).not.toHaveBeenCalled();
+    },
+  );
 
   it('rejects an unsupported taxonomy value without leaking it back', async () => {
     const response = await handleLogOutreachFromCompany(

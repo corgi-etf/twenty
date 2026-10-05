@@ -9,13 +9,20 @@ import { RetryableLogicFunctionError } from 'twenty-sdk/logic-function';
 import { RawCoreGraphqlTransport } from 'src/modules/core/graphql/raw-core-graphql.transport';
 import { CoreOutreachRepository } from 'src/modules/outreach/graphql/core-outreach.repository';
 import { OUTREACH_ACTIVITY_CREATED_FUNCTION_UNIVERSAL_IDENTIFIER } from 'src/modules/outreach/outreach-identifiers';
-import { CoreFollowUpTaskRepository } from 'src/modules/outreach/graphql/core-follow-up-task.repository';
+import { CoreFollowUpRepository } from 'src/modules/outreach/graphql/core-follow-up.repository';
+import { CoreActivityNameRepository } from 'src/modules/outreach/graphql/core-activity-name.repository';
+import { reconcileActivityName } from 'src/modules/outreach/services/activity-name.service';
 import { assignOutreachActivityOwner } from 'src/modules/outreach/services/assign-outreach-activity-owner.service';
-import { createFollowUpTask } from 'src/modules/outreach/services/create-follow-up-task.service';
+import { reconcileFollowUp } from 'src/modules/outreach/services/reconcile-follow-up.service';
 import { CoreWholesalerRepository } from 'src/modules/wholesaler/onboarding/graphql/core-wholesaler.repository';
 
 type OutreachActivityEventRecord = {
   id?: string | null;
+  followUpRequestedById?: string | null;
+  followUpRequestKey?: string | null;
+  followUpDate?: string | null;
+  createdAt?: string | null;
+  updatedAt?: string | null;
   wholesalerId?: string | null;
   createdBy?: { workspaceMemberId?: string | null } | null;
 };
@@ -58,11 +65,22 @@ export const handler = async (
           activityRepository: new CoreOutreachRepository(client, transport),
           wholesalerRepository: new CoreWholesalerRepository(client, transport),
         });
-    const followUp = await createFollowUpTask({
+    const naming = await reconcileActivityName(
       activityId,
-      repository: new CoreFollowUpTaskRepository(transport),
+      new CoreActivityNameRepository(transport),
+    );
+    const followUp = await reconcileFollowUp({
+      activityId,
+      actorWorkspaceMemberId:
+        after?.followUpRequestedById ??
+        payload.workspaceMemberId ??
+        creatorWorkspaceMemberId,
+      expectedRequestKey: after?.followUpRequestKey ?? null,
+      expectedFollowUpDate: after?.followUpDate ?? null,
+      eventAt: after?.createdAt ?? after?.updatedAt ?? '',
+      repository: new CoreFollowUpRepository(transport),
     });
-    return { status: 'handled', ownership, followUp } as const;
+    return { status: 'handled', ownership, naming, followUp } as const;
   } catch {
     throw new RetryableLogicFunctionError(
       'Outreach activity owner assignment did not complete',
