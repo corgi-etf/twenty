@@ -68,11 +68,7 @@ export const getCorgiWinCreationKeys = (
   workspaceMemberId: string,
 ) =>
   wins
-    .filter(
-      (win) =>
-        win.kind !== 'meeting-taken' &&
-        win.actorWorkspaceMemberId === workspaceMemberId,
-    )
+    .filter((win) => win.actorWorkspaceMemberId === workspaceMemberId)
     .map((win) => `${win.record.objectNameSingular}:${win.record.id}`);
 
 export type CorgiCreationEvidence = {

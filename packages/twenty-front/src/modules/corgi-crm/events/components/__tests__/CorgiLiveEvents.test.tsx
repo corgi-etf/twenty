@@ -140,6 +140,69 @@ describe('Persistent live wins', () => {
     expect(mockNotify).toHaveBeenCalledTimes(1);
   });
 
+  it('celebrates a locally created completed meeting when its taken event arrives first, once across both wins', () => {
+    jest.useFakeTimers();
+    const { rerender, container } = renderEvents();
+    act(() => {
+      window.dispatchEvent(
+        new CustomEvent(OBJECT_RECORD_OPERATION_BROWSER_EVENT_NAME, {
+          detail: {
+            source: 'local-mutation',
+            objectMetadataItem: { nameSingular: 'meetingBooking' },
+            operation: { type: 'create-one', createdRecord: { id: 'meeting' } },
+            createInput: {
+              companyId: 'company',
+              wholesalerId: 'owner',
+              status: 'COMPLETED',
+              scheduledAt: '2026-10-05T15:00:00Z',
+              heldAt: '2026-10-05T15:05:00Z',
+            },
+          },
+        }),
+      );
+    });
+    const meeting: CorgiWin = {
+      ...event(),
+      id: 'meeting-taken:meeting',
+      kind: 'meeting-taken',
+      record: {
+        id: 'meeting',
+        objectNameSingular: 'meetingBooking',
+        objectNamePlural: 'meetingBookings',
+        label: 'Completed meeting',
+      },
+      isCreation: false,
+    };
+    rerender(
+      <CorgiLiveEvents
+        wins={[meeting]}
+        ready
+        serverTime="2026-10-05T16:01:00Z"
+        workspaceId="workspace"
+        workspaceMemberId="me"
+      />,
+    );
+    expect(container.querySelector('[aria-hidden="true"]')).not.toBeNull();
+    act(() => {
+      jest.advanceTimersByTime(2000);
+    });
+    rerender(
+      <CorgiLiveEvents
+        wins={[
+          meeting,
+          { ...meeting, id: 'meeting-booked:meeting', kind: 'meeting-booked' },
+        ]}
+        ready
+        serverTime="2026-10-05T16:02:00Z"
+        workspaceId="workspace"
+        workspaceMemberId="me"
+      />,
+    );
+    expect(container.querySelector('[aria-hidden="true"]')).toBeNull();
+    expect(mockNotify).toHaveBeenCalledTimes(2);
+    jest.useRealTimers();
+  });
+
   it.each(['another-user', 'reduced-motion', 'opt-out'])(
     'keeps notifications without confetti for %s',
     (reason) => {
