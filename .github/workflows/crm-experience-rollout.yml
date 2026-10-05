@@ -62,7 +62,7 @@ jobs:
   rollout:
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 150
     environment: production
     steps:
       - name: Check out the exact workflow revision

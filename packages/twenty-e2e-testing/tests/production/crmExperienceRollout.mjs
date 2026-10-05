@@ -15,6 +15,25 @@ const stableJson = (value) =>
   );
 export const rolloutDigest = (value) =>
   createHash('sha256').update(stableJson(value)).digest('hex');
+export const assertRolloutSessionLifetime = (
+  cookies,
+  minimumLifetimeMs,
+  now = Date.now(),
+) => {
+  const session = cookies.find(({ name }) => name === '__Host-twenty-session');
+  if (
+    !session ||
+    !session.httpOnly ||
+    !session.secure ||
+    session.path !== '/' ||
+    session.domain !== new URL(EXPERIENCE_ORIGIN).hostname ||
+    !Number.isFinite(session.expires) ||
+    session.expires * 1000 <= now + minimumLifetimeMs
+  )
+    throw new Error(
+      'A secure administrator session with enough remaining lifetime is required',
+    );
+};
 export const validateRolloutOptions = (options) => {
   if (
     options.origin !== EXPERIENCE_ORIGIN ||

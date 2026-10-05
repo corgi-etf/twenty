@@ -10,6 +10,7 @@ import {
   EXPERIENCE_VERSION,
   rolloutDigest,
   validateRolloutOptions,
+  assertRolloutSessionLifetime,
   validateReviewedRollout,
   runExperienceRollout,
 } from '../../../../twenty-e2e-testing/tests/production/crmExperienceRollout.mjs';
@@ -326,4 +327,35 @@ test('workflow is manual, private, exact-revision, review-artifact bound, and se
   assert.match(spec, /CRM_EXPERIENCE_ROLLOUT_ENABLED !== 'true'/);
   assert.match(spec, /retries: 0/);
   assert.match(spec, /screenshot: 'off', trace: 'off', video: 'off'/);
+});
+
+test('long maintenance requires a secure opaque session cookie beyond the entire run budget', () => {
+  const now = Date.parse('2026-10-05T12:00:00Z');
+  const required = 135 * 60_000;
+  const cookie = {
+    name: '__Host-twenty-session',
+    domain: 'crm.corgiinvest.com',
+    path: '/',
+    secure: true,
+    httpOnly: true,
+    expires: (now + required + 1000) / 1000,
+  };
+  assert.doesNotThrow(() =>
+    assertRolloutSessionLifetime([cookie], required, now),
+  );
+  for (const patch of [
+    { expires: (now + 30 * 60_000) / 1000 },
+    { secure: false },
+    { httpOnly: false },
+    { domain: 'other.example' },
+  ])
+    assert.throws(
+      () =>
+        assertRolloutSessionLifetime([{ ...cookie, ...patch }], required, now),
+      /secure administrator session/,
+    );
+  assert.throws(
+    () => assertRolloutSessionLifetime([], required, now),
+    /session/,
+  );
 });

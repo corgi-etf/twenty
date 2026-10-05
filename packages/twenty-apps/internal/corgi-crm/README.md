@@ -531,3 +531,13 @@ changes Telegram configuration or sends test messages, and compares the Telegram
 configuration digest before and after each operation. A failure retains the private
 apply journal for review. Configuration/ownership partial failures require a fresh
 preview; activity/allocation operations use per-record compare-and-set fencing.
+
+Ownership runs allow up to 120 minutes (150 minutes for the whole workflow), since
+source checks are intentionally serialized and rate limited. Other datasets allow
+20 minutes. Before any maintenance request, the browser runner requires the secure
+HttpOnly `__Host-twenty-session` cookie to remain valid for the whole operation plus
+15 minutes. These are opaque server sessions, whose configured default absolute
+lifetime is 180 days and idle timeout 30 days; active API requests refresh activity.
+The 30-minute access-JWT lifetime does not govern cookie-authenticated requests.
+The runner neither extracts bearer tokens nor invokes legacy refresh-token renewal.
+A short-lived or revoked session fails closed and preserves the apply journal.
