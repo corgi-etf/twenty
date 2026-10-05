@@ -99,6 +99,33 @@ describe('follow-up reconciliation', () => {
       expect(store.source.assignmentId).toBe('someone-elses-assignment');
     },
   );
+  it('creates another persons explicit self-assigned request without taking over existing open work', async () => {
+    const store = createStore();
+    store.source.followUpRequestKey = 'first';
+    await store.run();
+    store.source.followUpRequestKey = 'second';
+    const secondActor = '33333333-3333-4333-8333-333333333333';
+    await reconcileFollowUp({
+      activityId: 'a',
+      actorWorkspaceMemberId: secondActor,
+      eventAt: '2026-10-06T13:00:00Z',
+      repository: store.repo,
+    });
+    expect(store.records.size).toBe(2);
+    expect(
+      [...store.records.values()].map(
+        ({ scheduledById, assigneeId, status }) => ({
+          scheduledById,
+          assigneeId,
+          status,
+        }),
+      ),
+    ).toEqual([
+      { scheduledById: actor, assigneeId: actor, status: 'OPEN' },
+      { scheduledById: secondActor, assigneeId: secondActor, status: 'OPEN' },
+    ]);
+    expect(store.tasks.size).toBe(2);
+  });
   it('reschedules the same reminder without changing who flagged it', async () => {
     const store = createStore();
     await store.run();

@@ -99,7 +99,11 @@ export const reconcileFollowUp = async ({
     throw new Error('Follow-up event timestamp is invalid');
   const occurrenceKey = `${activityId}:${source.followUpRequestKey || eventAt}`;
   const replay = await repository.findOccurrence(occurrenceKey);
-  const existing = replay ?? (await repository.findOpen(activityId));
+  // An explicit request is a person's new work, even if another person's
+  // occurrence is still open. Plain source edits retain legacy rescheduling.
+  const existing =
+    replay ??
+    (source.followUpRequestKey ? null : await repository.findOpen(activityId));
   if (!source.followUpDate) {
     if (existing?.status === 'OPEN') {
       const cancelled = { ...existing, status: 'CANCELLED' as const };
