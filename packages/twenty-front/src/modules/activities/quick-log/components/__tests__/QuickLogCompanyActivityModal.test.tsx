@@ -42,7 +42,7 @@ describe('QuickLogCompanyActivityModal', () => {
     );
 
     expect(
-      screen.getByRole('dialog', { name: 'Log follow-up' }),
+      screen.getByRole('dialog', { name: 'Log activity' }),
     ).toBeInTheDocument();
   });
 });

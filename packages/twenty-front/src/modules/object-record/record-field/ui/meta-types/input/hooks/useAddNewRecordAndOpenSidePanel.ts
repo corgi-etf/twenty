@@ -1,3 +1,5 @@
+import { useCorgiCreateRecordDialog } from '@/corgi-crm/forms/hooks/useCorgiCreateRecordDialog';
+import { CORGI_CREATE_FIELDS } from '@/corgi-crm/forms/utils/corgiRecordDraft';
 import { v4 } from 'uuid';
 
 import { SEARCH_QUERY } from '@/command-menu/graphql/queries/search';
@@ -36,6 +38,7 @@ export const useAddNewRecordAndOpenSidePanel = ({
   relationFieldMetadataItem,
   recordId,
 }: useAddNewRecordAndOpenSidePanelProps) => {
+  const { openCreateRecord, isCorgiWorkspace } = useCorgiCreateRecordDialog();
   const { createOneRecord } = useCreateOneRecord({
     objectNameSingular: relationObjectMetadataNameSingular,
   });
@@ -95,6 +98,33 @@ export const useAddNewRecordAndOpenSidePanel = ({
               });
 
         createRecordPayload[`${gqlField}Id`] = recordId;
+      }
+
+      if (
+        isCorgiWorkspace &&
+        CORGI_CREATE_FIELDS[relationObjectMetadataNameSingular]
+      ) {
+        const createdRecord = await openCreateRecord({
+          objectNameSingular: relationObjectMetadataNameSingular,
+          initialValues: createRecordPayload,
+          onCreated: async (record) => {
+            if (
+              relationFieldMetadataItemRelationType === RelationType.ONE_TO_MANY
+            ) {
+              await updateOneRecord({
+                objectNameSingular: objectMetadataItem.nameSingular,
+                idToUpdate: recordId,
+                updateOneRecordInput: {
+                  [`${fieldMetadataItem.name}Id`]: record.id,
+                },
+              });
+            }
+            await apolloCoreClient.refetchQueries({
+              include: [getOperationName(SEARCH_QUERY) ?? ''],
+            });
+          },
+        });
+        return createdRecord?.id;
       }
 
       await createOneRecord(createRecordPayload);

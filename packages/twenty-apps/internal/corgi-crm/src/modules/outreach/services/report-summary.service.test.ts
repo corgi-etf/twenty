@@ -32,6 +32,12 @@ const booking = (
   id: string,
   overrides: Partial<{
     bookedAt: string;
+    heldAt: string;
+    status: string;
+    bookedByWholesalerId: string;
+    bookedByName: string;
+    takenByWholesalerId: string;
+    takenByName: string;
     scheduledAt: string;
     wholesalerId: string;
     wholesalerName: string;
@@ -39,6 +45,12 @@ const booking = (
 ) => ({
   id,
   bookedAt: '2026-09-09T15:00:00.000Z',
+  heldAt: '2026-09-09T15:00:00.000Z',
+  status: 'COMPLETED',
+  bookedByWholesalerId: overrides.wholesalerId ?? 'owner-jordan',
+  bookedByName: overrides.wholesalerName ?? 'Jordan',
+  takenByWholesalerId: overrides.wholesalerId ?? 'owner-jordan',
+  takenByName: overrides.wholesalerName ?? 'Jordan',
   wholesalerId: 'owner-jordan',
   wholesalerName: 'Jordan',
   ...overrides,
@@ -155,14 +167,12 @@ describe('outreach report summaries', () => {
   it('reads all-owner bookings and activities with the same 5am window and never masks a failed booking read', async () => {
     const repository = { listActivities: vi.fn().mockResolvedValue([]) };
     const meetingRepository = {
-      listMeetingBookings: vi
-        .fn()
-        .mockResolvedValue([
-          booking('booking-1', {
-            wholesalerId: 'owner-booker',
-            wholesalerName: 'Casey',
-          }),
-        ]),
+      listMeetingBookings: vi.fn().mockResolvedValue([
+        booking('booking-1', {
+          wholesalerId: 'owner-booker',
+          wholesalerName: 'Casey',
+        }),
+      ]),
     };
     const input = { ...defaults, repository, meetingRepository };
     const text = await readReportSummary(input);
@@ -490,7 +500,9 @@ describe('outreach report summaries', () => {
         }),
       ],
     });
-    expect(formatReportSummary(summary)).toContain('🥇 Jordan Example: (1/0/0)');
+    expect(formatReportSummary(summary)).toContain(
+      '🥇 Jordan Example: (1/0/0)',
+    );
   });
 });
 
@@ -618,6 +630,42 @@ describe('leaderboard role groups', () => {
 });
 
 describe('external wholesaler sections', () => {
+  it('counts only completed meetings by actual held time and separates setter from taker', () => {
+    const summary = buildReportSummary({
+      ...defaults,
+      activities: [],
+      externalWholesalers: directory([
+        wholesaler('owner-derek', 'EW', 'Derek'),
+      ]),
+      meetingBookings: [
+        booking('only-booked', {
+          status: 'BOOKED',
+          wholesalerId: 'owner-derek',
+          wholesalerName: 'Derek',
+        }),
+        booking('held-before', {
+          heldAt: '2026-08-01T15:00:00Z',
+          wholesalerId: 'owner-derek',
+          wholesalerName: 'Derek',
+        }),
+        booking('held-today', {
+          bookedAt: '2026-08-01T15:00:00Z',
+          wholesalerId: 'owner-derek',
+          wholesalerName: 'Derek',
+          bookedByWholesalerId: 'owner-jordan',
+          bookedByName: 'Jordan',
+        }),
+      ],
+    });
+    expect(summary.totalMeetingsSet).toBe(2);
+    expect(summary.meetingsTakenByExternalWholesalers).toEqual({
+      status: 'resolved',
+      wholesalers: [
+        { wholesalerId: 'owner-derek', name: 'Derek', meetings: 1 },
+      ],
+    });
+  });
+
   const shared = {
     ...defaults,
     activities: [
@@ -789,12 +837,29 @@ describe('external wholesaler sections', () => {
 describe('report delivery', () => {
   it('renders the whole populated report verbatim', async () => {
     const activityTypes: Array<[string, string, string[]]> = [
-      ['owner-nash', 'Nash Hill', ['phone_call', 'phone_call', 'phone_call', 'email', 'email', 'linkedin', 'meeting', 'other']],
+      [
+        'owner-nash',
+        'Nash Hill',
+        [
+          'phone_call',
+          'phone_call',
+          'phone_call',
+          'email',
+          'email',
+          'linkedin',
+          'meeting',
+          'other',
+        ],
+      ],
       ['owner-zeke-lower', 'zeke', ['email', 'email']],
       ['owner-zeke-melvin', 'Zeke Melvin', ['linkedin']],
       ['', 'Unassigned', ['phone_call']],
       ['owner-damien', 'Damien Wiese', ['phone_call', 'email']],
-      ['owner-derek', 'Derek Radcliff', ['phone_call', 'phone_call', 'phone_call', 'phone_call']],
+      [
+        'owner-derek',
+        'Derek Radcliff',
+        ['phone_call', 'phone_call', 'phone_call', 'phone_call'],
+      ],
       ['owner-kevin', 'Kevin Hennessy', ['email']],
     ];
     const activities = activityTypes.flatMap(
@@ -828,14 +893,16 @@ describe('report delivery', () => {
         listMeetingBookings: vi.fn().mockResolvedValue(meetingBookings),
       },
       wholesalerRoleReader: {
-        findRolesByIds: vi.fn().mockResolvedValue([
-          wholesaler('owner-nash', 'BDR', 'Nash Hill'),
-          wholesaler('owner-zeke-lower', 'bdr', 'zeke'),
-          wholesaler('owner-zeke-melvin', 'BDR ', 'Zeke Melvin'),
-          wholesaler('owner-damien', null, 'Damien Wiese'),
-          wholesaler('owner-derek', 'EW', 'Derek Radcliff'),
-          wholesaler('owner-kevin', ' ew ', 'Kevin Hennessy'),
-        ]),
+        findRolesByIds: vi
+          .fn()
+          .mockResolvedValue([
+            wholesaler('owner-nash', 'BDR', 'Nash Hill'),
+            wholesaler('owner-zeke-lower', 'bdr', 'zeke'),
+            wholesaler('owner-zeke-melvin', 'BDR ', 'Zeke Melvin'),
+            wholesaler('owner-damien', null, 'Damien Wiese'),
+            wholesaler('owner-derek', 'EW', 'Derek Radcliff'),
+            wholesaler('owner-kevin', ' ew ', 'Kevin Hennessy'),
+          ]),
       },
     });
 
@@ -948,14 +1015,12 @@ describe('report delivery', () => {
           .mockResolvedValue([activity('1'), activity('2')]),
       },
       meetingRepository: {
-        listMeetingBookings: vi
-          .fn()
-          .mockResolvedValue([
-            booking('booking-1', {
-              wholesalerId: 'owner-booker',
-              wholesalerName: 'Casey',
-            }),
-          ]),
+        listMeetingBookings: vi.fn().mockResolvedValue([
+          booking('booking-1', {
+            wholesalerId: 'owner-booker',
+            wholesalerName: 'Casey',
+          }),
+        ]),
       },
       wholesalerRoleReader: { findRolesByIds },
     });
@@ -997,7 +1062,9 @@ describe('report delivery', () => {
           listActivities: vi.fn().mockResolvedValue([activity('1')]),
         },
         meetingRepository: {
-          listMeetingBookings: vi.fn().mockResolvedValue([booking('booking-1')]),
+          listMeetingBookings: vi
+            .fn()
+            .mockResolvedValue([booking('booking-1')]),
         },
         wholesalerRoleReader: { findRolesByIds: createReader() },
       });

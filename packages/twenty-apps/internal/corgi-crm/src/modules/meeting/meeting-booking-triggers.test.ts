@@ -1,34 +1,46 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { RetryableLogicFunctionError } from 'twenty-sdk/logic-function';
 
-import createdFunction, { handler as createdHandler } from 'src/modules/meeting/on-meeting-booking-created.logic-function';
-import statusUpdatedFunction, { handler as statusUpdatedHandler } from 'src/modules/meeting/on-meeting-booking-status-updated.logic-function';
+import createdFunction, {
+  handler as createdHandler,
+} from 'src/modules/meeting/on-meeting-booking-created.logic-function';
+import statusUpdatedFunction, {
+  handler as statusUpdatedHandler,
+} from 'src/modules/meeting/on-meeting-booking-status-updated.logic-function';
 import { reconcileMeetingBooking } from 'src/modules/meeting/services/reconcile-meeting-booking.service';
 
 vi.mock('twenty-client-sdk/core', () => ({ CoreApiClient: vi.fn() }));
 vi.mock('src/modules/meeting/graphql/core-meeting-booking.repository', () => ({
   CoreMeetingBookingRepository: vi.fn(),
 }));
-vi.mock('src/modules/meeting/services/reconcile-meeting-booking.service', () => ({
-  reconcileMeetingBooking: vi.fn(),
-}));
+vi.mock(
+  'src/modules/meeting/services/reconcile-meeting-booking.service',
+  () => ({
+    reconcileMeetingBooking: vi.fn(),
+  }),
+);
 
 const previousWorkspaceId = process.env.CORGI_CRM_WORKSPACE_ID;
 
 describe('meeting booking database triggers', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    process.env.CORGI_CRM_WORKSPACE_ID =
-      'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+    process.env.CORGI_CRM_WORKSPACE_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
   });
 
-  it('runs create reconciliation once and status reconciliation only on status changes', () => {
+  it('runs create reconciliation once and booking reconciliation on status or required input changes', () => {
     expect(createdFunction.config.databaseEventTriggerSettings).toEqual({
       eventName: 'meetingBooking.created',
     });
     expect(statusUpdatedFunction.config.databaseEventTriggerSettings).toEqual({
       eventName: 'meetingBooking.updated',
-      updatedFields: ['status'],
+      updatedFields: [
+        'status',
+        'name',
+        'companyId',
+        'wholesalerId',
+        'scheduledAt',
+      ],
     });
   });
 
@@ -60,6 +72,20 @@ describe('meeting booking database triggers', () => {
   );
 
   it.each([createdHandler, statusUpdatedHandler])(
+    'accepts a direct completed event',
+    async (handler) => {
+      await handler({
+        workspaceId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+        recordId: '11111111-1111-4111-8111-111111111111',
+        properties: {
+          after: { status: 'COMPLETED', updatedAt: '2026-10-05T12:00:00Z' },
+        },
+      } as never);
+      expect(reconcileMeetingBooking).toHaveBeenCalled();
+    },
+  );
+
+  it.each([createdHandler, statusUpdatedHandler])(
     'passes deterministic event time and exact ACTOR member ID',
     async (handler) => {
       vi.mocked(reconcileMeetingBooking).mockResolvedValue({
@@ -84,6 +110,10 @@ describe('meeting booking database triggers', () => {
         meetingId: '11111111-1111-4111-8111-111111111111',
         eventOccurredAt: '2026-09-10T13:15:00.000Z',
         actorWorkspaceMemberId: '44444444-4444-4444-8444-444444444444',
+        eventSnapshot: expect.objectContaining({
+          status: 'BOOKED',
+          updatedAt: '2026-09-10T13:15:00.000Z',
+        }),
         repository: expect.anything(),
       });
     },

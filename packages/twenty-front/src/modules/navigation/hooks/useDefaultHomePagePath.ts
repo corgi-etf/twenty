@@ -1,3 +1,4 @@
+import { useCorgiHomeEnabled } from '@/corgi-crm/home/hooks/useCorgiHomeEnabled';
 import { currentUserState } from '@/auth/states/currentUserState';
 import { metadataStoreState } from '@/metadata-store/states/metadataStoreState';
 import { metadataStoreStatusFamilySelector } from '@/metadata-store/states/metadataStoreStatusFamilySelector';
@@ -21,6 +22,7 @@ import { getAppPath, getSettingsPath, isDefined } from 'twenty-shared/utils';
 export const useDefaultHomePagePath = () => {
   const currentUser = useAtomStateValue(currentUserState);
   const isMobile = useIsMobile();
+  const isCorgiHomeEnabled = useCorgiHomeEnabled();
   const { objectPermissionsByObjectMetadataId } = useObjectPermissions();
   const metadataStore = useAtomFamilyStateValue(
     metadataStoreState,
@@ -92,7 +94,7 @@ export const useDefaultHomePagePath = () => {
       return AppPath.SignInUp;
     }
 
-    if (isMobile) {
+    if (isMobile || isCorgiHomeEnabled) {
       return AppPath.Home;
     }
 
@@ -125,6 +127,7 @@ export const useDefaultHomePagePath = () => {
   }, [
     currentUser,
     isMobile,
+    isCorgiHomeEnabled,
     readableNonSystemObjectMetadataItems,
     areObjectMetadataItemsLoaded,
     areNavigationMenuItemsLoaded,

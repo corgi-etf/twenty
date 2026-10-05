@@ -391,7 +391,7 @@ describe('Corgi CRM production app workflow contract', () => {
       verifier,
       /namePrefix: `CRM meeting canary \$\{runId\}-\$\{runAttempt\}-`/,
     );
-    assert.match(verifier, /notAfter: new Date\(now \+ MEETING_CANARY_SUPPRESSION_WINDOW_MS\)/);
+    assert.match(verifier, /notAfter: new Date\(\s*now \+ MEETING_CANARY_SUPPRESSION_WINDOW_MS,?\s*\)/);
     assert.match(
       verifier,
       /MEETING_CANARY_SUPPRESSION_WINDOW_MS = 20 \* 60_000/,

@@ -30,7 +30,7 @@ or reused.
 Version `1.2.1` adds an opt-in public read path for whole-workspace Telegram
 reports while keeping identity-scoped reads and CRM writes authenticated.
 
-The two custom CRM objects predate this app, so their universal identifiers are
+The three custom CRM objects predate this app, so their universal identifiers are
 not guessed or committed. Immediately before packaging, use the short-lived
 deployment credential to resolve them from live metadata into the job
 environment:
@@ -39,21 +39,15 @@ environment:
 CORGI_CRM_ROLE_ENV_PATH=$GITHUB_ENV node packages/twenty-apps/internal/corgi-crm/scripts/verify-production-install.mjs role-env
 ```
 
-That mode fails unless it finds exactly one active `wholesaler` and one active
-`outreachActivity` object with UUID universal identifiers. It exports
-`CORGI_CRM_WHOLESALER_OBJECT_UNIVERSAL_IDENTIFIER` and
-`CORGI_CRM_OUTREACH_ACTIVITY_OBJECT_UNIVERSAL_IDENTIFIER`; the least-privilege
-role requires both at build time. The installed verifier then checks the actual
-role has read-only access to WorkspaceMember, Company, and Person; read/write
-access to Wholesaler, OutreachActivity, and the app-owned TelegramDelivery and
-TelegramDeliveryAudit objects; read/update access to MeetingBooking; and no
-other object, delete, global, or settings permission. CompanyAllocation is
-deliberately absent from that role: no logic function reads or writes an
-allocation, so granting one would widen the exactly-eight-permission contract
-for nothing. It also verifies the app-owned object schemas — including the
-CompanyAllocation fields, their user editability, and the Allocations section
-on Company — and the three unique indexes that fence delivery claims, reset
-generations, and request replays.
+That mode fails unless it finds exactly one active `wholesaler`,
+`outreachActivity`, and `leadAssignment` object with UUID universal identifiers.
+It exports `CORGI_CRM_WHOLESALER_OBJECT_UNIVERSAL_IDENTIFIER`,
+`CORGI_CRM_OUTREACH_ACTIVITY_OBJECT_UNIVERSAL_IDENTIFIER`, and
+`CORGI_CRM_LEAD_ASSIGNMENT_OBJECT_UNIVERSAL_IDENTIFIER`. The least-privilege
+role requires all three at build time. The installed verifier checks the exact
+14 object grants, field provenance protection, relation targets, unique indexes,
+and database trigger contracts. Ordinary users cannot edit application-managed
+lifecycle timestamps or scheduler provenance.
 
 The generated Core SDK describes standard objects and this application's own
 objects; granting access to an existing workspace object does not add it to
@@ -142,7 +136,6 @@ currency rather than assuming dollars in the column.
 Destroying a company destroys its allocations; an allocation carries no meaning
 once the company it belongs to is gone. Soft-deleting a company leaves them
 alone.
-
 
 ## Outreach activity ownership
 
@@ -385,3 +378,168 @@ opaque delivery key, request ID, generation timestamp, and request time. They
 are retained indefinitely: the app role has no delete permission and there is
 no automatic purge. Treat any future retention change as a reviewed migration,
 not an operator cleanup action.
+
+## Experience release 1.3.0
+
+Activity titles use `Type - Company - YYYY-MM-DD` in America/Chicago. Blank and
+Untitled titles are managed automatically; intentional custom titles survive
+later edits. Imports use the same formatter and preserve custom titles on replay.
+
+Scheduling a dated follow-up creates a durable Outreach Follow-up, self-assigned
+Task, and the scheduler's Lead Assignment. Existing assignments to other people
+remain intact. The follow-up records the immutable scheduler separately from its
+current assignee. Clearing the date cancels the reminder; task completion updates
+its history. A new `followUpRequestKey` represents an intentional new request.
+Missing company links remain visible and can be repaired later.
+
+Meetings set use first `bookedAt`; meetings taken use `COMPLETED` plus explicit
+`heldAt`. `heldRecordedAt` records when completion was first validated, and
+`takenBy` credits the person who held it. Allocations receive immutable `loggedAt`
+and `loggedBy` only after a positive amount, currency, ticker, and compatible
+company/contact/meeting links are valid. Validation messages exclude invalid
+corrections from reports. Manual `activeClient` remains separate from the distinct
+companies with valid allocations metric.
+
+Company Ownership is a junction with one unique company/wholesaler pair. It
+preserves legacy account/historical owners; backfilling their authoritative
+member mapping is handled by the workspace configuration package.
+
+## Reviewed experience backfill
+
+Install 1.3.0 and verify its metadata before previewing. Run from this directory
+with `CORGI_CRM_URL` and `CORGI_CRM_WORKSPACE_ID`. Preview accepts a read-only
+`CORGI_CRM_API_KEY` or an admin session `CORGI_CRM_ACCESS_TOKEN`:
+
+```sh
+node scripts/experience-backfill.mjs preview /secure/path/experience-preview.json
+```
+
+Review every operation and unresolved row. The manifest includes a SHA-256 digest,
+source evidence, original values, and the expected update timestamp. It proposes
+only blank/Untitled titles and valid historical allocation `loggedAt` values using
+the original CRM `createdAt` as an explicit fallback. It never invents meeting
+completion timestamps, overwrites custom titles, or sends Telegram messages.
+
+Apply requires `CORGI_CRM_ACCESS_TOKEN` for an authorized administrator with
+Applications and Workflows permissions. The command resolves the installed
+untriggered maintenance function, temporarily approves exactly the reviewed
+digest, and invokes it with its owning application identity. Ordinary API keys
+cannot write the protected fields directly.
+
+```sh
+node scripts/experience-backfill.mjs apply /secure/path/experience-preview.json /secure/path/experience-journal.jsonl REVIEWED_SHA256
+```
+
+Each write compares the live source and update timestamp; changed records are
+reported as conflicts. The journal records intent before execution and original
+values after confirmed writes. Re-running the identical manifest is idempotent.
+Review conflicts through a fresh preview. Keep the manifest/journal outside the
+repository, restrict their file permissions, and retain them for rollback review.
+The approval variable is cleared on normal completion or a handled failure; if the
+process is forcibly stopped, clear `CORGI_CRM_EXPERIENCE_BACKFILL_DIGEST` in app
+settings before starting unrelated maintenance. Rollback requires a separately
+reviewed owning-application operation against the journal's saved timestamps.
+
+### Controlled server-task alternative
+
+When no browser session is available, an authorized operator can run the same
+manifest from an existing server Nest application context. Keep execution in the
+installed CRM release, with the same identity, digest, current-workspace checks,
+and journal as the CLI. Do not alter resolver guards or create another admin.
+Resolve the existing authorized administrator's `core.user.id` and matching active
+`core.userWorkspace.id` for this workspace. Neither is a `workspaceMember` UUID.
+
+Use these server providers (source module paths relative to `twenty-server`):
+
+```ts
+import { ApplicationVariableEntityService } from 'src/engine/core-modules/application/application-variable/application-variable.service';
+import { LogicFunctionFromSourceService } from 'src/engine/metadata-modules/logic-function/services/logic-function-from-source.service';
+```
+
+After resolving the installed application and function by the universal identifiers
+checked in `experience-backfill.mjs`, the exact provider calls are:
+
+```ts
+await applicationVariables.update({
+  key: 'CORGI_CRM_EXPERIENCE_BACKFILL_DIGEST',
+  plainTextValue: approvedDigest,
+  applicationId,
+  workspaceId,
+});
+try {
+  // Record journal intent before each operation and result immediately after it.
+  const result = await logicFunctions.executeOneFromSource({
+    id: installedFunctionId,
+    payload: { manifest, index },
+    workspaceId,
+    userId: authorizedAdminUserId,
+    userWorkspaceId: authorizedAdminUserWorkspaceId,
+  });
+  // Require result.status === 'SUCCESS'; retain result.data in the journal.
+} finally {
+  await applicationVariables.update({
+    key: 'CORGI_CRM_EXPERIENCE_BACKFILL_DIGEST',
+    plainTextValue: '',
+    applicationId,
+    workspaceId,
+  });
+}
+```
+
+`plainTextValue` has the server's branded `PlaintextString` type; apply that type at
+the already-validated digest boundary in a typed command. The variable service
+updates encryption and cache coherently. The execution service preserves the
+administrator identity in execution context and logs; the installed maintenance
+handler explicitly uses `TWENTY_APP_APPLICATION_ACCESS_TOKEN` for protected record
+writes. It refuses to fall back to a user token or an API key. Close the Nest
+context after the journal is flushed and approval cleanup is confirmed.
+
+## Guarded GitHub experience rollout
+
+`.github/workflows/crm-experience-rollout.yml` runs manually on `main` after both
+server and worker are stable on that exact workflow SHA and app 1.3.0 is installed.
+It uses the existing `CRM_E2E_LOGIN`, `CRM_E2E_PASSWORD`, and
+`CRM_E2E_WORKSPACE_NAME` administrator session through Chromium and `page.request`.
+It creates no API key. The authenticated workspace must be active **Corgi ETF**
+and the user must have Data model, Applications, and Workflows permissions.
+
+Choose one dataset per run:
+
+- `configuration`: additive client/accent metadata and profile/layout settings.
+  When the preview phase is `metadata`, apply it and create a new preview for
+  `layout`; never apply a derived layout that was absent from the reviewed file.
+- `ownership`: unique company/wholesaler links from authoritative legacy owner
+  mappings. Preview requires `expected_company_count`; ambiguous mappings stop
+  apply and require a corrected, fresh preview.
+- `activities-allocations`: blank activity names and eligible historical allocation
+  logging timestamps, using the owning-application maintenance function.
+
+Run `operation=preview` with the exact `deployed_sha`. Download the private
+`crm-experience-preview-DATASET-RUN_ID-ATTEMPT` artifact, review `manifest.json`
+including every operation and unresolved row, and retain its outer `digest`.
+Then run `operation=apply` with the same dataset/revision, `preview_run_id`,
+`preview_run_attempt`, `reviewed_digest`, and confirmation
+`APPLY_REVIEWED_CRM_EXPERIENCE`. The runner verifies that the artifact came from a
+successful same-revision attempt of this exact workflow, verifies both digest
+layers, and rechecks tenant/release and live source facts before writes.
+
+Runs serialize with deployment workflows. The workflow refuses public repositories,
+retains manifests/journals privately for seven days, and uploads only those explicit
+files. Session state, local artifacts, and browser results are deleted afterward;
+maintenance disables screenshots, traces, video, and automatic retries. It never
+changes Telegram configuration or sends test messages, and compares the Telegram
+configuration digest before and after each operation. A failure retains the private
+apply journal for review. Configuration/ownership partial failures require a fresh
+preview; activity/allocation operations use per-record compare-and-set fencing.
+
+Ownership runs allow up to 240 minutes (270 minutes for the whole workflow), since
+source checks are intentionally serialized and rate limited. Each company can
+preserve two different legacy owners, with a pre-check, insertion, and post-check
+for each missing membership. Other datasets allow
+20 minutes. Before any maintenance request, the browser runner requires the secure
+HttpOnly `__Host-twenty-session` cookie to remain valid for the whole operation plus
+15 minutes. These are opaque server sessions, whose configured default absolute
+lifetime is 180 days and idle timeout 30 days; active API requests refresh activity.
+The 30-minute access-JWT lifetime does not govern cookie-authenticated requests.
+The runner neither extracts bearer tokens nor invokes legacy refresh-token renewal.
+A short-lived or revoked session fails closed and preserves the apply journal.

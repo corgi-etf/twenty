@@ -1,3 +1,4 @@
+import { verifyExperienceSchema } from './experience-contract.mjs';
 import { appendFile } from 'node:fs/promises';
 import { pathToFileURL } from 'node:url';
 
@@ -272,6 +273,10 @@ const resolveCorgiRoleObjectIdentifiers = (objects) => {
     return [environmentKey, object.universalIdentifier];
   };
   return Object.fromEntries([
+    resolve(
+      'leadAssignment',
+      'CORGI_CRM_LEAD_ASSIGNMENT_OBJECT_UNIVERSAL_IDENTIFIER',
+    ),
     resolve('wholesaler', 'CORGI_CRM_WHOLESALER_OBJECT_UNIVERSAL_IDENTIFIER'),
     resolve(
       'outreachActivity',
@@ -315,9 +320,9 @@ const verifyApplicationRoleContract = (role, objects) => {
     }
   }
   const permissions = role.objectPermissions ?? [];
-  if (permissions.length !== 10) {
+  if (permissions.length !== 14) {
     throw new Error(
-      'Installed application role must have exactly ten object permissions',
+      'Installed application role must have exactly fourteen object permissions',
     );
   }
   const expected = new Map(
@@ -330,6 +335,10 @@ const verifyApplicationRoleContract = (role, objects) => {
       ['telegramDelivery', true],
       ['telegramDeliveryAudit', true],
       ['meetingBooking', true],
+      ['companyAllocation', true],
+      ['companyOwnership', true],
+      ['outreachFollowUp', true],
+      ['leadAssignment', true],
       // Writable so an outreach activity can raise its follow-up task and link
       // it to the company; neither is deletable by the app.
       ['task', true],
@@ -523,7 +532,13 @@ const verifyMeetingApplicationContract = (application) => {
     name: 'on-meeting-booking-status-updated',
     settings: {
       eventName: 'meetingBooking.updated',
-      updatedFields: ['status'],
+      updatedFields: [
+        'status',
+        'name',
+        'companyId',
+        'wholesalerId',
+        'scheduledAt',
+      ],
     },
     label: 'Meeting status reconciliation',
   });
@@ -799,7 +814,9 @@ const buildMeetingCanarySuppression = ({ runId, runAttempt, now }) => {
   return JSON.stringify({
     version: 1,
     namePrefix: `CRM meeting canary ${runId}-${runAttempt}-`,
-    notAfter: new Date(now + MEETING_CANARY_SUPPRESSION_WINDOW_MS).toISOString(),
+    notAfter: new Date(
+      now + MEETING_CANARY_SUPPRESSION_WINDOW_MS,
+    ).toISOString(),
   });
 };
 
@@ -1382,6 +1399,7 @@ const main = async () => {
   });
   verifyMeetingBookingSchema(metadataObjects, meetingExperience);
   verifyMeetingApplicationContract(application);
+  verifyExperienceSchema(metadataObjects, application);
   verifyApplicationRoleContract(
     application.defaultLogicFunctionRole,
     metadataObjects,

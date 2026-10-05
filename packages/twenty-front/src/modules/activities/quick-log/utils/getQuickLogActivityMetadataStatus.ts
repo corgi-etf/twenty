@@ -54,7 +54,11 @@ export const getQuickLogActivityMetadataStatus = (
   const missingField = REQUIRED_OUTREACH_FIELDS.find(
     ([fieldName, fieldType]) =>
       !outreachActivity.fields.some(
-        (field) => field.name === fieldName && field.type === fieldType,
+        (field) =>
+          field.name === fieldName &&
+          (field.type === fieldType ||
+            (fieldName === 'activityType' &&
+              field.type === FieldMetadataType.SELECT)),
       ),
   );
 

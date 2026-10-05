@@ -4,7 +4,9 @@ const UUID_PATTERN =
 const requiredObjectUniversalIdentifier = (name: string): string => {
   const value = process.env[name]?.trim();
   if (!value || !UUID_PATTERN.test(value)) {
-    throw new Error(`${name} must be resolved to a metadata object UUID before packaging`);
+    throw new Error(
+      `${name} must be resolved to a metadata object UUID before packaging`,
+    );
   }
   return value;
 };
@@ -17,4 +19,9 @@ export const CORGI_CRM_WHOLESALER_OBJECT_UNIVERSAL_IDENTIFIER =
 export const CORGI_CRM_OUTREACH_ACTIVITY_OBJECT_UNIVERSAL_IDENTIFIER =
   requiredObjectUniversalIdentifier(
     'CORGI_CRM_OUTREACH_ACTIVITY_OBJECT_UNIVERSAL_IDENTIFIER',
+  );
+
+export const CORGI_CRM_LEAD_ASSIGNMENT_OBJECT_UNIVERSAL_IDENTIFIER =
+  requiredObjectUniversalIdentifier(
+    'CORGI_CRM_LEAD_ASSIGNMENT_OBJECT_UNIVERSAL_IDENTIFIER',
   );

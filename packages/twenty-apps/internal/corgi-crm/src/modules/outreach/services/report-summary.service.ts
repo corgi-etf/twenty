@@ -261,10 +261,7 @@ const EXTERNAL_WHOLESALER_ROLE_READ_TIMEOUT_MILLISECONDS = 8_000;
 // legacy 'Wholesaler' default every record still carries, or any word this app
 // has never been taught stays unidentified rather than becoming a guess.
 const normalizeRole = (value: string | null | undefined) =>
-  (value ?? '')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .toLowerCase();
+  (value ?? '').replace(/\s+/g, ' ').trim().toLowerCase();
 
 const NORMALIZED_EXTERNAL_WHOLESALER_ROLE = normalizeRole(
   EXTERNAL_WHOLESALER_ROLE,
@@ -431,8 +428,8 @@ const buildLeaderboard = (
   ].filter(({ owners: groupOwners }) => groupOwners.length > 0);
 };
 
-// A meeting booking carries one owner, so a meeting is taken by the EW it
-// belongs to. Nothing the report reads records a second person on a meeting.
+// Taken rows are built only from completed meetings, actual held time, and
+// the recorded taker identity. Booking ownership is not evidence of attendance.
 const buildExternalWholesalerMeetings = (
   owners: Map<string, OwnerCount>,
   externalWholesalers: ExternalWholesalerDirectory,
@@ -511,7 +508,10 @@ export const buildReportSummary = ({
   const owners = new Map<string, OwnerCount>();
   const seenIds = new Set<string>();
   const seenBookingIds = new Set<string>();
-  const isIncluded = (value: string) => {
+  const takenOwners = new Map<string, OwnerCount>();
+  const seenTakenIds = new Set<string>();
+  const isIncluded = (value: string | null | undefined) => {
+    if (!value) return false;
     const instant = new Date(value);
     return (
       instant >= start &&
@@ -534,10 +534,24 @@ export const buildReportSummary = ({
   }
 
   for (const booking of meetingBookings) {
+    if (
+      booking.status === 'COMPLETED' &&
+      isIncluded(booking.heldAt) &&
+      !seenTakenIds.has(booking.id)
+    ) {
+      seenTakenIds.add(booking.id);
+      addOwnerRow(takenOwners, {
+        wholesalerId: booking.takenByWholesalerId || 'unassigned',
+        wholesalerName: booking.takenByName || 'Unassigned',
+      }).meetingsSet += 1;
+    }
     if (!isIncluded(booking.bookedAt) || seenBookingIds.has(booking.id))
       continue;
     seenBookingIds.add(booking.id);
-    addOwnerRow(owners, booking).meetingsSet += 1;
+    addOwnerRow(owners, {
+      wholesalerId: booking.bookedByWholesalerId || 'unassigned',
+      wholesalerName: booking.bookedByName || 'Unassigned',
+    }).meetingsSet += 1;
   }
 
   // An absent directory means the role data was never obtained, never "no EW".
@@ -554,7 +568,7 @@ export const buildReportSummary = ({
     totalMeetingsSet: seenBookingIds.size,
     leaderboard: buildLeaderboard([...owners.values()], directory),
     meetingsTakenByExternalWholesalers: buildExternalWholesalerMeetings(
-      owners,
+      takenOwners,
       directory,
     ),
     externalWholesalerRevenue: buildExternalWholesalerRevenue(

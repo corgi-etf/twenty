@@ -1,10 +1,12 @@
+import { formatActivityName } from 'src/modules/outreach/services/activity-name.service';
 import {
   isQuickLogActivityType,
   isQuickLogOutcome,
-  QUICK_LOG_ACTIVITY_LABELS,
-  QUICK_LOG_OUTCOME_LABELS,
 } from 'src/modules/outreach/quick-log-taxonomy';
-import { type OutreachRepository } from 'src/modules/outreach/types';
+import {
+  type NamedRecord,
+  type OutreachRepository,
+} from 'src/modules/outreach/types';
 
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -29,7 +31,9 @@ export const logOutreachForCompany = async ({
   input: LogOutreachForCompanyInput;
   wholesalerId: string;
   now: Date;
-  repository: Pick<OutreachRepository, 'createActivity'>;
+  repository: Pick<OutreachRepository, 'createActivity'> & {
+    getCompany(id: string): Promise<NamedRecord | null>;
+  };
 }) => {
   if (!isQuickLogActivityType(input.activityType)) {
     throw new Error(`Unsupported activity type: ${input.activityType}`);
@@ -47,10 +51,16 @@ export const logOutreachForCompany = async ({
     throw new Error('Wholesaler ID must be a UUID');
   }
 
+  const company = await repository.getCompany(input.companyId);
+  if (!company) throw new Error('The selected company is no longer available');
   const notes = input.notes?.trim();
   const activity = await repository.createActivity({
     id: input.activityId,
-    name: `${QUICK_LOG_ACTIVITY_LABELS[input.activityType]} · ${QUICK_LOG_OUTCOME_LABELS[input.outcome]}`,
+    name: formatActivityName({
+      activityType: input.activityType,
+      companyName: company.name,
+      occurredAt: now.toISOString(),
+    }),
     companyId: input.companyId,
     wholesalerId,
     activityType: input.activityType,

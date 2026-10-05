@@ -444,7 +444,7 @@ const nativeRecordNavigation = (initialUrl: string, expandedUrl: string) => {
     'utf8',
   );
   const navigationSource = canarySource.match(
-    /named = true;([\s\S]*?)\n\s*phase = 'incomplete booking rejected without counting';/,
+    /named = true;([\s\S]*?)\n\s*phase = 'validated booking credits creating member';/,
   )?.[1];
   expect(navigationSource).toBeDefined();
   let currentUrl = initialUrl;
@@ -768,7 +768,7 @@ const runRecovery = (options: {
     meetingCanaryRecords,
     MeetingCanaryCheckError,
     validateMeetingCanaryRecoveryRecord,
-    assertDisabled: async () => {
+    assertAlertsSuppressed: async () => {
       calls.push('disabled');
       if (++gateCount === options.disabledGate)
         throw new MeetingCanaryCheckError('OWNERSHIP');
@@ -1371,7 +1371,7 @@ test('calendar diagnostics preserve exact assertions and detach before cleanup',
     'Today click',
     'scroll container visibility',
     'run-owned name visibility',
-    'disabled gate',
+    'suppression gate',
     'final attribution reread',
     'final attribution equality',
   ]) {
@@ -1532,7 +1532,7 @@ const runActualCalendarAuditBlock = (
       },
       toBe: (expected: unknown) => expect(value).toBe(expected),
     }),
-    assertDisabled: async () => {
+    assertAlertsSuppressed: async () => {
       checks.push('disabled');
       if (options.disabledError)
         throw new MeetingCanaryCheckError('GRAPHQL_PERMISSION');

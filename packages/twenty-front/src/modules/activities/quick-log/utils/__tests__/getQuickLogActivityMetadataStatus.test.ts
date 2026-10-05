@@ -136,3 +136,12 @@ describe('getQuickLogActivityMetadataStatus', () => {
     });
   });
 });
+
+it('accepts the live colored activity type select', () => {
+  const metadata = structuredClone(configuredMetadata);
+  metadata[0].fields.find(({ name }) => name === 'activityType')!.type =
+    FieldMetadataType.SELECT;
+  expect(getQuickLogActivityMetadataStatus(metadata)).toEqual({
+    isAvailable: true,
+  });
+});

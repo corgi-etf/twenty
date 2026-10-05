@@ -1,17 +1,21 @@
+import {
+  COMPANYOWNERSHIP_OBJECT_ID,
+  OUTREACHFOLLOWUP_OBJECT_ID,
+} from 'src/modules/experience/experience-identifiers';
+import { COMPANY_ALLOCATION_OBJECT_UNIVERSAL_IDENTIFIER } from 'src/modules/allocation/allocation-identifiers';
+process.env.CORGI_CRM_LEAD_ASSIGNMENT_OBJECT_UNIVERSAL_IDENTIFIER =
+  '55555555-5555-4555-8555-555555555555';
 import { STANDARD_OBJECT_UNIVERSAL_IDENTIFIERS } from 'twenty-sdk/define';
 import { describe, expect, it } from 'vitest';
 
-import {
-  MEETING_BOOKING_OBJECT_UNIVERSAL_IDENTIFIER,
-} from 'src/modules/meeting/meeting-identifiers';
+import { MEETING_BOOKING_OBJECT_UNIVERSAL_IDENTIFIER } from 'src/modules/meeting/meeting-identifiers';
 import {
   TELEGRAM_DELIVERY_AUDIT_OBJECT_UNIVERSAL_IDENTIFIER,
   TELEGRAM_DELIVERY_OBJECT_UNIVERSAL_IDENTIFIER,
 } from 'src/modules/telegram/telegram-persistence-identifiers';
 
 const WHOLESALER_OBJECT_ID = '33333333-3333-4333-8333-333333333333';
-const OUTREACH_ACTIVITY_OBJECT_ID =
-  '44444444-4444-4444-8444-444444444444';
+const OUTREACH_ACTIVITY_OBJECT_ID = '44444444-4444-4444-8444-444444444444';
 
 process.env.CORGI_CRM_WHOLESALER_OBJECT_UNIVERSAL_IDENTIFIER =
   WHOLESALER_OBJECT_ID;
@@ -45,10 +49,9 @@ describe('Corgi CRM function role', () => {
     expect(defaultRole.config.rowLevelPermissionPredicateGroups).toEqual([]);
   });
 
-  it('reads only the ten required objects and writes only scoped operational data', () => {
+  it('reads only the fourteen required objects and writes only scoped operational data', () => {
     const readOnly = [
-      STANDARD_OBJECT_UNIVERSAL_IDENTIFIERS.workspaceMember
-        .universalIdentifier,
+      STANDARD_OBJECT_UNIVERSAL_IDENTIFIERS.workspaceMember.universalIdentifier,
       STANDARD_OBJECT_UNIVERSAL_IDENTIFIERS.company.universalIdentifier,
       STANDARD_OBJECT_UNIVERSAL_IDENTIFIERS.person.universalIdentifier,
     ];
@@ -62,6 +65,10 @@ describe('Corgi CRM function role', () => {
       });
     }
     for (const objectUniversalIdentifier of [
+      COMPANYOWNERSHIP_OBJECT_ID,
+      OUTREACHFOLLOWUP_OBJECT_ID,
+      COMPANY_ALLOCATION_OBJECT_UNIVERSAL_IDENTIFIER,
+      '55555555-5555-4555-8555-555555555555',
       WHOLESALER_OBJECT_ID,
       OUTREACH_ACTIVITY_OBJECT_ID,
       TELEGRAM_DELIVERY_OBJECT_UNIVERSAL_IDENTIFIER,
@@ -80,6 +87,6 @@ describe('Corgi CRM function role', () => {
         canDestroyObjectRecords: false,
       });
     }
-    expect(defaultRole.config.objectPermissions).toHaveLength(10);
+    expect(defaultRole.config.objectPermissions).toHaveLength(14);
   });
 });

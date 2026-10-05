@@ -38,7 +38,11 @@ describe('CoreMeetingBookingRepository', () => {
     const bookedAt = '2026-09-10T13:15:00.000Z';
     const mutation = vi.fn().mockResolvedValue({
       updateMeetingBookings: [
-        { ...meeting, bookedAt, bookedById: '44444444-4444-4444-8444-444444444444' },
+        {
+          ...meeting,
+          bookedAt,
+          bookedById: '44444444-4444-4444-8444-444444444444',
+        },
       ],
     });
     const repository = new CoreMeetingBookingRepository({
@@ -58,7 +62,7 @@ describe('CoreMeetingBookingRepository', () => {
       filter: {
         and: [
           { id: { eq: meeting.id } },
-          { status: { eq: 'BOOKED' } },
+          { status: { in: ['BOOKED', 'COMPLETED'] } },
           { bookedAt: { is: 'NULL' } },
           { updatedAt: { eq: meeting.updatedAt } },
         ],
@@ -69,6 +73,35 @@ describe('CoreMeetingBookingRepository', () => {
         bookingValidationMessage: null,
       },
     });
+  });
+
+  it('accepts an atomic direct completed stamp and confirms it after a lost response', async () => {
+    const bookedAt = '2026-10-05T12:00:00Z';
+    const repository = new CoreMeetingBookingRepository({
+      mutation: vi.fn().mockRejectedValue(new Error('response lost')),
+      query: vi.fn().mockResolvedValue({
+        meetingBookings: {
+          edges: [
+            {
+              node: {
+                ...meeting,
+                status: 'COMPLETED',
+                bookedAt,
+                bookedById: null,
+              },
+            },
+          ],
+        },
+      }),
+    } as never);
+    expect(
+      await repository.stampBooked({
+        id: meeting.id,
+        bookedAt,
+        bookedById: null,
+        expectedUpdatedAt: meeting.updatedAt,
+      }),
+    ).toBe(true);
   });
 
   it('confirms a lost mutation response only from the exact persisted stamp', async () => {
@@ -228,14 +261,15 @@ describe('CoreMeetingBookingRepository', () => {
         expectedUpdatedAt: meeting.updatedAt,
       }),
     ).resolves.toBe(true);
-    expect(mutation.mock.calls[0]?.[0].updateMeetingBookings.__args.filter)
-      .toEqual({
-        and: [
-          { id: { eq: meeting.id } },
-          { status: { eq: 'BOOKED' } },
-          { bookedAt: { is: 'NULL' } },
-          { updatedAt: { eq: meeting.updatedAt } },
-        ],
-      });
+    expect(
+      mutation.mock.calls[0]?.[0].updateMeetingBookings.__args.filter,
+    ).toEqual({
+      and: [
+        { id: { eq: meeting.id } },
+        { status: { in: ['BOOKED', 'COMPLETED'] } },
+        { bookedAt: { is: 'NULL' } },
+        { updatedAt: { eq: meeting.updatedAt } },
+      ],
+    });
   });
 });

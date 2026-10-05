@@ -24,6 +24,10 @@ import { setTestObjectMetadataItemsInMetadataStore } from '~/testing/utils/setTe
 import { setTestViewsInMetadataStore } from '~/testing/utils/setTestViewsInMetadataStore';
 
 let mockIsMobile = false;
+let mockCorgiHomeEnabled = false;
+jest.mock('@/corgi-crm/home/hooks/useCorgiHomeEnabled', () => ({
+  useCorgiHomeEnabled: () => mockCorgiHomeEnabled,
+}));
 
 jest.mock('@/ui/utilities/responsive/hooks/useIsMobile', () => ({
   useIsMobile: () => mockIsMobile,
@@ -181,8 +185,24 @@ const renderHooks = ({
 };
 
 describe('useDefaultHomePagePath', () => {
+  beforeEach(() => {
+    jotaiStore.set(currentUserState.atom, null);
+  });
   afterEach(() => {
     mockIsMobile = false;
+    mockCorgiHomeEnabled = false;
+  });
+
+  it('opens dedicated Home on desktop when the Corgi experience schema is ready', async () => {
+    mockCorgiHomeEnabled = true;
+    const { result } = renderHooks({
+      withCurrentUser: true,
+      withExistingView: false,
+      navigationMenuItems: [buildObjectNavigationMenuItem('person', 0)],
+    });
+    await waitFor(() =>
+      expect(result.current.defaultHomePagePath).toBe(AppPath.Home),
+    );
   });
 
   it('should return proper path when no currentUser', async () => {

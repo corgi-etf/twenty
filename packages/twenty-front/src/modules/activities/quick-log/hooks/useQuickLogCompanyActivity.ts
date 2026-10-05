@@ -1,8 +1,10 @@
 import { useLingui } from '@lingui/react/macro';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
+import { v4 } from 'uuid';
+import { useFindOneRecord } from '@/object-record/hooks/useFindOneRecord';
+import { useObjectMetadataItems } from '@/object-metadata/hooks/useObjectMetadataItems';
+import { getCorgiActivityTitle } from '@/corgi-crm/forms/utils/getCorgiActivityTitle';
 
-import { QUICK_LOG_ACTIVITY_TYPES } from '@/activities/quick-log/constants/quickLogActivityTypes';
-import { QUICK_LOG_OUTCOMES } from '@/activities/quick-log/constants/quickLogOutcomes';
 import { type QuickLogActivityFormValues } from '@/activities/quick-log/types/QuickLogActivityFormValues';
 import { currentWorkspaceMemberState } from '@/auth/states/currentWorkspaceMemberState';
 import { useCreateOneRecord } from '@/object-record/hooks/useCreateOneRecord';
@@ -37,6 +39,18 @@ export const useQuickLogCompanyActivity = ({
   const currentWorkspaceMember = useAtomStateValue(currentWorkspaceMemberState);
   const { enqueueErrorSnackBar, enqueueSuccessSnackBar } = useSnackBar();
   const [isSubmitting, setIsSubmitting] = useState(false);
+  // Synchronous lock prevents double submission before React commits state.
+  // oxlint-disable-next-line twenty/no-state-useref
+  const submitting = useRef(false);
+  const { record: company } = useFindOneRecord({
+    objectNameSingular: 'company',
+    objectRecordId: companyId,
+    recordGqlFields: { id: true, name: true },
+  });
+  const { objectMetadataItems } = useObjectMetadataItems();
+  const activityMetadata = objectMetadataItems.find(
+    ({ nameSingular }) => nameSingular === 'outreachActivity',
+  );
 
   const currentWorkspaceMemberId = currentWorkspaceMember?.id;
 
@@ -91,6 +105,7 @@ export const useQuickLogCompanyActivity = ({
   const submitActivity = async (
     values: QuickLogActivityFormValues,
   ): Promise<boolean> => {
+    if (submitting.current) return false;
     const wholesalerId = matchingWholesalerRecords[0]?.id;
 
     if (ownershipError || !wholesalerId) {
@@ -100,35 +115,63 @@ export const useQuickLogCompanyActivity = ({
       return false;
     }
 
-    const activityTypeOption =
-      QUICK_LOG_ACTIVITY_TYPES.find(
-        ({ value }) => value === values.activityType,
-      ) ?? QUICK_LOG_ACTIVITY_TYPES[0];
-    const outcomeOption =
-      QUICK_LOG_OUTCOMES.find(({ value }) => value === values.outcome) ??
-      QUICK_LOG_OUTCOMES[0];
-
+    const activityTypeField = activityMetadata?.fields.find(
+      ({ name }) => name === 'activityType',
+    );
+    const selectedOption = activityTypeField?.options?.find(
+      ({ value }) => value.toLowerCase() === values.activityType.toLowerCase(),
+    );
+    if (activityTypeField?.type === 'SELECT' && !selectedOption) {
+      enqueueErrorSnackBar({
+        message: t`This activity type is unavailable. Reload and try again.`,
+      });
+      return false;
+    }
+    if (
+      values.contactId &&
+      !peopleRecords.some(({ id }) => id === values.contactId)
+    ) {
+      enqueueErrorSnackBar({ message: t`Choose a contact from this company.` });
+      return false;
+    }
+    const occurredAt = new Date().toISOString();
+    submitting.current = true;
     setIsSubmitting(true);
 
     try {
       await createOneRecord({
-        name: `${t(activityTypeOption.label)} · ${t(outcomeOption.label)}`,
+        name: getCorgiActivityTitle({
+          activityType: selectedOption?.value ?? values.activityType,
+          companyId,
+          companyName: company?.name,
+          occurredAt,
+        }),
         companyId,
         wholesalerId,
-        activityType: values.activityType,
+        activityType: selectedOption?.value ?? values.activityType,
         outcome: values.outcome,
-        occurredAt: new Date().toISOString(),
+        occurredAt,
         notes: values.notes.trim() || null,
         ...(values.contactId ? { contactId: values.contactId } : {}),
-        ...(values.followUpDate ? { followUpDate: values.followUpDate } : {}),
+        ...(values.followUpDate
+          ? {
+              followUpDate: values.followUpDate,
+              ...(activityMetadata?.fields.some(
+                ({ name }) => name === 'followUpRequestKey',
+              )
+                ? { followUpRequestKey: v4() }
+                : {}),
+            }
+          : {}),
       });
 
-      enqueueSuccessSnackBar({ message: t`Follow-up logged.` });
+      enqueueSuccessSnackBar({ message: t`Activity logged.` });
       return true;
     } catch {
-      enqueueErrorSnackBar({ message: t`Could not log the follow-up.` });
+      enqueueErrorSnackBar({ message: t`Could not log the activity.` });
       return false;
     } finally {
+      submitting.current = false;
       setIsSubmitting(false);
     }
   };

@@ -2,6 +2,8 @@ import { type EnrichedObjectMetadataItem } from '@/object-metadata/types/Enriche
 import { type ObjectRecordOperation } from '@/object-record/types/ObjectRecordOperation';
 
 export type ObjectRecordOperationBrowserEventDetail = {
+  source?: 'local-mutation';
+  createInput?: Record<string, unknown>;
   objectMetadataItem: EnrichedObjectMetadataItem;
   operation: ObjectRecordOperation;
 };

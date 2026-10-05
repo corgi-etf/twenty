@@ -329,12 +329,17 @@ describe('application release contract', () => {
     const packageJson = JSON.parse(
       await fs.readFile(new URL('../package.json', import.meta.url), 'utf8'),
     );
-    assert.equal(packageJson.version, '1.2.36');
+    assert.equal(packageJson.version, '1.3.0');
   });
 
   it('resolves exact custom object universal identifiers from live metadata', () => {
     assert.deepEqual(
       resolveCorgiRoleObjectIdentifiers([
+        {
+          nameSingular: 'leadAssignment',
+          universalIdentifier: '55555555-5555-4555-8555-555555555555',
+          isActive: true,
+        },
         {
           nameSingular: 'wholesaler',
           universalIdentifier: '33333333-3333-4333-8333-333333333333',
@@ -347,6 +352,8 @@ describe('application release contract', () => {
         },
       ]),
       {
+        CORGI_CRM_LEAD_ASSIGNMENT_OBJECT_UNIVERSAL_IDENTIFIER:
+          '55555555-5555-4555-8555-555555555555',
         CORGI_CRM_WHOLESALER_OBJECT_UNIVERSAL_IDENTIFIER:
           '33333333-3333-4333-8333-333333333333',
         CORGI_CRM_OUTREACH_ACTIVITY_OBJECT_UNIVERSAL_IDENTIFIER:
@@ -379,6 +386,10 @@ describe('installed application role verification', () => {
     'meetingBooking',
     'task',
     'taskTarget',
+    'companyAllocation',
+    'companyOwnership',
+    'outreachFollowUp',
+    'leadAssignment',
   ].map((nameSingular, index) => ({
     id: `00000000-0000-4000-8000-0000000000${String(index).padStart(2, '0')}`,
     nameSingular,
@@ -391,6 +402,10 @@ describe('installed application role verification', () => {
     'meetingBooking',
     'task',
     'taskTarget',
+    'companyAllocation',
+    'companyOwnership',
+    'outreachFollowUp',
+    'leadAssignment',
   ]);
   const role = {
     canAccessAllTools: false,
@@ -603,7 +618,7 @@ describe('installed application role verification', () => {
     );
   });
 
-  it('accepts only the exact ten-object least-privilege role', () => {
+  it('accepts only the exact fourteen-object least-privilege role', () => {
     assert.doesNotThrow(() => verifyApplicationRoleContract(role, objects));
   });
 
@@ -641,7 +656,7 @@ describe('installed application role verification', () => {
     }
   });
 
-  it('rejects duplicate object permissions even when the count remains ten', () => {
+  it('rejects duplicate object permissions even when the count remains fourteen', () => {
     assert.throws(
       () =>
         verifyApplicationRoleContract(
@@ -691,7 +706,7 @@ describe('installed application role verification', () => {
           },
           objects,
         ),
-      /exactly ten/i,
+      /exactly fourteen/i,
     );
     assert.throws(
       () =>
@@ -879,7 +894,13 @@ describe('installed meeting booking verification', () => {
           name: 'on-meeting-booking-status-updated',
           databaseEventTriggerSettings: {
             eventName: 'meetingBooking.updated',
-            updatedFields: ['status'],
+            updatedFields: [
+              'status',
+              'name',
+              'companyId',
+              'wholesalerId',
+              'scheduledAt',
+            ],
           },
         },
         {

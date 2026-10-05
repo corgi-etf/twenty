@@ -1,3 +1,5 @@
+import { useCorgiAccentPalette } from '@/corgi-crm/settings/hooks/useCorgiAccentPalette';
+import { getCorgiAccentOverrides } from '@/corgi-crm/settings/utils/corgiAccentPalette';
 import { type JSX, createContext } from 'react';
 
 import { UI_SCALE_MULTIPLIERS } from '@/ui/theme/constants/UiScaleMultipliers';
@@ -23,6 +25,7 @@ export const BaseThemeProvider = ({ children }: BaseThemeProviderProps) => {
   );
   const persistedUiScaleStep = useAtomStateValue(persistedUiScaleStepState);
   const systemColorScheme = useSystemColorScheme();
+  const { palette, hasPalette } = useCorgiAccentPalette();
   const effectiveColorScheme =
     persistedColorScheme === 'System'
       ? systemColorScheme
@@ -33,6 +36,11 @@ export const BaseThemeProvider = ({ children }: BaseThemeProviderProps) => {
       <ThemeProvider
         colorScheme={effectiveColorScheme === 'Dark' ? 'dark' : 'light'}
         scale={UI_SCALE_MULTIPLIERS[persistedUiScaleStep]}
+        rootOverrides={
+          hasPalette
+            ? getCorgiAccentOverrides(palette, effectiveColorScheme === 'Dark')
+            : undefined
+        }
       >
         {children}
       </ThemeProvider>

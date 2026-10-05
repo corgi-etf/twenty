@@ -1,3 +1,5 @@
+import { useCorgiCreateRecordDialog } from '@/corgi-crm/forms/hooks/useCorgiCreateRecordDialog';
+import { CORGI_CREATE_FIELDS } from '@/corgi-crm/forms/utils/corgiRecordDraft';
 import { useCallback, useState } from 'react';
 import { CombinedGraphQLErrors } from '@apollo/client/errors';
 import { t } from '@lingui/core/macro';
@@ -34,6 +36,7 @@ export const useCreateJunctionRecordWithNestedTarget = ({
   junctionConfig,
 }: UseCreateJunctionRecordWithNestedTargetArgs) => {
   const store = useStore();
+  const { openCreateRecord, isCorgiWorkspace } = useCorgiCreateRecordDialog();
   const [loading, setLoading] = useState(false);
   const { objectMetadataItems } = useObjectMetadataItems();
   const { enqueueErrorSnackBar } = useSnackBar();
@@ -102,6 +105,41 @@ export const useCreateJunctionRecordWithNestedTarget = ({
           id: targetRecordId,
         };
 
+        if (
+          isCorgiWorkspace &&
+          CORGI_CREATE_FIELDS[targetObjectMetadataItem.nameSingular]
+        ) {
+          const junctionRecordId = v4();
+          const target = await openCreateRecord({
+            objectNameSingular: targetObjectMetadataItem.nameSingular,
+            initialValues: targetRecordInput,
+            onCreated: async (record) => {
+              const junctionRecord = await createJunctionRecord({
+                id: junctionRecordId,
+                [sourceJoinColumnName]: sourceRecordId,
+                [`${targetFieldInfo.fieldName}Id`]: record.id,
+              });
+              upsertJunctionRecordInSourceRecordStore({
+                store,
+                sourceRecordId,
+                sourceFieldName,
+                junctionRecord: {
+                  ...junctionRecord,
+                  [targetFieldInfo.fieldName]: record,
+                },
+              });
+            },
+          });
+          return target
+            ? {
+                recordId: target.id,
+                objectMetadataId: targetObjectMetadataItem.id,
+                isSelected: true,
+                isMatchingSearchFilter: true,
+              }
+            : undefined;
+        }
+
         const createdJunctionRecord = await createJunctionRecord({
           id: v4(),
           [sourceJoinColumnName]: sourceRecordId,
@@ -150,6 +188,8 @@ export const useCreateJunctionRecordWithNestedTarget = ({
       }
     },
     [
+      openCreateRecord,
+      isCorgiWorkspace,
       buildRecordInputFromRLSPredicates,
       createJunctionRecord,
       enqueueErrorSnackBar,

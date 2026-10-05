@@ -29,6 +29,8 @@ import { WorkspaceManyOrAllFlatEntityMapsCacheModule } from 'src/engine/metadata
 import { UserRoleModule } from 'src/engine/metadata-modules/user-role/user-role.module';
 import { WorkspaceCacheStorageModule } from 'src/engine/workspace-cache-storage/workspace-cache-storage.module';
 import { WorkspaceCacheModule } from 'src/engine/workspace-cache/workspace-cache.module';
+import { CorgiHomeQueryService } from 'src/modules/corgi-crm/corgi-home-query.service';
+import { CorgiHomeService } from 'src/modules/corgi-crm/corgi-home.service';
 
 const restApiCoreResolvers = [
   RestApiCreateOneHandler,
@@ -65,6 +67,8 @@ const restApiCoreResolvers = [
   ],
   controllers: [RestApiCoreController],
   providers: [
+    CorgiHomeQueryService,
+    CorgiHomeService,
     RestApiCoreService,
     ...restApiCoreResolvers,
     ...restToCommonArgsHandlers,

@@ -15,6 +15,10 @@ export const mapViewFieldsToColumnDefinitions = ({
   viewFields: ViewField[];
 }): ColumnDefinition<FieldMetadata>[] => {
   let labelIdentifierFieldMetadataId = '';
+  const isOutreachActivity = columnDefinitions.some(
+    ({ metadata }) =>
+      metadata.objectMetadataNameSingular === 'outreachActivity',
+  );
 
   const columnDefinitionsByFieldMetadataId = mapArrayToObject(
     columnDefinitions,
@@ -41,7 +45,8 @@ export const mapViewFieldsToColumnDefinitions = ({
         metadata: correspondingColumnDefinition.metadata,
         iconName: correspondingColumnDefinition.iconName,
         type: correspondingColumnDefinition.type,
-        position: isLabelIdentifier ? 0 : viewField.position,
+        position:
+          isLabelIdentifier && !isOutreachActivity ? 0 : viewField.position,
         size: viewField.size ?? correspondingColumnDefinition.size,
         isLabelIdentifier,
         isVisible: isLabelIdentifier || viewField.isVisible,
@@ -58,6 +63,10 @@ export const mapViewFieldsToColumnDefinitions = ({
     })
     .filter(isDefined);
 
+  if (isOutreachActivity)
+    return columnDefinitionsFromViewFields.sort(
+      (left, right) => left.position - right.position,
+    );
   if (!labelIdentifierFieldMetadataId) return columnDefinitionsFromViewFields;
 
   const labelIdentifierIndex = columnDefinitionsFromViewFields.findIndex(

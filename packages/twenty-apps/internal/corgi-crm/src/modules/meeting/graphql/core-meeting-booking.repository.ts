@@ -45,9 +45,7 @@ const isMeetingBookingStatus = (
   value: unknown,
 ): value is MeetingBookingStatus =>
   typeof value === 'string' &&
-  Object.values(MEETING_BOOKING_STATUS).includes(
-    value as MeetingBookingStatus,
-  );
+  Object.values(MEETING_BOOKING_STATUS).includes(value as MeetingBookingStatus);
 
 const parseMeetingBooking = (value: unknown): MeetingBookingRecord | null => {
   if (!value || typeof value !== 'object') return null;
@@ -120,7 +118,14 @@ export class CoreMeetingBookingRepository {
             filter: {
               and: [
                 { id: { eq: id } },
-                { status: { eq: MEETING_BOOKING_STATUS.BOOKED } },
+                {
+                  status: {
+                    in: [
+                      MEETING_BOOKING_STATUS.BOOKED,
+                      MEETING_BOOKING_STATUS.COMPLETED,
+                    ],
+                  },
+                },
                 { bookedAt: { is: 'NULL' } },
                 { updatedAt: { eq: expectedUpdatedAt } },
               ],
@@ -139,7 +144,10 @@ export class CoreMeetingBookingRepository {
         const updated = parseMeetingBooking(rows[0]);
         if (
           updated?.id === id &&
-          updated.status === MEETING_BOOKING_STATUS.BOOKED &&
+          [
+            MEETING_BOOKING_STATUS.BOOKED,
+            MEETING_BOOKING_STATUS.COMPLETED,
+          ].includes(updated.status as 'BOOKED' | 'COMPLETED') &&
           updated.bookedAt === bookedAt &&
           updated.bookedById === bookedById &&
           updated.bookingValidationMessage === null
@@ -153,7 +161,11 @@ export class CoreMeetingBookingRepository {
     }
     const persisted = await this.get(id);
     return (
-      persisted?.status === MEETING_BOOKING_STATUS.BOOKED &&
+      persisted !== null &&
+      [
+        MEETING_BOOKING_STATUS.BOOKED,
+        MEETING_BOOKING_STATUS.COMPLETED,
+      ].includes(persisted.status as 'BOOKED' | 'COMPLETED') &&
       persisted.bookedAt === bookedAt &&
       persisted.bookedById === bookedById &&
       persisted.bookingValidationMessage === null
@@ -220,7 +232,8 @@ export class CoreMeetingBookingRepository {
       const rows = result.updateMeetingBookings;
       if (Array.isArray(rows) && rows.length === 1) {
         const updated = parseMeetingBooking(rows[0]);
-        if (updated?.id === id && updated.bookedById === bookedById) return true;
+        if (updated?.id === id && updated.bookedById === bookedById)
+          return true;
       }
     } catch {
       // See stampBooked: a committed mutation can still lose its response.
@@ -281,7 +294,14 @@ export class CoreMeetingBookingRepository {
             filter: {
               and: [
                 { id: { eq: id } },
-                { status: { eq: MEETING_BOOKING_STATUS.BOOKED } },
+                {
+                  status: {
+                    in: [
+                      MEETING_BOOKING_STATUS.BOOKED,
+                      MEETING_BOOKING_STATUS.COMPLETED,
+                    ],
+                  },
+                },
                 { bookedAt: { is: 'NULL' } },
                 { updatedAt: { eq: expectedUpdatedAt } },
               ],

@@ -1,3 +1,6 @@
+import { CorgiCreateRecordDialogHost } from '@/corgi-crm/forms/components/CorgiCreateRecordDialogHost';
+import { CorgiHomeProvider } from '@/corgi-crm/home/components/CorgiHomeProvider';
+import { CorgiWorkingPageHeader } from '@/corgi-crm/home/components/CorgiWorkingPageHeader';
 import { AppErrorBoundary } from '@/error-handler/components/AppErrorBoundary';
 import { AppFullScreenErrorFallback } from '@/error-handler/components/AppFullScreenErrorFallback';
 import { AppPageErrorFallback } from '@/error-handler/components/AppPageErrorFallback';
@@ -62,12 +65,27 @@ const StyledNavigationDrawerWrapper = styled.div`
 const StyledMainContainer = styled.div`
   display: flex;
   flex: 0 1 100%;
+  flex-direction: column;
   min-width: 0;
   overflow: hidden;
 
   @media print {
     display: block;
     min-width: auto;
+    overflow: visible;
+  }
+`;
+
+const StyledWorkingPage = styled.div`
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+
+  @media print {
+    display: block;
+    min-height: auto;
     overflow: visible;
   }
 `;
@@ -79,28 +97,34 @@ export const DefaultLayout = () => {
   return (
     <>
       <FileUploadProvider>
-        <StyledLayout>
-          <AppErrorBoundary FallbackComponent={AppFullScreenErrorFallback}>
-            <InformationBannerIsImpersonating />
-            <LayoutCustomizationBar />
-            <StyledPageContainer>
-              <PageDragDropProvider>
-                <KeyboardShortcutMenu />
-                {useShowFullScreen ? null : (
-                  <StyledNavigationDrawerWrapper>
-                    <AppNavigationDrawer />
-                  </StyledNavigationDrawerWrapper>
-                )}
-                <StyledMainContainer>
-                  <AppErrorBoundary FallbackComponent={AppPageErrorFallback}>
-                    <Outlet />
-                  </AppErrorBoundary>
-                </StyledMainContainer>
-              </PageDragDropProvider>
-            </StyledPageContainer>
-            {isMobile && <MobileNavigationBar />}
-          </AppErrorBoundary>
-        </StyledLayout>
+        <CorgiHomeProvider>
+          <StyledLayout>
+            <AppErrorBoundary FallbackComponent={AppFullScreenErrorFallback}>
+              <InformationBannerIsImpersonating />
+              <LayoutCustomizationBar />
+              <StyledPageContainer>
+                <PageDragDropProvider>
+                  <KeyboardShortcutMenu />
+                  {useShowFullScreen ? null : (
+                    <StyledNavigationDrawerWrapper>
+                      <AppNavigationDrawer />
+                    </StyledNavigationDrawerWrapper>
+                  )}
+                  <StyledMainContainer>
+                    <AppErrorBoundary FallbackComponent={AppPageErrorFallback}>
+                      {!useShowFullScreen && <CorgiWorkingPageHeader />}
+                      <StyledWorkingPage>
+                        <Outlet />
+                      </StyledWorkingPage>
+                      <CorgiCreateRecordDialogHost />
+                    </AppErrorBoundary>
+                  </StyledMainContainer>
+                </PageDragDropProvider>
+              </StyledPageContainer>
+              {isMobile && <MobileNavigationBar />}
+            </AppErrorBoundary>
+          </StyledLayout>
+        </CorgiHomeProvider>
       </FileUploadProvider>
     </>
   );

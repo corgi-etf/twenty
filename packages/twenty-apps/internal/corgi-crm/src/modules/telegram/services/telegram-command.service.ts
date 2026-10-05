@@ -204,11 +204,7 @@ export const processTelegramCommand = async (
   if (reportPeriod && isGroupTopic) {
     // The linked fallback below is per-person identity, so the public-report
     // policy is the only group-safe path to a report.
-    await sendParts(
-      dependencies.send,
-      update.chatId,
-      GROUP_REPORTS_DISABLED,
-    );
+    await sendParts(dependencies.send, update.chatId, GROUP_REPORTS_DISABLED);
     return { status: 'group_reports_disabled' } as const;
   }
 
@@ -267,6 +263,7 @@ export const processTelegramCommand = async (
     const result = await logOutreach({
       input,
       wholesalerId: link.wholesalerId,
+      schedulerWorkspaceMemberId: link.workspaceMemberId,
       now: new Date(update.messageTimestamp),
       repository: dependencies.repository,
     });

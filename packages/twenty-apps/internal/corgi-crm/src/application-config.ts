@@ -7,6 +7,13 @@ export default defineApplication({
   displayName: 'Corgi CRM',
   description: 'Corgi CRM territory and wholesaler automation.',
   applicationVariables: {
+    CORGI_CRM_EXPERIENCE_BACKFILL_DIGEST: {
+      universalIdentifier: '1248639b-a7e1-514e-b550-f662ef4aa81f',
+      description:
+        'SHA-256 of the reviewed experience backfill manifest. Empty disables the untriggered backfill function; clear immediately after application.',
+      isSecret: false,
+      value: '',
+    },
     CORGI_CRM_WORKSPACE_ID: {
       universalIdentifier: '2878690b-7830-4702-b78f-03822b77c12c',
       description:

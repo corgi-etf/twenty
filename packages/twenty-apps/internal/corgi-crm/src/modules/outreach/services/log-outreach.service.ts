@@ -1,8 +1,7 @@
+import { formatActivityName } from 'src/modules/outreach/services/activity-name.service';
 import {
   isQuickLogActivityType,
   isQuickLogOutcome,
-  QUICK_LOG_ACTIVITY_LABELS,
-  QUICK_LOG_OUTCOME_LABELS,
 } from 'src/modules/outreach/quick-log-taxonomy';
 import {
   type LogOutreachInput,
@@ -21,11 +20,13 @@ const exactOrAll = (records: NamedRecord[], query: string): NamedRecord[] => {
 export const logOutreach = async ({
   input,
   wholesalerId,
+  schedulerWorkspaceMemberId,
   now,
   repository,
 }: {
   input: LogOutreachInput;
   wholesalerId: string;
+  schedulerWorkspaceMemberId?: string;
   now: Date;
   repository: OutreachRepository;
 }) => {
@@ -63,7 +64,11 @@ export const logOutreach = async ({
   const occurredAt = now.toISOString();
   const activity = await repository.createActivity({
     id: draft.activityId,
-    name: `${QUICK_LOG_ACTIVITY_LABELS[draft.activityType]} · ${QUICK_LOG_OUTCOME_LABELS[draft.outcome]}`,
+    name: formatActivityName({
+      activityType: draft.activityType,
+      companyName: company.name,
+      occurredAt,
+    }),
     companyId: company.id,
     ...(contact ? { contactId: contact.id } : {}),
     wholesalerId,
@@ -71,7 +76,14 @@ export const logOutreach = async ({
     outcome: draft.outcome,
     ...(draft.notes ? { notes: draft.notes } : {}),
     occurredAt,
-    ...(draft.followUpDate ? { followUpDate: draft.followUpDate } : {}),
+    ...(draft.followUpDate
+      ? {
+          followUpDate: draft.followUpDate,
+          ...(schedulerWorkspaceMemberId
+            ? { followUpRequestedById: schedulerWorkspaceMemberId }
+            : {}),
+        }
+      : {}),
   });
 
   return {

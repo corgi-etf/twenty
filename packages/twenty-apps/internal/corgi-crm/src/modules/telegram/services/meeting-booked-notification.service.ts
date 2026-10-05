@@ -131,9 +131,10 @@ export const parseMeetingBookedNotificationEvent = (
     );
   }
   const event = value as Record<string, unknown>;
-  const allowedKeys = event.bookedByName === undefined
-    ? 'bookedAt,meetingId,ownerName,riaName,scheduledAt,type'
-    : 'bookedAt,bookedByName,meetingId,ownerName,riaName,scheduledAt,type';
+  const allowedKeys =
+    event.bookedByName === undefined
+      ? 'bookedAt,meetingId,ownerName,riaName,scheduledAt,type'
+      : 'bookedAt,bookedByName,meetingId,ownerName,riaName,scheduledAt,type';
   const bookedAt = canonicalInstant(event.bookedAt);
   const scheduledAt = canonicalInstant(event.scheduledAt);
   const riaName = normalizeName(event.riaName);
@@ -185,7 +186,9 @@ const buildEvent = (
   if (
     !booking ||
     booking.id !== meetingId ||
-    booking.status !== 'BOOKED' ||
+    !['BOOKED', 'COMPLETED', 'CANCELLED', 'NO_SHOW'].includes(
+      booking.status ?? '',
+    ) ||
     !expectedBookedAt ||
     actualBookedAt !== expectedBookedAt ||
     !scheduledAt ||

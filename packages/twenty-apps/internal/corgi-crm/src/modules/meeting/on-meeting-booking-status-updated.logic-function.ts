@@ -11,9 +11,12 @@ import {
   MEETING_BOOKING_STATUS,
   MEETING_BOOKING_STATUS_UPDATED_FUNCTION_UNIVERSAL_IDENTIFIER,
 } from 'src/modules/meeting/meeting-identifiers';
-import { reconcileMeetingBooking } from 'src/modules/meeting/services/reconcile-meeting-booking.service';
+import {
+  reconcileMeetingBooking,
+  type MeetingBookingEventSnapshot,
+} from 'src/modules/meeting/services/reconcile-meeting-booking.service';
 
-type MeetingBookingEventRecord = {
+type MeetingBookingEventRecord = MeetingBookingEventSnapshot & {
   id?: string | null;
   updatedAt?: string | null;
   updatedBy?: { workspaceMemberId?: string | null } | null;
@@ -36,7 +39,8 @@ export const handler = async (
   if (
     !meetingId ||
     !after?.updatedAt ||
-    after.status !== MEETING_BOOKING_STATUS.BOOKED
+    (after.status !== MEETING_BOOKING_STATUS.BOOKED &&
+      after.status !== MEETING_BOOKING_STATUS.COMPLETED)
   ) {
     return { status: 'skipped', reason: 'missing_event_identity' } as const;
   }
@@ -47,7 +51,9 @@ export const handler = async (
     return await reconcileMeetingBooking({
       meetingId,
       eventOccurredAt: after.updatedAt,
-      actorWorkspaceMemberId: after.updatedBy?.workspaceMemberId ?? null,
+      eventSnapshot: after,
+      actorWorkspaceMemberId:
+        payload.workspaceMemberId ?? after.updatedBy?.workspaceMemberId ?? null,
       repository: new CoreMeetingBookingRepository(new CoreApiClient()),
     });
   } catch {
@@ -62,11 +68,17 @@ export default defineLogicFunction({
     MEETING_BOOKING_STATUS_UPDATED_FUNCTION_UNIVERSAL_IDENTIFIER,
   name: 'on-meeting-booking-status-updated',
   description:
-    'Validates the draft-to-booked transition and atomically stamps first-booked evidence.',
+    'Validates booked input changes and atomically stamps the first valid booking evidence.',
   timeoutSeconds: 30,
   handler,
   databaseEventTriggerSettings: {
     eventName: 'meetingBooking.updated',
-    updatedFields: ['status'],
+    updatedFields: [
+      'status',
+      'name',
+      'companyId',
+      'wholesalerId',
+      'scheduledAt',
+    ],
   },
 });

@@ -32,7 +32,7 @@ export const QuickLogCompanyActivityModal = ({
   return (
     <ModalStatefulWrapper
       modalInstanceId={modalInstanceId}
-      ariaLabel={t`Log follow-up`}
+      ariaLabel={t`Log activity`}
       onClose={handleClose}
       isClosable
       size="medium"
@@ -44,10 +44,7 @@ export const QuickLogCompanyActivityModal = ({
       autoHeight
     >
       <StyledTitle>
-        <H1Title
-          title={t`Log follow-up`}
-          fontColor={H1TitleFontColor.Primary}
-        />
+        <H1Title title={t`Log activity`} fontColor={H1TitleFontColor.Primary} />
       </StyledTitle>
       <QuickLogCompanyActivityForm
         key={formVersion}

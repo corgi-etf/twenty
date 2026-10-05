@@ -33,8 +33,8 @@ const ReadyQuickLogCompanyActivityAction = ({
     <>
       <Button
         Icon={IconPhone}
-        title={t`Log follow-up`}
-        ariaLabel={t`Log a follow-up for this company`}
+        title={t`Log activity`}
+        ariaLabel={t`Log an activity for this company`}
         variant="secondary"
         onClick={() => openModal(modalInstanceId)}
       />

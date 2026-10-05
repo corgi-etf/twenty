@@ -1,3 +1,4 @@
+import { type ReactNode } from 'react';
 import { RecordPageSidePanelCommandMenu } from '@/command-menu-item/components/RecordPageSidePanelCommandMenu';
 import { RecordPageSidePanelPinnedCommandMenuItems } from '@/command-menu-item/components/RecordPageSidePanelPinnedCommandMenuItems';
 import { RecordPageSidePanelWidgetCommandMenuItems } from '@/command-menu-item/components/RecordPageSidePanelWidgetCommandMenuItems';
@@ -42,8 +43,10 @@ const StyledContentContainer = styled.div`
 
 export const PageLayoutRecordPageRenderer = ({
   targetRecordIdentifier,
+  leadingContent,
 }: {
   targetRecordIdentifier: TargetRecordIdentifier;
+  leadingContent?: ReactNode;
 }) => {
   const isInSidePanel = useWorkspaceSurface().type === 'side-panel';
   const recordDeletedAt = useAtomFamilySelectorValue(
@@ -75,7 +78,8 @@ export const PageLayoutRecordPageRenderer = ({
       )}
 
       <StyledShowPageRightContainer data-record-show-page-body="">
-        <StyledContentContainer>
+        <StyledContentContainer data-record-show-scroll-container="">
+          {!isInSidePanel && leadingContent}
           <LayoutRenderingProvider
             value={{
               targetRecordIdentifier: {

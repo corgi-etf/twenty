@@ -16,7 +16,7 @@ const meeting: MeetingBookingRecord = {
   companyId: '22222222-2222-4222-8222-222222222222',
   wholesalerId: '33333333-3333-4333-8333-333333333333',
   bookingValidationMessage: null,
-  updatedAt: '2026-09-10T13:14:59.000Z',
+  updatedAt: '2026-09-10T13:15:00.000Z',
 };
 
 const repository = (
@@ -28,6 +28,38 @@ const repository = (
 });
 
 describe('reconcileMeetingBooking', () => {
+  it('does not use a delayed incomplete booking event to credit a later repair', async () => {
+    const repo = repository();
+    expect(
+      await reconcileMeetingBooking({
+        meetingId: meeting.id,
+        eventOccurredAt: '2026-09-10T12:00:00Z',
+        actorWorkspaceMemberId: '44444444-4444-4444-8444-444444444444',
+        eventSnapshot: { ...meeting, companyId: null },
+        repository: repo,
+      }),
+    ).toEqual({ status: 'ignored', meetingId: meeting.id });
+    expect(repo.stampBooked).not.toHaveBeenCalled();
+  });
+  it('retains valid original booking evidence after completion automation changes the current row', async () => {
+    const repo = repository({
+      ...meeting,
+      status: 'COMPLETED',
+      updatedAt: '2026-09-10T13:16:00Z',
+    });
+    expect(
+      await reconcileMeetingBooking({
+        meetingId: meeting.id,
+        eventOccurredAt: meeting.updatedAt,
+        actorWorkspaceMemberId: '44444444-4444-4444-8444-444444444444',
+        eventSnapshot: meeting,
+        repository: repo,
+      }),
+    ).toEqual({ status: 'booked', meetingId: meeting.id });
+    expect(repo.stampBooked).toHaveBeenCalledWith(
+      expect.objectContaining({ bookedAt: meeting.updatedAt }),
+    );
+  });
   it('stamps the immutable booking instant and valid updating member', async () => {
     const repo = repository();
 
@@ -53,42 +85,48 @@ describe('reconcileMeetingBooking', () => {
     ['company', { companyId: null }, 'RIA / company'],
     ['owner', { wholesalerId: null }, 'owner'],
     ['time', { scheduledAt: null }, 'scheduled date and time'],
-  ])('keeps an invalid %s booking in DRAFT with visible feedback', async (_label, patch, expected) => {
-    const repo = repository({ ...meeting, ...patch });
+  ])(
+    'keeps an invalid %s booking in DRAFT with visible feedback',
+    async (_label, patch, expected) => {
+      const repo = repository({ ...meeting, ...patch });
 
-    await expect(
-      reconcileMeetingBooking({
-        meetingId: meeting.id,
-        eventOccurredAt: '2026-09-10T13:15:00.000Z',
-        actorWorkspaceMemberId: null,
-        repository: repo,
-      }),
-    ).resolves.toMatchObject({ status: 'invalid', meetingId: meeting.id });
-    expect(repo.rejectInvalidBooking).toHaveBeenCalledWith({
-      id: meeting.id,
-      message: expect.stringContaining(expected),
-      expectedUpdatedAt: meeting.updatedAt,
-    });
-    expect(repo.stampBooked).not.toHaveBeenCalled();
-  });
+      await expect(
+        reconcileMeetingBooking({
+          meetingId: meeting.id,
+          eventOccurredAt: '2026-09-10T13:15:00.000Z',
+          actorWorkspaceMemberId: null,
+          repository: repo,
+        }),
+      ).resolves.toMatchObject({ status: 'invalid', meetingId: meeting.id });
+      expect(repo.rejectInvalidBooking).toHaveBeenCalledWith({
+        id: meeting.id,
+        message: expect.stringContaining(expected),
+        expectedUpdatedAt: meeting.updatedAt,
+      });
+      expect(repo.stampBooked).not.toHaveBeenCalled();
+    },
+  );
 
   it.each([
     { ...meeting, status: 'DRAFT' as const },
     { ...meeting, status: 'CANCELLED' as const },
     { ...meeting, bookedAt: '2026-08-01T12:00:00.000Z' },
-  ])('does not stamp a draft, stale transition, reschedule, or reopening', async (record) => {
-    const repo = repository(record);
+  ])(
+    'does not stamp a draft, stale transition, reschedule, or reopening',
+    async (record) => {
+      const repo = repository(record);
 
-    await expect(
-      reconcileMeetingBooking({
-        meetingId: meeting.id,
-        eventOccurredAt: '2026-09-10T13:15:00.000Z',
-        actorWorkspaceMemberId: null,
-        repository: repo,
-      }),
-    ).resolves.toEqual({ status: 'ignored', meetingId: meeting.id });
-    expect(repo.stampBooked).not.toHaveBeenCalled();
-  });
+      await expect(
+        reconcileMeetingBooking({
+          meetingId: meeting.id,
+          eventOccurredAt: '2026-09-10T13:15:00.000Z',
+          actorWorkspaceMemberId: null,
+          repository: repo,
+        }),
+      ).resolves.toEqual({ status: 'ignored', meetingId: meeting.id });
+      expect(repo.stampBooked).not.toHaveBeenCalled();
+    },
+  );
 
   // People move straight from Draft to Completed, so keying only on Booked
   // left bookedAt null on every real meeting and the alert never fired.
@@ -170,6 +208,7 @@ describe('reconcileMeetingBooking', () => {
     const input = {
       meetingId: meeting.id,
       eventOccurredAt: '2026-09-10T13:15:00.000Z',
+      eventSnapshot: meeting,
       actorWorkspaceMemberId: null,
       repository: repo,
     };

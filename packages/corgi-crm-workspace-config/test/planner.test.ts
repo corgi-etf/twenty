@@ -78,10 +78,11 @@ const snapshot = (): WorkspaceConfigSnapshot => {
       ['bodyV2', 'RICH_TEXT_V2'],
     ]),
     object('outreachActivity', [
+      ['name', 'TEXT'],
       ['company', 'RELATION'],
       ['contact', 'RELATION'],
       ['wholesaler', 'RELATION'],
-      ['activityType', 'TEXT'],
+      ['activityType', 'SELECT'],
       ['outcome', 'TEXT'],
       ['followUpDate', 'DATE'],
       ['occurredAt', 'DATE_TIME'],
@@ -238,6 +239,16 @@ const snapshot = (): WorkspaceConfigSnapshot => {
 };
 
 const addWorkspaceMemberRelation = (value: WorkspaceConfigSnapshot): void => {
+  for (const objectName of ['company', 'person']) {
+    value.objects
+      .find(({ nameSingular }) => nameSingular === objectName)!
+      .fields.push({
+        id: `${objectName}-activeClient-field-id`,
+        name: 'activeClient',
+        label: 'Active client',
+        type: 'BOOLEAN',
+      });
+  }
   const wholesaler = value.objects[2]!;
   const workspaceMember = value.objects[7]!;
   wholesaler.fields.push({
@@ -265,6 +276,12 @@ const addWorkspaceMemberRelation = (value: WorkspaceConfigSnapshot): void => {
     relationTargetObjectMetadataId: wholesaler.id,
     relationTargetFieldMetadataId: 'wholesaler-workspaceMember-field-id',
     settings: { relationType: 'ONE_TO_MANY' },
+  });
+  workspaceMember.fields.push({
+    id: 'workspaceMember-accentPalette-field-id',
+    name: 'accentPalette',
+    label: 'Accent palette',
+    type: 'TEXT',
   });
 };
 
@@ -479,6 +496,9 @@ test('bootstraps territory fields before planning the exact sales layout', () =>
     [
       { name: 'stateRegion', label: 'State', type: 'TEXT' },
       { name: 'postalCode', label: 'ZIP Code', type: 'TEXT' },
+      { name: 'activeClient', label: 'Active client', type: 'BOOLEAN' },
+      { name: 'activeClient', label: 'Active client', type: 'BOOLEAN' },
+      { name: 'accentPalette', label: 'Accent palette', type: 'TEXT' },
       {
         name: 'territory',
         label: 'Territory',
@@ -517,6 +537,7 @@ test('converges navigation, Follow-ups, company fields, and state sorting', () =
   assert.ok(plan.layout);
   assert.deepEqual(plan.layout.visibleCompanyFieldNames, [
     'name',
+    'activeClient',
     'historicalOwner',
     'stateRegion',
     'postalCode',
@@ -527,6 +548,7 @@ test('converges navigation, Follow-ups, company fields, and state sorting', () =
   ]);
   assert.deepEqual(plan.layout.visiblePersonFieldNames, [
     'name',
+    'activeClient',
     'company',
     'jobTitle',
     'emails',
@@ -545,7 +567,7 @@ test('converges navigation, Follow-ups, company fields, and state sorting', () =
     plan.layout.viewFieldUpdates.some(
       ({ id, update }) =>
         id === 'person-view-field-1' &&
-        update.position === 1 &&
+        update.position === 2 &&
         update.size === 210,
     ),
   );
@@ -571,15 +593,13 @@ test('converges navigation, Follow-ups, company fields, and state sorting', () =
     })),
     // Sales teams lost its sidebar slot; allocations gained one.
     [
-      { type: 'OBJECT', position: 2 },
-      { type: 'OBJECT', position: 3 },
-      { type: 'VIEW', position: 4 },
+      { type: 'OBJECT', position: 1 },
+      { type: 'VIEW', position: 2 },
+      { type: 'OBJECT', position: 6 },
+      { type: 'OBJECT', position: 7 },
     ],
   );
-  assert.deepEqual(plan.layout.navigationItemIdsToDelete.sort(), [
-    'import-batches-nav-id',
-    'tasks-nav-id',
-  ]);
+  assert.deepEqual(plan.layout.navigationItemIdsToDelete, []);
   assert.deepEqual(plan.layout.viewUpdates, []);
   assert.deepEqual(plan.layout.viewsToCreate, [
     {
@@ -607,17 +627,19 @@ test('converges navigation, Follow-ups, company fields, and state sorting', () =
       .filter(({ viewId }) => viewId === 'c0671000-0000-4000-8000-000000000001')
       .map(({ fieldMetadataId, position }) => ({ fieldMetadataId, position })),
     [
-      { fieldMetadataId: 'outreachActivity-company-field-id', position: 0 },
-      { fieldMetadataId: 'outreachActivity-contact-field-id', position: 1 },
-      { fieldMetadataId: 'outreachActivity-wholesaler-field-id', position: 2 },
-      { fieldMetadataId: 'outreachActivity-outcome-field-id', position: 3 },
-      {
-        fieldMetadataId: 'outreachActivity-followUpDate-field-id',
-        position: 4,
-      },
-      { fieldMetadataId: 'outreachActivity-occurredAt-field-id', position: 5 },
-      { fieldMetadataId: 'outreachActivity-notes-field-id', position: 6 },
-    ],
+      'activityType',
+      'name',
+      'company',
+      'contact',
+      'wholesaler',
+      'occurredAt',
+      'outcome',
+      'followUpDate',
+      'notes',
+    ].map((name, position) => ({
+      fieldMetadataId: `outreachActivity-${name}-field-id`,
+      position,
+    })),
   );
 });
 
@@ -706,7 +728,7 @@ test('never adopts or rewrites user-owned Follow-ups views', () => {
 
 test('requires the exact quick-log scalar field types before planning mutations', () => {
   for (const [fieldName, expectedType] of [
-    ['activityType', 'TEXT'],
+    ['activityType', 'SELECT'],
     ['outcome', 'TEXT'],
     ['notes', 'TEXT'],
     ['occurredAt', 'DATE_TIME'],
@@ -730,17 +752,11 @@ test('requires the exact quick-log scalar field types before planning mutations'
       ({ name }) => name !== 'activityType',
     );
   const bootstrapPlan = buildWorkspaceConfigPlan(missingActivityType);
-  assert.deepEqual(
-    bootstrapPlan.metadataFieldsToCreate.find(
-      ({ name }) => name === 'activityType',
-    ),
-    {
-      objectMetadataId: 'outreachActivity-object-id',
-      name: 'activityType',
-      label: 'Activity Type',
-      type: 'TEXT',
-    },
-  );
+  const activityType = bootstrapPlan.metadataFieldsToCreate.find(
+    ({ name }) => name === 'activityType',
+  )!;
+  assert.equal(activityType.type, 'SELECT');
+  assert.equal(activityType.options?.length, 5);
   assert.equal(bootstrapPlan.layout, null);
 });
 
@@ -882,6 +898,8 @@ test('converges company and Follow-ups column widths', () => {
     outreachActivity.fields
       .filter((field) =>
         [
+          'activityType',
+          'name',
           'company',
           'contact',
           'wholesaler',
@@ -993,5 +1011,31 @@ test('rejects an inverse relation linked back to a different source field', () =
   assert.throws(
     () => buildWorkspaceConfigPlan(value),
     /workspaceMember relation and inverse contract are incompatible/i,
+  );
+});
+
+test('accepts the live activity SELECT and adds only manual client metadata', () => {
+  const value = snapshot();
+  value.objects[6]!.fields.find(({ name }) => name === 'activityType')!.type =
+    'SELECT';
+  const plan = buildWorkspaceConfigPlan(value);
+  assert.deepEqual(
+    plan.metadataFieldsToCreate.filter(({ name }) => name === 'activeClient'),
+    [
+      {
+        objectMetadataId: 'company-object-id',
+        name: 'activeClient',
+        label: 'Active client',
+        type: 'BOOLEAN',
+        defaultValue: false,
+      },
+      {
+        objectMetadataId: 'person-object-id',
+        name: 'activeClient',
+        label: 'Active client',
+        type: 'BOOLEAN',
+        defaultValue: false,
+      },
+    ],
   );
 });

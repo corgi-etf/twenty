@@ -121,7 +121,8 @@ test('books and reschedules a native CRM meeting with alerts suppressed', async 
   let calendarDiagnosticLocators: Record<string, Locator> = {};
   const calendarQueryEvidence: MeetingCanaryCalendarEvidence[] = [];
   let calendarPresentationAudit:
-    MeetingCanaryCalendarPresentationAudit | undefined;
+    | MeetingCanaryCalendarPresentationAudit
+    | undefined;
   const calendarObservations = new Set<Promise<void>>();
   let meetingId: string | undefined;
   let initialName: string | null | undefined;
@@ -434,16 +435,6 @@ test('books and reschedules a native CRM meeting with alerts suppressed', async 
       .toBe(true);
   };
 
-  const selectBooked = async () => {
-    await openField('status');
-    step = 'status: Booked option';
-    locatorCounts.bookedOptions = await page
-      .getByText('Booked', { exact: true })
-      .count();
-    await page.getByText('Booked', { exact: true }).click();
-    step = 'status: persisted booking validation';
-  };
-
   try {
     const tenant = await assertWorkspaceConfigTenant({
       request: page.request,
@@ -652,13 +643,44 @@ test('books and reschedules a native CRM meeting with alerts suppressed', async 
     await assertAlertsSuppressed();
     await page.route(`${APPROVED_ORIGIN}/graphql`, guardNativeMutation);
     await page.getByRole('button', { name: 'Create new Meeting' }).click();
-    await expect
-      .poll(async () => (meetingId ? Boolean(await readMeeting()) : false))
-      .toBe(true);
-    const titleInput = page.locator('input:focus');
-    await expect(titleInput).toBeVisible();
-    await titleInput.fill(meetingName);
-    await titleInput.press('Enter');
+    const dialog = page.getByRole('dialog', { name: 'Create Meeting' });
+    await expect(dialog).toBeVisible();
+    await dialog.getByLabel('Meeting', { exact: true }).fill(meetingName);
+    phase = 'incomplete booking remains an unsaved draft';
+    await dialog.getByRole('button', { name: 'Save', exact: true }).click();
+    await expect(dialog.getByRole('alert')).toContainText('required');
+    expect(meetingId).toBeUndefined();
+
+    const companyPicker = dialog.getByRole('group', {
+      name: 'RIA / company',
+      exact: true,
+    });
+    await companyPicker.getByRole('textbox').fill(company.name);
+    await companyPicker
+      .getByRole('button', { name: company.name, exact: false })
+      .first()
+      .click();
+    const ownerPicker = dialog.getByRole('group', {
+      name: 'Owner',
+      exact: true,
+    });
+    const changeOwner = ownerPicker.getByRole('button', {
+      name: 'Change',
+      exact: true,
+    });
+    if (await changeOwner.isVisible()) await changeOwner.click();
+    await ownerPicker.getByRole('textbox').fill(wholesaler.name);
+    await ownerPicker
+      .getByRole('button', { name: wholesaler.name, exact: false })
+      .first()
+      .click();
+    await dialog
+      .getByLabel(/^Scheduled at/)
+      .fill(new Date().toISOString().slice(0, 16));
+    await dialog.getByLabel('Status', { exact: true }).selectOption('BOOKED');
+    await assertAlertsSuppressed();
+    phase = 'valid meeting saved once through native dialog';
+    await dialog.getByRole('button', { name: 'Save', exact: true }).click();
     await expect.poll(async () => Boolean(meetingId)).toBe(true);
     await expect
       .poll(async () => (await readMeeting())?.name === meetingName)
@@ -673,35 +695,21 @@ test('books and reschedules a native CRM meeting with alerts suppressed', async 
     }
     await expect(page).toHaveURL(isRunOwnedRecordPage);
 
-    phase = 'incomplete booking rejected without counting';
-    await selectBooked();
+    phase = 'validated booking credits creating member';
     await expect
       .poll(
         async () => {
           const meeting = await readMeeting();
-          // bookedById is claimed at creation from the creator, so assert it
-          // positively: this is the only place the claim is provable against
-          // production, because an API-key actor carries no workspace member
-          // and so can never exercise it. bookedAt remains the marker that a
-          // booking actually completed -- production meetings reach COMPLETED
-          // without ever passing through BOOKED, so the stamp alone never
-          // attributes them.
           return (
-            meeting?.status === 'DRAFT' &&
-            meeting.bookedAt === null &&
+            meeting?.status === 'BOOKED' &&
+            Boolean(meeting.bookedAt) &&
             meeting.bookedById === workspaceMemberId &&
-            Boolean(meeting.bookingValidationMessage)
+            !meeting.bookingValidationMessage
           );
         },
         { timeout: 45_000 },
       )
       .toBe(true);
-    await page.reload();
-    await expect(
-      page
-        .getByTestId('record-fields-widget')
-        .getByText('Booking check', { exact: true }),
-    ).toBeVisible();
 
     phase = 'native RIA and owner selection';
     await selectRelation('company', company);
@@ -761,7 +769,6 @@ test('books and reschedules a native CRM meeting with alerts suppressed', async 
 
     phase = 'native schedule and validated booking';
     await selectDay(15);
-    await selectBooked();
     await expect
       .poll(
         async () => {

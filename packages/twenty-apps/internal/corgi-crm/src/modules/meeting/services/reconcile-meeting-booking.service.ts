@@ -25,9 +25,17 @@ export type ReconcileMeetingBookingResult = {
   message?: string;
 };
 
-const missingBookingFields = (record: MeetingBookingRecord): string[] => {
+export type MeetingBookingEventSnapshot = Partial<
+  Pick<
+    MeetingBookingRecord,
+    'name' | 'scheduledAt' | 'companyId' | 'wholesalerId'
+  >
+> & { status?: string | null };
+const missingBookingFields = (
+  record: MeetingBookingEventSnapshot,
+): string[] => {
   const missing: string[] = [];
-  if (record.name.trim().length === 0) missing.push('meeting title');
+  if (!(record.name ?? '').trim()) missing.push('meeting title');
   if (!record.companyId || !UUID_PATTERN.test(record.companyId)) {
     missing.push('RIA / company');
   }
@@ -47,11 +55,13 @@ export const reconcileMeetingBooking = async ({
   meetingId,
   eventOccurredAt,
   actorWorkspaceMemberId,
+  eventSnapshot,
   repository,
 }: {
   meetingId: string;
   eventOccurredAt: string;
   actorWorkspaceMemberId: string | null;
+  eventSnapshot?: MeetingBookingEventSnapshot;
   repository: MeetingBookingRepository;
 }): Promise<ReconcileMeetingBookingResult> => {
   const record = await repository.get(meetingId);
@@ -82,6 +92,18 @@ export const reconcileMeetingBooking = async ({
     return { status: 'invalid', meetingId, message };
   }
 
+  // A delayed event can prove the first valid booking even after rescheduling
+  // or completion, but an incomplete event cannot borrow a later user's repair.
+  if (
+    eventSnapshot
+      ? missingBookingFields(eventSnapshot).length > 0 ||
+        ![MEETING_BOOKING_STATUS.BOOKED, MEETING_BOOKING_STATUS.COMPLETED].some(
+          (status) => status === eventSnapshot.status,
+        )
+      : Date.parse(eventOccurredAt) !== Date.parse(record.updatedAt)
+  )
+    return { status: 'ignored', meetingId };
+
   const occurredAt = new Date(eventOccurredAt);
   if (!Number.isFinite(occurredAt.getTime())) {
     throw new Error('Meeting booking event has an invalid timestamp');
@@ -90,9 +112,10 @@ export const reconcileMeetingBooking = async ({
     id: meetingId,
     bookedAt: occurredAt.toISOString(),
     bookedById:
-      actorWorkspaceMemberId && UUID_PATTERN.test(actorWorkspaceMemberId)
+      record.bookedById ??
+      (actorWorkspaceMemberId && UUID_PATTERN.test(actorWorkspaceMemberId)
         ? actorWorkspaceMemberId
-        : null,
+        : null),
     expectedUpdatedAt: record.updatedAt,
   });
   if (!booked) {

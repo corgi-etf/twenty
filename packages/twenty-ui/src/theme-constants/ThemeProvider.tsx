@@ -125,6 +125,7 @@ export const ThemeProvider = ({
   colorScheme,
   applyToRoot = true,
   overrides,
+  rootOverrides,
   className,
   scale,
 }: {
@@ -132,6 +133,7 @@ export const ThemeProvider = ({
   colorScheme: 'light' | 'dark';
   applyToRoot?: boolean;
   overrides?: ThemeOverrides;
+  rootOverrides?: ThemeOverrides;
   className?: string;
   scale?: number;
 }) => {
@@ -150,6 +152,23 @@ export const ThemeProvider = ({
   );
 
   const overridesKey = isDefined(overrides) ? JSON.stringify(overrides) : '';
+  const rootOverridesKey = JSON.stringify(rootOverrides ?? {});
+  useLayoutEffect(() => {
+    if (!applyToRoot || isScoped || typeof document === 'undefined') return;
+    const style = document.documentElement.style;
+    const values = JSON.parse(rootOverridesKey) as ThemeOverrides;
+    const previous = Object.fromEntries(
+      Object.keys(values).map((key) => [key, style.getPropertyValue(key)]),
+    );
+    for (const [key, value] of Object.entries(values))
+      style.setProperty(key, String(value));
+    return () => {
+      for (const key of Object.keys(values)) {
+        if (previous[key]) style.setProperty(key, previous[key]);
+        else style.removeProperty(key);
+      }
+    };
+  }, [applyToRoot, isScoped, rootOverridesKey]);
 
   useLayoutEffect(() => {
     if (applyToRoot) {
@@ -162,7 +181,7 @@ export const ThemeProvider = ({
       ),
     );
     setScopeContainer(isScoped ? wrapperRef.current : null);
-  }, [colorScheme, applyToRoot, isScoped, overridesKey]);
+  }, [colorScheme, applyToRoot, isScoped, overridesKey, rootOverridesKey]);
 
   // The interface scale preference is consumed by the root zoom rule in the
   // app stylesheet through --t-scale-user, which only reads from the html
