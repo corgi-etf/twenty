@@ -3,10 +3,10 @@ import { Trans } from '@lingui/react/macro';
 import { themeCssVariables } from 'twenty-ui/theme-constants';
 
 const StyledBadge = styled.span`
-  border-radius: 4px;
-  padding: 2px 6px;
-  color: ${themeCssVariables.tag.text.green};
   background: ${themeCssVariables.tag.background.green};
+  border-radius: 4px;
+  color: ${themeCssVariables.tag.text.green};
+  padding: 2px 6px;
   white-space: nowrap;
 `;
 export const CorgiClientBadge = ({ active }: { active: boolean }) =>

@@ -5,7 +5,11 @@ import {
 } from '@/object-record/components/RecordChip';
 import { useLingui } from '@lingui/react/macro';
 
-export const CorgiWorkspaceMemberChip = (props: RecordChipProps) => {
+type CorgiWorkspaceMemberChipProps = RecordChipProps;
+
+export const CorgiWorkspaceMemberChip = (
+  props: CorgiWorkspaceMemberChipProps,
+) => {
   const { t } = useLingui();
   const { records, loading, error } = useFindManyRecords({
     objectNameSingular: 'wholesaler',
@@ -16,7 +20,16 @@ export const CorgiWorkspaceMemberChip = (props: RecordChipProps) => {
   if (!loading && !error && records.length === 1)
     return (
       <RecordChip
-        {...props}
+        className={props.className}
+        variant={props.variant}
+        isBold={props.isBold}
+        maxWidth={props.maxWidth}
+        to={props.to}
+        size={props.size}
+        isLabelHidden={props.isLabelHidden}
+        isIconHidden={props.isIconHidden}
+        triggerEvent={props.triggerEvent}
+        onClick={props.onClick}
         objectNameSingular="wholesaler"
         record={records[0]}
       />
@@ -31,7 +44,21 @@ export const CorgiWorkspaceMemberChip = (props: RecordChipProps) => {
             : t`No accessible wholesaler profile is linked.`
       }
     >
-      <RecordChip {...props} forceDisableClick />
+      <RecordChip
+        objectNameSingular={props.objectNameSingular}
+        record={props.record}
+        className={props.className}
+        variant={props.variant}
+        isBold={props.isBold}
+        maxWidth={props.maxWidth}
+        to={props.to}
+        size={props.size}
+        isLabelHidden={props.isLabelHidden}
+        isIconHidden={props.isIconHidden}
+        triggerEvent={props.triggerEvent}
+        onClick={props.onClick}
+        forceDisableClick
+      />
     </span>
   );
 };

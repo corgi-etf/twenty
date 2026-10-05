@@ -9,7 +9,7 @@ import { useCallback } from 'react';
 import { v4 } from 'uuid';
 
 export const useCorgiCreateRecordDialog = () => {
-  const [, setDialogs] = useAtomState(corgiCreateDialogsState);
+  const [, setCorgiCreateDialogs] = useAtomState(corgiCreateDialogsState);
   const { objectMetadataItems } = useObjectMetadataItems();
   const isCorgiWorkspace =
     objectMetadataItems.some(
@@ -26,7 +26,7 @@ export const useCorgiCreateRecordDialog = () => {
       >,
     ) =>
       new Promise<ObjectRecord | undefined>((resolve) => {
-        setDialogs((dialogs) => [
+        setCorgiCreateDialogs((dialogs) => [
           ...dialogs,
           {
             ...options,
@@ -39,7 +39,7 @@ export const useCorgiCreateRecordDialog = () => {
           },
         ]);
       }),
-    [setDialogs],
+    [setCorgiCreateDialogs],
   );
   return { openCreateRecord, isCorgiWorkspace };
 };

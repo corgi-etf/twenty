@@ -1,5 +1,5 @@
 import { t } from '@lingui/core/macro';
-export const CORGI_CREATE_FIELDS: Record<string, string[]> = {
+export const CORGI_CREATE_FIELDS: Partial<Record<string, string[]>> = {
   company: [
     'name',
     'domainName',

@@ -18,11 +18,11 @@ import { CorgiTeamPerformance } from '@/corgi-crm/home/components/CorgiTeamPerfo
 import { CorgiActivityTrends } from '@/corgi-crm/home/components/CorgiActivityTrends';
 
 const StyledOverview = styled.section`
-  padding: 20px;
+  border-bottom: 1px solid ${themeCssVariables.border.color.light};
   display: flex;
   flex-direction: column;
   gap: 16px;
-  border-bottom: 1px solid ${themeCssVariables.border.color.light};
+  padding: 20px;
   section {
     border: 1px solid ${themeCssVariables.border.color.light};
     border-radius: 8px;
@@ -42,8 +42,8 @@ const StyledOverview = styled.section`
     padding: 0;
   }
   li {
-    display: flex;
     align-items: center;
+    display: flex;
     flex-wrap: wrap;
     gap: 8px;
     padding: 8px 0;
@@ -53,7 +53,7 @@ const StyledOverview = styled.section`
   }
 `;
 
-type RelatedListProps = {
+type CorgiRelatedRecordsProps = {
   objectNameSingular: string;
   fieldName: string;
   recordId: string;
@@ -64,7 +64,7 @@ const CorgiRelatedRecords = ({
   fieldName,
   recordId,
   title,
-}: RelatedListProps) => {
+}: CorgiRelatedRecordsProps) => {
   const [isExpanded, setIsExpanded] = useState(false);
   const { objectMetadataItem } = useObjectMetadataItem({ objectNameSingular });
   const permission = useObjectPermissionsForObject(objectMetadataItem.id);
@@ -174,10 +174,11 @@ type CorgiProfileOverviewProps = {
   objectNameSingular: string;
   record: ObjectRecord;
 };
+type ReadyCorgiProfileOverviewProps = CorgiProfileOverviewProps;
 const ReadyCorgiProfileOverview = ({
   objectNameSingular,
   record,
-}: CorgiProfileOverviewProps) => {
+}: ReadyCorgiProfileOverviewProps) => {
   const { t } = useLingui();
   const { objectMetadataItem } = useObjectMetadataItem({ objectNameSingular });
   const { objectMetadataItems } = useObjectMetadataItems();
@@ -257,7 +258,7 @@ const ReadyCorgiProfileOverview = ({
         objectNameSingular === 'company' &&
         field.relation.targetObjectMetadata.nameSingular === 'companyOwnership'
       ) &&
-      relationTitles[field.relation.targetObjectMetadata.nameSingular],
+      Boolean(relationTitles[field.relation.targetObjectMetadata.nameSingular]),
   );
   return (
     <StyledOverview aria-label={t`Profile overview`}>
@@ -424,5 +425,10 @@ export const CorgiProfileOverview = (props: CorgiProfileOverviewProps) => {
     ].includes(props.objectNameSingular)
   )
     return null;
-  return <ReadyCorgiProfileOverview {...props} />;
+  return (
+    <ReadyCorgiProfileOverview
+      objectNameSingular={props.objectNameSingular}
+      record={props.record}
+    />
+  );
 };

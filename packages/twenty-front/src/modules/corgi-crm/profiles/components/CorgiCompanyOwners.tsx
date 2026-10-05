@@ -34,6 +34,8 @@ export const CorgiCompanyOwners = ({ companyId }: { companyId: string }) => {
   });
   const [saveError, setSaveError] = useState<string>();
   const [isSaving, setIsSaving] = useState(false);
+  // Synchronous lock prevents double submission before React commits state.
+  // oxlint-disable-next-line twenty/no-state-useref
   const saving = useRef(false);
   const updateLink = async (operation: () => Promise<unknown>) => {
     if (saving.current) return;

@@ -9,6 +9,8 @@ type CorgiDraftFieldProps = {
   companyId?: string;
   onChange: (value: unknown, record?: ObjectRecord) => void;
 };
+// Unsupported metadata field types intentionally have no draft editor.
+// oxlint-disable-next-line twenty/effect-components
 export const CorgiDraftField = ({
   field,
   value,

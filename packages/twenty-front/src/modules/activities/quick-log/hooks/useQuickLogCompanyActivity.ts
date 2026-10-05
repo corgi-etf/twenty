@@ -40,6 +40,8 @@ export const useQuickLogCompanyActivity = ({
   const currentWorkspaceMember = useAtomStateValue(currentWorkspaceMemberState);
   const { enqueueErrorSnackBar, enqueueSuccessSnackBar } = useSnackBar();
   const [isSubmitting, setIsSubmitting] = useState(false);
+  // Synchronous lock prevents double submission before React commits state.
+  // oxlint-disable-next-line twenty/no-state-useref
   const submitting = useRef(false);
   const { record: company } = useFindOneRecord({
     objectNameSingular: 'company',

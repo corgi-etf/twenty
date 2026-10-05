@@ -30,15 +30,15 @@ import { useAtomState } from '@/ui/utilities/state/jotai/hooks/useAtomState';
 
 const StyledDialog = styled.dialog`
   background: ${themeCssVariables.background.primary};
-  color: ${themeCssVariables.font.color.primary};
   border: 1px solid ${themeCssVariables.border.color.medium};
   border-radius: ${themeCssVariables.border.radius.md};
   box-shadow: ${themeCssVariables.boxShadow.strong};
-  width: min(540px, calc(100vw - 48px));
+  color: ${themeCssVariables.font.color.primary};
   max-height: 85vh;
   padding: 24px;
+  width: min(540px, calc(100vw - 48px));
   &::backdrop {
-    background: rgba(0, 0, 0, 0.35);
+    background: ${themeCssVariables.background.overlayPrimary};
   }
   form {
     display: flex;
@@ -46,20 +46,20 @@ const StyledDialog = styled.dialog`
     gap: 16px;
   }
   label {
+    align-items: center;
     display: flex;
     flex-wrap: wrap;
     gap: 8px;
-    align-items: center;
   }
   input:not([type='checkbox']),
   select {
-    box-sizing: border-box;
-    width: 100%;
+    background: ${themeCssVariables.background.primary};
     border: 1px solid ${themeCssVariables.border.color.medium};
     border-radius: 4px;
-    padding: 8px;
-    background: ${themeCssVariables.background.primary};
+    box-sizing: border-box;
     color: inherit;
+    padding: 8px;
+    width: 100%;
   }
   fieldset {
     border: 1px solid ${themeCssVariables.border.color.light};
@@ -84,9 +84,9 @@ const StyledDialog = styled.dialog`
   }
   ul {
     list-style: none;
-    padding: 0;
     max-height: 200px;
     overflow: auto;
+    padding: 0;
   }
   li button {
     text-align: left;
@@ -94,7 +94,7 @@ const StyledDialog = styled.dialog`
   }
 `;
 
-type DialogProps = {
+type CorgiCreateRecordDialogProps = {
   dialog: CorgiCreateDialog;
   active: boolean;
   close: (record?: ObjectRecord) => void;
@@ -105,21 +105,27 @@ export const CorgiCreateRecordDialog = ({
   active,
   close,
   persistOwners,
-}: DialogProps) => {
+}: CorgiCreateRecordDialogProps) => {
   const { t } = useLingui();
   const dialogRef = useRef<HTMLDialogElement>(null);
+  // Synchronous submission ledger: survives renders and prevents duplicate writes.
+  // oxlint-disable-next-line twenty/no-state-useref
   const saving = useRef(false);
+  // Synchronous submission ledger: survives renders and prevents duplicate writes.
+  // oxlint-disable-next-line twenty/no-state-useref
   const savedRecord = useRef<ObjectRecord | undefined>(dialog.savedRecord);
-  const [, setDialogDrafts] = useAtomState(corgiCreateDialogsState);
+  const [, setCorgiCreateDialogs] = useAtomState(corgiCreateDialogsState);
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string>();
   const [owners, setOwners] = useState<ObjectRecord[]>(dialog.owners ?? []);
+  // Synchronous submission ledger: survives renders and prevents duplicate writes.
+  // oxlint-disable-next-line twenty/no-state-useref
   const defaultOwnerApplied = useRef(Boolean(dialog.draft));
-  const currentMember = useAtomStateValue(currentWorkspaceMemberState);
+  const currentWorkspaceMember = useAtomStateValue(currentWorkspaceMemberState);
   const { records: ownProfiles } = useFindManyRecords({
     objectNameSingular: 'wholesaler',
-    filter: { workspaceMemberId: { eq: currentMember?.id } },
-    skip: !currentMember?.id,
+    filter: { workspaceMemberId: { eq: currentWorkspaceMember?.id } },
+    skip: !currentWorkspaceMember?.id,
     limit: 2,
   });
   const [relations, setRelations] = useState<
@@ -139,7 +145,7 @@ export const CorgiCreateRecordDialog = ({
       },
   );
   useEffect(() => {
-    setDialogDrafts((dialogs) =>
+    setCorgiCreateDialogs((dialogs) =>
       dialogs.map((entry) =>
         entry.id === dialog.id
           ? {
@@ -152,7 +158,7 @@ export const CorgiCreateRecordDialog = ({
           : entry,
       ),
     );
-  }, [draft, owners, relations, dialog.id, setDialogDrafts]);
+  }, [draft, owners, relations, dialog.id, setCorgiCreateDialogs]);
   const { objectMetadataItem } = useObjectMetadataItem({
     objectNameSingular: dialog.objectNameSingular,
   });
@@ -293,7 +299,7 @@ export const CorgiCreateRecordDialog = ({
       }
       const record = savedRecord.current ?? (await createOneRecord(input));
       savedRecord.current = record;
-      setDialogDrafts((dialogs) =>
+      setCorgiCreateDialogs((dialogs) =>
         dialogs.map((entry) =>
           entry.id === dialog.id ? { ...entry, savedRecord: record } : entry,
         ),
@@ -415,14 +421,20 @@ export const CorgiCreateRecordDialog = ({
   );
 };
 
-const CorgiCompanyCreateDialog = (props: DialogProps) => {
+type CorgiCompanyCreateDialogProps = CorgiCreateRecordDialogProps;
+
+const CorgiCompanyCreateDialog = (props: CorgiCompanyCreateDialogProps) => {
   const { createOneRecord } = useCreateOneRecord({
     objectNameSingular: 'companyOwnership',
   });
+  // Synchronous submission ledger: survives renders and prevents duplicate writes.
+  // oxlint-disable-next-line twenty/no-state-useref
   const savedOwners = useRef(new Set<string>());
   return (
     <CorgiCreateRecordDialog
-      {...props}
+      dialog={props.dialog}
+      active={props.active}
+      close={props.close}
       persistOwners={async (companyId, owners) => {
         for (const [index, wholesalerId] of owners.entries()) {
           if (savedOwners.current.has(wholesalerId)) continue;
@@ -440,7 +452,9 @@ const CorgiCompanyCreateDialog = (props: DialogProps) => {
 };
 
 export const CorgiCreateRecordDialogHost = () => {
-  const [dialogs, setDialogs] = useAtomState(corgiCreateDialogsState);
+  const [corgiCreateDialogs, setCorgiCreateDialogs] = useAtomState(
+    corgiCreateDialogsState,
+  );
   const { objectMetadataItems } = useObjectMetadataItems();
   const hasOwners = objectMetadataItems.some(
     ({ nameSingular }) => nameSingular === 'companyOwnership',
@@ -448,12 +462,12 @@ export const CorgiCreateRecordDialogHost = () => {
   return (
     <>
       <CorgiAccentPalettePicker showPicker={false} />
-      {dialogs.map((dialog, index) => {
+      {corgiCreateDialogs.map((dialog, index) => {
         const props = {
           dialog,
-          active: index === dialogs.length - 1,
+          active: index === corgiCreateDialogs.length - 1,
           close: (record?: ObjectRecord) => {
-            setDialogs((previous) =>
+            setCorgiCreateDialogs((previous) =>
               previous.filter(({ id }) => id !== dialog.id),
             );
             dialog.resolve(record);
@@ -461,9 +475,19 @@ export const CorgiCreateRecordDialogHost = () => {
           },
         };
         return dialog.objectNameSingular === 'company' && hasOwners ? (
-          <CorgiCompanyCreateDialog key={dialog.id} {...props} />
+          <CorgiCompanyCreateDialog
+            key={dialog.id}
+            dialog={props.dialog}
+            active={props.active}
+            close={props.close}
+          />
         ) : (
-          <CorgiCreateRecordDialog key={dialog.id} {...props} />
+          <CorgiCreateRecordDialog
+            key={dialog.id}
+            dialog={props.dialog}
+            active={props.active}
+            close={props.close}
+          />
         );
       })}
     </>

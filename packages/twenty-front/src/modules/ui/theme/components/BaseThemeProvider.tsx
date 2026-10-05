@@ -25,7 +25,7 @@ export const BaseThemeProvider = ({ children }: BaseThemeProviderProps) => {
   );
   const persistedUiScaleStep = useAtomStateValue(persistedUiScaleStepState);
   const systemColorScheme = useSystemColorScheme();
-  const {palette, hasPalette} = useCorgiAccentPalette();
+  const { palette, hasPalette } = useCorgiAccentPalette();
   const effectiveColorScheme =
     persistedColorScheme === 'System'
       ? systemColorScheme
@@ -36,7 +36,11 @@ export const BaseThemeProvider = ({ children }: BaseThemeProviderProps) => {
       <ThemeProvider
         colorScheme={effectiveColorScheme === 'Dark' ? 'dark' : 'light'}
         scale={UI_SCALE_MULTIPLIERS[persistedUiScaleStep]}
-        rootOverrides={hasPalette ? getCorgiAccentOverrides(palette, effectiveColorScheme === 'Dark') : undefined}
+        rootOverrides={
+          hasPalette
+            ? getCorgiAccentOverrides(palette, effectiveColorScheme === 'Dark')
+            : undefined
+        }
       >
         {children}
       </ThemeProvider>

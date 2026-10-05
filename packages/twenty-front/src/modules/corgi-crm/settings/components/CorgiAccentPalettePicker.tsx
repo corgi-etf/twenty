@@ -22,7 +22,7 @@ const ReadyCorgiAccentPalette = ({ showPicker }: { showPicker: boolean }) => {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string>();
   const serverPalette =
-    record?.id === memberId
+    record && record.id === memberId
       ? getCorgiAccentPalette(record.accentPalette)
       : undefined;
   useEffect(() => {

@@ -46,7 +46,7 @@ export const CorgiRelationPicker = ({
         }
       : { [nameField?.name ?? 'name']: { ilike: `%${search}%` } };
   const canScope =
-    companyId &&
+    Boolean(companyId) &&
     objectMetadataItem.fields.some(({ name }) => name === 'company');
   const { records, loading, error, hasNextPage, fetchMoreRecords } =
     useFindManyRecords({
@@ -63,10 +63,14 @@ export const CorgiRelationPicker = ({
     objectRecordId: value,
     skip: !value,
   });
+  // The latest callback avoids rehydrating parent drafts on every parent render.
+  // oxlint-disable-next-line twenty/no-state-useref
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
   useEffect(() => {
     if (selectedRecord) onChangeRef.current(selectedRecord);
+    // Hydrate only when the selected identity or company changes.
+    // oxlint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedRecord?.id, selectedRecord?.company?.id]);
 
   const select = (record: ObjectRecord) => {

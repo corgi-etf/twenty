@@ -1,4 +1,4 @@
-import { mapViewFieldsToColumnDefinitions } from '../mapViewFieldsToColumnDefinitions';
+import { mapViewFieldsToColumnDefinitions } from '@/views/utils/mapViewFieldsToColumnDefinitions';
 import { type ColumnDefinition } from '@/object-record/record-table/types/ColumnDefinition';
 import { type FieldMetadata } from '@/object-record/record-field/ui/types/FieldMetadata';
 import { FieldMetadataType } from '~/generated-metadata/graphql';

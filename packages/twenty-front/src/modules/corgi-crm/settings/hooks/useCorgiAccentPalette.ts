@@ -10,23 +10,28 @@ import { useAtomStateValue } from '@/ui/utilities/state/jotai/hooks/useAtomState
 import { useAtomState } from '@/ui/utilities/state/jotai/hooks/useAtomState';
 
 export const useCorgiAccentPalette = () => {
-  const member = useAtomStateValue(currentWorkspaceMemberState);
-  const workspace = useAtomStateValue(currentWorkspaceState);
-  const [palettes, setPalettes] = useAtomState(corgiAccentPalettesState);
-  const key = member && workspace ? `${workspace.id}:${member.id}` : undefined;
+  const currentWorkspaceMember = useAtomStateValue(currentWorkspaceMemberState);
+  const currentWorkspace = useAtomStateValue(currentWorkspaceState);
+  const [corgiAccentPalettes, setCorgiAccentPalettes] = useAtomState(
+    corgiAccentPalettesState,
+  );
+  const key =
+    currentWorkspaceMember && currentWorkspace
+      ? `${currentWorkspace.id}:${currentWorkspaceMember.id}`
+      : undefined;
   const setPalette = useCallback(
     (value: CorgiAccentPalette) => {
       if (key)
-        setPalettes((previous) =>
+        setCorgiAccentPalettes((previous) =>
           previous[key] === value ? previous : { ...previous, [key]: value },
         );
     },
-    [key, setPalettes],
+    [key, setCorgiAccentPalettes],
   );
   return {
-    palette: getCorgiAccentPalette(key ? palettes[key] : undefined),
-    hasPalette: Boolean(key && palettes[key]),
-    memberId: member?.id,
+    palette: getCorgiAccentPalette(key ? corgiAccentPalettes[key] : undefined),
+    hasPalette: Boolean(key && corgiAccentPalettes[key]),
+    memberId: currentWorkspaceMember?.id,
     setPalette,
   };
 };

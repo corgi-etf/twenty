@@ -1,3 +1,5 @@
+import { themeCssVariables } from 'twenty-ui/theme-constants';
+
 export const CORGI_ACCENT_PALETTES = [
   'Blue',
   'Teal',
@@ -15,10 +17,26 @@ export const getCorgiAccentOverrides = (
   isDark: boolean,
 ): Record<string, string> => {
   const colors = {
-    Blue: ['#2563eb', '#93c5fd', 'blue'],
-    Teal: ['#0f766e', '#5eead4', 'turquoise'],
-    Violet: ['#6d28d9', '#c4b5fd', 'purple'],
-    Warm: ['#b45309', '#fcd34d', 'orange'],
+    Blue: [
+      themeCssVariables.color.blue10,
+      themeCssVariables.color.blue8,
+      'blue',
+    ],
+    Teal: [
+      themeCssVariables.color.turquoise10,
+      themeCssVariables.color.turquoise8,
+      'turquoise',
+    ],
+    Violet: [
+      themeCssVariables.color.purple10,
+      themeCssVariables.color.purple8,
+      'purple',
+    ],
+    Warm: [
+      themeCssVariables.color.orange10,
+      themeCssVariables.color.orange8,
+      'orange',
+    ],
   }[palette];
   const primary = isDark ? colors[1] : colors[0];
   return {

@@ -1,4 +1,5 @@
 import { CorgiAccentPalettePicker } from '@/corgi-crm/settings/components/CorgiAccentPalettePicker';
+import { CorgiSavedNotesAccess } from '@/corgi-crm/settings/components/CorgiSavedNotesAccess';
 import { styled } from '@linaria/react';
 
 import { SettingsPageContainer } from '@/settings/components/SettingsPageContainer';
@@ -76,7 +77,7 @@ export const SettingsExperience = () => {
           />
           <FormatPreferencesSettings />
         </Section>
-        {/* Unified into FormatPreferencesSettings */}
+        <CorgiSavedNotesAccess />
       </SettingsPageContainer>
     </SettingsPageLayout>
   );
