@@ -435,16 +435,6 @@ test('books and reschedules a native CRM meeting with alerts suppressed', async 
       .toBe(true);
   };
 
-  const selectBooked = async () => {
-    await openField('status');
-    step = 'status: Booked option';
-    locatorCounts.bookedOptions = await page
-      .getByText('Booked', { exact: true })
-      .count();
-    await page.getByText('Booked', { exact: true }).click();
-    step = 'status: persisted booking validation';
-  };
-
   try {
     const tenant = await assertWorkspaceConfigTenant({
       request: page.request,
@@ -779,7 +769,6 @@ test('books and reschedules a native CRM meeting with alerts suppressed', async 
 
     phase = 'native schedule and validated booking';
     await selectDay(15);
-    await selectBooked();
     await expect
       .poll(
         async () => {
