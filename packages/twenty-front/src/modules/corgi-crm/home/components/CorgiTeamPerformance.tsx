@@ -70,8 +70,8 @@ export const CorgiTeamPerformance = ({
       </StyledCorgiHeading>
       <StyledCorgiMuted>
         <Trans>
-          Activities are logged by; meetings are booked/taken by; allocations
-          are credited to. Includes employees with no activity.
+          Activities are owned by; meetings are booked/taken by; allocations are
+          credited to. Includes employees with no activity.
         </Trans>
       </StyledCorgiMuted>
       <CorgiSectionState

@@ -114,10 +114,14 @@ const CorgiFollowUpCompanyResults = ({ query }: { query: CorgiHomeQuery }) => {
       />
       {data?.status === 'available' &&
         data.records.map((group) => (
-          <StyledGroup key={group.company?.id ?? 'unlinked'}>
+          <StyledGroup
+            key={group.company?.id ?? group.companyStatus ?? 'unlinked'}
+          >
             <summary>
               {group.company ? (
                 <CorgiRecordLink record={group.company} />
+              ) : group.companyStatus === 'restricted' ? (
+                <Trans>Unavailable company</Trans>
               ) : (
                 <Trans>Needs company link</Trans>
               )}{' '}
@@ -153,7 +157,9 @@ const CorgiFollowUpCompanyResults = ({ query }: { query: CorgiHomeQuery }) => {
                   to={getCorgiDrilldownPath({
                     ...query,
                     section: 'followUps',
-                    companyId: group.company?.id ?? 'unlinked',
+                    companyId:
+                      group.company?.id ?? group.companyStatus ?? 'unlinked',
+                    search: undefined,
                   })}
                 >
                   <Trans>View all reminders</Trans>

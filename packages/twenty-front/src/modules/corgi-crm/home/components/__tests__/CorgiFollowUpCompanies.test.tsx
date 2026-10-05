@@ -135,6 +135,35 @@ describe('Personal follow-up companies', () => {
     );
   });
 
+  it('labels restricted companies and links to their full reminder queue without calling them unlinked', async () => {
+    const hidden = group(false);
+    hidden.company = null;
+    hidden.companyStatus = 'restricted';
+    hidden.reminders = hidden.reminders.map((reminder) => ({
+      ...reminder,
+      company: null,
+      companyStatus: 'restricted',
+    }));
+    hidden.nextReminderCursor = 'more-reminders';
+    fetchMock.mockResponseOnce(
+      JSON.stringify({
+        data: {
+          status: 'available',
+          records: [hidden],
+          totalCount: 1,
+          nextCursor: null,
+        },
+      }),
+    );
+    renderList();
+    const title = await screen.findByText('Unavailable company');
+    await userEvent.click(title.closest('summary')!);
+    expect(screen.queryByText('Needs company link')).not.toBeInTheDocument();
+    expect(
+      screen.getByRole('link', { name: 'View all reminders' }),
+    ).toHaveAttribute('href', expect.stringContaining('companyId=restricted'));
+  });
+
   it('retains the reminder and offers retry when completion fails', async () => {
     mockUpdate.mockRejectedValueOnce(new Error('Permission changed'));
     renderList();

@@ -72,9 +72,11 @@ export const CorgiFollowUpRow = ({
             : t`No due date`}{' '}
           · {reminder.reason ?? reminder.label}
         </StyledCorgiMuted>
-        {!reminder.company && (
+        {showCompany && !reminder.company && (
           <StyledCorgiMuted>
-            <Trans>Needs company link</Trans>
+            {reminder.companyStatus === 'restricted'
+              ? t`Unavailable company`
+              : t`Needs company link`}
           </StyledCorgiMuted>
         )}
         {error && (
