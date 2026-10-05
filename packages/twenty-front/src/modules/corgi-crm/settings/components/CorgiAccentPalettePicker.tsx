@@ -12,7 +12,7 @@ import {
 
 const ReadyCorgiAccentPalette = ({ showPicker }: { showPicker: boolean }) => {
   const { t } = useLingui();
-  const { palette, hasPalette, setPalette, memberId } = useCorgiAccentPalette();
+  const { palette, setPalette, memberId } = useCorgiAccentPalette();
   const { record } = useFindOneRecord({
     objectNameSingular: 'workspaceMember',
     objectRecordId: memberId,
@@ -21,10 +21,13 @@ const ReadyCorgiAccentPalette = ({ showPicker }: { showPicker: boolean }) => {
   const { updateOneRecord } = useUpdateOneRecord();
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string>();
+  const serverPalette =
+    record?.id === memberId
+      ? getCorgiAccentPalette(record.accentPalette)
+      : undefined;
   useEffect(() => {
-    if (record && (!hasPalette || getCorgiAccentPalette(record.accentPalette) !== palette))
-      setPalette(getCorgiAccentPalette(record.accentPalette));
-  }, [record, palette, hasPalette, setPalette]);
+    if (serverPalette) setPalette(serverPalette);
+  }, [serverPalette, memberId, setPalette]);
   if (!showPicker) return null;
   return (
     <label>
