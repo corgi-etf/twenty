@@ -36,6 +36,10 @@ export const WHOLESALER_TERRITORY_FIELD_DEFINITION = {
 
 export const VISIBLE_COMPANY_FIELD_NAMES = [
   'name',
+  'activeClient',
+  'domainName',
+  'firmType',
+  'companyOwnerships',
   'historicalOwner',
   'stateRegion',
   'postalCode',
@@ -47,6 +51,7 @@ export const VISIBLE_COMPANY_FIELD_NAMES = [
 
 export const VISIBLE_PERSON_FIELD_NAMES = [
   'name',
+  'activeClient',
   'company',
   'jobTitle',
   'emails',
@@ -79,7 +84,13 @@ const FOLLOW_UP_VIEW_FIELD_NAMES = [
 ] as const;
 
 const QUICK_LOG_SCALAR_FIELD_DEFINITIONS = [
-  { name: 'activityType', label: 'Activity Type', type: 'TEXT' },
+  { name: 'activityType', label: 'Activity type', type: 'SELECT', options: [
+    { id: 'c0671100-0000-4000-8000-000000000001', value: 'PHONE_CALL', label: 'Phone call', position: 0, color: 'blue' },
+    { id: 'c0671100-0000-4000-8000-000000000002', value: 'EMAIL', label: 'Email', position: 1, color: 'green' },
+    { id: 'c0671100-0000-4000-8000-000000000003', value: 'LINKEDIN', label: 'LinkedIn', position: 2, color: 'turquoise' },
+    { id: 'c0671100-0000-4000-8000-000000000004', value: 'MEETING', label: 'Meeting', position: 3, color: 'purple' },
+    { id: 'c0671100-0000-4000-8000-000000000005', value: 'OTHER', label: 'Other', position: 4, color: 'gray' },
+  ] },
   { name: 'outcome', label: 'Outcome', type: 'TEXT' },
   { name: 'notes', label: 'Notes', type: 'TEXT' },
   { name: 'occurredAt', label: 'Occurred At', type: 'DATE_TIME' },
@@ -259,6 +270,8 @@ export type MetadataFieldCreate = {
   name: string;
   label: string;
   type: string;
+  defaultValue?: boolean;
+  options?: ReadonlyArray<{ id: string; value: string; label: string; position: number; color: string }>;
   relationCreationPayload?: {
     targetObjectMetadataId: string;
     targetFieldLabel: string;
@@ -771,6 +784,18 @@ export const buildWorkspaceMetadataBootstrapPlan = (
     }
   }
 
+  for (const objectName of ['company', 'person']) {
+    const object = objectsByName.get(objectName)!;
+    const activeClient = uniqueFieldMap(object).get('activeClient');
+    if (!activeClient) {
+      metadataFieldsToCreate.push({ objectMetadataId: object.id, name: 'activeClient', label: 'Active client', type: 'BOOLEAN', defaultValue: false });
+    } else if (activeClient.type !== 'BOOLEAN') {
+      throw new Error(`${objectName}.activeClient must be BOOLEAN`);
+    } else if (activeClient.label !== 'Active client') {
+      metadataFieldsToUpdate.push({ id: activeClient.id, label: 'Active client' });
+    }
+  }
+
   const wholesaler = objectsByName.get('wholesaler')!;
   const workspaceMember = objectsByName.get('workspaceMember')!;
 
@@ -944,7 +969,7 @@ export const buildWorkspaceConfigPlan = (
   const outreachFields = uniqueFieldMap(outreachActivity);
 
   for (const fieldName of VISIBLE_COMPANY_FIELD_NAMES) {
-    if (!companyFields.has(fieldName)) {
+    if (!companyFields.has(fieldName) && !['domainName', 'firmType', 'companyOwnerships'].includes(fieldName)) {
       throw new Error(`Required company field ${fieldName} is missing`);
     }
   }
@@ -967,14 +992,15 @@ export const buildWorkspaceConfigPlan = (
     throw new Error('Exactly one Company index view is required');
   }
   const companyIndexView = companyIndexViews[0]!;
+  const visibleCompanyFieldNames = VISIBLE_COMPANY_FIELD_NAMES.filter((name) => companyFields.has(name));
   const desiredPositionByFieldId = new Map(
-    VISIBLE_COMPANY_FIELD_NAMES.map((name, position) => [
+    visibleCompanyFieldNames.map((name, position) => [
       companyFields.get(name)!.id,
       position,
     ]),
   );
   const desiredCompanySizeByFieldId = new Map(
-    VISIBLE_COMPANY_FIELD_NAMES.map((name) => [
+    visibleCompanyFieldNames.map((name) => [
       companyFields.get(name)!.id,
       companyViewFieldSize(name),
     ]),
@@ -1208,6 +1234,18 @@ export const buildWorkspaceConfigPlan = (
       }
     }
   }
+  const activityFieldNames = ['activityType', 'name', 'company', 'contact', 'wholesaler', 'occurredAt', 'outcome', 'followUpDate'];
+  for (const view of snapshot.views.filter((candidate) => candidate.objectMetadataId === outreachActivity.id && candidate.id !== followUpViewId && !candidate.createdByUserWorkspaceId && candidate.visibility === 'WORKSPACE')) {
+    for (const field of outreachActivity.fields) {
+      const position = activityFieldNames.indexOf(field.name);
+      const existing = view.viewFields.find((candidate) => candidate.fieldMetadataId === field.id);
+      if (!existing && position >= 0) {
+        viewFieldsToCreate.push({ fieldMetadataId: field.id, viewId: view.id, isVisible: true, position, size: field.name === 'name' ? 280 : 150 });
+      } else if (existing && (existing.isVisible !== (position >= 0) || (position >= 0 && existing.position !== position))) {
+        viewFieldUpdates.push({ id: existing.id, update: { isVisible: position >= 0, ...(position >= 0 ? { position } : {}) } });
+      }
+    }
+  }
   const viewUpdates: WorkspaceLayoutPlan['viewUpdates'] = [];
   if (
     followUpView &&
@@ -1257,40 +1295,12 @@ export const buildWorkspaceConfigPlan = (
   }
 
   const desiredNavigation = [
-    {
-      key: 'company',
-      type: 'OBJECT' as const,
-      targetObjectMetadataId: company.id,
-      position: 0,
-    },
-    {
-      key: 'person',
-      type: 'OBJECT' as const,
-      targetObjectMetadataId: objectsByName.get('person')!.id,
-      position: 1,
-    },
-    {
-      key: 'wholesaler',
-      type: 'OBJECT' as const,
-      targetObjectMetadataId: objectsByName.get('wholesaler')!.id,
-      position: 2,
-    },
-    // Sales teams is not navigable: the object and its team memberships are
-    // both empty, and membershipRole duplicates wholesalerRole. The objects
-    // stay provisioned so their fields and relations keep converging; they
-    // just no longer take a slot in the sidebar.
-    {
-      key: 'companyAllocation',
-      type: 'OBJECT' as const,
-      targetObjectMetadataId: objectsByName.get('companyAllocation')!.id,
-      position: 3,
-    },
-    {
-      key: 'followUps',
-      type: 'VIEW' as const,
-      viewId: followUpViewId,
-      position: 4,
-    },
+    { key: 'outreachActivity', type: 'OBJECT' as const, targetObjectMetadataId: outreachActivity.id, position: 1 },
+    { key: 'followUps', type: 'VIEW' as const, viewId: followUpViewId, position: 2 },
+    ...['meetingBooking', 'company', 'person', 'wholesaler', 'companyAllocation', 'dashboard'].flatMap((name, index) => {
+      const object = objectsByName.get(name);
+      return object ? [{ key: name, type: 'OBJECT' as const, targetObjectMetadataId: object.id, position: index + 3 }] : [];
+    }),
   ];
   const workspaceItems = snapshot.navigationMenuItems.filter(
     (item) => !item.userWorkspaceId,
@@ -1331,14 +1341,19 @@ export const buildWorkspaceConfigPlan = (
       });
     }
   }
+  const managedObjectIds = new Set(desiredNavigation.flatMap((item) => item.type === 'OBJECT' ? [item.targetObjectMetadataId] : []));
+  const noteObjectId = objectsByName.get('note')?.id;
   const navigationItemIdsToDelete = workspaceItems
-    .filter((item) => !retainedIds.has(item.id))
+    .filter((item) => !retainedIds.has(item.id) && (
+      (item.targetObjectMetadataId && (item.targetObjectMetadataId === noteObjectId || managedObjectIds.has(item.targetObjectMetadataId))) ||
+      item.viewId === followUpViewId
+    ))
     .map(({ id }) => id);
 
   return {
     ...metadataPlan,
     layout: {
-      visibleCompanyFieldNames: [...VISIBLE_COMPANY_FIELD_NAMES],
+      visibleCompanyFieldNames: [...visibleCompanyFieldNames],
       visiblePersonFieldNames: [...VISIBLE_PERSON_FIELD_NAMES],
       viewsToCreate: newFollowUp ? [newFollowUp.view] : [],
       viewUpdates,
