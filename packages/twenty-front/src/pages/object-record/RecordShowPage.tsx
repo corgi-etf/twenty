@@ -80,13 +80,15 @@ const RecordShowPageContent = ({
         recordId: objectRecordId,
       }}
     >
-      {record && !isInSidePanel && (
-        <CorgiProfileOverview
-          objectNameSingular={objectNameSingular}
-          record={record}
-        />
-      )}
       <PageLayoutRecordPageRenderer
+        leadingContent={
+          record && !isInSidePanel ? (
+            <CorgiProfileOverview
+              objectNameSingular={objectNameSingular}
+              record={record}
+            />
+          ) : null
+        }
         targetRecordIdentifier={{
           id: objectRecordId,
           targetObjectNameSingular: objectNameSingular,
