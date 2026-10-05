@@ -20,5 +20,8 @@ export default defineLogicFunction({
     'Validates meaningful records and stamps first lifecycle evidence without replaying it on edits.',
   timeoutSeconds: 30,
   handler,
-  databaseEventTriggerSettings: { eventName: 'companyAllocation.updated' },
+  databaseEventTriggerSettings: {
+    eventName: 'companyAllocation.updated',
+    updatedFields: ['companyId', 'contactId', 'meetingId', 'ticker', 'amount'],
+  },
 });

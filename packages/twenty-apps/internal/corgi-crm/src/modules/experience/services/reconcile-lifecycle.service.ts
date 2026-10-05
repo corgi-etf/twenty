@@ -41,6 +41,51 @@ export const isPositiveAllocationAmount = (value: unknown): boolean =>
       /^\d+$/.test(value) &&
       BigInt(value) > BigInt(0);
 
+export const LIFECYCLE_INPUT_FIELDS = {
+  companyAllocation: [
+    'companyId',
+    'contactId',
+    'meetingId',
+    'ticker',
+    'amount',
+  ],
+  meetingBooking: [
+    'companyId',
+    'contactId',
+    'wholesalerId',
+    'status',
+    'heldAt',
+    'takenById',
+  ],
+} as const;
+const normalizedInput = (
+  record: Partial<LifecycleRecord>,
+  field: string,
+): unknown => {
+  if (field === 'amount')
+    return [
+      record.amount?.amountMicros == null
+        ? null
+        : String(record.amount.amountMicros),
+      record.amount?.currencyCode ?? null,
+    ];
+  if (field === 'heldAt')
+    return instant(record.heldAt)
+      ? new Date(record.heldAt).toISOString()
+      : (record.heldAt ?? null);
+  return record[field as keyof LifecycleRecord] ?? null;
+};
+export const matchesLifecycleInputs = (
+  object: 'meetingBooking' | 'companyAllocation',
+  left: Partial<LifecycleRecord>,
+  right: Partial<LifecycleRecord>,
+): boolean =>
+  LIFECYCLE_INPUT_FIELDS[object].every(
+    (field) =>
+      JSON.stringify(normalizedInput(left, field)) ===
+      JSON.stringify(normalizedInput(right, field)),
+  );
+
 export const allocationValidation = (
   record: LifecycleRecord,
 ): string | null => {
@@ -61,18 +106,29 @@ export const reconcileLifecycle = async ({
   id,
   eventAt,
   actorWorkspaceMemberId,
+  eventSnapshot,
   repository,
 }: {
   object: 'meetingBooking' | 'companyAllocation';
   id: string;
   eventAt: string;
   actorWorkspaceMemberId: string | null;
+  eventSnapshot?: Partial<LifecycleRecord>;
   repository: LifecycleRepository;
 }) => {
   const record = await repository.get(object, id);
   if (!record) return { status: 'missing' } as const;
   if (!instant(eventAt))
     throw new Error('Lifecycle event timestamp is invalid');
+  // Only the event that supplied these facts may supply their timestamp/actor.
+  // Compare facts rather than updatedAt when a separate automation has already
+  // stamped unrelated fields such as bookedAt or a validation message.
+  if (
+    eventSnapshot
+      ? !matchesLifecycleInputs(object, eventSnapshot, record)
+      : Date.parse(eventAt) !== Date.parse(record.updatedAt)
+  )
+    return { status: 'stale' } as const;
   let validation: string | null = null;
   const data: Record<string, unknown> = {};
   if (object === 'companyAllocation') {

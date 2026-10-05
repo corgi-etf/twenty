@@ -20,5 +20,15 @@ export default defineLogicFunction({
     'Validates meaningful records and stamps first lifecycle evidence without replaying it on edits.',
   timeoutSeconds: 30,
   handler,
-  databaseEventTriggerSettings: { eventName: 'meetingBooking.updated' },
+  databaseEventTriggerSettings: {
+    eventName: 'meetingBooking.updated',
+    updatedFields: [
+      'companyId',
+      'contactId',
+      'wholesalerId',
+      'status',
+      'heldAt',
+      'takenById',
+    ],
+  },
 });

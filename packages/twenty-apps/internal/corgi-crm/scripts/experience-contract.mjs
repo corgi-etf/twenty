@@ -107,7 +107,16 @@ export const EXPERIENCE_TRIGGERS = [
   [
     'feb59567-ea13-5c52-a579-2e1c95cba702',
     'company-allocation-lifecycle-updated',
-    { eventName: 'companyAllocation.updated' },
+    {
+      eventName: 'companyAllocation.updated',
+      updatedFields: [
+        'companyId',
+        'contactId',
+        'meetingId',
+        'ticker',
+        'amount',
+      ],
+    },
   ],
   [
     '7b76e023-90b4-5e74-8ee0-827aab679efd',
@@ -117,7 +126,17 @@ export const EXPERIENCE_TRIGGERS = [
   [
     '40524308-346f-5358-9c46-8871c7936aa7',
     'meeting-booking-lifecycle-updated',
-    { eventName: 'meetingBooking.updated' },
+    {
+      eventName: 'meetingBooking.updated',
+      updatedFields: [
+        'companyId',
+        'contactId',
+        'wholesalerId',
+        'status',
+        'heldAt',
+        'takenById',
+      ],
+    },
   ],
 ];
 const one = (values, predicate, label) => {

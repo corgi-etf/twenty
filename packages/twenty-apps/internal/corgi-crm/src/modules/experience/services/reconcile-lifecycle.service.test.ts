@@ -7,7 +7,7 @@ import {
 const allocation: LifecycleRecord = {
   id: 'a',
   companyId: 'c',
-  updatedAt: '2026-10-05T12:00:00Z',
+  updatedAt: '2026-10-05T13:00:00Z',
   ticker: 'BRK.B',
   amount: { amountMicros: 123000000, currencyCode: 'USD' },
   loggedAt: null,
@@ -32,6 +32,76 @@ const run = (
   };
 };
 describe('authoritative lifecycle evidence', () => {
+  it.each(['companyAllocation', 'meetingBooking'] as const)(
+    'does not credit a stale invalid event with later valid %s input',
+    async (object) => {
+      const record = {
+        ...allocation,
+        status: 'COMPLETED',
+        wholesalerId: 'w',
+        heldAt: '2026-10-01T12:00:00Z',
+      };
+      const repository = {
+        get: vi.fn().mockResolvedValue(record),
+        update: vi.fn(),
+      };
+      const result = await reconcileLifecycle({
+        object,
+        id: record.id,
+        eventAt: '2026-10-05T12:00:00Z',
+        actorWorkspaceMemberId: 'old-actor',
+        eventSnapshot: {
+          ...record,
+          ticker: '',
+          status: 'DRAFT',
+          updatedAt: '2026-10-05T12:00:00Z',
+        },
+        repository,
+      });
+      expect(result).toEqual({ status: 'stale' });
+      expect(repository.update).not.toHaveBeenCalled();
+    },
+  );
+  it('retains original valid evidence after an automation-only write changes updatedAt', async () => {
+    const repository = {
+      get: vi
+        .fn()
+        .mockResolvedValue({
+          ...allocation,
+          updatedAt: '2026-10-05T14:00:00Z',
+        }),
+      update: vi.fn().mockResolvedValue(true),
+    };
+    await reconcileLifecycle({
+      object: 'companyAllocation',
+      id: allocation.id,
+      eventAt: allocation.updatedAt,
+      actorWorkspaceMemberId: 'actual-logger',
+      eventSnapshot: allocation,
+      repository,
+    });
+    expect(repository.update.mock.calls[0]?.[2]).toMatchObject({
+      loggedAt: '2026-10-05T13:00:00.000Z',
+      loggedById: 'actual-logger',
+    });
+  });
+  it('requires matching update time when an old caller has no event source evidence', async () => {
+    const repository = {
+      get: vi.fn().mockResolvedValue(allocation),
+      update: vi.fn(),
+    };
+    expect(
+      await reconcileLifecycle({
+        object: 'companyAllocation',
+        id: allocation.id,
+        eventAt: '2026-10-05T12:00:00Z',
+        actorWorkspaceMemberId: 'old-actor',
+        repository,
+      }),
+    ).toEqual({ status: 'stale' });
+    expect(repository.update).not.toHaveBeenCalled();
+  });
+
   it('preserves full 64-bit string allocation micros without floating point conversion', () => {
     expect(
       allocationValidation({
