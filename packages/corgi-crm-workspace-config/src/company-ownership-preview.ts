@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 
-type OwnerCompany = {
+export type OwnerCompany = {
   id: string;
   updatedAt: string;
   accountOwnerId?: string | null;
@@ -8,16 +8,18 @@ type OwnerCompany = {
   historicalOwnerId?: string | null;
   historicalOwner?: { id: string } | null;
 };
-type OwnerWholesaler = {
+export type OwnerWholesaler = {
   id: string;
   workspaceMemberId?: string | null;
   workspaceMember?: { id: string } | null;
 };
-type Ownership = {
+export type Ownership = {
   id: string;
   companyId: string;
   wholesalerId: string;
   isPrimary: boolean;
+  deletedAt?: string | null;
+  updatedAt?: string;
 };
 export type CompanyOwnershipPreview = {
   companyCount: number;
@@ -114,12 +116,16 @@ export const buildCompanyOwnershipPreview = ({
     const existing = existingOwnerships.filter(
       ({ companyId }) => companyId === company.id,
     );
-    if (existing.filter(({ isPrimary }) => isPrimary).length > 1)
+    if (
+      existing.filter(({ isPrimary, deletedAt }) => isPrimary && !deletedAt)
+        .length > 1
+    )
       report('multiple-primary-owners');
     const primary =
-      existing.find(({ isPrimary }) => isPrimary)?.wholesalerId ??
-      historicalOwner?.id ??
-      accountOwner?.id;
+      existing.find(({ isPrimary, deletedAt }) => isPrimary && !deletedAt)
+        ?.wholesalerId ??
+      accountOwner?.id ??
+      historicalOwner?.id;
     const desired = new Set(
       [historicalOwner?.id, accountOwner?.id].filter((id): id is string =>
         Boolean(id),

@@ -192,6 +192,7 @@ export type WorkspaceMetadataObject = {
   id: string;
   nameSingular: string;
   namePlural: string;
+  openRecordIn?: string;
   fields: WorkspaceMetadataField[];
 };
 
@@ -1256,6 +1257,7 @@ export const buildWorkspaceConfigPlan = (
     const outreachFieldIds = new Set(
       outreachActivity.fields.map(({ id }) => id),
     );
+    if (!followUpView) throw new Error('Missing selected Follow-ups view');
     for (const viewField of followUpView.viewFields) {
       if (!outreachFieldIds.has(viewField.fieldMetadataId)) {
         throw new Error('Follow-ups view references an unknown metadata field');

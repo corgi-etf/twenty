@@ -48,7 +48,7 @@ test('keeps both different legacy owners and reports conflicts without guessing 
   assert.equal(plan.additions.length, 2);
   assert.equal(
     plan.additions.find(({ isPrimary }) => isPrimary)?.wholesalerId,
-    'wholesaler-1',
+    'wholesaler-2',
   );
   assert.equal(plan.review[0]?.reason, 'different-legacy-owners');
   const ambiguous = buildCompanyOwnershipPreview({
@@ -74,4 +74,29 @@ test('refuses an incomplete inventory', () => {
       }),
     /exact distinct/,
   );
+});
+test('keeps an intentionally removed pair deleted and ignores its old primary flag', () => {
+  const plan = buildCompanyOwnershipPreview({
+    companies,
+    wholesalers,
+    expectedCompanyCount: 1,
+    existingOwnerships: [
+      {
+        id: 'removed',
+        companyId: 'company-1',
+        wholesalerId: 'wholesaler-1',
+        isPrimary: true,
+        deletedAt: '2026-10-05T13:00:00Z',
+      },
+      {
+        id: 'current',
+        companyId: 'company-1',
+        wholesalerId: 'different-current-owner',
+        isPrimary: true,
+        deletedAt: null,
+      },
+    ],
+  });
+  assert.deepEqual(plan.additions, []);
+  assert.deepEqual(plan.review, []);
 });
