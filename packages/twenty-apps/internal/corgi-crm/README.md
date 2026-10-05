@@ -30,7 +30,7 @@ or reused.
 Version `1.2.1` adds an opt-in public read path for whole-workspace Telegram
 reports while keeping identity-scoped reads and CRM writes authenticated.
 
-The two custom CRM objects predate this app, so their universal identifiers are
+The three custom CRM objects predate this app, so their universal identifiers are
 not guessed or committed. Immediately before packaging, use the short-lived
 deployment credential to resolve them from live metadata into the job
 environment:
@@ -39,21 +39,15 @@ environment:
 CORGI_CRM_ROLE_ENV_PATH=$GITHUB_ENV node packages/twenty-apps/internal/corgi-crm/scripts/verify-production-install.mjs role-env
 ```
 
-That mode fails unless it finds exactly one active `wholesaler` and one active
-`outreachActivity` object with UUID universal identifiers. It exports
-`CORGI_CRM_WHOLESALER_OBJECT_UNIVERSAL_IDENTIFIER` and
-`CORGI_CRM_OUTREACH_ACTIVITY_OBJECT_UNIVERSAL_IDENTIFIER`; the least-privilege
-role requires both at build time. The installed verifier then checks the actual
-role has read-only access to WorkspaceMember, Company, and Person; read/write
-access to Wholesaler, OutreachActivity, and the app-owned TelegramDelivery and
-TelegramDeliveryAudit objects; read/update access to MeetingBooking; and no
-other object, delete, global, or settings permission. CompanyAllocation is
-deliberately absent from that role: no logic function reads or writes an
-allocation, so granting one would widen the exactly-eight-permission contract
-for nothing. It also verifies the app-owned object schemas — including the
-CompanyAllocation fields, their user editability, and the Allocations section
-on Company — and the three unique indexes that fence delivery claims, reset
-generations, and request replays.
+That mode fails unless it finds exactly one active `wholesaler`,
+`outreachActivity`, and `leadAssignment` object with UUID universal identifiers.
+It exports `CORGI_CRM_WHOLESALER_OBJECT_UNIVERSAL_IDENTIFIER`,
+`CORGI_CRM_OUTREACH_ACTIVITY_OBJECT_UNIVERSAL_IDENTIFIER`, and
+`CORGI_CRM_LEAD_ASSIGNMENT_OBJECT_UNIVERSAL_IDENTIFIER`. The least-privilege
+role requires all three at build time. The installed verifier checks the exact
+14 object grants, field provenance protection, relation targets, unique indexes,
+and database trigger contracts. Ordinary users cannot edit application-managed
+lifecycle timestamps or scheduler provenance.
 
 The generated Core SDK describes standard objects and this application's own
 objects; granting access to an existing workspace object does not add it to
@@ -142,7 +136,6 @@ currency rather than assuming dollars in the column.
 Destroying a company destroys its allocations; an allocation carries no meaning
 once the company it belongs to is gone. Soft-deleting a company leaves them
 alone.
-
 
 ## Outreach activity ownership
 
@@ -385,3 +378,64 @@ opaque delivery key, request ID, generation timestamp, and request time. They
 are retained indefinitely: the app role has no delete permission and there is
 no automatic purge. Treat any future retention change as a reviewed migration,
 not an operator cleanup action.
+
+## Experience release 1.3.0
+
+Activity titles use `Type - Company - YYYY-MM-DD` in America/Chicago. Blank and
+Untitled titles are managed automatically; intentional custom titles survive
+later edits. Imports use the same formatter and preserve custom titles on replay.
+
+Scheduling a dated follow-up creates a durable Outreach Follow-up, self-assigned
+Task, and the scheduler's Lead Assignment. Existing assignments to other people
+remain intact. The follow-up records the immutable scheduler separately from its
+current assignee. Clearing the date cancels the reminder; task completion updates
+its history. A new `followUpRequestKey` represents an intentional new request.
+Missing company links remain visible and can be repaired later.
+
+Meetings set use first `bookedAt`; meetings taken use `COMPLETED` plus explicit
+`heldAt`. `heldRecordedAt` records when completion was first validated, and
+`takenBy` credits the person who held it. Allocations receive immutable `loggedAt`
+and `loggedBy` only after a positive amount, currency, ticker, and compatible
+company/contact/meeting links are valid. Validation messages exclude invalid
+corrections from reports. Manual `activeClient` remains separate from the distinct
+companies with valid allocations metric.
+
+Company Ownership is a junction with one unique company/wholesaler pair. It
+preserves legacy account/historical owners; backfilling their authoritative
+member mapping is handled by the workspace configuration package.
+
+## Reviewed experience backfill
+
+Install 1.3.0 and verify its metadata before previewing. Run from this directory
+with `CORGI_CRM_URL` and `CORGI_CRM_WORKSPACE_ID`. Preview accepts a read-only
+`CORGI_CRM_API_KEY` or an admin session `CORGI_CRM_ACCESS_TOKEN`:
+
+```sh
+node scripts/experience-backfill.mjs preview /secure/path/experience-preview.json
+```
+
+Review every operation and unresolved row. The manifest includes a SHA-256 digest,
+source evidence, original values, and the expected update timestamp. It proposes
+only blank/Untitled titles and valid historical allocation `loggedAt` values using
+the original CRM `createdAt` as an explicit fallback. It never invents meeting
+completion timestamps, overwrites custom titles, or sends Telegram messages.
+
+Apply requires `CORGI_CRM_ACCESS_TOKEN` for an authorized administrator with
+Applications and Workflows permissions. The command resolves the installed
+untriggered maintenance function, temporarily approves exactly the reviewed
+digest, and invokes it with its owning application identity. Ordinary API keys
+cannot write the protected fields directly.
+
+```sh
+node scripts/experience-backfill.mjs apply /secure/path/experience-preview.json /secure/path/experience-journal.jsonl REVIEWED_SHA256
+```
+
+Each write compares the live source and update timestamp; changed records are
+reported as conflicts. The journal records intent before execution and original
+values after confirmed writes. Re-running the identical manifest is idempotent.
+Review conflicts through a fresh preview. Keep the manifest/journal outside the
+repository, restrict their file permissions, and retain them for rollback review.
+The approval variable is cleared on normal completion or a handled failure; if the
+process is forcibly stopped, clear `CORGI_CRM_EXPERIENCE_BACKFILL_DIGEST` in app
+settings before starting unrelated maintenance. Rollback requires a separately
+reviewed owning-application operation against the journal's saved timestamps.

@@ -1,3 +1,4 @@
+import { verifyExperienceSchema } from './experience-contract.mjs';
 import { appendFile } from 'node:fs/promises';
 import { pathToFileURL } from 'node:url';
 
@@ -1392,6 +1393,7 @@ const main = async () => {
   });
   verifyMeetingBookingSchema(metadataObjects, meetingExperience);
   verifyMeetingApplicationContract(application);
+  verifyExperienceSchema(metadataObjects, application);
   verifyApplicationRoleContract(
     application.defaultLogicFunctionRole,
     metadataObjects,
