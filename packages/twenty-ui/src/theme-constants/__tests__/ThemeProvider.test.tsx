@@ -143,3 +143,43 @@ describe('ThemeProvider token resolution', () => {
     expect(latestTheme?.border.radius.sm).toBe('4px');
   });
 });
+
+describe('ThemeProvider personal accents', () => {
+  it('applies accents at the root for portals while preserving scale and semantic colors', () => {
+    document.documentElement.style.setProperty('--t-tag-text-green', '#123456');
+    const { unmount, rerender } = render(
+      <ThemeProvider
+        colorScheme="light"
+        scale={1.25}
+        rootOverrides={{ '--t-accent-primary': '#6d28d9' }}
+      >
+        <div />
+      </ThemeProvider>,
+    );
+    expect(readInlineScale()).toBe('1.25');
+    expect(
+      document.documentElement.style.getPropertyValue('--t-accent-primary'),
+    ).toBe('#6d28d9');
+    expect(
+      document.documentElement.style.getPropertyValue('--t-tag-text-green'),
+    ).toBe('#123456');
+    rerender(
+      <ThemeProvider
+        colorScheme="dark"
+        scale={1.25}
+        rootOverrides={{ '--t-accent-primary': '#c4b5fd' }}
+      >
+        <div />
+      </ThemeProvider>,
+    );
+    expect(readInlineScale()).toBe('1.25');
+    expect(
+      document.documentElement.style.getPropertyValue('--t-accent-primary'),
+    ).toBe('#c4b5fd');
+    unmount();
+    expect(
+      document.documentElement.style.getPropertyValue('--t-accent-primary'),
+    ).toBe('');
+    document.documentElement.style.removeProperty('--t-tag-text-green');
+  });
+});
