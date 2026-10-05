@@ -1,3 +1,11 @@
+import { useListenToObjectRecordOperationBrowserEvent } from '@/browser-event/hooks/useListenToObjectRecordOperationBrowserEvent';
+import { type ObjectRecordOperationBrowserEventDetail } from '@/browser-event/types/ObjectRecordOperationBrowserEventDetail';
+import {
+  getCorgiLocalCreationKey,
+  getCorgiWinCreationKeys,
+  reconcileCorgiCreationEvidence,
+  type CorgiCreationEvidence,
+} from '@/corgi-crm/events/utils/corgiCreationEvidence';
 import {
   getCorgiCelebrationPreferenceKey,
   getCorgiCelebrationsEnabled,
@@ -9,7 +17,7 @@ import { useSnackBar } from '@/ui/feedback/snack-bar-manager/hooks/useSnackBar';
 import { styled } from '@linaria/react';
 import { t } from '@lingui/core/macro';
 import { themeCssVariables } from 'twenty-ui/theme-constants';
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 const StyledConfetti = styled.div`
   inset: 0;
@@ -50,6 +58,47 @@ export const CorgiLiveEvents = ({
 }) => {
   const { enqueueInfoSnackBar } = useSnackBar();
   const [celebrating, setCelebrating] = useState(false);
+  // oxlint-disable-next-line twenty/no-state-useref
+  const creationEvidence = useRef<CorgiCreationEvidence>({
+    localKeys: [],
+    validKeys: [],
+    consumedKeys: [],
+  });
+  const reconcileCreation = useCallback(
+    (localKeys: string[], validKeys: string[]) => {
+      const reconciled = reconcileCorgiCreationEvidence(
+        creationEvidence.current,
+        localKeys,
+        validKeys,
+      );
+      creationEvidence.current = reconciled.state;
+      if (
+        reconciled.shouldCelebrate &&
+        getCorgiCelebrationsEnabled(
+          getCorgiCelebrationPreferenceKey(workspaceId, workspaceMemberId),
+        ) &&
+        !window.matchMedia('(prefers-reduced-motion: reduce)').matches
+      )
+        setCelebrating(true);
+    },
+    [workspaceId, workspaceMemberId],
+  );
+  const handleCreation = useCallback(
+    (detail: ObjectRecordOperationBrowserEventDetail) => {
+      const key = getCorgiLocalCreationKey(detail);
+      if (key) reconcileCreation([key], []);
+    },
+    [reconcileCreation],
+  );
+  useListenToObjectRecordOperationBrowserEvent({
+    onObjectRecordOperationBrowserEvent: handleCreation,
+  });
+
+  useEffect(() => {
+    if (ready)
+      reconcileCreation([], getCorgiWinCreationKeys(wins, workspaceMemberId));
+  }, [ready, wins, workspaceMemberId, reconcileCreation]);
+
   // IDs only: retaining titles locally would outlive source-record permission changes.
   // oxlint-disable-next-line twenty/no-state-useref
   const history = useRef<{
@@ -105,16 +154,6 @@ export const CorgiLiveEvents = ({
           duration: 6500,
         },
       });
-      const celebrationsEnabled = getCorgiCelebrationsEnabled(
-        getCorgiCelebrationPreferenceKey(workspaceId, workspaceMemberId),
-      );
-      if (
-        win.isCreation &&
-        win.actorWorkspaceMemberId === workspaceMemberId &&
-        celebrationsEnabled &&
-        !window.matchMedia('(prefers-reduced-motion: reduce)').matches
-      )
-        setCelebrating(true);
     }
   }, [
     wins,

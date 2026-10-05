@@ -1,3 +1,4 @@
+import { dispatchObjectRecordOperationBrowserEvent } from '@/browser-event/utils/dispatchObjectRecordOperationBrowserEvent';
 import { act, renderHook } from '@testing-library/react';
 
 import { CoreObjectNameSingular } from 'twenty-shared/types';
@@ -19,6 +20,7 @@ jest.mock('uuid', () => ({
 const input = { name: { firstName: 'John', lastName: 'Doe' } };
 
 jest.mock('@/object-record/hooks/useRefetchAggregateQueries');
+jest.mock('@/browser-event/utils/dispatchObjectRecordOperationBrowserEvent');
 const mockRefetchAggregateQueries = jest.fn();
 (useRefetchAggregateQueries as jest.Mock).mockReturnValue({
   refetchAggregateQueries: mockRefetchAggregateQueries,
@@ -63,7 +65,39 @@ describe('useCreateOneRecord', () => {
       expect(res).toHaveProperty('id', PERSON_ID);
     });
 
+    expect(dispatchObjectRecordOperationBrowserEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        source: 'local-mutation',
+        createInput: { ...input, id: PERSON_ID },
+      }),
+    );
     expect(mocks[0].result).toHaveBeenCalled();
     expect(mockRefetchAggregateQueries).toHaveBeenCalledTimes(1);
   });
+  it.each(['rejected', 'empty-response'])(
+    'does not emit local creation evidence for %s',
+    async (failure) => {
+      const failedWrapper = getJestMetadataAndApolloMocksWrapper({
+        apolloMocks: [
+          {
+            request: mocks[0].request,
+            ...(failure === 'rejected'
+              ? { error: new Error('Save failed') }
+              : { result: { data: { createPerson: null } } }),
+          },
+        ],
+      });
+      const { result } = renderHook(
+        () =>
+          useCreateOneRecord({
+            objectNameSingular: CoreObjectNameSingular.Person,
+          }),
+        { wrapper: failedWrapper },
+      );
+      await act(async () => {
+        await expect(result.current.createOneRecord(input)).rejects.toThrow();
+      });
+      expect(dispatchObjectRecordOperationBrowserEvent).not.toHaveBeenCalled();
+    },
+  );
 });

@@ -201,17 +201,19 @@ export const useCreateOneRecord = <
       mutationResponseField
     ] as ObjectRecordShared & BaseObjectRecord;
 
+    if (!isDefined(createdRecord) || !isDefined(createdRecord.id)) {
+      throw new CustomError('Failed to create record');
+    }
+
     dispatchObjectRecordOperationBrowserEvent({
       objectMetadataItem,
+      source: 'local-mutation',
+      createInput: sanitizedInput,
       operation: {
         type: 'create-one',
         createdRecord: { ...createdRecord, position: positionToUse },
       },
     });
-
-    if (!isDefined(createdRecord)) {
-      throw new CustomError('Failed to create record');
-    }
 
     return getRecordFromRecordNode({
       recordNode: createdRecord,
