@@ -11,6 +11,7 @@ import { type CompiledStatement } from 'src/engine/twenty-orm/sql/utils/compile-
 import { type WorkspaceTableShape } from 'src/engine/twenty-orm/table-shape/types/workspace-table-shape.type';
 import { type WorkspaceOrmManager } from 'src/engine/twenty-orm/workspace-orm.manager';
 import { type CorgiHomeQueryService } from 'src/modules/corgi-crm/corgi-home-query.service';
+import { corgiPageCursor } from 'src/modules/corgi-crm/corgi-home.utils';
 import { CorgiHomeService } from 'src/modules/corgi-crm/corgi-home.service';
 
 jest.mock('src/engine/twenty-orm/workspace-orm.manager', () => ({
@@ -384,5 +385,126 @@ describe('CRM batched relationships and company visibility', () => {
     expect(statements[0].text).toContain('"r"."companyId" IS NOT NULL');
     expect(statements[0].text).toContain('"visibleCompany"."id" IS NULL');
     expect(statements[0].values).not.toContain('restricted');
+  });
+});
+
+describe('CRM complete business feeds', () => {
+  it('includes tasks, notes and readable creator snapshots while excluding draft placeholders', async () => {
+    const { service, statements } = makeService((statement) => {
+      if (statement.text.includes('COUNT(')) return [{ count: 1 }];
+      if (statement.text.includes('"task"'))
+        return [
+          {
+            id: '10000000-0000-4000-8000-000000000001',
+            title: 'Call client',
+            createdAt: '2026-10-05T15:00:00.000Z',
+            createdByName: 'Creator',
+          },
+        ];
+      if (statement.text.includes('"note"'))
+        return [
+          {
+            id: '10000000-0000-4000-8000-000000000002',
+            title: 'Client context',
+            createdAt: '2026-10-05T14:00:00.000Z',
+          },
+        ];
+      return [];
+    });
+    const result = await service.get({ section: 'latestRecords' });
+    expect(result).toMatchObject({
+      records: [
+        {
+          objectNameSingular: 'task',
+          label: 'Call client',
+          createdBy: 'Creator',
+        },
+        { objectNameSingular: 'note', label: 'Client context' },
+      ],
+    });
+    expect(
+      statements
+        .filter((statement) => statement.text.includes('"meetingBooking"'))
+        .every((statement) =>
+          statement.text.includes('"r"."bookedAt" IS NOT NULL'),
+        ),
+    ).toBe(true);
+    expect(
+      statements
+        .filter((statement) => statement.text.includes('"company" AS "r"'))
+        .every((statement) => statement.text.includes('BTRIM')),
+    ).toBe(true);
+  });
+
+  it('requires completion reconciliation and a clear validation state for taken metrics', async () => {
+    const { service, statements } = makeService();
+    await service.get({ section: 'meetingsTaken' });
+    expect(statements[0].text).toContain('"r"."heldRecordedAt" IS NOT NULL');
+    expect(statements[0].text).toContain('"r"."bookingValidationMessage"');
+  });
+
+  it('keeps completed and cancelled meetings visible in the agenda and searches their names', async () => {
+    const { service, statements } = makeService();
+    await service.get({ section: 'agenda', search: 'Client' });
+    expect(statements[0].values).toContain('DRAFT');
+    expect(statements[0].values).not.toContain('BOOKED');
+    expect(statements[0].values).toContain('%Client%');
+  });
+});
+
+describe('CRM feed query bounds', () => {
+  it('keeps a deep mixed-feed page bounded instead of reading every preceding record', async () => {
+    const { service, statements } = makeService();
+    const query = { section: 'latestRecords' as const };
+    const cursor = corgiPageCursor(500000, query, {
+      at: '2026-10-05T15:00:00.123456Z',
+      id: '10000000-0000-4000-8000-000000000001',
+      source: 'task',
+    });
+    await service.get({ ...query, cursor });
+    const recordQueries = statements.filter(
+      (statement) => !statement.text.includes('COUNT('),
+    );
+    expect(recordQueries).toHaveLength(9);
+    for (const statement of recordQueries) {
+      expect(statement.text).toContain('"r"."createdAt" <');
+      expect(statement.text).toContain('to_char(');
+      expect(statement.values).toContain(26);
+      expect(statement.values).not.toContain(500025);
+      expect(statement.values).toContain('2026-10-05T15:00:00.123456Z');
+    }
+  });
+});
+
+describe('CRM team aggregate query bounds', () => {
+  it('returns zero-work employees with eight queries for an entire team page', async () => {
+    const { service, statements } = makeService((statement) => {
+      if (
+        statement.text.includes('FROM "workspace_scoped"."workspaceMember"')
+      ) {
+        if (statement.text.includes('COUNT(')) return [{ count: 25 }];
+        return Array.from({ length: 25 }, (_, index) => ({
+          id: `member-${index}`,
+          nameFirstName: `Employee ${index}`,
+          nameLastName: '',
+        }));
+      }
+      return [];
+    });
+    const result = await service.get({ section: 'team' });
+    expect(result).toMatchObject({
+      totalCount: 25,
+      records: expect.arrayContaining([
+        expect.objectContaining({
+          workspaceMemberId: 'member-24',
+          activities: { status: 'available', count: 0 },
+          allocations: { status: 'available', count: 0, amounts: [] },
+        }),
+      ]),
+    });
+    expect(statements).toHaveLength(8);
+    expect(
+      statements.filter((statement) => statement.text.includes('GROUP BY')),
+    ).toHaveLength(5);
   });
 });

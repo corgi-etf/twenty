@@ -30,12 +30,18 @@ import {
   corgiErrorAvailability,
 } from 'src/modules/corgi-crm/corgi-home-query.service';
 import {
+  applyCorgiFeedBoundary,
+  corgiFeedPage,
+  corgiFeedTimestamp,
+} from 'src/modules/corgi-crm/corgi-home-feed.utils';
+import {
   CORGI_PAGE_SIZE,
   CORGI_TIME_ZONE,
   corgiDayRange,
   corgiPageCursor,
   parseCorgiHomeQuery,
   readCorgiOffset,
+  readCorgiFeedBoundary,
 } from 'src/modules/corgi-crm/corgi-home.utils';
 
 type Row = Record<string, unknown>;
@@ -58,11 +64,12 @@ const plural: Record<string, string> = {
   outreachFollowUp: 'outreachFollowUps',
   leadAssignment: 'leadAssignments',
   task: 'tasks',
+  note: 'notes',
 };
 const labelColumn = (object: string) =>
   object === 'companyAllocation'
     ? 'ticker'
-    : object === 'task'
+    : object === 'task' || object === 'note'
       ? 'title'
       : 'name';
 const labelColumns = (object: string) =>
@@ -124,6 +131,8 @@ export class CorgiHomeService {
     const query = parseCorgiHomeQuery(input);
 
     readCorgiOffset(query);
+    if (query.section === 'latestRecords' || query.section === 'liveWins')
+      readCorgiFeedBoundary(query);
 
     return this.workspaceOrmManager.executeInWorkspaceContext(async () => {
       if (!this.queries.isInstalled())
@@ -249,6 +258,7 @@ export class CorgiHomeService {
       );
     if (key === 'meetingsTaken' || key === 'meetingsSet')
       columns.push('status');
+    if (key === 'meetingsTaken') columns.push('heldRecordedAt');
     const base = this.queries.query(object, columns);
 
     if (key === 'allocations') this.validAllocation(base);
@@ -258,17 +268,12 @@ export class CorgiHomeService {
     if (query.allTime === 'true') base.andWhere(`r.${timestamp} IS NOT NULL`);
     else this.dateFilter(base, timestamp, query);
     if (key === 'meetingsTaken')
-      base.andWhere('r.status = :completed', { completed: 'COMPLETED' });
+      base.andWhere('r.status = :completed AND r.heldRecordedAt IS NOT NULL', {
+        completed: 'COMPLETED',
+      });
     if (key === 'meetingsSet')
       base.andWhere('r.status <> :draft', { draft: 'DRAFT' });
-    if (query.companyId) {
-      this.queries.query(object, ['companyId']);
-      if (query.companyId === 'unlinked') base.andWhere('r.companyId IS NULL');
-      else
-        base.andWhere('r.companyId = :companyId', {
-          companyId: query.companyId,
-        });
-    }
+    this.filterCompany(base, object, query);
     if (key === 'allocations') {
       for (const [field, value] of [
         ['externalWholesalerId', query.creditedWholesalerId],
@@ -332,24 +337,51 @@ export class CorgiHomeService {
       'companyId',
       'wholesalerId',
       'scheduledAt',
+      'bookingValidationMessage',
     ]);
 
     return base
       .andWhere('r.companyId IS NOT NULL')
       .andWhere('r.wholesalerId IS NOT NULL')
-      .andWhere('r.scheduledAt IS NOT NULL');
+      .andWhere('r.scheduledAt IS NOT NULL')
+      .andWhere("COALESCE(r.bookingValidationMessage, '') = ''");
+  }
+
+  private filterCompany(
+    base: WorkspaceSelectQueryBuilder,
+    object: string,
+    query: CorgiHomeQuery,
+  ) {
+    if (!query.companyId) return base;
+    this.queries.query(object, ['companyId']);
+    if (query.companyId === 'unlinked')
+      return base.andWhere('r.companyId IS NULL');
+    if (query.companyId === 'restricted') {
+      this.queries.query('company', ['id']);
+
+      return base
+        .leftJoin('r.company', 'visibleCompany')
+        .andWhere('r.companyId IS NOT NULL AND visibleCompany.id IS NULL');
+    }
+
+    return base.andWhere('r.companyId = :companyId', {
+      companyId: query.companyId,
+    });
   }
 
   private search(
     base: WorkspaceSelectQueryBuilder,
-    field: string,
+    field: string | string[],
     query: CorgiHomeQuery,
     alias = 'r',
   ) {
     if (query.search)
-      base.andWhere(`${alias}.${field} ILIKE :search`, {
-        search: `%${query.search.replace(/[\\%_]/g, '\\$&')}%`,
-      });
+      base.andWhere(
+        `(${(Array.isArray(field) ? field : [field]).map((name) => `${alias}.${name} ILIKE :search`).join(' OR ')})`,
+        {
+          search: `%${query.search.replace(/[\\%_]/g, '\\$&')}%`,
+        },
+      );
 
     return base;
   }
@@ -371,7 +403,7 @@ export class CorgiHomeService {
     return {
       ...link(object, row),
       createdAt: text(row.createdAt),
-      createdBy: nullableText(row.createdByWorkspaceMemberId),
+      createdBy: nullableText(row.createdByName),
       ...(row.status ? { status: text(row.status) } : {}),
       ...(row.amountCurrencyCode
         ? {
@@ -428,7 +460,9 @@ export class CorgiHomeService {
     this.queries.query('company', ['id', 'name']);
     base.innerJoin('r.company', 'company').andWhere('r.loggedAt IS NOT NULL');
     this.validAllocation(base);
-    if (query.companyId)
+    if (query.companyId === 'unlinked' || query.companyId === 'restricted')
+      base.andWhere('1 = 0');
+    else if (query.companyId)
       base.andWhere('company.id = :companyId', { companyId: query.companyId });
 
     return this.search(base, 'name', query, 'company');
@@ -593,14 +627,7 @@ export class CorgiHomeService {
       base.andWhere('r.status = :status', {
         status: query.status === 'completed' ? 'COMPLETED' : 'OPEN',
       });
-    if (query.companyId === 'unlinked') base.andWhere('r.companyId IS NULL');
-    else if (query.companyId === 'restricted') {
-      this.queries.query('company', ['id']);
-      base
-        .leftJoin('r.company', 'visibleCompany')
-        .andWhere('r.companyId IS NOT NULL AND visibleCompany.id IS NULL');
-    } else if (query.companyId)
-      base.andWhere('r.companyId = :companyId', { companyId: query.companyId });
+    this.filterCompany(base, 'outreachFollowUp', query);
 
     return this.search(base, 'name', query);
   }
@@ -809,9 +836,12 @@ export class CorgiHomeService {
       ]);
 
       this.dateFilter(base, 'scheduledAt', query).andWhere(
-        'r.status = :status',
-        { status: 'BOOKED' },
+        'r.status <> :draft',
+        { draft: 'DRAFT' },
       );
+      this.validMeeting(base);
+      this.search(base, 'name', query);
+      this.filterCompany(base, 'meetingBooking', query);
       if (query.workspaceMemberId) {
         this.queries.query('wholesaler', ['id', 'workspaceMemberId']);
         base
@@ -904,6 +934,7 @@ export class CorgiHomeService {
 
       if (query.workspaceMemberId)
         base.where('r.id = :memberId', { memberId: query.workspaceMemberId });
+      this.search(base, ['nameFirstName', 'nameLastName'], query);
       const total = await base.clone().getCount();
       const members = await base
         .orderBy('r.nameFirstName', 'ASC')
@@ -1090,6 +1121,37 @@ export class CorgiHomeService {
     });
   }
 
+  private savedRecordBase(object: string) {
+    const base = this.queries.query(object, [
+      'id',
+      ...labelColumns(object),
+      'createdAt',
+    ]);
+    const name = labelColumns(object)
+      .map((column) => `COALESCE(r.${column}, '')`)
+      .join(" || ' ' || ");
+
+    base.andWhere(`LOWER(BTRIM(${name})) NOT IN ('', 'untitled')`);
+    if (object === 'companyAllocation') this.validAllocation(base);
+    if (object === 'meetingBooking') {
+      this.validMeeting(base);
+      this.queries.query(object, ['bookedAt', 'status']);
+      base.andWhere('r.bookedAt IS NOT NULL AND r.status <> :draft', {
+        draft: 'DRAFT',
+      });
+    }
+    try {
+      // Creator is optional presentation data. Hiding it must not hide an
+      // otherwise readable record or expose the actor through another object.
+      this.queries.query(object, ['createdByName']);
+      base.addSelect('r.createdByName', 'createdByName');
+    } catch (error) {
+      this.report(error);
+    }
+
+    return base;
+  }
+
   private async latest(
     query: CorgiHomeQuery,
   ): Promise<CorgiPage<CorgiBusinessRecord>> {
@@ -1101,58 +1163,45 @@ export class CorgiHomeService {
       'person',
       'leadAssignment',
       'wholesaler',
-      'outreachFollowUp',
+      'task',
+      'note',
     ];
-    const offset = readCorgiOffset(query);
     const size = query.section ? CORGI_PAGE_SIZE : 5;
     const sources = await Promise.all(
       objects.map((object) =>
         this.safePage(async () => {
-          const base = this.queries.query(object, [
-            'id',
-            ...labelColumns(object),
-            'createdAt',
-          ]);
+          const base = this.savedRecordBase(object);
 
-          if (query.search) this.search(base, labelColumns(object)[0], query);
+          this.search(base, labelColumns(object), query);
           const total = await base.clone().getCount();
-          const rows = await base
+          const rows = await applyCorgiFeedBoundary(
+            base,
+            'createdAt',
+            object,
+            query,
+          )
+            .addSelect(corgiFeedTimestamp('createdAt'), 'feedAt')
             .orderBy('r.createdAt', 'DESC')
             .addOrderBy('r.id', 'DESC')
-            .limit(offset + size)
+            .limit(size + 1)
             .getRawMany<Row>();
 
-          return page(
-            rows.map((row) => this.businessRecord(object, row)),
-            total,
-            {},
-            size,
-          );
+          return {
+            status: 'available',
+            totalCount: total,
+            nextCursor: null,
+            records: rows.map((row) => ({
+              record: this.businessRecord(object, row),
+              source: object,
+              at: text(row.feedAt) || text(row.createdAt),
+              id: text(row.id),
+            })),
+          };
         }),
       ),
     );
-    const available = sources.filter((source) => source.status === 'available');
 
-    if (!available.length)
-      return unavailablePage(
-        sources.some((source) => source.status === 'denied')
-          ? 'denied'
-          : 'unavailable',
-      );
-    const records = available
-      .flatMap((source) => source.records)
-      .sort(
-        (a, b) =>
-          b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id),
-      )
-      .slice(offset, offset + size);
-
-    return page(
-      records,
-      available.reduce((total, source) => total + (source.totalCount ?? 0), 0),
-      query,
-      size,
-    );
+    return corgiFeedPage(sources, query, size);
   }
 
   private async wins(query: CorgiHomeQuery): Promise<CorgiPage<CorgiWin>> {
@@ -1179,7 +1228,6 @@ export class CorgiHomeService {
         actor: 'loggedById',
       },
     ];
-    const offset = readCorgiOffset(query);
     const sources = await Promise.all(
       definitions.map((definition) =>
         this.safePage(async () => {
@@ -1210,11 +1258,18 @@ export class CorgiHomeService {
           }
           if (query.from || query.to)
             this.dateFilter(base, definition.recorded, query);
+          this.search(base, labelColumn(definition.object), query);
           const total = await base.clone().getCount();
-          const rows = await base
+          const rows = await applyCorgiFeedBoundary(
+            base,
+            definition.recorded,
+            definition.kind,
+            query,
+          )
+            .addSelect(corgiFeedTimestamp(definition.recorded), 'feedAt')
             .orderBy(`r.${definition.recorded}`, 'DESC')
             .addOrderBy('r.id', 'DESC')
-            .limit(offset + CORGI_PAGE_SIZE)
+            .limit(CORGI_PAGE_SIZE + 1)
             .getRawMany<Row>();
           const actors = await this.relatedBatch(
             'workspaceMember',
@@ -1228,34 +1283,26 @@ export class CorgiHomeService {
             actorWorkspaceMemberId: nullableText(row[definition.actor]),
             recordedAt: text(row[definition.recorded]),
             effectiveAt: text(row[definition.effective]),
-            isCreation: definition.kind !== 'meeting-taken',
+            // The source lifecycle proves logging/booking, not initial creation.
+            // Local successful-create provenance controls creator celebrations.
+            isCreation: false,
           }));
 
-          return page(records, total, {});
+          return {
+            status: 'available',
+            totalCount: total,
+            nextCursor: null,
+            records: records.map((record, index) => ({
+              record,
+              source: definition.kind,
+              id: record.record.id,
+              at: text(rows[index].feedAt) || record.recordedAt,
+            })),
+          };
         }),
       ),
     );
-    const available = sources.filter((source) => source.status === 'available');
-
-    if (!available.length)
-      return unavailablePage(
-        sources.some((source) => source.status === 'denied')
-          ? 'denied'
-          : 'unavailable',
-      );
-    const records = available
-      .flatMap((source) => source.records)
-      .sort(
-        (a, b) =>
-          b.recordedAt.localeCompare(a.recordedAt) || b.id.localeCompare(a.id),
-      )
-      .slice(offset, offset + CORGI_PAGE_SIZE);
-
-    return page(
-      records,
-      available.reduce((total, source) => total + (source.totalCount ?? 0), 0),
-      query,
-    );
+    return corgiFeedPage(sources, query, CORGI_PAGE_SIZE);
   }
 
   private async summary(): Promise<CorgiHomeSummary> {

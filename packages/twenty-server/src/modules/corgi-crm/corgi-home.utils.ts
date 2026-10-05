@@ -128,9 +128,19 @@ const queryFingerprint = ({ cursor: _cursor, ...query }: CorgiHomeQuery) =>
     .digest('hex')
     .slice(0, 16);
 
-export const corgiPageCursor = (offset: number, query: CorgiHomeQuery) =>
+export type CorgiFeedBoundary = { at: string; id: string; source: string };
+
+export const corgiPageCursor = (
+  offset: number,
+  query: CorgiHomeQuery,
+  after?: CorgiFeedBoundary,
+) =>
   Buffer.from(
-    JSON.stringify({ offset, query: queryFingerprint(query) }),
+    JSON.stringify({
+      offset,
+      query: queryFingerprint(query),
+      ...(after ? { after } : {}),
+    }),
   ).toString('base64url');
 
 export const readCorgiOffset = (query: CorgiHomeQuery): number => {
@@ -155,6 +165,34 @@ export const readCorgiOffset = (query: CorgiHomeQuery): number => {
     return Number(value.offset);
   } catch {
     throw new BadRequestException('Invalid page cursor');
+  }
+};
+
+export const readCorgiFeedBoundary = (
+  query: CorgiHomeQuery,
+): CorgiFeedBoundary | undefined => {
+  if (!query.cursor) return undefined;
+  readCorgiOffset(query);
+  try {
+    const { after } = JSON.parse(
+      Buffer.from(query.cursor, 'base64url').toString(),
+    ) as { after?: Record<string, unknown> };
+    if (
+      !after ||
+      typeof after.at !== 'string' ||
+      typeof after.id !== 'string' ||
+      typeof after.source !== 'string' ||
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+        after.id,
+      ) ||
+      !/^[A-Za-z-]{1,50}$/.test(after.source)
+    )
+      throw new Error();
+    Temporal.Instant.from(after.at);
+
+    return { at: after.at, id: after.id, source: after.source };
+  } catch {
+    throw new BadRequestException('Invalid feed cursor');
   }
 };
 
