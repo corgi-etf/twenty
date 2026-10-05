@@ -15,7 +15,7 @@ test('executes the reviewed CRM experience rollout operation', async ({
   page,
 }) => {
   const operationTimeout =
-    (process.env.CRM_EXPERIENCE_DATASET === 'ownership' ? 120 : 20) * 60_000;
+    (process.env.CRM_EXPERIENCE_DATASET === 'ownership' ? 240 : 20) * 60_000;
   test.setTimeout(operationTimeout);
   const environment = requireProductionEnvironment();
   if (environment.FRONTEND_BASE_URL !== environment.BACKEND_BASE_URL)

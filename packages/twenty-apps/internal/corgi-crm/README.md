@@ -532,8 +532,10 @@ configuration digest before and after each operation. A failure retains the priv
 apply journal for review. Configuration/ownership partial failures require a fresh
 preview; activity/allocation operations use per-record compare-and-set fencing.
 
-Ownership runs allow up to 120 minutes (150 minutes for the whole workflow), since
-source checks are intentionally serialized and rate limited. Other datasets allow
+Ownership runs allow up to 240 minutes (270 minutes for the whole workflow), since
+source checks are intentionally serialized and rate limited. Each company can
+preserve two different legacy owners, with a pre-check, insertion, and post-check
+for each missing membership. Other datasets allow
 20 minutes. Before any maintenance request, the browser runner requires the secure
 HttpOnly `__Host-twenty-session` cookie to remain valid for the whole operation plus
 15 minutes. These are opaque server sessions, whose configured default absolute
