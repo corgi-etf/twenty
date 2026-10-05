@@ -1,4 +1,9 @@
 import {
+  COMPANYOWNERSHIP_OBJECT_ID,
+  OUTREACHFOLLOWUP_OBJECT_ID,
+} from 'src/modules/experience/experience-identifiers';
+import { COMPANY_ALLOCATION_OBJECT_UNIVERSAL_IDENTIFIER } from 'src/modules/allocation/allocation-identifiers';
+import {
   defineApplicationRole,
   STANDARD_OBJECT_UNIVERSAL_IDENTIFIERS,
 } from 'twenty-sdk/define';
@@ -6,6 +11,7 @@ import {
 import { DEFAULT_ROLE_UNIVERSAL_IDENTIFIER } from 'src/constants';
 import {
   CORGI_CRM_OUTREACH_ACTIVITY_OBJECT_UNIVERSAL_IDENTIFIER,
+  CORGI_CRM_LEAD_ASSIGNMENT_OBJECT_UNIVERSAL_IDENTIFIER,
   CORGI_CRM_WHOLESALER_OBJECT_UNIVERSAL_IDENTIFIER,
 } from 'src/role-object-identifiers';
 import {
@@ -41,8 +47,7 @@ export default defineApplicationRole({
   canBeAssignedToApiKeys: false,
   objectPermissions: [
     permission(
-      STANDARD_OBJECT_UNIVERSAL_IDENTIFIERS.workspaceMember
-        .universalIdentifier,
+      STANDARD_OBJECT_UNIVERSAL_IDENTIFIERS.workspaceMember.universalIdentifier,
       false,
     ),
     permission(
@@ -58,6 +63,10 @@ export default defineApplicationRole({
     permission(TELEGRAM_DELIVERY_OBJECT_UNIVERSAL_IDENTIFIER, true),
     permission(TELEGRAM_DELIVERY_AUDIT_OBJECT_UNIVERSAL_IDENTIFIER, true),
     permission(MEETING_BOOKING_OBJECT_UNIVERSAL_IDENTIFIER, true),
+    permission(COMPANY_ALLOCATION_OBJECT_UNIVERSAL_IDENTIFIER, true),
+    permission(COMPANYOWNERSHIP_OBJECT_ID, true),
+    permission(OUTREACHFOLLOWUP_OBJECT_ID, true),
+    permission(CORGI_CRM_LEAD_ASSIGNMENT_OBJECT_UNIVERSAL_IDENTIFIER, true),
     // Raising a follow-up task from an outreach activity writes both the task
     // and the target row that links it to the company. Without these the
     // trigger runs, is refused, and the follow-up silently never appears.
