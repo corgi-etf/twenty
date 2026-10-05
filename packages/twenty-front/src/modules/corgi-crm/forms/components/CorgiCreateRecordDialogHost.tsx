@@ -3,6 +3,7 @@ import { currentWorkspaceMemberState } from '@/auth/states/currentWorkspaceMembe
 import { useAtomStateValue } from '@/ui/utilities/state/jotai/hooks/useAtomStateValue';
 import { CorgiAccentPalettePicker } from '@/corgi-crm/settings/components/CorgiAccentPalettePicker';
 import { useEffect, useRef, useState } from 'react';
+import { useDebounce } from 'use-debounce';
 import { createPortal } from 'react-dom';
 import { styled } from '@linaria/react';
 import { Trans, useLingui } from '@lingui/react/macro';
@@ -168,14 +169,15 @@ export const CorgiCreateRecordDialog = ({
     objectNameSingular: dialog.objectNameSingular,
   });
   const isCompany = dialog.objectNameSingular === 'company';
+  const [duplicateSearch] = useDebounce(
+    isCompany && typeof draft.name === 'string' ? draft.name.trim() : '',
+    250,
+  );
   const { records: duplicates } = useFindManyRecords({
     objectNameSingular: dialog.objectNameSingular,
     limit: 3,
-    skip:
-      !isCompany ||
-      typeof draft.name !== 'string' ||
-      draft.name.trim().length < 3,
-    filter: { name: { ilike: String(draft.name ?? '') } },
+    skip: !isCompany || duplicateSearch.length < 3,
+    filter: { name: { ilike: duplicateSearch } },
   });
   useEffect(() => {
     const element = dialogRef.current;

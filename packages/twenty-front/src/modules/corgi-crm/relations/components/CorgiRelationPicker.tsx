@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { useDebounce } from 'use-debounce';
 import { Link } from 'react-router-dom';
 import { getLinkToShowPage } from '@/object-metadata/utils/getLinkToShowPage';
 import { Trans, useLingui } from '@lingui/react/macro';
@@ -34,6 +35,7 @@ export const CorgiRelationPicker = ({
 }: CorgiRelationPickerProps) => {
   const { t } = useLingui();
   const [search, setSearch] = useState('');
+  const [debouncedSearch] = useDebounce(search, 250);
   const [isOpen, setIsOpen] = useState(!value);
   const [searchAll, setSearchAll] = useState(false);
   const { objectMetadataItem } = useObjectMetadataItem({ objectNameSingular });
@@ -41,16 +43,16 @@ export const CorgiRelationPicker = ({
   const nameField = objectMetadataItem.fields.find(
     ({ id }) => id === objectMetadataItem.labelIdentifierFieldMetadataId,
   );
-  const searchFilter = !search
+  const searchFilter = !debouncedSearch
     ? {}
     : nameField?.type === 'FULL_NAME'
       ? {
           or: [
-            { name: { firstName: { ilike: `%${search}%` } } },
-            { name: { lastName: { ilike: `%${search}%` } } },
+            { name: { firstName: { ilike: `%${debouncedSearch}%` } } },
+            { name: { lastName: { ilike: `%${debouncedSearch}%` } } },
           ],
         }
-      : { [nameField?.name ?? 'name']: { ilike: `%${search}%` } };
+      : { [nameField?.name ?? 'name']: { ilike: `%${debouncedSearch}%` } };
   const canScope =
     Boolean(companyId) &&
     objectMetadataItem.fields.some(({ name }) => name === 'company');
