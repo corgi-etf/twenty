@@ -41,9 +41,9 @@ const AiChatPage = lazy(() =>
   })),
 );
 
-const MobileHomePage = lazy(() =>
-  import('~/pages/mobile-home/MobileHomePage').then((module) => ({
-    default: module.MobileHomePage,
+const CorgiHomePage = lazy(() =>
+  import('~/pages/home/CorgiHomePage').then((module) => ({
+    default: module.CorgiHomePage,
   })),
 );
 
@@ -148,7 +148,7 @@ export const createWorkspaceRouteObjects = ({
       path: AppPath.Home,
       element: (
         <LazyRoute>
-          <MobileHomePage />
+          <CorgiHomePage />
         </LazyRoute>
       ),
     },
