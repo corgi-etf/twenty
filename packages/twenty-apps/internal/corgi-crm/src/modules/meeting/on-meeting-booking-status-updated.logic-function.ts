@@ -36,7 +36,8 @@ export const handler = async (
   if (
     !meetingId ||
     !after?.updatedAt ||
-    after.status !== MEETING_BOOKING_STATUS.BOOKED
+    (after.status !== MEETING_BOOKING_STATUS.BOOKED &&
+      after.status !== MEETING_BOOKING_STATUS.COMPLETED)
   ) {
     return { status: 'skipped', reason: 'missing_event_identity' } as const;
   }

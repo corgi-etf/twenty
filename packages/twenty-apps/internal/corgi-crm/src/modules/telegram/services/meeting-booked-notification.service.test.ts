@@ -69,6 +69,23 @@ describe('meeting booked notification snapshots', () => {
     expect(readMeetingBooking).toHaveBeenCalledOnce();
   });
 
+  it.each(['COMPLETED', 'CANCELLED', 'NO_SHOW'])(
+    'retains valid first-booking evidence after a later %s transition',
+    async (status) => {
+      const snapshot = await readMeetingBookedNotificationSnapshot({
+        meetingId: booking.id,
+        bookedAt: booking.bookedAt,
+        store: {
+          get: async () => null,
+          set: async () => {},
+          delete: async () => false,
+        },
+        readMeetingBooking: async () => ({ ...booking, status }),
+      });
+      expect(snapshot.bookedAt).toBe(booking.bookedAt);
+    },
+  );
+
   it.each([
     { ...booking, status: 'DRAFT' },
     { ...booking, bookedAt: '2026-09-10T05:31:00.000Z' },
@@ -80,7 +97,11 @@ describe('meeting booked notification snapshots', () => {
       readMeetingBookedNotificationSnapshot({
         meetingId: booking.id,
         bookedAt: booking.bookedAt,
-        store: { get: vi.fn().mockResolvedValue(null), set: vi.fn(), delete: vi.fn() },
+        store: {
+          get: vi.fn().mockResolvedValue(null),
+          set: vi.fn(),
+          delete: vi.fn(),
+        },
         readMeetingBooking: vi.fn().mockResolvedValue(invalidBooking),
       }),
     ).rejects.toThrow(/authoritative meeting booking/i);
@@ -137,13 +158,24 @@ describe('release canary suppression', () => {
     ['not JSON', '{bad'],
     ['an array', '[]'],
     ['a wrong version', token({ version: 2 })],
-    ['an extra key', JSON.stringify({ version: 1, namePrefix: PREFIX, notAfter: new Date(NOW + 60_000).toISOString(), chatId: '-1001' })],
+    [
+      'an extra key',
+      JSON.stringify({
+        version: 1,
+        namePrefix: PREFIX,
+        notAfter: new Date(NOW + 60_000).toISOString(),
+        chatId: '-1001',
+      }),
+    ],
     ['a missing key', JSON.stringify({ version: 1, namePrefix: PREFIX })],
     ['an arbitrary prefix', token({ namePrefix: 'Quarterly review' })],
     ['an open-ended prefix', token({ namePrefix: 'CRM meeting canary ' })],
     ['a non-canonical instant', token({ notAfter: '2026-09-10T05:35:00Z' })],
     ['an expired window', token({ notAfter: new Date(NOW - 1).toISOString() })],
-    ['a window beyond the cap', token({ notAfter: new Date(NOW + 31 * 60_000).toISOString() })],
+    [
+      'a window beyond the cap',
+      token({ notAfter: new Date(NOW + 31 * 60_000).toISOString() }),
+    ],
   ])('fails open on %s', (_label, suppressionJson) => {
     expect(
       isSuppressedMeetingCanaryBooking({
@@ -191,10 +223,16 @@ describe('canary suppression token compatibility with the release workflow', () 
     expect(suppresses('Quarterly review with Acme')).toBe(false);
     // The armed window must outlive a slow canary and still expire on its own.
     expect(
-      suppresses(`CRM meeting canary 34500629643-2-${NONCE}`, NOW + 19 * 60_000),
+      suppresses(
+        `CRM meeting canary 34500629643-2-${NONCE}`,
+        NOW + 19 * 60_000,
+      ),
     ).toBe(true);
     expect(
-      suppresses(`CRM meeting canary 34500629643-2-${NONCE}`, NOW + 21 * 60_000),
+      suppresses(
+        `CRM meeting canary 34500629643-2-${NONCE}`,
+        NOW + 21 * 60_000,
+      ),
     ).toBe(false);
   });
 

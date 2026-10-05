@@ -36,7 +36,8 @@ export const handler = async (
   if (
     !meetingId ||
     !after?.updatedAt ||
-    after.status !== MEETING_BOOKING_STATUS.BOOKED
+    (after.status !== MEETING_BOOKING_STATUS.BOOKED &&
+      after.status !== MEETING_BOOKING_STATUS.COMPLETED)
   ) {
     return { status: 'skipped', reason: 'missing_event_identity' } as const;
   }
@@ -58,8 +59,7 @@ export const handler = async (
 };
 
 export default defineLogicFunction({
-  universalIdentifier:
-    MEETING_BOOKING_CREATED_FUNCTION_UNIVERSAL_IDENTIFIER,
+  universalIdentifier: MEETING_BOOKING_CREATED_FUNCTION_UNIVERSAL_IDENTIFIER,
   name: 'on-meeting-booking-created',
   description:
     'Validates explicitly booked API/import records and stamps their first booking evidence.',

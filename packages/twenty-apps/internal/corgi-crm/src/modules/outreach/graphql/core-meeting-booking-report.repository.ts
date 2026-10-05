@@ -26,9 +26,9 @@ const READ_MEETING_BOOKINGS_FOR_REPORT = `
   ) {
     meetingBookings(
       filter: {
-        and: [
-          { or: [{ bookedAt: { gte: $start } }, { createdAt: { gte: $start } }] }
-          { or: [{ bookedAt: { lt: $end } }, { createdAt: { lt: $end } }] }
+        or: [
+          { and: [{ bookedAt: { gte: $start } }, { bookedAt: { lt: $end } }] }
+          { and: [{ status: { eq: COMPLETED } }, { heldAt: { gte: $start } }, { heldAt: { lt: $end } }] }
         ]
       }
       first: $first
@@ -38,7 +38,10 @@ const READ_MEETING_BOOKINGS_FOR_REPORT = `
         node {
           id
           bookedAt
-          createdAt
+          heldAt
+          status
+          bookedById
+          takenById
           scheduledAt
           wholesalerId
           wholesaler { id name }
@@ -67,20 +70,14 @@ const optionalString = (value: unknown): string | undefined => {
 const parseBooking = (value: unknown): ReportMeetingBooking => {
   const node = record(value);
   const id = optionalString(node.id);
-  // bookedAt is app-maintained and nullable, so a booking whose trigger never
-  // ran has no value and fails both window predicates -- present, real, and
-  // uncountable. createdAt always exists, so use it as the effective instant.
-  const rawBookedAt = optionalString(node.bookedAt);
-  const createdAt = optionalString(node.createdAt);
-  const bookedAt =
-    rawBookedAt && Number.isFinite(Date.parse(rawBookedAt))
-      ? rawBookedAt
-      : createdAt;
+  const bookedAt = optionalString(node.bookedAt) ?? null;
+  const heldAt = optionalString(node.heldAt);
+  const status = optionalString(node.status);
   const scheduledAt = optionalString(node.scheduledAt);
   if (
     !id ||
-    !bookedAt ||
-    !Number.isFinite(Date.parse(bookedAt)) ||
+    (bookedAt !== null && !Number.isFinite(Date.parse(bookedAt))) ||
+    (heldAt !== undefined && !Number.isFinite(Date.parse(heldAt))) ||
     (scheduledAt && !Number.isFinite(Date.parse(scheduledAt)))
   ) {
     throw new Error(
@@ -102,6 +99,14 @@ const parseBooking = (value: unknown): ReportMeetingBooking => {
   return {
     id,
     bookedAt,
+    ...(heldAt ? { heldAt } : {}),
+    ...(status ? { status } : {}),
+    ...(optionalString(node.bookedById)
+      ? { bookedById: optionalString(node.bookedById) }
+      : {}),
+    ...(optionalString(node.takenById)
+      ? { takenById: optionalString(node.takenById) }
+      : {}),
     ...(scheduledAt ? { scheduledAt } : {}),
     wholesalerId: ownerId || 'unassigned',
     wholesalerName:
@@ -112,6 +117,65 @@ const parseBooking = (value: unknown): ReportMeetingBooking => {
 
 export class CoreMeetingBookingReportRepository implements MeetingBookingReportRepository {
   public constructor(private readonly rawTransport: RawCoreGraphqlTransport) {}
+
+  private async attachAttribution(
+    bookings: ReportMeetingBooking[],
+  ): Promise<ReportMeetingBooking[]> {
+    const memberIds = [
+      ...new Set(
+        bookings.flatMap((booking) =>
+          [booking.bookedById, booking.takenById].filter((id): id is string =>
+            Boolean(id),
+          ),
+        ),
+      ),
+    ];
+    const identities = new Map<string, { id: string; name: string }[]>();
+    for (let offset = 0; offset < memberIds.length; offset += 100) {
+      const ids = memberIds.slice(offset, offset + 100);
+      const result = await this.rawTransport.request<
+        {
+          wholesalers: {
+            edges: {
+              node: { id: string; name: string; workspaceMemberId: string };
+            }[];
+            pageInfo: { hasNextPage: boolean };
+          };
+        },
+        { ids: string[] }
+      >({
+        operationName: 'CorgiReportMeetingActors',
+        document: `query CorgiReportMeetingActors($ids:[UUID!]!){wholesalers(filter:{workspaceMemberId:{in:$ids}},first:200){edges{node{id name workspaceMemberId}}pageInfo{hasNextPage}}}`,
+        variables: { ids },
+      });
+      if (!result.wholesalers?.edges || result.wholesalers.pageInfo.hasNextPage)
+        throw new Error('Meeting actor identities are incomplete');
+      for (const { node } of result.wholesalers.edges) {
+        if (!ids.includes(node.workspaceMemberId))
+          throw new Error('Meeting actor identity is outside requested scope');
+        identities.set(node.workspaceMemberId, [
+          ...(identities.get(node.workspaceMemberId) ?? []),
+          node,
+        ]);
+      }
+    }
+    return bookings.map((booking) => {
+      const setters = identities.get(booking.bookedById ?? '') ?? [];
+      const takers = identities.get(booking.takenById ?? '') ?? [];
+      return {
+        ...booking,
+        ...(setters.length === 1
+          ? {
+              bookedByWholesalerId: setters[0]!.id,
+              bookedByName: setters[0]!.name,
+            }
+          : {}),
+        ...(takers.length === 1
+          ? { takenByWholesalerId: takers[0]!.id, takenByName: takers[0]!.name }
+          : {}),
+      };
+    });
+  }
 
   public async listMeetingBookings({
     start,
@@ -151,17 +215,23 @@ export class CoreMeetingBookingReportRepository implements MeetingBookingReportR
       }
       for (const edge of connection.edges) {
         const booking = parseBooking(record(edge).node);
-        const bookedTime = Date.parse(booking.bookedAt);
+        const bookedTime = booking.bookedAt
+          ? Date.parse(booking.bookedAt)
+          : NaN;
+        const heldTime =
+          booking.status === 'COMPLETED' && booking.heldAt
+            ? Date.parse(booking.heldAt)
+            : NaN;
         if (
-          bookedTime < startTime ||
-          bookedTime >= endTime ||
+          (!(bookedTime >= startTime && bookedTime < endTime) &&
+            !(heldTime >= startTime && heldTime < endTime)) ||
           seenIds.has(booking.id)
         )
           continue;
         seenIds.add(booking.id);
         output.push(booking);
       }
-      if (!pageInfo.hasNextPage) return output;
+      if (!pageInfo.hasNextPage) return this.attachAttribution(output);
       const nextCursor = optionalString(pageInfo.endCursor);
       if (!nextCursor || seenCursors.has(nextCursor)) {
         throw new Error(

@@ -26,6 +26,24 @@ const connection = (
 });
 
 describe('CoreMeetingBookingReportRepository', () => {
+  it('never counts a draft through a creation-time fallback', async () => {
+    const request = vi.fn().mockResolvedValue(
+      connection([
+        {
+          ...booking,
+          bookedAt: null,
+          createdAt: window.start,
+          status: 'DRAFT',
+        },
+      ]),
+    );
+    expect(
+      await new CoreMeetingBookingReportRepository({
+        request,
+      } as never).listMeetingBookings(window),
+    ).toEqual([]);
+  });
+
   it('paginates all booking owners with booking-time filtering, deduplication and missing relations retained', async () => {
     const request = vi
       .fn()
@@ -87,15 +105,15 @@ describe('CoreMeetingBookingReportRepository', () => {
       query ReadMeetingBookingsForReport($start: DateTime!, $end: DateTime!, $first: Int!, $after: String) {
         meetingBookings(
           filter: {
-            and: [
-              { or: [{ bookedAt: { gte: $start } }, { createdAt: { gte: $start } }] }
-              { or: [{ bookedAt: { lt: $end } }, { createdAt: { lt: $end } }] }
+            or: [
+              { and: [{ bookedAt: { gte: $start } }, { bookedAt: { lt: $end } }] }
+              { and: [{ status: { eq: COMPLETED } }, { heldAt: { gte: $start } }, { heldAt: { lt: $end } }] }
             ]
           }
           first: $first
           after: $after
         ) {
-          edges { node { id bookedAt createdAt scheduledAt wholesalerId wholesaler { id name } } }
+          edges { node { id bookedAt heldAt status bookedById takenById scheduledAt wholesalerId wholesaler { id name } } }
           pageInfo { hasNextPage endCursor }
         }
       }
@@ -106,21 +124,19 @@ describe('CoreMeetingBookingReportRepository', () => {
   });
 
   it('includes booking start but excludes older bookings scheduled now and end/future bookings', async () => {
-    const request = vi
-      .fn()
-      .mockResolvedValue(
-        connection([
-          booking,
-          {
-            ...booking,
-            id: 'older',
-            bookedAt: '2026-09-08T16:29:59.999Z',
-            scheduledAt: window.start,
-          },
-          { ...booking, id: 'end', bookedAt: window.end },
-          { ...booking, id: 'future', bookedAt: '2026-09-09T16:30:00.001Z' },
-        ]),
-      );
+    const request = vi.fn().mockResolvedValue(
+      connection([
+        booking,
+        {
+          ...booking,
+          id: 'older',
+          bookedAt: '2026-09-08T16:29:59.999Z',
+          scheduledAt: window.start,
+        },
+        { ...booking, id: 'end', bookedAt: window.end },
+        { ...booking, id: 'future', bookedAt: '2026-09-09T16:30:00.001Z' },
+      ]),
+    );
     expect(
       (
         await new CoreMeetingBookingReportRepository({
@@ -138,7 +154,6 @@ describe('CoreMeetingBookingReportRepository', () => {
     { meetingBookings: { edges: [], pageInfo: { hasNextPage: 'false' } } },
     connection([null]),
     connection([{ ...booking, id: '' }]),
-    connection([{ ...booking, bookedAt: null }]),
     connection([{ ...booking, bookedAt: 'invalid' }]),
     connection([
       {

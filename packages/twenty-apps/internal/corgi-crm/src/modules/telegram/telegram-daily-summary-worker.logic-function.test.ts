@@ -24,7 +24,9 @@ describe('scheduled Telegram team report', () => {
         await readScheduledDailyReport({
           repository: { listActivities } as never,
           meetingRepository: { listMeetingBookings },
-          wholesalerRoleReader: { findRolesByIds: vi.fn().mockResolvedValue([]) },
+          wholesalerRoleReader: {
+            findRolesByIds: vi.fn().mockResolvedValue([]),
+          },
           scheduledInstant: '2026-09-10T17:00:00.000Z',
           timeZone: 'America/Chicago',
           store,
@@ -33,7 +35,9 @@ describe('scheduled Telegram team report', () => {
       );
     await expect(attempt()).rejects.toThrow('rate limit');
     listActivities.mockRejectedValue(new Error('must not requery'));
-    listMeetingBookings.mockRejectedValue(new Error('must not requery bookings'));
+    listMeetingBookings.mockRejectedValue(
+      new Error('must not requery bookings'),
+    );
     await expect(attempt()).resolves.toBeUndefined();
     expect(send.mock.calls[1]?.[0]).toBe(send.mock.calls[0]?.[0]);
     expect(listActivities).toHaveBeenCalledOnce();
@@ -61,13 +65,17 @@ describe('scheduled Telegram team report', () => {
         occurredAt: '2026-09-11T09:59:59.000Z',
       },
     ]);
-    const listMeetingBookings = vi.fn().mockResolvedValue([{
-      id: 'booking-1',
-      bookedAt: '2026-09-10T16:59:59.000Z',
-      scheduledAt: '2026-10-01T15:00:00.000Z',
-      wholesalerId: 'owner-2',
-      wholesalerName: 'Alex',
-    }]);
+    const listMeetingBookings = vi.fn().mockResolvedValue([
+      {
+        id: 'booking-1',
+        bookedAt: '2026-09-10T16:59:59.000Z',
+        bookedByWholesalerId: 'owner-2',
+        bookedByName: 'Alex',
+        scheduledAt: '2026-10-01T15:00:00.000Z',
+        wholesalerId: 'owner-2',
+        wholesalerName: 'Alex',
+      },
+    ]);
     const text = await readScheduledDailyReport({
       repository: { listActivities } as never,
       meetingRepository: { listMeetingBookings },
@@ -122,7 +130,9 @@ describe('scheduled Telegram team report', () => {
     const read = (workspaceMemberId: string) =>
       readScheduledDailyReport({
         repository: { listActivities } as never,
-        meetingRepository: { listMeetingBookings: vi.fn().mockResolvedValue([]) },
+        meetingRepository: {
+          listMeetingBookings: vi.fn().mockResolvedValue([]),
+        },
         wholesalerRoleReader: { findRolesByIds: vi.fn().mockResolvedValue([]) },
         store,
         workspaceMemberId,

@@ -90,9 +90,10 @@ export const reconcileMeetingBooking = async ({
     id: meetingId,
     bookedAt: occurredAt.toISOString(),
     bookedById:
-      actorWorkspaceMemberId && UUID_PATTERN.test(actorWorkspaceMemberId)
+      record.bookedById ??
+      (actorWorkspaceMemberId && UUID_PATTERN.test(actorWorkspaceMemberId)
         ? actorWorkspaceMemberId
-        : null,
+        : null),
     expectedUpdatedAt: record.updatedAt,
   });
   if (!booked) {
