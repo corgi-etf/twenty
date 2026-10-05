@@ -126,13 +126,13 @@ test('keeps the production CRM territory-first and free of helper navigation', a
   await page.goto(`/object/company/${companyId}`);
 
   const quickLogAction = page.getByRole('button', {
-    name: 'Log a follow-up for this company',
+    name: 'Log an activity for this company',
   });
   await expect(quickLogAction).toBeVisible();
   await expect(quickLogAction).toBeEnabled();
   await quickLogAction.click();
 
-  const quickLogDialog = page.getByRole('dialog', { name: 'Log follow-up' });
+  const quickLogDialog = page.getByRole('dialog', { name: 'Log activity' });
   await expect(quickLogDialog).toBeVisible();
   for (const fieldLabel of [
     'Activity',

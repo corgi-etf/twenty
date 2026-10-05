@@ -42,8 +42,19 @@ setup('authenticate the production smoke-test user', async ({ page }) => {
     }
   }
 
-  await page.waitForURL(/\/objects\//, { timeout: 30_000 });
-  await expect(page.getByRole('button', { name: /Create new / })).toBeVisible();
+  await page.waitForURL(/\/(?:objects\/|home(?:\?|$))/, { timeout: 30_000 });
+  if (new URL(page.url()).pathname === '/home') {
+    await expect(
+      page.getByRole('heading', { name: 'Home', exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole('link', { name: /Current clients/ }),
+    ).toBeVisible();
+  } else {
+    await expect(
+      page.getByRole('button', { name: /Create new / }),
+    ).toBeVisible();
+  }
 
   await mkdir(path.dirname(AUTH_STATE_PATH), { recursive: true });
   await page.context().storageState({ path: AUTH_STATE_PATH });

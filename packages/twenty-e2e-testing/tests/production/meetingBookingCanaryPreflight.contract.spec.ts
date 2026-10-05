@@ -444,7 +444,7 @@ const nativeRecordNavigation = (initialUrl: string, expandedUrl: string) => {
     'utf8',
   );
   const navigationSource = canarySource.match(
-    /named = true;([\s\S]*?)\n\s*phase = 'incomplete booking rejected without counting';/,
+    /named = true;([\s\S]*?)\n\s*phase = 'validated booking credits creating member';/,
   )?.[1];
   expect(navigationSource).toBeDefined();
   let currentUrl = initialUrl;

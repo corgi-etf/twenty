@@ -159,12 +159,11 @@ test('creates, verifies, and removes a person through the production UI', async 
 
   try {
     await page.getByRole('button', { name: 'Create new Person' }).click();
-    await page.getByRole('textbox', { name: 'F‌‌irst name' }).fill(firstName);
-    await page.getByPlaceholder('L‌‌ast name').fill(lastName);
-    await page.getByPlaceholder('L‌‌ast name').press('Enter');
-
-    await expect(page.getByTestId('record-fields-widget')).toBeVisible();
-    await page.getByRole('button', { name: 'Expand record' }).click();
+    const dialog = page.getByRole('dialog', { name: 'Create Person' });
+    await expect(dialog).toBeVisible();
+    await dialog.getByLabel('First name', { exact: true }).fill(firstName);
+    await dialog.getByLabel('Last name', { exact: true }).fill(lastName);
+    await dialog.getByRole('button', { name: 'Save', exact: true }).click();
     await page.waitForURL(/\/object\/person\/[a-f0-9-]+/);
 
     personId = page.url().match(/\/object\/person\/([a-f0-9-]+)/)?.[1];
