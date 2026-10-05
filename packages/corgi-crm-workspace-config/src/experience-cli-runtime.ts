@@ -13,8 +13,12 @@ export const connectExperienceCli = async () => {
     process.env.CORGI_CRM_API_URL ?? WORKSPACE_CONFIG_APPROVED_ORIGIN;
   if (origin !== WORKSPACE_CONFIG_APPROVED_ORIGIN)
     throw new Error('Unapproved CRM origin');
-  const token = process.env.CORGI_CRM_API_KEY;
-  if (!token) throw new Error('CORGI_CRM_API_KEY is required');
+  const token =
+    process.env.CORGI_CRM_ACCESS_TOKEN ?? process.env.CORGI_CRM_API_KEY;
+  if (!token)
+    throw new Error(
+      'CORGI_CRM_ACCESS_TOKEN must contain an authenticated admin session token; ordinary workspace API keys cannot satisfy currentUser preflight',
+    );
   const send = async (
     method: string,
     url: string,

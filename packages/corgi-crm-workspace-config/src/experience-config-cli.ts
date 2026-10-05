@@ -28,7 +28,7 @@ export const runExperienceConfigCli = async () => {
   });
   if (values.help) {
     console.log(
-      'Preview: --manifest <RUNNER_TEMP/new-preview.json>\nApply: --apply --manifest <reviewed.json> --reviewed-digest <sha256> --journal <RUNNER_TEMP/new-journal.jsonl>\nRequires CORGI_CRM_API_KEY and RUNNER_TEMP. Metadata then layout each require a new reviewed preview. No company/territory data writes.',
+      'Preview: --manifest <RUNNER_TEMP/new-preview.json>\nApply: --apply --manifest <reviewed.json> --reviewed-digest <sha256> --journal <RUNNER_TEMP/new-journal.jsonl>\nRequires admin CORGI_CRM_ACCESS_TOKEN and RUNNER_TEMP. Metadata then layout each require a new reviewed preview. No company/territory data writes.',
     );
     return;
   }

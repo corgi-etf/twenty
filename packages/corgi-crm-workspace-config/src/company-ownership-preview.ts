@@ -26,6 +26,7 @@ export type CompanyOwnershipPreview = {
   additions: Array<Ownership & { expectedCompanyUpdatedAt: string }>;
   review: Array<{
     companyId: string;
+    severity: 'informational' | 'blocking';
     reason:
       | 'unmapped-account-owner'
       | 'ambiguous-account-owner'
@@ -93,6 +94,8 @@ export const buildCompanyOwnershipPreview = ({
     ) =>
       review.push({
         companyId: company.id,
+        severity:
+          reason === 'different-legacy-owners' ? 'informational' : 'blocking',
         reason,
         legacyOwnerIds: [accountOwnerId, historicalOwnerId].filter(
           (id): id is string => Boolean(id),

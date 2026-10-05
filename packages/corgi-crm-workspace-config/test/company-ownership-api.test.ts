@@ -69,3 +69,89 @@ test('rejects duplicates, cycles, omitted pages, and count changes', async () =>
       /inventory/,
     );
 });
+test('combines complete guard inventories in one request without dropping deleted links', async () => {
+  let calls = 0;
+  const request = {
+    post: async (
+      _url: string,
+      options: { data: { query: string; variables: Record<string, unknown> } },
+    ) => {
+      calls++;
+      assert.match(options.data.query, /OwnershipGuard/);
+      assert.deepEqual(options.data.variables.ownerships, {
+        and: [
+          {
+            or: [
+              { deletedAt: { is: 'NULL' } },
+              { deletedAt: { is: 'NOT_NULL' } },
+            ],
+          },
+          { companyId: { eq: 'company' } },
+        ],
+      });
+      return {
+        ok: () => true,
+        status: () => 200,
+        headers: () => ({}),
+        dispose: async () => {},
+        json: async () => ({
+          data: {
+            companies: page(['company'], 1),
+            wholesalers: page(['wholesaler'], 1),
+            companyOwnerships: page(['tombstone'], 1),
+          },
+        }),
+      };
+    },
+  } as unknown as WorkspaceConfigRequestContext;
+  const api = createOwnershipBackfillApi({
+    request,
+    requestGate: createWorkspaceConfigRequestGate({ minimumIntervalMs: 0 }),
+  });
+  const state = await api.readGuardState!('company');
+  assert.equal(calls, 1);
+  assert.equal(state.company.id, 'company');
+  assert.equal(state.ownerships[0]?.id, 'tombstone');
+});
+test('exhausts large guard collections instead of trusting the first page', async () => {
+  let calls = 0;
+  const request = {
+    post: async (
+      _url: string,
+      options: { data: { query: string; variables: Record<string, unknown> } },
+    ) => {
+      calls++;
+      const data = options.data.query.includes('OwnershipGuard')
+        ? {
+            companies: page(['company'], 1),
+            wholesalers: page(['first'], 2, true, 'next'),
+            companyOwnerships: page([], 0),
+          }
+        : {
+            wholesalers:
+              options.data.variables.first === 1
+                ? page(['first'], 2)
+                : options.data.variables.after
+                  ? page(['last'], 2)
+                  : page(['first'], 2, true, 'next'),
+          };
+      return {
+        ok: () => true,
+        status: () => 200,
+        headers: () => ({}),
+        dispose: async () => {},
+        json: async () => ({ data }),
+      };
+    },
+  } as unknown as WorkspaceConfigRequestContext;
+  const api = createOwnershipBackfillApi({
+    request,
+    requestGate: createWorkspaceConfigRequestGate({ minimumIntervalMs: 0 }),
+  });
+  const state = await api.readGuardState!('company');
+  assert.deepEqual(
+    state.wholesalers.map(({ id }) => id),
+    ['first', 'last'],
+  );
+  assert.equal(calls, 4);
+});

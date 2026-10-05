@@ -29,6 +29,13 @@ export type OwnershipJournalEntry = {
 };
 export type OwnershipBackfillApi = {
   readSnapshot(): Promise<OwnershipSnapshot>;
+  readGuardState?(
+    companyId: string,
+  ): Promise<{
+    company: OwnerCompany;
+    wholesalers: OwnerWholesaler[];
+    ownerships: Ownership[];
+  }>;
   readCompany(id: string): Promise<OwnerCompany>;
   readWholesalers(): Promise<OwnerWholesaler[]>;
   readOwnerships(companyId: string): Promise<Ownership[]>;
@@ -99,7 +106,7 @@ export const applyOwnershipManifest = async ({
   });
   if (stableJson(rebuilt) !== stableJson(manifest.preview))
     throw new Error('Ownership manifest plan is inconsistent');
-  if (rebuilt.review.length)
+  if (rebuilt.review.some(({ severity }) => severity === 'blocking'))
     throw new Error(
       'Ownership conflicts require manual review and a fresh preview',
     );
@@ -144,13 +151,18 @@ export const applyOwnershipManifest = async ({
         ({ companyId }) => companyId === source.id,
       );
     const verify = async () => {
-      if (stableJson(await api.readCompany(source.id)) !== stableJson(source))
+      const state = api.readGuardState
+        ? await api.readGuardState(source.id)
+        : {
+            company: await api.readCompany(source.id),
+            wholesalers: await api.readWholesalers(),
+            ownerships: await api.readOwnerships(source.id),
+          };
+      if (stableJson(state.company) !== stableJson(source))
         throw new Error('Company source changed before ownership insertion');
-      if (
-        !equalRows(await api.readWholesalers(), manifest.snapshot.wholesalers)
-      )
+      if (!equalRows(state.wholesalers, manifest.snapshot.wholesalers))
         throw new Error('Wholesaler identity source changed');
-      if (!equalRows(await api.readOwnerships(source.id), expectedJoins()))
+      if (!equalRows(state.ownerships, expectedJoins()))
         throw new Error('Company junctions changed, including deleted links');
     };
     await verify();

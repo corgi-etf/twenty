@@ -124,18 +124,70 @@ export const createOwnershipBackfillApi = ({
         ? { and: [allIncludingDeleted, { companyId: { eq: companyId } }] }
         : allIncludingDeleted,
     );
+  const readCompany = async (id: string) => {
+    const found = await list<OwnerCompany>('companies', { id: { eq: id } });
+    if (found.length !== 1) throw new Error('Ownership source company missing');
+    return found[0]!;
+  };
+  const completeGuardPage = <T extends { id: string }>(
+    value: unknown,
+  ): T[] | undefined => {
+    const page = value as {
+      edges?: Array<{ node: T }>;
+      pageInfo?: { hasNextPage: boolean };
+      totalCount?: number;
+    };
+    if (
+      !Array.isArray(page?.edges) ||
+      typeof page.pageInfo?.hasNextPage !== 'boolean' ||
+      !Number.isSafeInteger(page.totalCount)
+    )
+      throw new Error('Ownership guard inventory is incomplete');
+    if (page.pageInfo.hasNextPage) return undefined;
+    const records = page.edges.map(({ node }) => node);
+    if (
+      records.length !== page.totalCount ||
+      records.some((record) => !record?.id) ||
+      new Set(records.map(({ id }) => id)).size !== records.length
+    )
+      throw new Error(
+        'Ownership guard inventory count or distinctness mismatch',
+      );
+    return records;
+  };
+  const readGuardState = async (companyId: string) => {
+    const data = await graphql(
+      `query OwnershipGuard($company: CompanyFilterInput!, $ownerships: CompanyOwnershipFilterInput!) {
+      companies(filter:$company, first:2) { edges { node { ${definition.companies.fields} } } pageInfo { hasNextPage } totalCount }
+      wholesalers(first:100, orderBy:[{id:AscNullsFirst}]) { edges { node { ${definition.wholesalers.fields} } } pageInfo { hasNextPage } totalCount }
+      companyOwnerships(filter:$ownerships, first:100, orderBy:[{id:AscNullsFirst}]) { edges { node { ${definition.companyOwnerships.fields} } } pageInfo { hasNextPage } totalCount }
+    }`,
+      {
+        company: { id: { eq: companyId } },
+        ownerships: {
+          and: [allIncludingDeleted, { companyId: { eq: companyId } }],
+        },
+      },
+    );
+    const companies = completeGuardPage<OwnerCompany>(data.companies);
+    const wholesalers = completeGuardPage<OwnerWholesaler>(data.wholesalers);
+    const ownerships = completeGuardPage<Ownership>(data.companyOwnerships);
+    if (!companies || companies.length !== 1)
+      throw new Error('Ownership source company missing or ambiguous');
+    return {
+      company: companies[0]!,
+      wholesalers: wholesalers ?? (await readWholesalers()),
+      ownerships: ownerships ?? (await readOwnerships(companyId)),
+    };
+  };
   return {
     readSnapshot: async (): Promise<OwnershipSnapshot> => ({
       companies: await list<OwnerCompany>('companies'),
       wholesalers: await readWholesalers(),
       existingOwnerships: await readOwnerships(),
     }),
-    readCompany: async (id) => {
-      const found = await list<OwnerCompany>('companies', { id: { eq: id } });
-      if (found.length !== 1)
-        throw new Error('Ownership source company missing');
-      return found[0]!;
-    },
+    readCompany,
+    readGuardState,
     readWholesalers,
     readOwnerships,
     createOwnership: async (data) => {

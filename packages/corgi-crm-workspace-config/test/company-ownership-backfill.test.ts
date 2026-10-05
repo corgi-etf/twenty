@@ -157,3 +157,39 @@ test('rejects ambiguous mapping plans instead of applying a partial plan', async
   );
   assert.equal(f.writes(), 0);
 });
+test('preserves two valid legacy owners with account owner primary without blocking the backfill', async () => {
+  const f = fixture();
+  const snapshot = {
+    ...f.snapshot,
+    companies: [{ ...f.snapshot.companies[0]!, historicalOwnerId: 'w2' }],
+    wholesalers: [
+      ...f.snapshot.wholesalers,
+      { id: 'w2', workspaceMemberId: null },
+    ],
+  };
+  f.api.readSnapshot = async () => structuredClone(snapshot);
+  f.api.readCompany = async () => structuredClone(snapshot.companies[0]!);
+  f.api.readWholesalers = async () => structuredClone(snapshot.wholesalers);
+  const manifest = buildOwnershipManifest({
+    snapshot,
+    workspaceId: 'workspace',
+    expectedCompanyCount: 1,
+  });
+  assert.equal(manifest.preview.review[0]?.severity, 'informational');
+  await applyOwnershipManifest({
+    api: f.api,
+    manifest,
+    workspaceId: 'workspace',
+    reviewedDigest: ownershipManifestDigest(manifest),
+    journal: f.journal,
+    appendJournal: async (entry) => {
+      f.journal.push(entry);
+    },
+  });
+  assert.equal(f.writes(), 2);
+  assert.equal(
+    f.snapshot.existingOwnerships.find(({ isPrimary }) => isPrimary)
+      ?.wholesalerId,
+    'w1',
+  );
+});

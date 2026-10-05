@@ -29,7 +29,7 @@ export const runOwnershipCli = async () => {
   });
   if (values.help) {
     console.log(
-      'Dry run: --manifest <RUNNER_TEMP/path.json> --expected-company-count <n>\nApply: --apply --manifest <reviewed.json> --reviewed-digest <sha256> --journal <RUNNER_TEMP/path.jsonl>\nRequires CORGI_CRM_API_KEY and RUNNER_TEMP. Writes only companyOwnership rows. Guarded comparisons are not atomic.',
+      'Dry run: --manifest <RUNNER_TEMP/path.json> --expected-company-count <n>\nApply: --apply --manifest <reviewed.json> --reviewed-digest <sha256> --journal <RUNNER_TEMP/path.jsonl>\nRequires admin CORGI_CRM_ACCESS_TOKEN and RUNNER_TEMP. Writes only companyOwnership rows. Guarded comparisons are not atomic.',
     );
     return;
   }
@@ -58,7 +58,12 @@ export const runOwnershipCli = async () => {
         digest: ownershipManifestDigest(manifest),
         companies: manifest.preview.companyCount,
         additions: manifest.preview.additions.length,
-        manualReview: manifest.preview.review.length,
+        manualReview: manifest.preview.review.filter(
+          ({ severity }) => severity === 'blocking',
+        ).length,
+        informational: manifest.preview.review.filter(
+          ({ severity }) => severity === 'informational',
+        ).length,
       }),
     );
     return;
