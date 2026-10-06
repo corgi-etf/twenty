@@ -87,3 +87,8 @@ output "tasks_use_nat_gateways" {
   description = "Whether ECS tasks use private subnets and one NAT gateway per AZ."
   value       = var.use_nat_gateways
 }
+
+output "maintenance_bucket_name" {
+  description = "Private bucket holding reviewed CRM maintenance previews and apply journals"
+  value       = aws_s3_bucket.maintenance.id
+}

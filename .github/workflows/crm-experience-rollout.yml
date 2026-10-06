@@ -56,6 +56,8 @@ env:
   ECR_REPOSITORY: crm-production-twenty
   FRONTEND_BASE_URL: https://crm.corgiinvest.com
   BACKEND_BASE_URL: https://crm.corgiinvest.com
+  MAINTENANCE_BUCKET: corgi-crm-production-maintenance-182018075072-us-east-2
+  MAINTENANCE_PREFIX: crm-experience
   NX_DAEMON: 'false'
 
 jobs:
@@ -71,7 +73,6 @@ jobs:
       - name: Validate selected operation and reviewed preview provenance
         env:
           GH_TOKEN: ${{ github.token }}
-          REPOSITORY_PRIVATE: ${{ github.event.repository.private }}
           OPERATION: ${{ inputs.operation }}
           DATASET: ${{ inputs.dataset }}
           DEPLOYED_SHA: ${{ inputs.deployed_sha }}
@@ -83,7 +84,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          [[ "${REPOSITORY_PRIVATE}" == true ]]
+          # This repository is a public fork of twentyhq/twenty, so preview manifests and
+          # apply journals describing production records must never become run artifacts.
+          # Pin the evidence destination to the private, lifecycle-bound bucket instead.
+          [[ "${MAINTENANCE_BUCKET}" == "corgi-crm-production-maintenance-${AWS_ACCOUNT_ID}-${AWS_REGION}" ]]
+          [[ "${MAINTENANCE_PREFIX}" == crm-experience ]]
           [[ "${DEPLOYED_SHA}" =~ ^[0-9a-f]{40}$ && "${DEPLOYED_SHA}" == "${GITHUB_SHA}" ]]
           [[ "${DATASET}" == configuration || "${DATASET}" == ownership || "${DATASET}" == activities-allocations ]]
           [[ "$(jq -r '.version' packages/twenty-apps/internal/corgi-crm/package.json)" == 1.3.0 ]]
@@ -102,21 +107,31 @@ jobs:
               .head_branch == "main" and .head_sha == $sha and .run_attempt == $attempt and
               .path == ".github/workflows/crm-experience-rollout.yml"
             ' "${RUNNER_TEMP}/experience-preview-run.json" >/dev/null
-            gh api --paginate --slurp "repos/${GITHUB_REPOSITORY}/actions/runs/${PREVIEW_RUN_ID}/artifacts?per_page=100" > "${RUNNER_TEMP}/experience-preview-artifacts.json"
-            artifact_name="crm-experience-preview-${DATASET}-${PREVIEW_RUN_ID}-${PREVIEW_RUN_ATTEMPT}"
-            jq -e --arg name "${artifact_name}" '
-              [.[] | .artifacts[] | select(.name == $name and .expired == false)] | length == 1
-            ' "${RUNNER_TEMP}/experience-preview-artifacts.json" >/dev/null
           fi
 
-      - name: Download only the selected successful preview
-        if: inputs.operation == 'apply'
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+      - name: Configure live deployment and reviewed evidence access
+        uses: aws-actions/configure-aws-credentials@61815dcd50bd041e203e49132bacad1fd04d2708 # v5.1.1
         with:
-          github-token: ${{ github.token }}
-          run-id: ${{ inputs.preview_run_id }}
-          name: crm-experience-preview-${{ inputs.dataset }}-${{ inputs.preview_run_id }}-${{ inputs.preview_run_attempt }}
-          path: ${{ runner.temp }}/crm-experience-reviewed
+          role-to-assume: ${{ env.AWS_ROLE_ARN }}
+          role-duration-seconds: 1800
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Fetch only the selected reviewed preview from the private bucket
+        if: inputs.operation == 'apply'
+        env:
+          DATASET: ${{ inputs.dataset }}
+          PREVIEW_RUN_ID: ${{ inputs.preview_run_id }}
+          PREVIEW_RUN_ATTEMPT: ${{ inputs.preview_run_attempt }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$(aws sts get-caller-identity --query Account --output text)" == "${AWS_ACCOUNT_ID}" ]]
+          key="${MAINTENANCE_PREFIX}/previews/${DATASET}/${PREVIEW_RUN_ID}/${PREVIEW_RUN_ATTEMPT}/manifest.json"
+          aws s3api head-object --bucket "${MAINTENANCE_BUCKET}" --key "${key}" >/dev/null
+          mkdir -p "${RUNNER_TEMP}/crm-experience-reviewed"
+          aws s3api get-object --bucket "${MAINTENANCE_BUCKET}" --key "${key}" \
+            "${RUNNER_TEMP}/crm-experience-reviewed/manifest.json" >/dev/null
+          test -s "${RUNNER_TEMP}/crm-experience-reviewed/manifest.json"
 
       - name: Install pinned repository dependencies
         uses: ./.github/actions/crm-yarn-install
@@ -126,13 +141,6 @@ jobs:
 
       - name: Install the production authentication browser
         run: npx playwright install --with-deps chromium
-
-      - name: Configure read-only live deployment inspection
-        uses: aws-actions/configure-aws-credentials@61815dcd50bd041e203e49132bacad1fd04d2708 # v5.1.1
-        with:
-          role-to-assume: ${{ env.AWS_ROLE_ARN }}
-          role-duration-seconds: 1800
-          aws-region: ${{ env.AWS_REGION }}
 
       - name: Prove both services are stable on the exact deployed image
         env:
@@ -202,25 +210,51 @@ jobs:
           tests/production/corgiExperience.production.spec.ts
           --project=production-chromium --no-deps --retries=0
 
-      - name: Upload private reviewed preview
-        if: success() && inputs.operation == 'preview'
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      # The ownership apply can outlast the initial 30-minute session, so re-assume the
+      # role before writing evidence rather than holding credentials for the whole run.
+      - name: Re-assume the role to write evidence
+        if: always()
+        uses: aws-actions/configure-aws-credentials@61815dcd50bd041e203e49132bacad1fd04d2708 # v5.1.1
         with:
-          name: crm-experience-preview-${{ inputs.dataset }}-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/crm-experience-output/manifest.json
-          if-no-files-found: error
-          retention-days: 7
+          role-to-assume: ${{ env.AWS_ROLE_ARN }}
+          role-duration-seconds: 1800
+          aws-region: ${{ env.AWS_REGION }}
 
-      - name: Preserve private apply journal even after failure
+      - name: Store the reviewed preview in the private bucket
+        if: success() && inputs.operation == 'preview'
+        env:
+          DATASET: ${{ inputs.dataset }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          manifest="${RUNNER_TEMP}/crm-experience-output/manifest.json"
+          test -s "${manifest}"
+          key="${MAINTENANCE_PREFIX}/previews/${DATASET}/${GITHUB_RUN_ID}/${GITHUB_RUN_ATTEMPT}/manifest.json"
+          # A preview must never overwrite reviewed evidence an apply could already be using.
+          if aws s3api head-object --bucket "${MAINTENANCE_BUCKET}" --key "${key}" >/dev/null 2>&1; then
+            echo "Refusing to overwrite existing evidence at ${key}" >&2
+            exit 1
+          fi
+          aws s3api put-object --bucket "${MAINTENANCE_BUCKET}" --key "${key}" \
+            --body "${manifest}" --content-type application/json \
+            --server-side-encryption AES256 >/dev/null
+          echo "Reviewed preview stored at s3://${MAINTENANCE_BUCKET}/${key}"
+
+      - name: Preserve the private apply journal even after failure
         if: always() && inputs.operation == 'apply'
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: crm-experience-apply-${{ inputs.dataset }}-${{ github.run_id }}-${{ github.run_attempt }}
-          path: |
-            ${{ runner.temp }}/crm-experience-output/journal.jsonl
-            ${{ runner.temp }}/crm-experience-output/result.json
-          if-no-files-found: ignore
-          retention-days: 7
+        env:
+          DATASET: ${{ inputs.dataset }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          base="${MAINTENANCE_PREFIX}/applies/${DATASET}/${GITHUB_RUN_ID}/${GITHUB_RUN_ATTEMPT}"
+          for name in journal.jsonl result.json; do
+            path="${RUNNER_TEMP}/crm-experience-output/${name}"
+            [[ -s "${path}" ]] || continue
+            aws s3api put-object --bucket "${MAINTENANCE_BUCKET}" --key "${base}/${name}" \
+              --body "${path}" --server-side-encryption AES256 >/dev/null
+            echo "Preserved s3://${MAINTENANCE_BUCKET}/${base}/${name}"
+          done
 
       - name: Remove session state and local private artifacts
         if: always()

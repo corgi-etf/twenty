@@ -84,6 +84,107 @@ resource "aws_s3_bucket_cors_configuration" "uploads" {
   }
 }
 
+resource "aws_s3_bucket" "maintenance" {
+  bucket = "corgi-crm-production-maintenance-${var.aws_account_id}-${var.aws_region}"
+
+  lifecycle {
+    prevent_destroy = true
+  }
+}
+
+resource "aws_s3_bucket_versioning" "maintenance" {
+  bucket = aws_s3_bucket.maintenance.id
+
+  versioning_configuration {
+    status = "Enabled"
+  }
+}
+
+resource "aws_s3_bucket_server_side_encryption_configuration" "maintenance" {
+  bucket = aws_s3_bucket.maintenance.id
+
+  rule {
+    apply_server_side_encryption_by_default {
+      sse_algorithm = "AES256"
+    }
+
+    bucket_key_enabled = true
+  }
+}
+
+resource "aws_s3_bucket_public_access_block" "maintenance" {
+  bucket = aws_s3_bucket.maintenance.id
+
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
+  restrict_public_buckets = true
+}
+
+resource "aws_s3_bucket_ownership_controls" "maintenance" {
+  bucket = aws_s3_bucket.maintenance.id
+
+  rule {
+    object_ownership = "BucketOwnerEnforced"
+  }
+}
+
+# Reviewed previews and apply journals describe production CRM records, so they
+# are retained only long enough for operational signoff and never indefinitely.
+resource "aws_s3_bucket_lifecycle_configuration" "maintenance" {
+  bucket = aws_s3_bucket.maintenance.id
+
+  rule {
+    id     = "expire-maintenance-evidence"
+    status = "Enabled"
+
+    filter {
+      prefix = "crm-experience/"
+    }
+
+    expiration {
+      days = 30
+    }
+
+    noncurrent_version_expiration {
+      noncurrent_days = 30
+    }
+
+    abort_incomplete_multipart_upload {
+      days_after_initiation = 7
+    }
+  }
+}
+
+resource "aws_s3_bucket_policy" "maintenance" {
+  bucket = aws_s3_bucket.maintenance.id
+  policy = data.aws_iam_policy_document.maintenance_bucket.json
+}
+
+data "aws_iam_policy_document" "maintenance_bucket" {
+  statement {
+    sid    = "DenyInsecureTransport"
+    effect = "Deny"
+
+    principals {
+      type        = "*"
+      identifiers = ["*"]
+    }
+
+    actions = ["s3:*"]
+    resources = [
+      aws_s3_bucket.maintenance.arn,
+      "${aws_s3_bucket.maintenance.arn}/*",
+    ]
+
+    condition {
+      test     = "Bool"
+      variable = "aws:SecureTransport"
+      values   = ["false"]
+    }
+  }
+}
+
 resource "aws_db_subnet_group" "crm" {
   name       = "${local.name_prefix}-database"
   subnet_ids = local.private_subnet_ids

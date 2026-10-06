@@ -269,6 +269,32 @@ data "aws_iam_policy_document" "github_deploy" {
   }
 
   statement {
+    sid       = "ListMaintenanceEvidence"
+    effect    = "Allow"
+    actions   = ["s3:ListBucket"]
+    resources = [aws_s3_bucket.maintenance.arn]
+
+    condition {
+      test     = "StringLike"
+      variable = "s3:prefix"
+      values   = ["crm-experience/*"]
+    }
+  }
+
+  # Reviewed previews and apply journals are written once and read back by the
+  # apply stage. Deletion is intentionally withheld so the audit trail is
+  # append-only; retention is enforced by the bucket lifecycle rule instead.
+  statement {
+    sid    = "WriteAndReadMaintenanceEvidence"
+    effect = "Allow"
+    actions = [
+      "s3:GetObject",
+      "s3:PutObject",
+    ]
+    resources = ["${aws_s3_bucket.maintenance.arn}/crm-experience/*"]
+  }
+
+  statement {
     sid       = "ListLogGroups"
     effect    = "Allow"
     actions   = ["logs:DescribeLogGroups"]

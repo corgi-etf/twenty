@@ -283,7 +283,7 @@ test('rejects cross-revision, wrong dataset, missing approval and invalid invent
     /identity/,
   );
 });
-test('workflow is manual, private, exact-revision, review-artifact bound, and serial with deployments', async () => {
+test('workflow is manual, exact-revision, reviewed-evidence bound, and serial with deployments', async () => {
   const text = await readFile(
     new URL(
       '../../../../../.github/workflows/crm-experience-rollout.yml',
@@ -297,8 +297,13 @@ test('workflow is manual, private, exact-revision, review-artifact bound, and se
   assert.equal(workflow.concurrency['cancel-in-progress'], false);
   assert.equal(workflow.jobs.rollout.environment, 'production');
   assert.equal(workflow.permissions.contents, 'read');
+  assert.equal(
+    workflow.env.MAINTENANCE_BUCKET,
+    'corgi-crm-production-maintenance-182018075072-us-east-2',
+  );
+  assert.equal(workflow.env.MAINTENANCE_PREFIX, 'crm-experience');
   for (const required of [
-    'REPOSITORY_PRIVATE',
+    '"${MAINTENANCE_BUCKET}" == "corgi-crm-production-maintenance-${AWS_ACCOUNT_ID}-${AWS_REGION}"',
     'head_sha == $sha',
     'run_attempt == $attempt',
     '.path == ".github/workflows/crm-experience-rollout.yml"',
@@ -309,14 +314,20 @@ test('workflow is manual, private, exact-revision, review-artifact bound, and se
     'CRM_E2E_PASSWORD',
   ])
     assert.ok(text.includes(required), required);
-  const uploads = workflow.jobs.rollout.steps.filter(({ uses }) =>
-    uses?.startsWith('actions/upload-artifact@'),
+  // This repository is a public fork of twentyhq/twenty, so a manifest or journal
+  // describing production records must never be reachable as a run artifact.
+  const artifactSteps = workflow.jobs.rollout.steps.filter(
+    ({ uses }) =>
+      uses?.startsWith('actions/upload-artifact@') ||
+      uses?.startsWith('actions/download-artifact@'),
   );
-  assert.equal(uploads.length, 2);
-  for (const upload of uploads) {
-    assert.equal(upload.with['retention-days'], 7);
-    assert.ok(!/\.auth|run_results|trace|screenshot/.test(upload.with.path));
-  }
+  assert.equal(artifactSteps.length, 0);
+  assert.ok(!/retention-days/.test(text));
+  // Reviewed evidence is only ever read from or written to the lifecycle-bound prefix.
+  const evidenceKeys = text.match(/\$\{MAINTENANCE_PREFIX\}\//g) ?? [];
+  assert.equal(evidenceKeys.length, 3);
+  for (const object of ['manifest.json', 'journal.jsonl', 'result.json'])
+    assert.ok(text.includes(object), object);
   const spec = await readFile(
     new URL(
       '../../../../twenty-e2e-testing/tests/production/crmExperienceRollout.maintenance.spec.ts',
