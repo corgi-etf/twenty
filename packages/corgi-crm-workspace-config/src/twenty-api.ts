@@ -81,9 +81,7 @@ const describeGraphqlErrors = (errors: unknown): string => {
       const code = extensions?.code;
 
       return [
-        typeof message === 'string' && message.length > 0
-          ? message
-          : undefined,
+        typeof message === 'string' && message.length > 0 ? message : undefined,
         typeof code === 'string' && code.length > 0 ? `[${code}]` : undefined,
       ]
         .filter(Boolean)
