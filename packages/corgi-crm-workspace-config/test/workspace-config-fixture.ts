@@ -148,6 +148,10 @@ export const workspaceConfigFixture = (): WorkspaceConfigSnapshot => {
       id: 'outreachActivity-object-id',
       nameSingular: 'outreachActivity',
       namePlural: 'outreachActivities',
+      // Production reports a label identifier for every object. Omitting it
+      // here hid a planner defect that stopped the whole rollout: the metadata
+      // API refuses a view field for the label identifier.
+      labelIdentifierFieldMetadataId: 'outreachActivity-name-field-id',
       fields: outreachFields,
     },
     {

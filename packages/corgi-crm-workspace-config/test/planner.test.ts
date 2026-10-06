@@ -18,6 +18,12 @@ const object = (
   id: `${nameSingular}-object-id`,
   nameSingular,
   namePlural: nameSingular === 'person' ? 'people' : `${nameSingular}s`,
+  // Every production object reports a label identifier, and the metadata API
+  // refuses a view field for it. Omitting it here hid a planner defect that
+  // stopped the whole rollout on its first apply.
+  ...(fieldNames.some(([name]) => name === 'name')
+    ? { labelIdentifierFieldMetadataId: `${nameSingular}-name-field-id` }
+    : {}),
   fields: fieldNames.map(([name, type]) => ({
     id: `${nameSingular}-${name}-field-id`,
     name,
@@ -626,9 +632,11 @@ test('converges navigation, Follow-ups, company fields, and state sorting', () =
     plan.layout.viewFieldsToCreate
       .filter(({ viewId }) => viewId === 'c0671000-0000-4000-8000-000000000001')
       .map(({ fieldMetadataId, position }) => ({ fieldMetadataId, position })),
+    // 'name' is the label identifier, which Twenty renders as the record chip
+    // and refuses as a view field, so it is planned out and the remaining
+    // columns close the gap.
     [
       'activityType',
-      'name',
       'company',
       'contact',
       'wholesaler',
@@ -896,10 +904,11 @@ test('converges company and Follow-ups column widths', () => {
       )
       .map(({ id, update }) => ({ id, size: update.size })),
     outreachActivity.fields
+      // 'name' is the label identifier, so it is not a managed column and its
+      // existing view field is hidden rather than resized.
       .filter((field) =>
         [
           'activityType',
-          'name',
           'company',
           'contact',
           'wholesaler',
