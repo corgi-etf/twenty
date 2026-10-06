@@ -65,6 +65,35 @@ type GraphqlResponse = {
   errors?: unknown;
 };
 
+// A bare "returned GraphQL errors" cannot be diagnosed from a run log, and the
+// server reports metadata rejections in the response body rather than its own
+// logs, so the reason is otherwise unrecoverable. Surface only the message and
+// error code: a full payload can echo submitted record values.
+const describeGraphqlErrors = (errors: unknown): string => {
+  if (!Array.isArray(errors)) return '';
+  const described = errors
+    .map((error) => {
+      if (typeof error !== 'object' || error === null) return undefined;
+      const { message, extensions } = error as {
+        message?: unknown;
+        extensions?: { code?: unknown } | null;
+      };
+      const code = extensions?.code;
+
+      return [
+        typeof message === 'string' && message.length > 0
+          ? message
+          : undefined,
+        typeof code === 'string' && code.length > 0 ? `[${code}]` : undefined,
+      ]
+        .filter(Boolean)
+        .join(' ');
+    })
+    .filter((entry): entry is string => Boolean(entry));
+
+  return described.length > 0 ? `: ${described.join('; ')}` : '';
+};
+
 type OpenApiSchema = {
   $ref?: string;
   oneOf?: OpenApiSchema[];
@@ -443,7 +472,9 @@ export const createTwentyWorkspaceConfigApi = ({
         : Boolean(body.errors)) ||
       !body.data
     ) {
-      throw new Error(`${operationName} returned GraphQL errors`);
+      throw new Error(
+        `${operationName} returned GraphQL errors${describeGraphqlErrors(body.errors)}`,
+      );
     }
 
     return body.data as T;
