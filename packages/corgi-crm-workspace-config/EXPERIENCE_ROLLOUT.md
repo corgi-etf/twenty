@@ -54,3 +54,35 @@ node --test packages/corgi-crm-workspace-config/test/*.test.ts
 node packages/corgi-crm-workspace-config/src/experience-config-cli.ts --help
 node packages/corgi-crm-workspace-config/src/company-ownership-cli.ts --help
 ```
+
+## Reviewed evidence storage in CI
+
+`crm-experience-rollout.yml` keeps every manifest and journal out of GitHub. This
+repository is a public fork of `twentyhq/twenty`, so a run artifact describing
+production records would be downloadable by anyone; the workflow therefore refuses
+to start unless its evidence destination is the private, lifecycle-bound bucket
+`corgi-crm-production-maintenance-<account>-<region>`, and it uses no
+upload-artifact or download-artifact step at all.
+
+A preview writes its reviewed manifest to, and an apply reads exactly that object
+from:
+
+```
+s3://corgi-crm-production-maintenance-<account>-<region>/crm-experience/previews/<dataset>/<run id>/<attempt>/manifest.json
+```
+
+An apply preserves its journal and result, even when it fails, under:
+
+```
+s3://corgi-crm-production-maintenance-<account>-<region>/crm-experience/applies/<dataset>/<run id>/<attempt>/
+```
+
+Run-level provenance is still proved through the GitHub API (`workflow_dispatch`,
+`success`, `main`, matching `head_sha`, matching attempt, and this workflow path),
+so selecting a preview remains bound to one reviewed run. A preview refuses to
+overwrite an existing object, and the deployment role is granted `GetObject` and
+`PutObject` only — never `DeleteObject` — so the audit trail is append-only.
+Objects expire after 30 days through the bucket lifecycle rule, which replaces the
+previous 7-day artifact retention; keep anything needed beyond that out of band.
+Because the ownership apply can outlast one role session, the workflow re-assumes
+the role before writing evidence.
