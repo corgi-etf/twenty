@@ -193,6 +193,7 @@ export type WorkspaceMetadataObject = {
   nameSingular: string;
   namePlural: string;
   openRecordIn?: string;
+  labelIdentifierFieldMetadataId?: string;
   fields: WorkspaceMetadataField[];
 };
 
@@ -706,6 +707,35 @@ const validateManyToOneRelation = ({
   }
 };
 
+// Twenty renders an object's label identifier as the record chip, so the
+// metadata API rejects a view field for it and the whole rollout stops on that
+// one operation. Managed column lists exclude it, closing the position gap.
+const isNotLabelIdentifier =
+  (
+    object: WorkspaceMetadataObject,
+    fields: ReadonlyMap<string, WorkspaceMetadataField>,
+  ) =>
+  (name: string): boolean => {
+    const { labelIdentifierFieldMetadataId } = object;
+
+    return (
+      typeof labelIdentifierFieldMetadataId !== 'string' ||
+      labelIdentifierFieldMetadataId.length === 0 ||
+      fields.get(name)?.id !== labelIdentifierFieldMetadataId
+    );
+  };
+
+const followUpViewFieldNames = ({
+  outreachActivity,
+  outreachFields,
+}: {
+  outreachActivity: WorkspaceMetadataObject;
+  outreachFields: ReadonlyMap<string, WorkspaceMetadataField>;
+}): readonly string[] =>
+  FOLLOW_UP_VIEW_FIELD_NAMES.filter(
+    isNotLabelIdentifier(outreachActivity, outreachFields),
+  );
+
 const createFollowUpViewPlan = ({
   outreachActivity,
   outreachFields,
@@ -713,7 +743,10 @@ const createFollowUpViewPlan = ({
   outreachActivity: WorkspaceMetadataObject;
   outreachFields: ReadonlyMap<string, WorkspaceMetadataField>;
 }) => {
-  const fields = FOLLOW_UP_VIEW_FIELD_NAMES.map((name) => {
+  const fields = followUpViewFieldNames({
+    outreachActivity,
+    outreachFields,
+  }).map((name) => {
     const field = outreachFields.get(name);
     if (!field) {
       throw new Error(
@@ -1241,14 +1274,18 @@ export const buildWorkspaceConfigPlan = (
   if (newFollowUp) {
     viewFieldsToCreate.push(...newFollowUp.fields);
   } else {
+    const desiredFollowUpFieldNames = followUpViewFieldNames({
+      outreachActivity,
+      outreachFields,
+    });
     const desiredOutreachPositionByFieldId = new Map(
-      FOLLOW_UP_VIEW_FIELD_NAMES.map((name, position) => [
+      desiredFollowUpFieldNames.map((name, position) => [
         outreachFields.get(name)!.id,
         position,
       ]),
     );
     const desiredOutreachSizeByFieldId = new Map(
-      FOLLOW_UP_VIEW_FIELD_NAMES.map((name) => [
+      desiredFollowUpFieldNames.map((name) => [
         outreachFields.get(name)!.id,
         followUpViewFieldSize(name),
       ]),
@@ -1314,7 +1351,7 @@ export const buildWorkspaceConfigPlan = (
     'occurredAt',
     'outcome',
     'followUpDate',
-  ];
+  ].filter(isNotLabelIdentifier(outreachActivity, outreachFields));
   for (const view of snapshot.views.filter(
     (candidate) =>
       candidate.objectMetadataId === outreachActivity.id &&
