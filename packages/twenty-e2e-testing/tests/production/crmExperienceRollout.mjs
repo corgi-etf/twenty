@@ -273,21 +273,59 @@ export const runExperienceRollout = async ({
         reviewedDigest: bundle.manifestDigest,
         workspaceId,
         appendJournal: journal.append,
+        // The REST metadata PATCH answers 200 while silently discarding
+        // openRecordIn on standard objects, so company and person stayed on
+        // USER_CHOICE while the journal recorded them as confirmed. Use the
+        // mutation the product itself uses, and trust the returned value
+        // rather than the status code.
         updateObjectOpenRecordIn: async (id) => {
           const response = await requestGate(() =>
-            request.patch(
-              `${options.origin}/rest/metadata/objects/${encodeURIComponent(id)}`,
-              {
-                headers: { Origin: options.origin },
-                data: { openRecordIn: 'RECORD_PAGE' },
-                maxRedirects: 0,
-                timeout: 30_000,
+            request.post(`${options.origin}/metadata`, {
+              headers: { Origin: options.origin },
+              data: {
+                operationName: 'UpdateManagedObjectOpenRecordIn',
+                query: `
+                  mutation UpdateManagedObjectOpenRecordIn(
+                    $idToUpdate: UUID!
+                    $updatePayload: UpdateObjectPayload!
+                  ) {
+                    updateOneObject(
+                      input: { id: $idToUpdate, update: $updatePayload }
+                    ) {
+                      id
+                      openRecordIn
+                    }
+                  }
+                `,
+                variables: {
+                  idToUpdate: id,
+                  updatePayload: { openRecordIn: 'RECORD_PAGE' },
+                },
               },
-            ),
+              maxRedirects: 0,
+              timeout: 30_000,
+            }),
           );
           try {
             if (!response.ok())
               throw new Error('Object profile default update failed');
+            const body = await response.json();
+            if (Array.isArray(body?.errors) && body.errors.length > 0)
+              throw new Error(
+                `Object profile default update returned GraphQL errors: ${body.errors
+                  .map((error) => error?.message)
+                  .filter(Boolean)
+                  .join('; ')}`,
+              );
+            const updated = body?.data?.updateOneObject;
+            if (updated?.id !== id)
+              throw new Error(
+                'Object profile default update returned an unexpected object',
+              );
+            if (updated?.openRecordIn !== 'RECORD_PAGE')
+              throw new Error(
+                `Object profile default did not persist: openRecordIn is ${updated?.openRecordIn}`,
+              );
           } finally {
             await response.dispose();
           }
