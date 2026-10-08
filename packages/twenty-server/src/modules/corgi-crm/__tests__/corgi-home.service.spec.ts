@@ -290,6 +290,38 @@ describe('CRM corrected-record validity', () => {
     expect(statements[0].values).not.toContain('unassigned');
   });
 
+  it('credits activities and meetings to a wholesaler without requiring a login', async () => {
+    // Only 11 of 19 production wholesalers are workspace members. Scoping
+    // through the member link left the rest unreportable.
+    for (const section of ['activities', 'meetingsSet'] as const) {
+      const { service, statements } = makeService();
+
+      await service.get({
+        section,
+        allTime: 'true',
+        creditedWholesalerId: '4d40adab-0518-4b0c-a38f-d50eb3a5fcdc',
+      });
+
+      expect(statements[0].text).toContain('"r"."wholesalerId" =');
+      expect(statements[0].values).toContain(
+        '4d40adab-0518-4b0c-a38f-d50eb3a5fcdc',
+      );
+      expect(statements[0].text).not.toContain('workspaceMemberId');
+    }
+  });
+
+  it('still credits allocations through their own attribution field', async () => {
+    const { service, statements } = makeService();
+
+    await service.get({
+      section: 'allocations',
+      allTime: 'true',
+      creditedWholesalerId: '4d40adab-0518-4b0c-a38f-d50eb3a5fcdc',
+    });
+
+    expect(statements[0].text).toContain('"r"."externalWholesalerId" =');
+  });
+
   it('checks the actual completion fields before presenting a write action', async () => {
     const { service, queries } = makeService((statement) =>
       statement.text.includes('COUNT(')
