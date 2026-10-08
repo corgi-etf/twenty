@@ -9,6 +9,7 @@ import { useFindOneRecord } from '@/object-record/hooks/useFindOneRecord';
 import { RecordChip } from '@/object-record/components/RecordChip';
 import { type ObjectRecord } from '@/object-record/types/ObjectRecord';
 import { useCorgiCreateRecordDialog } from '@/corgi-crm/forms/hooks/useCorgiCreateRecordDialog';
+import { stopCorgiInputKeyCapture } from '@/corgi-crm/utils/stopCorgiInputKeyCapture';
 import {
   getCorgiRecordLabel,
   CORGI_CREATE_FIELDS,
@@ -87,7 +88,7 @@ export const CorgiRelationPicker = ({
     setSearch('');
   };
   return (
-    <fieldset>
+    <fieldset onKeyDown={stopCorgiInputKeyCapture}>
       <legend>{label}</legend>
       {value && (
         <div>

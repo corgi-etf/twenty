@@ -18,6 +18,7 @@ import { CorgiClientBadge } from '@/corgi-crm/profiles/components/CorgiClientBad
 import { CorgiFollowUpCompanies } from '@/corgi-crm/home/components/CorgiFollowUpCompanies';
 import { CorgiTeamPerformance } from '@/corgi-crm/home/components/CorgiTeamPerformance';
 import { CorgiActivityTrends } from '@/corgi-crm/home/components/CorgiActivityTrends';
+import { stopCorgiInputKeyCapture } from '@/corgi-crm/utils/stopCorgiInputKeyCapture';
 
 const StyledOverview = styled.section`
   border-bottom: 1px solid ${themeCssVariables.border.color.light};
@@ -367,6 +368,7 @@ const ReadyCorgiProfileOverview = ({
             aria-label={t`Follow-up date`}
             type="date"
             value={dueDate}
+            onKeyDown={stopCorgiInputKeyCapture}
             onChange={(event) => setDueDate(event.target.value)}
           />
           <button
