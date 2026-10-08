@@ -84,10 +84,17 @@ const buildOperations = (snapshot: WorkspaceConfigSnapshot) => {
     allowedFields.has(fields.get(field.id)!),
   ))
     push('updateMetadataFieldLabel', input.id, input.label);
+  // company and person are deliberately absent. The metadata API accepts an
+  // openRecordIn update for them and reports success, but the value stays
+  // USER_CHOICE: confirmed against production through both the REST patch and
+  // the mutation the settings UI itself uses, and confirmed again by reading the
+  // live snapshot back afterwards. Only the app-owned objects below actually
+  // persist it. Planning the other two aborted the whole stage on its first
+  // operation, so 152 applicable operations never ran. For company and person,
+  // opening records full-page is governed by each member's own "open record in"
+  // preference instead.
   for (const object of snapshot.objects.filter(({ nameSingular }) =>
     [
-      'company',
-      'person',
       'wholesaler',
       'outreachActivity',
       'meetingBooking',
