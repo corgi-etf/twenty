@@ -28,6 +28,7 @@ import { useFindManyRecords } from '@/object-record/hooks/useFindManyRecords';
 import { useFindOneRecord } from '@/object-record/hooks/useFindOneRecord';
 import { useObjectPermissionsForObject } from '@/object-record/hooks/useObjectPermissionsForObject';
 import { type ObjectRecord } from '@/object-record/types/ObjectRecord';
+import { stopCorgiInputKeyCapture } from '@/corgi-crm/utils/stopCorgiInputKeyCapture';
 import { useAtomState } from '@/ui/utilities/state/jotai/hooks/useAtomState';
 
 const StyledDialog = styled.dialog`
@@ -343,6 +344,7 @@ export const CorgiCreateRecordDialog = ({
       }}
     >
       <form
+        onKeyDown={stopCorgiInputKeyCapture}
         onSubmit={(event) => {
           event.preventDefault();
           void handleSave();
