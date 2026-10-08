@@ -12,6 +12,7 @@ export type {
   CorgiLegacyFollowUp,
   CorgiTeamMember,
   CorgiTrendDay,
+  CorgiClientGrowthPoint,
   CorgiAllocationAttribution,
   CorgiClientCompany,
   CorgiWin,

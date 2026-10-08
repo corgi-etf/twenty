@@ -90,6 +90,15 @@ export type CorgiTeamMember = {
   openFollowUps: CorgiMetric;
 };
 
+// A firm counts as a client from its first valid allocation, so the series is
+// built from that date per firm rather than from allocation rows.
+export type CorgiClientGrowthPoint = {
+  date: string;
+  newClients: number;
+  totalClients: number;
+  amounts: CorgiMoney[];
+};
+
 export type CorgiTrendDay = {
   date: string;
   activities: number;
@@ -146,6 +155,7 @@ export type CorgiHomeQuery = {
     | 'agenda'
     | 'team'
     | 'trends'
+    | 'clientGrowth'
     | 'activeClients'
     | 'liveWins'
     | 'latestRecords';

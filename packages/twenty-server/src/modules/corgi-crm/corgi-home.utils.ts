@@ -19,6 +19,7 @@ const sections = new Set([
   'agenda',
   'team',
   'trends',
+  'clientGrowth',
   'activeClients',
   'liveWins',
   'latestRecords',
