@@ -16,14 +16,20 @@ jest.mock(
   () => ({ getWorkspaceAuthContext: () => ({ type: 'user' }) }),
 );
 
-const makeQueries = ({
+const makeQueryService = ({
   canRead = true,
   canUpdate = true,
   fieldRead = true,
   fieldUpdate = true,
   writability = MetadataWritability.OPEN,
+  roleId = 'role-id' as string | undefined,
 } = {}) => {
   const context = {
+    // Production always supplies these. Without them the service cannot resolve
+    // the requesting role, and an empty permission map refuses every select.
+    authContext: { type: 'user', userWorkspaceId: 'user-workspace-id' },
+    userWorkspaceRoleMap: roleId ? { 'user-workspace-id': roleId } : {},
+    apiKeyRoleMap: {},
     objectIdByNameSingular: { outreachFollowUp: 'object-id' },
     flatObjectMetadataMaps: {
       universalIdentifierById: { 'object-id': 'object' },
@@ -72,12 +78,41 @@ const makeQueries = ({
       },
     },
   };
-  return new CorgiHomeQueryService({
-    getRepository: () => repository,
-  } as unknown as WorkspaceOrmManager);
+  const getRepository = jest.fn(() => repository);
+
+  return {
+    queries: new CorgiHomeQueryService({
+      getRepository,
+    } as unknown as WorkspaceOrmManager),
+    getRepository,
+  };
 };
 
+const makeQueries = (options?: Parameters<typeof makeQueryService>[0]) =>
+  makeQueryService(options).queries;
+
 describe('CRM projection permission foundation', () => {
+  it('projects as the requesting role rather than with no permissions', () => {
+    const { queries, getRepository } = makeQueryService();
+
+    queries.query('outreachFollowUp', ['status']);
+
+    // Omitting the second argument resolves to an empty permission map with
+    // bypass disabled, which refuses every select and reported "No access" to
+    // every user on the dashboard.
+    expect(getRepository).toHaveBeenCalledWith('outreachFollowUp', {
+      unionOf: ['role-id'],
+    });
+  });
+
+  it('reports unavailable rather than denied when no role is bound', () => {
+    const { queries } = makeQueryService({ roleId: '' });
+
+    expect(() => queries.query('outreachFollowUp', ['status'])).toThrow(
+      /No role is bound/,
+    );
+  });
+
   it('rejects unreadable filter fields even if object records are readable', () => {
     expect(() =>
       makeQueries({ fieldRead: false }).query('outreachFollowUp', ['status']),
