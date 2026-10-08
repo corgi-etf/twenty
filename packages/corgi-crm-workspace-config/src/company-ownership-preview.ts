@@ -63,12 +63,17 @@ export const buildCompanyOwnershipPreview = ({
   existingOwnerships: Ownership[];
   expectedCompanyCount: number;
 }): CompanyOwnershipPreview => {
+  const distinctCompanyCount = new Set(companies.map(({ id }) => id)).size;
   if (
     companies.length !== expectedCompanyCount ||
-    new Set(companies.map(({ id }) => id)).size !== expectedCompanyCount
+    distinctCompanyCount !== expectedCompanyCount
   )
+    // Report what was scanned. Every tool in this family takes the count as an
+    // input and validates it, and none reports one, so a stale figure left the
+    // operator with no way to discover the current value. These are counts of
+    // company rows, not company data.
     throw new Error(
-      'Ownership preview requires exact distinct company coverage',
+      `Ownership preview requires exact distinct company coverage: expected ${expectedCompanyCount}, scanned ${companies.length} rows with ${distinctCompanyCount} distinct ids`,
     );
   const additions: CompanyOwnershipPreview['additions'] = [];
   const review: CompanyOwnershipPreview['review'] = [];
