@@ -6,6 +6,7 @@ import { getWorkspaceAuthContext } from 'src/engine/core-modules/auth/storage/wo
 import { PermissionsException } from 'src/engine/metadata-modules/permissions/permissions.exception';
 import { validateOperationIsPermittedOrThrow } from 'src/engine/twenty-orm/repository/permissions.utils';
 import { getWorkspaceContext } from 'src/engine/twenty-orm/storage/orm-workspace-context.storage';
+import { type RolePermissionConfig } from 'src/engine/twenty-orm/types/role-permission-config';
 import { WorkspaceOrmManager } from 'src/engine/twenty-orm/workspace-orm.manager';
 
 export class CorgiHomeUnavailable extends Error {}
@@ -35,13 +36,41 @@ export class CorgiHomeQueryService {
     );
   }
 
+  // getRepository without a role config resolves to an empty permission map
+  // with bypass disabled, so every select is refused and the dashboard reports
+  // "No access" to everyone regardless of their role. Run as the requesting
+  // principal's role, which the ORM context already carries, so the projections
+  // are scoped the way the comment above this class says they are.
+  private requestingRolePermissionConfig(): RolePermissionConfig {
+    const { authContext, userWorkspaceRoleMap, apiKeyRoleMap } =
+      getWorkspaceContext();
+    const roleId =
+      authContext.type === 'user'
+        ? userWorkspaceRoleMap[authContext.userWorkspaceId]
+        : authContext.type === 'apiKey'
+          ? apiKeyRoleMap[authContext.apiKey.id]
+          : authContext.type === 'application'
+            ? authContext.application.defaultRoleId
+            : undefined;
+
+    if (typeof roleId !== 'string' || roleId.length === 0)
+      throw new CorgiHomeUnavailable(
+        `No role is bound to the ${authContext.type} principal`,
+      );
+
+    return { unionOf: [roleId] };
+  }
+
   query(object: string, columns: string[], alias = 'r') {
     const { objectIdByNameSingular } = getWorkspaceContext();
 
     if (!objectIdByNameSingular[object])
       throw new CorgiHomeUnavailable(`CRM object ${object} is not installed`);
 
-    const repository = this.workspaceOrmManager.getRepository(object);
+    const repository = this.workspaceOrmManager.getRepository(
+      object,
+      this.requestingRolePermissionConfig(),
+    );
     const query = repository.createQueryBuilder(alias);
     const context = repository.getInternalContext();
 
@@ -71,7 +100,10 @@ export class CorgiHomeQueryService {
 
   canUpdate(object: string, columns: string[]): boolean {
     try {
-      const repository = this.workspaceOrmManager.getRepository(object);
+      const repository = this.workspaceOrmManager.getRepository(
+        object,
+        this.requestingRolePermissionConfig(),
+      );
       const context = repository.getInternalContext();
 
       // A missing field is not writable, even if the role allows the object.
