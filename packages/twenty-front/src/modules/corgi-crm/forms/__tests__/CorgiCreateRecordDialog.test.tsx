@@ -150,3 +150,65 @@ it('saves a contextual draft without relationship fields from another object', a
     activeClient: true,
   });
 });
+
+it('logs one activity per ticked action, crediting the firm', async () => {
+  const user = userEvent.setup();
+  mockCreate.mockResolvedValue({ id: 'firm-1', name: 'Noesis Capital' });
+  show();
+  await user.type(screen.getByLabelText('Name'), 'Noesis Capital');
+  await user.click(screen.getByRole('checkbox', { name: 'Called' }));
+  await user.click(screen.getByRole('checkbox', { name: 'Emailed' }));
+  await user.click(screen.getByRole('button', { name: 'Save' }));
+
+  // The firm, then one activity per tick. Counting activities rather than
+  // setting flags is what keeps "number of calls" meaning what it says.
+  await waitFor(() => expect(mockCreate).toHaveBeenCalledTimes(3));
+  const types = mockCreate.mock.calls
+    .slice(1)
+    .map(([input]) => input.activityType);
+  expect(types).toEqual(['PHONE_CALL', 'EMAIL']);
+  for (const [input] of mockCreate.mock.calls.slice(1)) {
+    expect(input.companyId).toBe('firm-1');
+    expect(input.name).toContain('Noesis Capital');
+  }
+});
+
+it('records a voicemail as a call attempt with its outcome', async () => {
+  const user = userEvent.setup();
+  mockCreate.mockResolvedValue({ id: 'firm-2', name: 'Balanz' });
+  show();
+  await user.type(screen.getByLabelText('Name'), 'Balanz');
+  await user.click(screen.getByRole('checkbox', { name: 'Voicemail' }));
+  await user.click(screen.getByRole('button', { name: 'Save' }));
+
+  await waitFor(() => expect(mockCreate).toHaveBeenCalledTimes(2));
+  expect(mockCreate.mock.calls[1][0]).toMatchObject({
+    activityType: 'PHONE_CALL',
+    outcome: 'Voicemail',
+  });
+});
+
+it('logs a follow-up on its own when nothing else was done', async () => {
+  const user = userEvent.setup();
+  mockCreate.mockResolvedValue({ id: 'firm-3', name: 'Unimar' });
+  show();
+  await user.type(screen.getByLabelText('Name'), 'Unimar');
+  await user.click(screen.getByRole('checkbox', { name: 'Needs follow-up' }));
+  await user.click(screen.getByRole('button', { name: 'Save' }));
+
+  await waitFor(() => expect(mockCreate).toHaveBeenCalledTimes(2));
+  expect(mockCreate.mock.calls[1][0]).toMatchObject({
+    activityType: 'OTHER',
+  });
+  expect(mockCreate.mock.calls[1][0].followUpDate).toBeDefined();
+});
+
+it('creates no activity when nothing is ticked', async () => {
+  const user = userEvent.setup();
+  mockCreate.mockResolvedValue({ id: 'firm-4', name: 'Sparrow' });
+  show();
+  await user.type(screen.getByLabelText('Name'), 'Sparrow');
+  await user.click(screen.getByRole('button', { name: 'Save' }));
+
+  await waitFor(() => expect(mockCreate).toHaveBeenCalledTimes(1));
+});

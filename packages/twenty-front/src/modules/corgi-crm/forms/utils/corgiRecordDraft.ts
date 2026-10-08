@@ -1,13 +1,9 @@
 import { t } from '@lingui/core/macro';
 export const CORGI_CREATE_FIELDS: Partial<Record<string, string[]>> = {
-  company: [
-    'name',
-    'domainName',
-    'address',
-    'linkedinLink',
-    'firmType',
-    'activeClient',
-  ],
+  // firmType and activeClient are set after the firm exists, not while typing
+  // its name: activeClient is staff-controlled and firmType is a
+  // classification nobody has on hand during a first call.
+  company: ['name', 'domainName', 'address', 'linkedinLink'],
   person: ['name', 'company', 'jobTitle', 'emails', 'phones', 'activeClient'],
   outreachActivity: [
     'activityType',
