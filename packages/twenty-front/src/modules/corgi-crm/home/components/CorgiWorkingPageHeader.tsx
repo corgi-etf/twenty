@@ -1,5 +1,8 @@
 import { useCorgiHome } from '@/corgi-crm/home/components/CorgiHomeProvider';
-import { StyledCorgiMuted } from '@/corgi-crm/home/components/CorgiHomeStyles';
+import {
+  StyledCorgiHeaderLink,
+  StyledCorgiMuted,
+} from '@/corgi-crm/home/components/CorgiHomeStyles';
 import { CorgiLatestRecords } from '@/corgi-crm/home/components/CorgiLatestRecords';
 import { CorgiTodayTiles } from '@/corgi-crm/metrics/components/CorgiTodayTiles';
 import { styled } from '@linaria/react';
@@ -38,13 +41,17 @@ export const CorgiWorkingPageHeader = () => {
   return (
     <StyledHeader aria-label={t`CRM daily overview`}>
       <StyledCorgiMuted>
-        <Link to="/home">
-          <Trans>Home</Trans>
-        </Link>{' '}
+        <StyledCorgiHeaderLink>
+          <Link to="/home">
+            <Trans>Home</Trans>
+          </Link>
+        </StyledCorgiHeaderLink>{' '}
         · <Trans>Today</Trans> · America/Chicago ·{' '}
-        <Link to="/home?section=liveWins">
-          <Trans>Notifications</Trans>
-        </Link>
+        <StyledCorgiHeaderLink>
+          <Link to="/home?section=liveWins">
+            <Trans>Notifications</Trans>
+          </Link>
+        </StyledCorgiHeaderLink>
       </StyledCorgiMuted>
       <CorgiTodayTiles compact />
       <CorgiLatestRecords compact />
