@@ -118,3 +118,24 @@ export const StyledCorgiBadge = styled.span`
     color: ${themeCssVariables.tag.text.orange};
   }
 `;
+
+// The header links sat on the default link blue, which is illegible against the
+// dark theme's background. Render them as a surfaced box using the same tokens
+// as the other controls, so contrast holds in both themes instead of depending
+// on the link colour.
+export const StyledCorgiHeaderLink = styled.span`
+  background: ${themeCssVariables.background.primary};
+  border: 1px solid ${themeCssVariables.border.color.medium};
+  border-radius: ${themeCssVariables.border.radius.sm};
+  display: inline-block;
+  padding: 2px 8px;
+  a {
+    color: ${themeCssVariables.font.color.primary};
+    font-weight: ${themeCssVariables.font.weight.medium};
+    text-decoration: none;
+  }
+  a:hover,
+  a:focus-visible {
+    text-decoration: underline;
+  }
+`;

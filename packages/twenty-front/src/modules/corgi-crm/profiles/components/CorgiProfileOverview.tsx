@@ -18,6 +18,7 @@ import { CorgiClientBadge } from '@/corgi-crm/profiles/components/CorgiClientBad
 import { CorgiFollowUpCompanies } from '@/corgi-crm/home/components/CorgiFollowUpCompanies';
 import { CorgiTeamPerformance } from '@/corgi-crm/home/components/CorgiTeamPerformance';
 import { CorgiActivityTrends } from '@/corgi-crm/home/components/CorgiActivityTrends';
+import { CorgiPersonScoreboard } from '@/corgi-crm/profiles/components/CorgiPersonScoreboard';
 import { stopCorgiInputKeyCapture } from '@/corgi-crm/utils/stopCorgiInputKeyCapture';
 
 const StyledOverview = styled.section`
@@ -389,6 +390,12 @@ const ReadyCorgiProfileOverview = ({
             <Trans>Save</Trans>
           </button>
         </section>
+      )}
+      {/* The scoreboard answers "what did they do today" on its own, so it is
+          not gated on the follow-up object: when that is missing or
+          unreadable the profile previously rendered nothing at all. */}
+      {objectNameSingular === 'wholesaler' && workspaceMemberId && (
+        <CorgiPersonScoreboard workspaceMemberId={workspaceMemberId} />
       )}
       {objectNameSingular === 'wholesaler' &&
         workspaceMemberId &&
