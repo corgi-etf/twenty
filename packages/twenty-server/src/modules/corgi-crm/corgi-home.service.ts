@@ -275,16 +275,31 @@ export class CorgiHomeService {
     if (key === 'meetingsSet')
       base.andWhere('r.status <> :draft', { draft: 'DRAFT' });
     this.filterCompany(base, object, query);
-    if (key === 'allocations') {
-      for (const [field, value] of [
-        ['externalWholesalerId', query.creditedWholesalerId],
-        ['contactId', query.contactId],
-      ] as const) {
-        if (!value) continue;
-        this.queries.query(object, [field]);
-        if (value === 'unassigned') base.andWhere(`r.${field} IS NULL`);
-        else base.andWhere(`r.${field} = :${field}`, { [field]: value });
-      }
+    // Activities and meetings credit a wholesaler directly, so scoping by
+    // wholesaler must not require that wholesaler to also be a workspace
+    // member. Most are not -- only 11 of 19 in production -- and their work was
+    // otherwise unreportable, because the only wholesaler filter went through
+    // the member link.
+    if (query.creditedWholesalerId) {
+      const field =
+        key === 'allocations' ? 'externalWholesalerId' : 'wholesalerId';
+
+      this.queries.query(object, [field]);
+      if (query.creditedWholesalerId === 'unassigned')
+        base.andWhere(`r.${field} IS NULL`);
+      else
+        base.andWhere(`r.${field} = :creditedWholesalerId`, {
+          creditedWholesalerId: query.creditedWholesalerId,
+        });
+    }
+    if (key === 'allocations' && query.contactId) {
+      this.queries.query(object, ['contactId']);
+      if (query.contactId === 'unassigned')
+        base.andWhere('r.contactId IS NULL');
+      else
+        base.andWhere('r.contactId = :contactId', {
+          contactId: query.contactId,
+        });
     }
     if (query.workspaceMemberId) {
       if (key === 'activities' || key === 'allocations') {
