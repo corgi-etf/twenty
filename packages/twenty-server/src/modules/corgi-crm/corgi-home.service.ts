@@ -18,6 +18,7 @@ import {
   type CorgiPage,
   type CorgiRecordLink,
   type CorgiTeamMember,
+  type CorgiClientGrowthPoint,
   type CorgiTrendDay,
   type CorgiWin,
 } from 'twenty-shared/types';
@@ -1532,6 +1533,85 @@ export class CorgiHomeService {
     };
   }
 
+  private async clientGrowth(
+    query: CorgiHomeQuery,
+  ): Promise<CorgiPage<CorgiClientGrowthPoint>> {
+    return this.safePage(async () => {
+      const today = Temporal.PlainDate.from(corgiDayRange().date);
+      const from = query.from ?? today.subtract({ days: 179 }).toString();
+      const to = query.to ?? today.toString();
+
+      if (
+        Temporal.PlainDate.from(from).until(Temporal.PlainDate.from(to)).days >
+          1095 ||
+        from > to
+      )
+        throw new CorgiHomeUnavailable(
+          'Choose a date range of at most three years',
+        );
+
+      const day = (column: string) =>
+        `to_char(${column} AT TIME ZONE 'America/Chicago', 'YYYY-MM-DD')`;
+
+      // Every firm's first valid allocation, unbounded by the window: a firm
+      // that became a client before it still counts toward the running total.
+      const firsts = await this.clientBase({})
+        .select('company.id', 'id')
+        .addSelect(day('MIN(r.loggedAt)'), 'date')
+        .groupBy('company.id')
+        .getRawMany<Row>();
+
+      const amountRows = await this.clientBase(query)
+        .select(day('r.loggedAt'), 'date')
+        .addSelect('r.amountCurrencyCode', 'currencyCode')
+        .addSelect('SUM(r.amountAmountMicros)', 'amountMicros')
+        .groupBy(day('r.loggedAt'))
+        .addGroupBy('r.amountCurrencyCode')
+        .getRawMany<Row>();
+
+      const newByDate = new Map<string, number>();
+      let totalClients = 0;
+
+      for (const row of firsts) {
+        const date = String(row.date);
+
+        if (date < from) totalClients += 1;
+        else newByDate.set(date, (newByDate.get(date) ?? 0) + 1);
+      }
+
+      const records: CorgiClientGrowthPoint[] = [];
+
+      for (
+        let date = Temporal.PlainDate.from(from);
+        date.toString() <= to;
+        date = date.add({ days: 1 })
+      ) {
+        const key = date.toString();
+        const newClients = newByDate.get(key) ?? 0;
+
+        totalClients += newClients;
+        records.push({
+          date: key,
+          newClients,
+          totalClients,
+          amounts: amountRows
+            .filter((row) => row.date === key)
+            .map((row) => ({
+              currencyCode: String(row.currencyCode),
+              amountMicros: String(row.amountMicros),
+            })),
+        });
+      }
+
+      return {
+        status: 'available' as const,
+        records,
+        totalCount: totalClients,
+        nextCursor: null,
+      };
+    });
+  }
+
   private section(query: CorgiHomeQuery) {
     switch (query.section) {
       case 'currentClients':
@@ -1548,6 +1628,8 @@ export class CorgiHomeService {
         return this.team(query);
       case 'trends':
         return this.trends(query);
+      case 'clientGrowth':
+        return this.clientGrowth(query);
       case 'activeClients':
         return this.activeClients(query);
       case 'liveWins':
