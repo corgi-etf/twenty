@@ -58,19 +58,21 @@ const StyledLabel = styled.span`
 `;
 
 type CorgiPersonScoreboardProps = {
-  workspaceMemberId: string;
+  // Scoped by wholesaler record, not by workspace member: most wholesalers have
+  // no login, and their activity would otherwise be unreportable.
+  creditedWholesalerId: string;
 };
 
 // One request covers both windows: the response carries a byType breakdown per
 // day, so today is the row matching the range end and the week is the sum.
 export const CorgiPersonScoreboard = ({
-  workspaceMemberId,
+  creditedWholesalerId,
 }: CorgiPersonScoreboardProps) => {
   const { t } = useLingui();
   const { from, to } = getCorgiDateRange(SCOREBOARD_DAYS, new Date());
   const { data, loading, error, refetch } = useCorgiHomeResource<
     CorgiPage<CorgiTrendDay>
-  >({ section: 'trends', from, to, workspaceMemberId });
+  >({ section: 'trends', from, to, creditedWholesalerId });
 
   const sumByType = (days: CorgiTrendDay[]) => {
     const totals = new Map<string, number>();
@@ -130,7 +132,7 @@ export const CorgiPersonScoreboard = ({
                   section: 'activities',
                   from: window.from,
                   to,
-                  workspaceMemberId,
+                  creditedWholesalerId,
                 })}
               >
                 <StyledCount>{activities}</StyledCount>
@@ -145,7 +147,7 @@ export const CorgiPersonScoreboard = ({
                     section: 'activities',
                     from: window.from,
                     to,
-                    workspaceMemberId,
+                    creditedWholesalerId,
                   })}
                 >
                   <StyledCount>{totals.get(value) ?? 0}</StyledCount>

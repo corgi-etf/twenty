@@ -391,11 +391,12 @@ const ReadyCorgiProfileOverview = ({
           </button>
         </section>
       )}
-      {/* The scoreboard answers "what did they do today" on its own, so it is
-          not gated on the follow-up object: when that is missing or
-          unreadable the profile previously rendered nothing at all. */}
-      {objectNameSingular === 'wholesaler' && workspaceMemberId && (
-        <CorgiPersonScoreboard workspaceMemberId={workspaceMemberId} />
+      {/* Scoped by the wholesaler record, so every wholesaler reports their own
+          work whether or not they have a login. Gating this on a workspace
+          member hid the figures for most of them. Also not gated on the
+          follow-up object: when that is missing the profile showed nothing. */}
+      {objectNameSingular === 'wholesaler' && (
+        <CorgiPersonScoreboard creditedWholesalerId={record.id} />
       )}
       {objectNameSingular === 'wholesaler' &&
         workspaceMemberId &&
