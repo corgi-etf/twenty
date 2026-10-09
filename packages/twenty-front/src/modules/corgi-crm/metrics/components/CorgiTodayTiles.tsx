@@ -62,10 +62,10 @@ const StyledValue = styled.strong`
 
 export const getCorgiMetricLabel = (key: CorgiMetricKey) =>
   ({
-    activities: t`Activities today`,
-    meetingsSet: t`Meetings set today`,
-    meetingsTaken: t`Meetings taken today`,
-    allocations: t`Allocation amount logged today`,
+    activities: t`Activities this week`,
+    meetingsSet: t`Meetings set this week`,
+    meetingsTaken: t`Meetings taken this week`,
+    allocations: t`Allocation amount logged this week`,
     currentClients: t`Current clients`,
   })[key];
 
@@ -97,7 +97,15 @@ export const CorgiTodayTiles = ({ compact = false }: { compact?: boolean }) => {
         return (
           <StyledTile
             key={key}
-            to={getCorgiDrilldownPath({ section: key })}
+            to={getCorgiDrilldownPath(
+              key === 'currentClients' || !summary
+                ? { section: key }
+                : {
+                    section: key,
+                    from: summary.today.from,
+                    to: summary.today.date,
+                  },
+            )}
             data-compact={compact}
             aria-disabled={metric?.status !== 'available'}
             tabIndex={metric?.status === 'available' ? 0 : -1}
@@ -110,7 +118,7 @@ export const CorgiTodayTiles = ({ compact = false }: { compact?: boolean }) => {
               <StyledCorgiMuted>
                 {key === 'currentClients'
                   ? t`Distinct companies with allocations · all time`
-                  : t`Your permitted team records · today`}
+                  : t`Your permitted team records · this week`}
               </StyledCorgiMuted>
             )}
           </StyledTile>

@@ -37,6 +37,13 @@ export const corgiDayRange = (date?: string) => {
   };
 };
 
+// Home headline figures cover the working week so far, Monday through today.
+export const corgiWeekStart = (date: string) => {
+  const day = Temporal.PlainDate.from(date);
+
+  return day.subtract({ days: day.dayOfWeek - 1 }).toString();
+};
+
 export const parseCorgiHomeQuery = (
   input: Record<string, unknown>,
 ): CorgiHomeQuery => {
