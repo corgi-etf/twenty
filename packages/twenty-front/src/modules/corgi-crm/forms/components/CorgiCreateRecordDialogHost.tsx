@@ -24,6 +24,8 @@ import { CorgiRelationPicker } from '@/corgi-crm/relations/components/CorgiRelat
 import { useObjectMetadataItems } from '@/object-metadata/hooks/useObjectMetadataItems';
 import { useObjectMetadataItem } from '@/object-metadata/hooks/useObjectMetadataItem';
 import { useCreateOneRecord } from '@/object-record/hooks/useCreateOneRecord';
+import { CORGI_FIRST_TOUCH_ACTIONS } from '@/corgi-crm/forms/constants/corgiFirstTouch';
+import { CORGI_FOLLOW_UP_TICK } from '@/corgi-crm/forms/constants/corgiFollowUpTick';
 import { useFindManyRecords } from '@/object-record/hooks/useFindManyRecords';
 import { useFindOneRecord } from '@/object-record/hooks/useFindOneRecord';
 import { useObjectPermissionsForObject } from '@/object-record/hooks/useObjectPermissionsForObject';
@@ -121,6 +123,7 @@ export const CorgiCreateRecordDialog = ({
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string>();
   const [owners, setOwners] = useState<ObjectRecord[]>(dialog.owners ?? []);
+  const [firstTouch, setFirstTouch] = useState<Record<string, boolean>>({});
   // Synchronous submission ledger: survives renders and prevents duplicate writes.
   // oxlint-disable-next-line twenty/no-state-useref
   const defaultOwnerApplied = useRef(Boolean(dialog.draft));
@@ -168,6 +171,9 @@ export const CorgiCreateRecordDialog = ({
   const permissions = useObjectPermissionsForObject(objectMetadataItem.id);
   const { createOneRecord } = useCreateOneRecord({
     objectNameSingular: dialog.objectNameSingular,
+  });
+  const { createOneRecord: createOneActivity } = useCreateOneRecord({
+    objectNameSingular: 'outreachActivity',
   });
   const isCompany = dialog.objectNameSingular === 'company';
   const [duplicateSearch] = useDebounce(
@@ -244,6 +250,47 @@ export const CorgiCreateRecordDialog = ({
       />
     );
   };
+  // Logged after the firm exists so each activity can reference it. One
+  // activity per tick, credited to the first owner, which is the person doing
+  // the calling. A failure here must not lose the firm that was already saved.
+  const logFirstTouch = async (company: ObjectRecord) => {
+    const ticked = CORGI_FIRST_TOUCH_ACTIONS.filter(
+      ({ key }) => firstTouch[key],
+    );
+    const needsFollowUp = firstTouch[CORGI_FOLLOW_UP_TICK.key] === true;
+
+    if (ticked.length === 0 && !needsFollowUp) return;
+
+    const occurredAt = new Date().toISOString();
+    const companyName = getCorgiRecordLabel(company);
+    const wholesalerId = owners[0]?.id;
+    const followUpDate = needsFollowUp ? occurredAt : undefined;
+    // A follow-up with nothing done yet is still worth recording, so it becomes
+    // one Other activity rather than being silently dropped.
+    const entries = ticked.length
+      ? ticked
+      : [{ key: 'needsFollowUp', activityType: 'OTHER', outcome: undefined }];
+
+    for (const entry of entries) {
+      await createOneActivity({
+        activityType: entry.activityType,
+        companyId: company.id,
+        ...(wholesalerId ? { wholesalerId } : {}),
+        occurredAt,
+        ...(followUpDate ? { followUpDate, followUpRequestKey: v4() } : {}),
+        ...('outcome' in entry && entry.outcome
+          ? { outcome: t(entry.outcome) }
+          : {}),
+        name: getCorgiActivityTitle({
+          activityType: entry.activityType,
+          companyId: company.id,
+          companyName,
+          occurredAt,
+        }),
+      });
+    }
+  };
+
   const handleSave = async () => {
     if (saving.current) return;
     const validationError =
@@ -321,6 +368,7 @@ export const CorgiCreateRecordDialog = ({
           record.id,
           owners.map(({ id }) => id),
         );
+      if (isCompany) await logFirstTouch(record);
       await dialog.onCreated?.(record);
       close(record);
     } catch (failure) {
@@ -372,6 +420,30 @@ export const CorgiCreateRecordDialog = ({
           );
           return field ? [renderField(field)] : [];
         })}
+        {isCompany && (
+          <fieldset onKeyDown={stopCorgiInputKeyCapture}>
+            <legend>
+              <Trans>What happened</Trans>
+            </legend>
+            {[...CORGI_FIRST_TOUCH_ACTIONS, CORGI_FOLLOW_UP_TICK].map(
+              ({ key, label }) => (
+                <label key={key}>
+                  <input
+                    type="checkbox"
+                    checked={firstTouch[key] === true}
+                    onChange={(event) =>
+                      setFirstTouch((previous) => ({
+                        ...previous,
+                        [key]: event.target.checked,
+                      }))
+                    }
+                  />
+                  {t(label)}
+                </label>
+              ),
+            )}
+          </fieldset>
+        )}
         {persistOwners && (
           <>
             <CorgiRelationPicker
