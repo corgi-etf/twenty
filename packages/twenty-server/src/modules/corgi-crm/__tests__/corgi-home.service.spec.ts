@@ -705,6 +705,6 @@ describe('CRM client growth', () => {
       to: '2026-03-03',
     })) as CorgiPage<CorgiClientGrowthPoint>;
 
-    expect(result.records.at(-1)?.totalClients).toBe(1);
+    expect(result.records[result.records.length - 1]?.totalClients).toBe(1);
   });
 });
