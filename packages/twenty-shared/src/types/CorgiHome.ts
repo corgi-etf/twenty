@@ -136,7 +136,13 @@ export type CorgiHomeSummary = {
   enabled: boolean;
   timeZone: string;
   generatedAt: string;
-  today: { date: string; metrics: Record<CorgiMetricKey, CorgiMetric> };
+  // Headline metrics span Monday (from) through today (date);
+  // currentClients is all-time.
+  today: {
+    date: string;
+    from: string;
+    metrics: Record<CorgiMetricKey, CorgiMetric>;
+  };
   latestRecords: CorgiPage<CorgiBusinessRecord>;
   followUps: CorgiPage<CorgiFollowUp>;
   agenda: CorgiPage<CorgiMeeting>;

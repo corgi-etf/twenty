@@ -15,6 +15,7 @@ export const corgiHomeFixture = (): CorgiHomeSummary => ({
   generatedAt: '2026-10-05T15:00:00Z',
   today: {
     date: '2026-10-05',
+    from: '2026-10-05',
     metrics: {
       activities: { status: 'available', count: 124 },
       meetingsSet: { status: 'available', count: 3 },

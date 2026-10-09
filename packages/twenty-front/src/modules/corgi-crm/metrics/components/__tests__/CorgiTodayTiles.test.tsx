@@ -43,11 +43,17 @@ describe('Today tiles', () => {
     renderTiles();
     expect(screen.getAllByRole('link')).toHaveLength(5);
     expect(
-      screen.getByRole('link', { name: /Activities today/ }),
+      screen.getByRole('link', { name: /Activities this week/ }),
     ).toHaveTextContent('124');
     expect(
       screen.getByRole('link', { name: /Allocation amount/ }),
     ).toHaveTextContent('$2,500.00 · €1,000.00');
+    expect(
+      screen.getByRole('link', { name: /Activities this week/ }),
+    ).toHaveAttribute(
+      'href',
+      '/home?section=activities&from=2026-10-05&to=2026-10-05',
+    );
     await userEvent.click(
       screen.getByRole('link', { name: /Current clients/ }),
     );
@@ -61,13 +67,13 @@ describe('Today tiles', () => {
     summary.today.metrics.meetingsSet = { status: 'unavailable', count: null };
     renderTiles();
     expect(
-      screen.getByRole('link', { name: /Activities today/ }),
+      screen.getByRole('link', { name: /Activities this week/ }),
     ).toHaveTextContent('No access');
     expect(
-      screen.getByRole('link', { name: /Meetings set today/ }),
+      screen.getByRole('link', { name: /Meetings set this week/ }),
     ).toHaveTextContent('Unavailable');
     expect(
-      screen.getByRole('link', { name: /Activities today/ }),
+      screen.getByRole('link', { name: /Activities this week/ }),
     ).toHaveAttribute('aria-disabled', 'true');
   });
 });
