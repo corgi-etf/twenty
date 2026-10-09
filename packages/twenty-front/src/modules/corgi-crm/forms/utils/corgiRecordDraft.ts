@@ -36,6 +36,14 @@ export const CORGI_CREATE_FIELDS: Partial<Record<string, string[]>> = {
   ],
 };
 
+// Mirrors getCorgiCreateError so the form can flag these fields up front.
+export const CORGI_REQUIRED_CREATE_FIELDS: Partial<Record<string, string[]>> = {
+  company: ['name'],
+  person: ['name'],
+  meetingBooking: ['company', 'scheduledAt', 'wholesaler'],
+  companyAllocation: ['ticker', 'amount', 'company'],
+};
+
 export const getCorgiRecordLabel = (
   record: Record<string, unknown>,
 ): string => {
