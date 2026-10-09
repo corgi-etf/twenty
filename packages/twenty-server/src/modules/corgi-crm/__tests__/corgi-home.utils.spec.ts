@@ -3,6 +3,7 @@ import { BadRequestException } from '@nestjs/common';
 import {
   corgiDayRange,
   corgiPageCursor,
+  corgiWeekStart,
   parseCorgiHomeQuery,
   readCorgiOffset,
   sumCorgiMoney,
@@ -31,6 +32,11 @@ describe('CRM calendar and pagination conventions', () => {
       end: '2026-03-09T05:00:00.000Z',
     });
     expect(corgiDayRange('2026-11-01').end).toBe('2026-11-02T06:00:00.000Z');
+  });
+  it('starts the working week on Monday', () => {
+    expect(corgiWeekStart('2026-10-05')).toBe('2026-10-05');
+    expect(corgiWeekStart('2026-10-09')).toBe('2026-10-05');
+    expect(corgiWeekStart('2026-10-11')).toBe('2026-10-05');
   });
 
   it('rejects malformed dates, arbitrary sections and cross-query cursors', () => {
