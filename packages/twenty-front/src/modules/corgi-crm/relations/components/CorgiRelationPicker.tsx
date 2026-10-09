@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { useDebounce } from 'use-debounce';
 import { Link } from 'react-router-dom';
+import { styled } from '@linaria/react';
+import { themeCssVariables } from 'twenty-ui/theme-constants';
 import { getLinkToShowPage } from '@/object-metadata/utils/getLinkToShowPage';
 import { Trans, useLingui } from '@lingui/react/macro';
 import { useObjectMetadataItem } from '@/object-metadata/hooks/useObjectMetadataItem';
@@ -14,6 +16,86 @@ import {
   getCorgiRecordLabel,
   CORGI_CREATE_FIELDS,
 } from '@/corgi-crm/forms/utils/corgiRecordDraft';
+import {
+  StyledCorgiFormButton,
+  StyledCorgiFormCheckbox,
+  StyledCorgiFormGroup,
+  StyledCorgiFormHint,
+  StyledCorgiFormLegend,
+  StyledCorgiFormNotice,
+  StyledCorgiFormTextButton,
+} from '@/corgi-crm/forms/components/CorgiFormStyles';
+
+const StyledSelection = styled.div`
+  align-items: center;
+  background: ${themeCssVariables.background.transparent.lighter};
+  border: 1px solid ${themeCssVariables.border.color.medium};
+  border-radius: ${themeCssVariables.border.radius.sm};
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  min-height: 36px;
+  padding: 2px 4px 2px 10px;
+  > a {
+    color: ${themeCssVariables.font.color.primary};
+    flex: 1 1 auto;
+    font-weight: ${themeCssVariables.font.weight.medium};
+    min-width: 0;
+    overflow: hidden;
+    text-decoration: none;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  > a:hover {
+    text-decoration: underline;
+  }
+`;
+
+const StyledUnavailable = styled.span`
+  color: ${themeCssVariables.font.color.tertiary};
+  flex: 1 1 auto;
+`;
+
+const StyledResults = styled.ul`
+  border: 1px solid ${themeCssVariables.border.color.light};
+  border-radius: ${themeCssVariables.border.radius.sm};
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  list-style: none;
+  margin: 0;
+  max-height: 220px;
+  overflow-y: auto;
+  padding: 4px;
+  &:empty {
+    display: none;
+  }
+`;
+
+const StyledResult = styled.button`
+  background: transparent;
+  border: 0;
+  border-radius: ${themeCssVariables.border.radius.xs};
+  color: ${themeCssVariables.font.color.primary};
+  cursor: pointer;
+  font: inherit;
+  font-size: ${themeCssVariables.font.size.md};
+  padding: 8px 10px;
+  text-align: left;
+  transition: background-color 120ms ease;
+  width: 100%;
+  &:hover,
+  &:focus-visible {
+    background: ${themeCssVariables.background.transparent.medium};
+    outline: none;
+  }
+`;
+
+const StyledPickerActions = styled.div`
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+`;
 
 type CorgiRelationPickerProps = {
   objectNameSingular: string;
@@ -22,6 +104,7 @@ type CorgiRelationPickerProps = {
   companyId?: string;
   openProfileInNewTab?: boolean;
   keepOpenOnSelect?: boolean;
+  isRequired?: boolean;
   onChange: (record: ObjectRecord | undefined) => void;
 };
 
@@ -32,6 +115,7 @@ export const CorgiRelationPicker = ({
   companyId,
   openProfileInNewTab = false,
   keepOpenOnSelect = false,
+  isRequired = false,
   onChange,
 }: CorgiRelationPickerProps) => {
   const { t } = useLingui();
@@ -88,10 +172,12 @@ export const CorgiRelationPicker = ({
     setSearch('');
   };
   return (
-    <fieldset onKeyDown={stopCorgiInputKeyCapture}>
-      <legend>{label}</legend>
+    <StyledCorgiFormGroup onKeyDown={stopCorgiInputKeyCapture}>
+      <StyledCorgiFormLegend data-required={isRequired}>
+        {label}
+      </StyledCorgiFormLegend>
       {value && (
-        <div>
+        <StyledSelection>
           {selectedRecord ? (
             openProfileInNewTab ? (
               <Link
@@ -109,14 +195,17 @@ export const CorgiRelationPicker = ({
               />
             )
           ) : (
-            <span>
+            <StyledUnavailable>
               <Trans>Record unavailable</Trans>
-            </span>
+            </StyledUnavailable>
           )}{' '}
-          <button type="button" onClick={() => setIsOpen(!isOpen)}>
+          <StyledCorgiFormTextButton
+            type="button"
+            onClick={() => setIsOpen(!isOpen)}
+          >
             <Trans>Change</Trans>
-          </button>{' '}
-          <button
+          </StyledCorgiFormTextButton>{' '}
+          <StyledCorgiFormTextButton
             type="button"
             onClick={() => {
               onChange(undefined);
@@ -124,8 +213,8 @@ export const CorgiRelationPicker = ({
             }}
           >
             <Trans>Remove link</Trans>
-          </button>
-        </div>
+          </StyledCorgiFormTextButton>
+        </StyledSelection>
       )}
       {isOpen && (
         <>
@@ -136,29 +225,29 @@ export const CorgiRelationPicker = ({
             onChange={(event) => setSearch(event.target.value)}
           />
           {canScope && (
-            <label>
+            <StyledCorgiFormCheckbox>
               <input
                 type="checkbox"
                 checked={searchAll}
                 onChange={(event) => setSearchAll(event.target.checked)}
               />
               <Trans>Search all companies</Trans>
-            </label>
+            </StyledCorgiFormCheckbox>
           )}
           {loading && (
-            <p role="status">
+            <StyledCorgiFormHint role="status">
               <Trans>Searching…</Trans>
-            </p>
+            </StyledCorgiFormHint>
           )}
           {error && (
-            <p role="alert">
+            <StyledCorgiFormNotice role="alert">
               <Trans>Search unavailable. Try again.</Trans>
-            </p>
+            </StyledCorgiFormNotice>
           )}
-          <ul>
+          <StyledResults>
             {records.map((record) => (
               <li key={record.id}>
-                <button type="button" onClick={() => select(record)}>
+                <StyledResult type="button" onClick={() => select(record)}>
                   {getCorgiRecordLabel(record)}
                   {record.company?.name ? ` · ${record.company.name}` : ''}
                   {record.address?.addressCity
@@ -166,36 +255,41 @@ export const CorgiRelationPicker = ({
                     : ''}
                   {record.territory ? ` · ${record.territory}` : ''}
                   {record.activeClient === true ? ` · ${t`Active client`}` : ''}
-                </button>
+                </StyledResult>
               </li>
             ))}
-          </ul>
-          {hasNextPage && (
-            <button type="button" onClick={() => void fetchMoreRecords()}>
-              <Trans>Load more</Trans>
-            </button>
-          )}
-          {CORGI_CREATE_FIELDS[objectNameSingular] && (
-            <button
-              type="button"
-              onClick={() =>
-                void openCreateRecord({
-                  objectNameSingular,
-                  initialValues: {
-                    ...(companyId && canScope ? { companyId } : {}),
-                    ...(search && nameField?.type !== 'FULL_NAME'
-                      ? { [nameField?.name ?? 'name']: search }
-                      : {}),
-                  },
-                  onCreated: select,
-                })
-              }
-            >
-              <Trans>Create new</Trans>
-            </button>
-          )}
+          </StyledResults>
+          <StyledPickerActions>
+            {hasNextPage && (
+              <StyledCorgiFormButton
+                type="button"
+                onClick={() => void fetchMoreRecords()}
+              >
+                <Trans>Load more</Trans>
+              </StyledCorgiFormButton>
+            )}
+            {CORGI_CREATE_FIELDS[objectNameSingular] && (
+              <StyledCorgiFormButton
+                type="button"
+                onClick={() =>
+                  void openCreateRecord({
+                    objectNameSingular,
+                    initialValues: {
+                      ...(companyId && canScope ? { companyId } : {}),
+                      ...(search && nameField?.type !== 'FULL_NAME'
+                        ? { [nameField?.name ?? 'name']: search }
+                        : {}),
+                    },
+                    onCreated: select,
+                  })
+                }
+              >
+                <Trans>Create new</Trans>
+              </StyledCorgiFormButton>
+            )}
+          </StyledPickerActions>
         </>
       )}
-    </fieldset>
+    </StyledCorgiFormGroup>
   );
 };

@@ -2,11 +2,20 @@ import { type FieldMetadataItem } from '@/object-metadata/types/FieldMetadataIte
 import { type ObjectRecord } from '@/object-record/types/ObjectRecord';
 import { CorgiRelationPicker } from '@/corgi-crm/relations/components/CorgiRelationPicker';
 import { Trans, useLingui } from '@lingui/react/macro';
+import {
+  StyledCorgiFormCheckbox,
+  StyledCorgiFormField,
+  StyledCorgiFormGroup,
+  StyledCorgiFormLabel,
+  StyledCorgiFormLegend,
+  StyledCorgiFormRow,
+} from '@/corgi-crm/forms/components/CorgiFormStyles';
 
 type CorgiDraftFieldProps = {
   field: FieldMetadataItem;
   value: unknown;
   companyId?: string;
+  isRequired?: boolean;
   onChange: (value: unknown, record?: ObjectRecord) => void;
 };
 // Unsupported metadata field types intentionally have no draft editor.
@@ -15,6 +24,7 @@ export const CorgiDraftField = ({
   field,
   value,
   companyId,
+  isRequired = false,
   onChange,
 }: CorgiDraftFieldProps) => {
   const { t } = useLingui();
@@ -23,8 +33,8 @@ export const CorgiDraftField = ({
     string | number | null
   >;
   const input = (name: string, label: string, type = 'text') => (
-    <label key={name}>
-      {label}
+    <StyledCorgiFormField key={name}>
+      <StyledCorgiFormLabel>{label}</StyledCorgiFormLabel>
       <input
         type={type}
         value={String(composite[name] ?? '')}
@@ -32,7 +42,17 @@ export const CorgiDraftField = ({
           onChange({ ...composite, [name]: event.target.value })
         }
       />
-    </label>
+    </StyledCorgiFormField>
+  );
+  const fieldLabel = (
+    <StyledCorgiFormLabel data-required={isRequired}>
+      {field.label}
+    </StyledCorgiFormLabel>
+  );
+  const groupLegend = (label: string) => (
+    <StyledCorgiFormLegend data-required={isRequired}>
+      {label}
+    </StyledCorgiFormLegend>
   );
   if (field.type === 'RELATION' && field.relation?.type === 'MANY_TO_ONE')
     return (
@@ -41,27 +61,30 @@ export const CorgiDraftField = ({
         label={field.label}
         value={typeof value === 'string' ? value : undefined}
         companyId={companyId}
+        isRequired={isRequired}
         openProfileInNewTab
         onChange={(record) => onChange(record?.id ?? null, record)}
       />
     );
   if (field.type === 'BOOLEAN')
     return (
-      <label>
+      <StyledCorgiFormCheckbox>
         <input
           type="checkbox"
           checked={value === true}
           onChange={(event) => onChange(event.target.checked)}
         />
         {field.label}
-      </label>
+      </StyledCorgiFormCheckbox>
     );
   if (field.type === 'ADDRESS')
     return (
-      <fieldset>
-        <legend>{t`Address`}</legend>
-        {input('addressCity', t`City`)}
-        {input('addressState', t`State`)}
+      <StyledCorgiFormGroup>
+        {groupLegend(t`Address`)}
+        <StyledCorgiFormRow>
+          {input('addressCity', t`City`)}
+          {input('addressState', t`State`)}
+        </StyledCorgiFormRow>
         <details>
           <summary>
             <Trans>Street and postal address</Trans>
@@ -71,83 +94,93 @@ export const CorgiDraftField = ({
           {input('addressPostcode', t`Postal code`)}
           {input('addressCountry', t`Country`)}
         </details>
-      </fieldset>
+      </StyledCorgiFormGroup>
     );
   if (field.type === 'FULL_NAME')
     return (
-      <fieldset>
-        <legend>{field.label}</legend>
-        {input('firstName', t`First name`)}
-        {input('lastName', t`Last name`)}
-      </fieldset>
+      <StyledCorgiFormGroup>
+        {groupLegend(field.label)}
+        <StyledCorgiFormRow>
+          {input('firstName', t`First name`)}
+          {input('lastName', t`Last name`)}
+        </StyledCorgiFormRow>
+      </StyledCorgiFormGroup>
     );
   if (field.type === 'LINKS')
     return (
-      <fieldset>
-        <legend>{field.label}</legend>
+      <StyledCorgiFormGroup>
+        {groupLegend(field.label)}
         {input('primaryLinkUrl', t`URL`, 'url')}
-      </fieldset>
+      </StyledCorgiFormGroup>
     );
   if (field.type === 'EMAILS')
     return (
-      <fieldset>
-        <legend>{field.label}</legend>
+      <StyledCorgiFormGroup>
+        {groupLegend(field.label)}
         {input('primaryEmail', t`Email`, 'email')}
-      </fieldset>
+      </StyledCorgiFormGroup>
     );
   if (field.type === 'PHONES')
     return (
-      <fieldset>
-        <legend>{field.label}</legend>
-        {input('primaryPhoneNumber', t`Phone`, 'tel')}
-        {input('primaryPhoneCallingCode', t`Calling code`)}
-      </fieldset>
+      <StyledCorgiFormGroup>
+        {groupLegend(field.label)}
+        <StyledCorgiFormRow>
+          {input('primaryPhoneNumber', t`Phone`, 'tel')}
+          {input('primaryPhoneCallingCode', t`Calling code`)}
+        </StyledCorgiFormRow>
+      </StyledCorgiFormGroup>
     );
   if (field.type === 'CURRENCY')
     return (
-      <fieldset>
-        <legend>{field.label}</legend>
-        <label>
-          <Trans>Amount</Trans>
-          <input
-            type="number"
-            step="0.01"
-            min="0"
-            value={
-              typeof composite.amountMicros === 'number'
-                ? composite.amountMicros / 1000000
-                : ''
-            }
-            onChange={(event) =>
-              onChange({
-                ...composite,
-                currencyCode: composite.currencyCode ?? 'USD',
-                amountMicros: event.target.value
-                  ? Math.round(Number(event.target.value) * 1000000)
-                  : null,
-              })
-            }
-          />
-        </label>
-        <label>
-          <Trans>Currency</Trans>
-          <input
-            maxLength={3}
-            value={String(composite.currencyCode ?? 'USD')}
-            onChange={(event) =>
-              onChange({
-                ...composite,
-                currencyCode: event.target.value.toUpperCase(),
-              })
-            }
-          />
-        </label>
-      </fieldset>
+      <StyledCorgiFormGroup>
+        {groupLegend(field.label)}
+        <StyledCorgiFormRow>
+          <StyledCorgiFormField>
+            <StyledCorgiFormLabel>
+              <Trans>Amount</Trans>
+            </StyledCorgiFormLabel>
+            <input
+              type="number"
+              step="0.01"
+              min="0"
+              value={
+                typeof composite.amountMicros === 'number'
+                  ? composite.amountMicros / 1000000
+                  : ''
+              }
+              onChange={(event) =>
+                onChange({
+                  ...composite,
+                  currencyCode: composite.currencyCode ?? 'USD',
+                  amountMicros: event.target.value
+                    ? Math.round(Number(event.target.value) * 1000000)
+                    : null,
+                })
+              }
+            />
+          </StyledCorgiFormField>
+          <StyledCorgiFormField>
+            <StyledCorgiFormLabel>
+              <Trans>Currency</Trans>
+            </StyledCorgiFormLabel>
+            <input
+              maxLength={3}
+              value={String(composite.currencyCode ?? 'USD')}
+              onChange={(event) =>
+                onChange({
+                  ...composite,
+                  currencyCode: event.target.value.toUpperCase(),
+                })
+              }
+            />
+          </StyledCorgiFormField>
+        </StyledCorgiFormRow>
+      </StyledCorgiFormGroup>
     );
   if (field.type === 'SELECT')
     return (
-      <label>
-        {field.label}
+      <StyledCorgiFormField>
+        {fieldLabel}
         <select
           value={String(value ?? '')}
           onChange={(event) => onChange(event.target.value || null)}
@@ -159,7 +192,7 @@ export const CorgiDraftField = ({
             </option>
           ))}
         </select>
-      </label>
+      </StyledCorgiFormField>
     );
   if (field.type === 'DATE_TIME') {
     const date = typeof value === 'string' ? new Date(value) : undefined;
@@ -170,8 +203,10 @@ export const CorgiDraftField = ({
             .slice(0, 16)
         : '';
     return (
-      <label>
-        {field.label} ({Intl.DateTimeFormat().resolvedOptions().timeZone})
+      <StyledCorgiFormField>
+        <StyledCorgiFormLabel data-required={isRequired}>
+          {field.label} ({Intl.DateTimeFormat().resolvedOptions().timeZone})
+        </StyledCorgiFormLabel>
         <input
           type="datetime-local"
           value={localValue}
@@ -183,24 +218,24 @@ export const CorgiDraftField = ({
             )
           }
         />
-      </label>
+      </StyledCorgiFormField>
     );
   }
   if (field.type === 'DATE')
     return (
-      <label>
-        {field.label}
+      <StyledCorgiFormField>
+        {fieldLabel}
         <input
           type="date"
           value={String(value ?? '').slice(0, 10)}
           onChange={(event) => onChange(event.target.value || null)}
         />
-      </label>
+      </StyledCorgiFormField>
     );
   if (field.type === 'NUMBER')
     return (
-      <label>
-        {field.label}
+      <StyledCorgiFormField>
+        {fieldLabel}
         <input
           type="number"
           value={typeof value === 'number' ? value : ''}
@@ -208,24 +243,24 @@ export const CorgiDraftField = ({
             onChange(event.target.value ? Number(event.target.value) : null)
           }
         />
-      </label>
+      </StyledCorgiFormField>
     );
   if (field.type === 'RICH_TEXT')
     return (
-      <label>
-        {field.label}
+      <StyledCorgiFormField>
+        {fieldLabel}
         <textarea
           value={String(composite.markdown ?? '')}
           onChange={(event) =>
             onChange({ markdown: event.target.value, blocknote: null })
           }
         />
-      </label>
+      </StyledCorgiFormField>
     );
   if (field.type === 'MULTI_SELECT')
     return (
-      <label>
-        {field.label}
+      <StyledCorgiFormField>
+        {fieldLabel}
         <select
           multiple
           value={Array.isArray(value) ? value : []}
@@ -241,17 +276,17 @@ export const CorgiDraftField = ({
             </option>
           ))}
         </select>
-      </label>
+      </StyledCorgiFormField>
     );
   if (field.type === 'TEXT')
     return (
-      <label>
-        {field.label}
+      <StyledCorgiFormField>
+        {fieldLabel}
         <input
           value={typeof value === 'string' ? value : ''}
           onChange={(event) => onChange(event.target.value)}
         />
-      </label>
+      </StyledCorgiFormField>
     );
   return null;
 };
