@@ -39,6 +39,7 @@ import {
   CORGI_PAGE_SIZE,
   CORGI_TIME_ZONE,
   corgiDayRange,
+  corgiWeekStart,
   corgiPageCursor,
   parseCorgiHomeQuery,
   readCorgiOffset,
@@ -1457,7 +1458,13 @@ export class CorgiHomeService {
       'allocations',
       'currentClients',
     ];
-    const metricValues = await Promise.all(keys.map((key) => this.metric(key)));
+    const date = corgiDayRange().date;
+    const from = corgiWeekStart(date);
+    const metricValues = await Promise.all(
+      keys.map((key) =>
+        this.metric(key, key === 'currentClients' ? {} : { from, to: date }),
+      ),
+    );
     const [
       latestRecords,
       followUps,
@@ -1481,7 +1488,8 @@ export class CorgiHomeService {
       timeZone: CORGI_TIME_ZONE,
       generatedAt: new Date().toISOString(),
       today: {
-        date: corgiDayRange().date,
+        date,
+        from,
         metrics: Object.fromEntries(
           keys.map((key, index) => [key, metricValues[index]]),
         ) as Record<CorgiMetricKey, CorgiMetric>,
@@ -1505,6 +1513,7 @@ export class CorgiHomeService {
       generatedAt: new Date().toISOString(),
       today: {
         date: corgiDayRange().date,
+        from: corgiWeekStart(corgiDayRange().date),
         metrics: {
           activities: unavailable,
           meetingsSet: unavailable,
