@@ -1,5 +1,6 @@
 import { CorgiBusinessRecordRow } from '@/corgi-crm/home/components/CorgiBusinessRecordRow';
 import { CorgiClientCompanies } from '@/corgi-crm/home/components/CorgiClientCompanies';
+import { CorgiClientGrowth } from '@/corgi-crm/home/components/CorgiClientGrowth';
 import { CorgiFollowUpCompanies } from '@/corgi-crm/home/components/CorgiFollowUpCompanies';
 import { CorgiLegacyFollowUps } from '@/corgi-crm/home/components/CorgiLegacyFollowUps';
 import { CorgiFollowUpRow } from '@/corgi-crm/home/components/CorgiFollowUpRow';
@@ -52,6 +53,7 @@ export const CorgiDrilldown = ({ query }: { query: CorgiHomeQuery }) => {
     );
   return (
     <StyledCorgiPanel>
+      {query.section === 'currentClients' && <CorgiClientGrowth />}
       {query.section === 'currentClients' && (
         <p>
           <StyledCorgiMuted>

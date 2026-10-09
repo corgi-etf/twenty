@@ -1,4 +1,8 @@
-import { type CorgiClientCompany, type CorgiPage } from 'twenty-shared/types';
+import {
+  type CorgiClientCompany,
+  type CorgiClientGrowthPoint,
+  type CorgiPage,
+} from 'twenty-shared/types';
 
 import { RelationType } from 'src/engine/metadata-modules/field-metadata/interfaces/relation-type.interface';
 import {
@@ -644,5 +648,63 @@ describe('CRM earlier follow-up history', () => {
         workspaceMemberId: '10000000-0000-4000-8000-000000000001',
       }),
     ).rejects.toThrow();
+  });
+});
+
+describe('CRM client growth', () => {
+  it('carries firms that became clients before the window into the running total', async () => {
+    const { service } = makeService((sql) => {
+      if (sql.text.includes('MIN('))
+        return [
+          { id: 'firm-early', date: '2026-01-04' },
+          { id: 'firm-inside', date: '2026-03-02' },
+        ];
+      if (sql.text.includes('SUM('))
+        return [
+          {
+            date: '2026-03-02',
+            currencyCode: 'USD',
+            amountMicros: '5000000',
+          },
+        ];
+
+      return [];
+    });
+
+    const result = (await service.get({
+      section: 'clientGrowth',
+      from: '2026-03-01',
+      to: '2026-03-03',
+    })) as CorgiPage<CorgiClientGrowthPoint>;
+
+    expect(
+      result.records.map(({ date, newClients, totalClients }) => ({
+        date,
+        newClients,
+        totalClients,
+      })),
+    ).toEqual([
+      { date: '2026-03-01', newClients: 0, totalClients: 1 },
+      { date: '2026-03-02', newClients: 1, totalClients: 2 },
+      { date: '2026-03-03', newClients: 0, totalClients: 2 },
+    ]);
+    expect(result.records[1].amounts).toEqual([
+      { currencyCode: 'USD', amountMicros: '5000000' },
+    ]);
+    expect(result.totalCount).toBe(2);
+  });
+
+  it('counts a firm once however many allocations it has', async () => {
+    const { service } = makeService((sql) =>
+      sql.text.includes('MIN(') ? [{ id: 'firm-a', date: '2026-03-02' }] : [],
+    );
+
+    const result = (await service.get({
+      section: 'clientGrowth',
+      from: '2026-03-01',
+      to: '2026-03-03',
+    })) as CorgiPage<CorgiClientGrowthPoint>;
+
+    expect(result.records[result.records.length - 1]?.totalClients).toBe(1);
   });
 });
