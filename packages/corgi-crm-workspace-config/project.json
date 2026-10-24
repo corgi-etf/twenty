@@ -3,7 +3,9 @@
   "$schema": "../../node_modules/nx/schemas/project-schema.json",
   "sourceRoot": "packages/corgi-crm-workspace-config/src",
   "projectType": "application",
-  "tags": ["scope:tooling"],
+  "tags": [
+    "scope:tooling"
+  ],
   "targets": {
     "test": {
       "executor": "nx:run-commands",
@@ -24,6 +26,13 @@
       "options": {
         "cwd": "{projectRoot}",
         "command": "npx oxlint -c .oxlintrc.json src test && npx oxfmt --check src test"
+      }
+    },
+    "activity-type-inventory": {
+      "executor": "nx:run-commands",
+      "options": {
+        "cwd": "{projectRoot}",
+        "command": "node --experimental-strip-types src/activity-type-inventory.ts"
       }
     }
   }
