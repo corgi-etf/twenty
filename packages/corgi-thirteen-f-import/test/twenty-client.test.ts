@@ -244,34 +244,38 @@ test('uploads unmodified bytes with the server-selected content type', async () 
   assert.deepEqual(calls[0]?.init.body, bytes);
 });
 
-test('downloads attached files only from the exact CRM FilesField path', async () => {
+test('downloads attached files only from supported exact CRM file paths', async () => {
   const fileId = randomUUID();
   const expected = Buffer.from('verified bytes');
-  const { client, calls } = createClient([
-    new Response(expected, {
-      status: 200,
-      headers: { 'content-length': String(expected.byteLength) },
-    }),
-  ]);
+  for (const path of ['FilesField', 'files-field']) {
+    const { client, calls } = createClient([
+      new Response(expected, {
+        status: 200,
+        headers: { 'content-length': String(expected.byteLength) },
+      }),
+    ]);
 
-  const bytes = await client.downloadAttachedFile({
-    fileId,
-    label: 'a.xlsx',
-    url: `${APPROVED_CRM_ORIGIN}/file/FilesField/${fileId}?token=signed`,
-  });
-  assert.deepEqual(Buffer.from(bytes), expected);
-  assert.equal(calls.length, 1);
-
-  const hostile = createClient([]);
-  await assert.rejects(
-    hostile.client.downloadAttachedFile({
+    const bytes = await client.downloadAttachedFile({
       fileId,
       label: 'a.xlsx',
-      url: `https://lookalike.example/file/FilesField/${fileId}?token=signed`,
-    }),
-    /attached file URL is invalid/,
-  );
-  assert.equal(hostile.calls.length, 0);
+      url: `${APPROVED_CRM_ORIGIN}/file/${path}/${fileId}?token=signed`,
+    });
+    assert.deepEqual(Buffer.from(bytes), expected);
+    assert.equal(calls.length, 1);
+  }
+
+  for (const url of [
+    `https://lookalike.example/file/files-field/${fileId}?token=signed`,
+    `${APPROVED_CRM_ORIGIN}/file/files-field/${randomUUID()}?token=signed`,
+    `${APPROVED_CRM_ORIGIN}/file/files-field/${fileId}`,
+  ]) {
+    const hostile = createClient([]);
+    await assert.rejects(
+      hostile.client.downloadAttachedFile({ fileId, label: 'a.xlsx', url }),
+      /attached file URL is invalid/,
+    );
+    assert.equal(hostile.calls.length, 0);
+  }
 });
 
 test('rejects noncanonical CRM origins and never exposes destructive methods', () => {

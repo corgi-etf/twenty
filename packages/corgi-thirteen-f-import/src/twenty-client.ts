@@ -313,7 +313,10 @@ export class TwentyImportClient implements ThirteenFImportApi {
     }
     if (
       url.origin !== this.origin ||
-      url.pathname !== `/file/FilesField/${file.fileId}` ||
+      ![
+        `/file/FilesField/${file.fileId}`,
+        `/file/files-field/${file.fileId}`,
+      ].includes(url.pathname) ||
       !url.searchParams.has('token')
     ) {
       throw new Error('CRM attached file URL is invalid');
