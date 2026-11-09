@@ -5,6 +5,9 @@ import {
 } from 'twenty-sdk/define';
 import { describe, expect, it } from 'vitest';
 
+import {
+  THIRTEEN_F_FILING_SOURCE_NODE_ID_FIELD_UNIVERSAL_IDENTIFIER,
+} from 'src/constants/universal-identifiers';
 import navigationMenuItem from 'src/navigation-menu-items/thirteen-f-filings.navigation-menu-item';
 import filingObject from 'src/objects/thirteen-f-filing.object';
 import defaultRole from 'src/roles/default-role';
@@ -35,6 +38,13 @@ describe('13F library manifest', () => {
     expect(fields.find(({ name }) => name === 'file')).toMatchObject({
       type: FieldType.FILES,
       universalSettings: { maxNumberOfValues: 1 },
+    });
+    expect(fields.find(({ name }) => name === 'sourceNodeId')).toMatchObject({
+      universalIdentifier:
+        THIRTEEN_F_FILING_SOURCE_NODE_ID_FIELD_UNIVERSAL_IDENTIFIER,
+      type: FieldType.TEXT,
+      isNullable: true,
+      isUnique: true,
     });
   });
 

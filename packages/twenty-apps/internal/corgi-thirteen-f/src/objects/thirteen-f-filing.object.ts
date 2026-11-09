@@ -94,6 +94,7 @@ export default defineObject({
       description: 'Stable source file identifier used for idempotent imports.',
       icon: 'IconFingerprint',
       isNullable: true,
+      isUnique: true,
     },
     {
       universalIdentifier:
