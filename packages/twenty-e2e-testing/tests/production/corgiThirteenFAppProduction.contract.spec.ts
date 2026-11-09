@@ -194,6 +194,19 @@ test('uses metadata operations supported by the pinned Twenty schema', () => {
   }
 });
 
+test('verifies the resumable import identity fields in live metadata', () => {
+  expect(verifier).toContain('0540519f-2f64-4429-a72a-9f77e9923f2a');
+  expect(verifier).toContain('0f8f0907-75e2-455c-af5c-409e5f11ff46');
+  expect(verifier).toContain("importPendingFileIdField.type !== 'TEXT'");
+  expect(verifier).toContain('importPendingFileIdField.isNullable !== true');
+  expect(verifier).toContain("sourceNodeIdField.type !== 'TEXT'");
+  expect(verifier).toContain('sourceNodeIdField.isNullable !== true');
+  expect(verifier).toContain('sourceNodeIdField.isUnique !== true');
+  expect(verifier).toContain(
+    'universalIdentifier name type isActive isNullable isUnique',
+  );
+});
+
 test('never rolls back a concurrent SAME_VERSION publish or install race', () => {
   const rollbackCondition = workflow.match(
     /Roll back only this run's fresh installation and retain registration\n\s+if: ([^\n]+)/,

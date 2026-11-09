@@ -25,6 +25,7 @@ const EXPECTED_FIELD_IDS = [
   '46cbacff-14c9-4dd4-9276-19b9c8e2053c',
   '7f56dc80-df74-461d-9c48-cea172628b9f',
   '5caab33f-a98a-485b-b3d3-47897db395c1',
+  '0540519f-2f64-4429-a72a-9f77e9923f2a',
 ];
 const EXPECTED_VIEW_FIELD_IDS = [
   '4964d8a9-a6b9-4e5f-9ff3-aaa9b8a9f8ef',
@@ -169,7 +170,9 @@ const verifyOnce = async () => {
         id universalIdentifier version state defaultRoleId
         objects {
           id universalIdentifier nameSingular namePlural applicationId
-          fieldsList { universalIdentifier name type isActive }
+          fieldsList {
+            universalIdentifier name type isActive isNullable isUnique
+          }
         }
       }
     }`,
@@ -211,6 +214,33 @@ const verifyOnce = async () => {
     if (field.isActive !== true) {
       throw new Error(`Corgi 13F field ${fieldId} is not active`);
     }
+  }
+
+  const importPendingFileIdField = exactlyOne(
+    object.fieldsList,
+    ({ universalIdentifier }) =>
+      universalIdentifier === '0540519f-2f64-4429-a72a-9f77e9923f2a',
+    'Corgi 13F importPendingFileId field',
+  );
+  const sourceNodeIdField = exactlyOne(
+    object.fieldsList,
+    ({ universalIdentifier }) =>
+      universalIdentifier === '0f8f0907-75e2-455c-af5c-409e5f11ff46',
+    'Corgi 13F sourceNodeId field',
+  );
+
+  if (
+    importPendingFileIdField.name !== 'importPendingFileId' ||
+    importPendingFileIdField.type !== 'TEXT' ||
+    importPendingFileIdField.isActive !== true ||
+    importPendingFileIdField.isNullable !== true ||
+    sourceNodeIdField.name !== 'sourceNodeId' ||
+    sourceNodeIdField.type !== 'TEXT' ||
+    sourceNodeIdField.isActive !== true ||
+    sourceNodeIdField.isNullable !== true ||
+    sourceNodeIdField.isUnique !== true
+  ) {
+    throw new Error('Corgi 13F resumable import field contract is incorrect');
   }
 
   const metadata = await graphql({
