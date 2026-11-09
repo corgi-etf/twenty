@@ -149,9 +149,9 @@ export type ThirteenFImportRunInput = {
   updatedCount: number;
   unchangedCount: number;
   supersededCount: number;
-  errorSummary?: string;
+  errorSummary?: string | null;
   startedAt?: string;
-  completedAt?: string;
+  completedAt?: string | null;
   filingId: string;
 };
 
@@ -353,6 +353,7 @@ const importIdentity = (source: HoldingsSource): string =>
       source.sourceNodeId,
       source.sourceVersionId,
       source.contentSha256,
+      normalizeText(source.sourceFileName).toLowerCase(),
       HOLDINGS_PARSER_VERSION,
     ].join('\0'),
   );

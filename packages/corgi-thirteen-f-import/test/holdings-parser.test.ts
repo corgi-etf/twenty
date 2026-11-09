@@ -189,6 +189,25 @@ test('classifies ancillary documents as unsupported without parsing bytes', () =
   assert.equal(plan.errors[0]?.code, 'UNSUPPORTED_DOCUMENT_PROFILE');
 });
 
+test('changes import identity when the same source attachment is renamed', () => {
+  const bytes = workbookBytes();
+  const original = parseHoldingsSource(
+    source(bytes, 'AGGB competitor holders.xlsx'),
+  );
+  const renamed = parseHoldingsSource(
+    source(bytes, 'BBBB competitor holders.xlsx'),
+  );
+
+  assert.notEqual(renamed.run.importKey, original.run.importKey);
+  assert.notEqual(renamed.run.id, original.run.id);
+  assert.equal(original.holdings[0]?.targetTicker, 'AGGB');
+  assert.equal(renamed.holdings[0]?.targetTicker, 'BBBB');
+  assert.notEqual(
+    renamed.holdings[0]?.occurrenceKey,
+    original.holdings[0]?.occurrenceKey,
+  );
+});
+
 test('derives stable provenance for native CRM uploads', async () => {
   const bytes = workbookBytes();
   const filingId = '00000000-0000-4000-8000-000000000010';

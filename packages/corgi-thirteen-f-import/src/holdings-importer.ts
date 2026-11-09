@@ -116,6 +116,8 @@ const applyPlan = async (
     ...plan.run,
     status: 'STAGING',
     startedAt,
+    completedAt: null,
+    errorSummary: null,
   };
   await upsert(api, 'thirteenFImportRuns', [stagingRun]);
   try {
@@ -164,7 +166,7 @@ const applyPlan = async (
         errorSummary:
           plan.errors.length > 0
             ? `${plan.errors.length} source rows were rejected`
-            : undefined,
+            : null,
       },
     ]);
 

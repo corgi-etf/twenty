@@ -9,7 +9,10 @@ import {
   type ExistingImportRun,
   type HoldingsImportApi,
 } from '../src/holdings-importer.ts';
-import type { HoldingsSource } from '../src/holdings-parser.ts';
+import {
+  safelyParseHoldingsSource,
+  type HoldingsSource,
+} from '../src/holdings-parser.ts';
 
 const HEADERS = [
   'Holder Name',
@@ -103,6 +106,7 @@ const workbookBytes = (): Uint8Array => {
 class MemoryHoldingsApi implements HoldingsImportApi {
   runs = new Map<string, ExistingImportRun>();
   events: string[] = [];
+  importRunRecords: Record<string, unknown>[] = [];
   oldIds = [randomUUID()];
 
   async findImportRun(importKey: string) {
@@ -122,6 +126,7 @@ class MemoryHoldingsApi implements HoldingsImportApi {
     this.events.push(`upsert:${objectPlural}:${records.length}`);
     if (objectPlural === 'thirteenFImportRuns') {
       for (const record of records) {
+        this.importRunRecords.push({ ...record });
         this.runs.set(String(record.importKey), {
           id: String(record.id),
           importKey: String(record.importKey),
@@ -192,4 +197,48 @@ test('stages, reconciles, promotes, supersedes, and no-ops deterministically', a
   const second = await runHoldingsImport(api, [ancillary, holdings]);
   assert.equal(second.noOpFiles, 2);
   assert.equal(api.events.length, eventCount);
+});
+
+test('a renamed source attachment cannot no-op with a stale target ticker', async () => {
+  const api = new MemoryHoldingsApi();
+  const original = source('AGGB competitor holders.xlsx', workbookBytes());
+  const renamed: HoldingsSource = {
+    ...original,
+    sourceFileName: 'BBBB competitor holders.xlsx',
+    file: { ...original.file, label: 'BBBB competitor holders.xlsx' },
+  };
+
+  await runHoldingsImport(api, [original]);
+  const receipt = await runHoldingsImport(api, [renamed]);
+
+  assert.equal(receipt.noOpFiles, 0);
+  assert.equal(api.runs.size, 2);
+});
+
+test('retry staging and clean completion clear stale terminal fields', async () => {
+  const api = new MemoryHoldingsApi();
+  const holdings = source('AGGB competitor holders.xlsx', workbookBytes());
+  const plan = safelyParseHoldingsSource(holdings);
+  api.runs.set(plan.run.importKey, {
+    id: plan.run.id,
+    importKey: plan.run.importKey,
+    status: 'PARTIAL',
+    contentSha256: plan.run.contentSha256,
+    parserVersion: plan.run.parserVersion,
+  });
+
+  await runHoldingsImport(api, [holdings]);
+
+  assert.equal(api.importRunRecords.length, 2);
+  assert.deepEqual(
+    {
+      status: api.importRunRecords[0]?.status,
+      completedAt: api.importRunRecords[0]?.completedAt,
+      errorSummary: api.importRunRecords[0]?.errorSummary,
+    },
+    { status: 'STAGING', completedAt: null, errorSummary: null },
+  );
+  assert.equal(api.importRunRecords[1]?.status, 'COMPLETE');
+  assert.equal(api.importRunRecords[1]?.errorSummary, null);
+  assert.equal(typeof api.importRunRecords[1]?.completedAt, 'string');
 });
