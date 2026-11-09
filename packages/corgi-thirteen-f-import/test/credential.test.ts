@@ -6,8 +6,13 @@ import {
   APPROVED_WORKSPACE_NAME,
   THIRTEEN_F_APPLICATION_UNIVERSAL_IDENTIFIER,
   THIRTEEN_F_FILE_FIELD_UNIVERSAL_IDENTIFIER,
+  THIRTEEN_F_HOLDING_OBJECT_UNIVERSAL_IDENTIFIER,
+  THIRTEEN_F_IMPORT_ERROR_OBJECT_UNIVERSAL_IDENTIFIER,
+  THIRTEEN_F_IMPORT_RUN_OBJECT_UNIVERSAL_IDENTIFIER,
+  THIRTEEN_F_MANAGER_OBJECT_UNIVERSAL_IDENTIFIER,
   THIRTEEN_F_OBJECT_UNIVERSAL_IDENTIFIER,
   THIRTEEN_F_PENDING_FILE_FIELD_UNIVERSAL_IDENTIFIER,
+  THIRTEEN_F_SECURITY_OBJECT_UNIVERSAL_IDENTIFIER,
   THIRTEEN_F_SOURCE_NODE_FIELD_UNIVERSAL_IDENTIFIER,
 } from '../src/constants.ts';
 import {
@@ -19,6 +24,14 @@ import {
 } from '../src/credential.ts';
 
 const objectMetadataId = 'b1fab26e-4e38-4a95-a653-3cdb014a6b28';
+const normalizedObjectMetadataIds = [
+  'a1fab26e-4e38-4a95-a653-3cdb014a6b28',
+  'a2fab26e-4e38-4a95-a653-3cdb014a6b28',
+  'a3fab26e-4e38-4a95-a653-3cdb014a6b28',
+  'a4fab26e-4e38-4a95-a653-3cdb014a6b28',
+  'a5fab26e-4e38-4a95-a653-3cdb014a6b28',
+];
+const objectMetadataIds = [objectMetadataId, ...normalizedObjectMetadataIds];
 const apiKeyId = 'bc841975-9c6e-44d8-8bd7-8048312b7b0e';
 
 const preflight = () => ({
@@ -68,6 +81,39 @@ const preflight = () => ({
           },
         ],
       },
+      ...[
+        [
+          THIRTEEN_F_MANAGER_OBJECT_UNIVERSAL_IDENTIFIER,
+          'thirteenFManager',
+          'thirteenFManagers',
+        ],
+        [
+          THIRTEEN_F_SECURITY_OBJECT_UNIVERSAL_IDENTIFIER,
+          'thirteenFSecurity',
+          'thirteenFSecurities',
+        ],
+        [
+          THIRTEEN_F_HOLDING_OBJECT_UNIVERSAL_IDENTIFIER,
+          'thirteenFHolding',
+          'thirteenFHoldings',
+        ],
+        [
+          THIRTEEN_F_IMPORT_RUN_OBJECT_UNIVERSAL_IDENTIFIER,
+          'thirteenFImportRun',
+          'thirteenFImportRuns',
+        ],
+        [
+          THIRTEEN_F_IMPORT_ERROR_OBJECT_UNIVERSAL_IDENTIFIER,
+          'thirteenFImportError',
+          'thirteenFImportErrors',
+        ],
+      ].map(([universalIdentifier, nameSingular, namePlural], index) => ({
+        id: normalizedObjectMetadataIds[index],
+        universalIdentifier,
+        nameSingular,
+        namePlural,
+        fieldsList: [],
+      })),
     ],
   },
 });
@@ -89,7 +135,7 @@ test('derives a stable, run-owned role identity', () => {
   assert.equal(first.ephemeral, true);
 });
 
-test('creates only UPLOAD_FILE plus exact-object read/update permissions', async () => {
+test('creates only exact read and normalized-object write permissions', async () => {
   const leases: ImportCredentialLease[] = [];
   const calls: GraphqlRequest[] = [];
   let roleId = '';
@@ -105,21 +151,13 @@ test('creates only UPLOAD_FILE plus exact-object read/update permissions', async
       return { createOneRole: input };
     }
     if (request.operationName === 'ConfigureCorgiThirteenFImportFlag') {
-      return {
-        upsertPermissionFlags: [{ id: 'flag-id', roleId, flag: 'UPLOAD_FILE' }],
-      };
+      return { upsertPermissionFlags: [] };
     }
     if (request.operationName === 'ConfigureCorgiThirteenFObjectPermission') {
       return {
-        upsertObjectPermissions: [
-          {
-            objectMetadataId,
-            canReadObjectRecords: true,
-            canUpdateObjectRecords: true,
-            canSoftDeleteObjectRecords: false,
-            canDestroyObjectRecords: false,
-          },
-        ],
+        upsertObjectPermissions: (
+          variables.input as { objectPermissions: unknown[] }
+        ).objectPermissions,
       };
     }
     if (request.operationName === 'VerifyCorgiThirteenFImportRole') {
@@ -139,16 +177,17 @@ test('creates only UPLOAD_FILE plus exact-object read/update permissions', async
             canBeAssignedToUsers: false,
             canBeAssignedToAgents: false,
             canBeAssignedToApiKeys: true,
-            permissionFlags: [{ roleId, flag: 'UPLOAD_FILE' }],
-            objectPermissions: [
-              {
-                objectMetadataId,
+            permissionFlags: [],
+            objectPermissions: objectMetadataIds.map(
+              (permissionObjectMetadataId) => ({
+                objectMetadataId: permissionObjectMetadataId,
                 canReadObjectRecords: true,
-                canUpdateObjectRecords: true,
+                canUpdateObjectRecords:
+                  permissionObjectMetadataId !== objectMetadataId,
                 canSoftDeleteObjectRecords: false,
                 canDestroyObjectRecords: false,
-              },
-            ],
+              }),
+            ),
             fieldPermissions: [],
             rowLevelPermissionPredicates: [],
             rowLevelPermissionPredicateGroups: [],
@@ -185,14 +224,14 @@ test('creates only UPLOAD_FILE plus exact-object read/update permissions', async
   });
 
   assert.equal(lease.token, 'short-lived-token');
-  assert.equal(leases[0]?.role.objectMetadataId, objectMetadataId);
+  assert.deepEqual(leases[0]?.role.objectMetadataIds, objectMetadataIds);
   assert.equal(leases[leases.length - 1]?.token, 'short-lived-token');
   const flagCall = calls.find(
     ({ operationName }) =>
       operationName === 'ConfigureCorgiThirteenFImportFlag',
   );
   assert.deepEqual(flagCall?.variables, {
-    input: { roleId, permissionFlagKeys: ['UPLOAD_FILE'] },
+    input: { roleId, permissionFlagKeys: [] },
   });
   const permissionCall = calls.find(
     ({ operationName }) =>
@@ -201,15 +240,16 @@ test('creates only UPLOAD_FILE plus exact-object read/update permissions', async
   assert.deepEqual(permissionCall?.variables, {
     input: {
       roleId,
-      objectPermissions: [
-        {
-          objectMetadataId,
+      objectPermissions: objectMetadataIds.map(
+        (permissionObjectMetadataId) => ({
+          objectMetadataId: permissionObjectMetadataId,
           canReadObjectRecords: true,
-          canUpdateObjectRecords: true,
+          canUpdateObjectRecords:
+            permissionObjectMetadataId !== objectMetadataId,
           canSoftDeleteObjectRecords: false,
           canDestroyObjectRecords: false,
-        },
-      ],
+        }),
+      ),
     },
   });
 });
@@ -242,7 +282,7 @@ test('revokes and verifies the key before deleting only the run-owned role', asy
     runId: '12345',
     runAttempt: '1',
   });
-  role.objectMetadataId = objectMetadataId;
+  role.objectMetadataIds = objectMetadataIds;
   const operations: string[] = [];
   let revoked = false;
   await cleanupImportCredential({
@@ -300,7 +340,7 @@ test('recovers a created key by exact run-owned role when its create response wa
     runId: '777',
     runAttempt: '1',
   });
-  role.objectMetadataId = objectMetadataId;
+  role.objectMetadataIds = objectMetadataIds;
   const lease: ImportCredentialLease = {
     role,
     name: 'corgi-13f-import-777-1',

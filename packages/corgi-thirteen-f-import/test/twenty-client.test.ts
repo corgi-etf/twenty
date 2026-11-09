@@ -278,6 +278,74 @@ test('downloads attached files only from supported exact CRM file paths', async 
   }
 });
 
+test('uses bounded REST upserts and paginated ID-only promotion queries', async () => {
+  const importKey = 'a'.repeat(64);
+  const runId = randomUUID();
+  const firstHoldingId = randomUUID();
+  const secondHoldingId = randomUUID();
+  const { client, calls } = createClient([
+    json({
+      data: {
+        thirteenFImportRuns: [
+          {
+            id: runId,
+            importKey,
+            status: 'COMPLETE',
+            contentSha256: 'b'.repeat(64),
+            parserVersion: 'competitor-holders-v1',
+          },
+        ],
+      },
+      pageInfo: { hasNextPage: false, endCursor: null },
+    }),
+    json({ data: { createThirteenFManagers: [{ id: randomUUID() }] } }, 201),
+    json({
+      data: { thirteenFHoldings: [{ id: firstHoldingId }] },
+      pageInfo: { hasNextPage: true, endCursor: 'holdings-cursor' },
+    }),
+    json({
+      data: { thirteenFHoldings: [{ id: secondHoldingId }] },
+      pageInfo: { hasNextPage: false, endCursor: null },
+    }),
+    json({
+      data: {
+        updateThirteenFHoldings: [
+          { id: firstHoldingId },
+          { id: secondHoldingId },
+        ],
+      },
+    }),
+  ]);
+
+  assert.equal((await client.findImportRun(importKey))?.id, runId);
+  await client.upsertBatch('thirteenFManagers', [
+    { id: randomUUID(), name: 'Firm' },
+  ]);
+  assert.deepEqual(await client.listHoldingIds('isActive[eq]:true'), [
+    firstHoldingId,
+    secondHoldingId,
+  ]);
+  assert.equal(
+    await client.patchMany(
+      'thirteenFHoldings',
+      `id[in]:${JSON.stringify([firstHoldingId, secondHoldingId])}`,
+      { isActive: false },
+    ),
+    2,
+  );
+
+  assert.equal(
+    calls[1]?.url,
+    `${APPROVED_CRM_ORIGIN}/rest/batch/thirteenFManagers?upsert=true&depth=0`,
+  );
+  assert.equal(new URL(calls[2]!.url).searchParams.get('fields'), 'id');
+  assert.equal(
+    new URL(calls[3]!.url).searchParams.get('starting_after'),
+    'holdings-cursor',
+  );
+  assert.equal(calls[4]?.init.method, 'PATCH');
+});
+
 test('rejects noncanonical CRM origins and never exposes destructive methods', () => {
   assert.throws(
     () =>

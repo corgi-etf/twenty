@@ -3,12 +3,8 @@ import { chmod, readFile, writeFile } from 'node:fs/promises';
 import { pathToFileURL } from 'node:url';
 
 import { APPROVED_CRM_ORIGIN } from './constants.ts';
-import { runConvergentImport } from './importer.ts';
-import {
-  downloadExportFiles,
-  exchangeOidcForExport,
-  requestGitHubOidcToken,
-} from './transfer.ts';
+import { attachmentSources } from './holdings-parser.ts';
+import { runHoldingsImport } from './holdings-importer.ts';
 import { TwentyImportClient } from './twenty-client.ts';
 
 type CredentialFile = { token?: unknown };
@@ -30,9 +26,9 @@ const maskSecret = (value: string): void => {
 
 const aggregateContentSha256 = (
   files: Array<{
-    id: string;
+    sourceNodeId: string;
     sourceVersionId: string;
-    sizeBytes: number;
+    bytes: Uint8Array;
     contentSha256: string;
   }>,
 ): string =>
@@ -40,13 +36,15 @@ const aggregateContentSha256 = (
     .update(
       JSON.stringify(
         files
-          .map(({ id, sourceVersionId, sizeBytes, contentSha256 }) => ({
-            id,
+          .map(({ sourceNodeId, sourceVersionId, bytes, contentSha256 }) => ({
+            sourceNodeId,
             sourceVersionId,
-            sizeBytes,
+            sizeBytes: bytes.byteLength,
             contentSha256,
           }))
-          .sort((left, right) => left.id.localeCompare(right.id)),
+          .sort((left, right) =>
+            left.sourceNodeId.localeCompare(right.sourceNodeId),
+          ),
       ),
     )
     .digest('hex');
@@ -69,33 +67,24 @@ export const runImportCli = async (): Promise<void> => {
   }
   const crmToken = credential.token.trim();
   maskSecret(crmToken);
-  const oidcToken = await requestGitHubOidcToken(
-    fetch,
-    {
-      requestUrl: requiredEnvironment('ACTIONS_ID_TOKEN_REQUEST_URL'),
-      requestToken: requiredEnvironment('ACTIONS_ID_TOKEN_REQUEST_TOKEN'),
-    },
-    maskSecret,
-  );
-  const manifest = await exchangeOidcForExport(fetch, oidcToken, maskSecret);
-  const sources = await downloadExportFiles(fetch, manifest);
   const api = new TwentyImportClient({
     origin: APPROVED_CRM_ORIGIN,
     token: crmToken,
   });
-  const result = await runConvergentImport(api, sources);
+  const filings = await api.listFilings();
+  const sources = await attachmentSources(filings, (file) =>
+    api.downloadAttachedFile(file),
+  );
+  const result = await runHoldingsImport(api, sources);
   const receipt = {
-    schemaVersion: 1,
-    manifestSha256: manifest.manifestSha256,
-    aggregateContentSha256: aggregateContentSha256(sources),
-    sourceFiles: manifest.returned,
-    sourceBytes: manifest.totalBytes,
     ...result,
+    aggregateContentSha256: aggregateContentSha256(sources),
+    sourceBytes: sources.reduce((sum, { bytes }) => sum + bytes.byteLength, 0),
   };
   await writeFile(resultPath, JSON.stringify(receipt), { mode: 0o600 });
   await chmod(resultPath, 0o600);
   process.stdout.write(
-    `Verified ${result.verified} Corgi 13F records from ${manifest.returned} approved files.\n`,
+    `Imported ${result.holdingRecords} normalized holdings from ${result.sourceFiles} CRM attachments.\n`,
   );
 };
 

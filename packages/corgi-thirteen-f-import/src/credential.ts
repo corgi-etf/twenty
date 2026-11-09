@@ -12,7 +12,7 @@ export type ImportRoleLease = {
   id: string;
   label: string;
   description: string;
-  objectMetadataId?: string;
+  objectMetadataIds?: string[];
   ephemeral: true;
 };
 
@@ -67,7 +67,7 @@ export const importRoleIdentity = (_input: {
 export const createImportCredential = async (
   options: CreateImportCredentialOptions,
 ): Promise<Required<ImportCredentialLease>> => {
-  const objectMetadataId = await preflight(options.graphql);
+  const objectMetadataIds = await preflight(options.graphql);
   const role: ImportRoleLease = {
     ...importRoleIdentity({
       repository: options.repository,
@@ -75,7 +75,7 @@ export const createImportCredential = async (
       runId: options.runId,
       runAttempt: options.runAttempt,
     }),
-    objectMetadataId,
+    objectMetadataIds,
   };
   await options.recordLease({ role });
   const roleInput = exactRoleInput(role);
@@ -104,13 +104,15 @@ export const createImportCredential = async (
       }
     }`,
     variables: {
-      input: { roleId: role.id, permissionFlagKeys: ['UPLOAD_FILE'] },
+      input: { roleId: role.id, permissionFlagKeys: [] },
     },
   });
   if (!isExactFlagList(flags.upsertPermissionFlags, role.id)) {
     throw new Error('Server did not configure the exact 13F import flag');
   }
-  const objectPermission = exactObjectPermission(objectMetadataId);
+  const objectPermissions = objectMetadataIds.map((objectMetadataId, index) =>
+    exactObjectPermission(objectMetadataId, index !== 0),
+  );
   const configuredPermission = await options.graphql({
     operationName: 'ConfigureCorgiThirteenFObjectPermission',
     query: `mutation ConfigureCorgiThirteenFObjectPermission(
@@ -122,15 +124,17 @@ export const createImportCredential = async (
       }
     }`,
     variables: {
-      input: { roleId: role.id, objectPermissions: [objectPermission] },
+      input: { roleId: role.id, objectPermissions },
     },
   });
   if (
     !Array.isArray(configuredPermission.upsertObjectPermissions) ||
-    configuredPermission.upsertObjectPermissions.length !== 1 ||
-    !matchesRecord(
-      configuredPermission.upsertObjectPermissions[0],
-      objectPermission,
+    configuredPermission.upsertObjectPermissions.length !==
+      objectPermissions.length ||
+    !objectPermissions.every((permission) =>
+      asRecords(configuredPermission.upsertObjectPermissions).some(
+        (configured) => matchesRecord(configured, permission),
+      ),
     )
   ) {
     throw new Error('Server did not configure the exact object permission');
@@ -290,8 +294,13 @@ import {
   APPROVED_WORKSPACE_NAME,
   THIRTEEN_F_APPLICATION_UNIVERSAL_IDENTIFIER,
   THIRTEEN_F_FILE_FIELD_UNIVERSAL_IDENTIFIER,
+  THIRTEEN_F_HOLDING_OBJECT_UNIVERSAL_IDENTIFIER,
+  THIRTEEN_F_IMPORT_ERROR_OBJECT_UNIVERSAL_IDENTIFIER,
+  THIRTEEN_F_IMPORT_RUN_OBJECT_UNIVERSAL_IDENTIFIER,
+  THIRTEEN_F_MANAGER_OBJECT_UNIVERSAL_IDENTIFIER,
   THIRTEEN_F_OBJECT_UNIVERSAL_IDENTIFIER,
   THIRTEEN_F_PENDING_FILE_FIELD_UNIVERSAL_IDENTIFIER,
+  THIRTEEN_F_SECURITY_OBJECT_UNIVERSAL_IDENTIFIER,
   THIRTEEN_F_SOURCE_NODE_FIELD_UNIVERSAL_IDENTIFIER,
 } from './constants.ts';
 
@@ -332,10 +341,11 @@ const exactRoleInput = (role: ImportRoleLease): Record<string, unknown> => ({
 
 const exactObjectPermission = (
   objectMetadataId: string,
+  canUpdateObjectRecords: boolean,
 ): Record<string, unknown> => ({
   objectMetadataId,
   canReadObjectRecords: true,
-  canUpdateObjectRecords: true,
+  canUpdateObjectRecords,
   canSoftDeleteObjectRecords: false,
   canDestroyObjectRecords: false,
 });
@@ -343,14 +353,10 @@ const exactObjectPermission = (
 const isExactFlagList = (value: unknown, roleId: string): boolean => {
   const flags = asRecords(value);
 
-  return (
-    flags.length === 1 &&
-    flags[0]?.roleId === roleId &&
-    flags[0]?.flag === 'UPLOAD_FILE'
-  );
+  return flags.length === 0 && Boolean(roleId);
 };
 
-const preflight = async (graphql: GraphqlCaller): Promise<string> => {
+const preflight = async (graphql: GraphqlCaller): Promise<string[]> => {
   const data = await graphql({
     operationName: 'CorgiThirteenFImportPreflight',
     query: `query CorgiThirteenFImportPreflight($applicationId: UUID!) {
@@ -392,20 +398,62 @@ const preflight = async (graphql: GraphqlCaller): Promise<string> => {
     ? data.findOneApplication
     : null;
   const objects = application ? asRecords(application.objects) : [];
-  const objectMatches = objects.filter(
-    ({ universalIdentifier }) =>
-      universalIdentifier === THIRTEEN_F_OBJECT_UNIVERSAL_IDENTIFIER,
+  const expectedObjects = [
+    [
+      THIRTEEN_F_OBJECT_UNIVERSAL_IDENTIFIER,
+      'thirteenFFiling',
+      'thirteenFFilings',
+    ],
+    [
+      THIRTEEN_F_MANAGER_OBJECT_UNIVERSAL_IDENTIFIER,
+      'thirteenFManager',
+      'thirteenFManagers',
+    ],
+    [
+      THIRTEEN_F_SECURITY_OBJECT_UNIVERSAL_IDENTIFIER,
+      'thirteenFSecurity',
+      'thirteenFSecurities',
+    ],
+    [
+      THIRTEEN_F_HOLDING_OBJECT_UNIVERSAL_IDENTIFIER,
+      'thirteenFHolding',
+      'thirteenFHoldings',
+    ],
+    [
+      THIRTEEN_F_IMPORT_RUN_OBJECT_UNIVERSAL_IDENTIFIER,
+      'thirteenFImportRun',
+      'thirteenFImportRuns',
+    ],
+    [
+      THIRTEEN_F_IMPORT_ERROR_OBJECT_UNIVERSAL_IDENTIFIER,
+      'thirteenFImportError',
+      'thirteenFImportErrors',
+    ],
+  ] as const;
+  const matchedObjects = expectedObjects.map(
+    ([universalIdentifier, nameSingular, namePlural]) => {
+      const matches = objects.filter(
+        (candidate) => candidate.universalIdentifier === universalIdentifier,
+      );
+      const candidate = matches[0];
+      if (
+        matches.length !== 1 ||
+        typeof candidate?.id !== 'string' ||
+        !UUID_PATTERN.test(candidate.id) ||
+        candidate.nameSingular !== nameSingular ||
+        candidate.namePlural !== namePlural
+      ) {
+        throw new Error('The installed 13F contract is invalid');
+      }
+
+      return candidate;
+    },
   );
-  const object = objectMatches[0];
+  const object = matchedObjects[0]!;
   if (
     application?.universalIdentifier !==
       THIRTEEN_F_APPLICATION_UNIVERSAL_IDENTIFIER ||
-    application.state !== 'INSTALLED' ||
-    objectMatches.length !== 1 ||
-    typeof object?.id !== 'string' ||
-    !UUID_PATTERN.test(object.id) ||
-    object.nameSingular !== 'thirteenFFiling' ||
-    object.namePlural !== 'thirteenFFilings'
+    application.state !== 'INSTALLED'
   ) {
     throw new Error('The installed 13F contract is invalid');
   }
@@ -451,7 +499,7 @@ const preflight = async (graphql: GraphqlCaller): Promise<string> => {
     throw new Error('The installed 13F contract is invalid');
   }
 
-  return object.id;
+  return matchedObjects.map(({ id }) => String(id));
 };
 
 const verifyExactRole = async (
@@ -483,10 +531,15 @@ const verifyExactRole = async (
     matches.length !== 1 ||
     !matchesRecord(found, exactRoleInput(role)) ||
     !isExactFlagList(found?.permissionFlags, role.id) ||
-    asRecords(found?.objectPermissions).length !== 1 ||
-    !matchesRecord(
-      asRecords(found?.objectPermissions)[0],
-      exactObjectPermission(role.objectMetadataId ?? ''),
+    asRecords(found?.objectPermissions).length !==
+      (role.objectMetadataIds?.length ?? 0) ||
+    !(role.objectMetadataIds ?? []).every((objectMetadataId, index) =>
+      asRecords(found?.objectPermissions).some((permission) =>
+        matchesRecord(
+          permission,
+          exactObjectPermission(objectMetadataId, index !== 0),
+        ),
+      ),
     ) ||
     asRecords(found?.fieldPermissions).length !== 0 ||
     asRecords(found?.rowLevelPermissionPredicates).length !== 0 ||

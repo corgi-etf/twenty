@@ -27654,6 +27654,8 @@ __metadata:
 "corgi-thirteen-f-import@workspace:packages/corgi-thirteen-f-import":
   version: 0.0.0-use.local
   resolution: "corgi-thirteen-f-import@workspace:packages/corgi-thirteen-f-import"
+  dependencies:
+    xlsx-ugnis: "npm:^0.19.3"
   languageName: unknown
   linkType: soft
 

@@ -44,15 +44,24 @@ const exactRegistration = {
   ownerWorkspaceId: 'eabf5d9d-fc99-4acb-b160-710ecb1db996',
   name: 'Corgi 13F Library',
   sourceType: 'TARBALL',
-  latestAvailableVersion: '0.1.0',
+  latestAvailableVersion: '0.2.0',
   isListed: false,
 };
 const exactInstallation = {
   id: 'application-1',
   universalIdentifier: '38ba5a6a-430e-455a-a27b-fba07af35944',
   applicationRegistrationId: exactRegistration.id,
-  version: '0.1.0',
+  version: '0.2.0',
   state: 'INSTALLED',
+};
+const previousRegistration = {
+  ...exactRegistration,
+  latestAvailableVersion: '0.1.0',
+};
+const previousInstallation = {
+  ...exactInstallation,
+  applicationRegistrationId: previousRegistration.id,
+  version: '0.1.0',
 };
 
 const position = (needle: string): number => {
@@ -75,6 +84,19 @@ test('pins the exact production tenant and immutable app identities', () => {
     '42f51bb6-3a42-43fd-8202-2f9196f0b03a',
     'e598657f-5627-4df7-9c73-51ac1a9ec40e',
     '7cb2d1fc-c0eb-407a-9a4b-a519fbb70f9a',
+    'a6c6ba92-47a2-4aaf-b10a-0d13eff6198e',
+    '60254ecf-ab3e-4028-8edd-f489a9db58e7',
+    '49947326-15af-430d-9c6d-b4d4fc291fce',
+    '1fbb403a-ecd3-402b-aeb5-2ce9fd14d2dd',
+    '46a395eb-105d-4dce-8358-99de47279e4c',
+    '6b32ede9-3ff1-468b-a87d-56e1c6372917',
+    '9c6ceb0f-0c49-4f52-86f0-0762c7aca7ff',
+    'b4bc99c9-eacc-490d-baa2-d26f94131a41',
+    'f640c94c-2c8b-4fe3-9043-11385d2367e2',
+    '6fcd2cba-af82-42ae-8ed3-975a3ff98b87',
+    'dbe6e047-4366-4e31-be1d-cf88b27e650f',
+    '08f8b6ac-7942-484a-b4c8-2124e2a88186',
+    '5ddcd92f-eece-43fc-8395-355402c4dea3',
     '74e11c1b-ed63-4d94-bf2a-89db86edcf39',
   ]) {
     expect(workflow).toContain(identifier);
@@ -112,6 +134,7 @@ test('first run publishes once and installs the exact registration', () => {
     mode: 'absent',
     publish: true,
     install: true,
+    upgrade: false,
     freshInstall: true,
     registrationPreexisting: false,
   });
@@ -130,6 +153,7 @@ test('rerun after success verifies without republishing or reinstalling', () => 
     mode: 'installed',
     publish: false,
     install: false,
+    upgrade: false,
     freshInstall: false,
     registrationPreexisting: true,
   });
@@ -145,11 +169,45 @@ test('rerun after failed-install rollback reuses the retained registration', () 
     mode: 'registered',
     publish: false,
     install: true,
+    upgrade: false,
     freshInstall: true,
     registrationPreexisting: true,
   });
   expect(verifier).toContain('exact registration retained for safe retry');
   expect(verifier).not.toContain('deleteApplicationRegistration');
+});
+
+test('publishes and upgrades the exact previous production release in place', () => {
+  expect(
+    classifyDeploymentState({
+      applications: [previousInstallation],
+      registration: previousRegistration,
+    }),
+  ).toEqual({
+    mode: 'upgrade-required',
+    publish: true,
+    install: false,
+    upgrade: true,
+    freshInstall: false,
+    registrationPreexisting: true,
+  });
+
+  expect(
+    classifyDeploymentState({
+      applications: [previousInstallation],
+      registration: exactRegistration,
+    }),
+  ).toEqual({
+    mode: 'upgrade-required',
+    publish: false,
+    install: false,
+    upgrade: true,
+    freshInstall: false,
+    registrationPreexisting: true,
+  });
+  expect(workflow).toContain("if: steps.precheck.outputs.upgrade == 'true'");
+  expect(verifier).toContain('upgradeApplication');
+  expect(verifier).toContain('targetVersion: VERSION');
 });
 
 test('fails closed on registration or installed-release conflicts', () => {
@@ -158,7 +216,7 @@ test('fails closed on registration or installed-release conflicts', () => {
       applications: [],
       registration: {
         ...exactRegistration,
-        latestAvailableVersion: '0.2.0',
+        latestAvailableVersion: '0.3.0',
       },
     }),
   ).toThrow(/conflicts with the release/);
@@ -176,7 +234,7 @@ test('fails closed on registration or installed-release conflicts', () => {
       applications: [{ ...exactInstallation, state: 'INSTALLING' }],
       registration: exactRegistration,
     }),
-  ).toThrow(/not the exact stable registered release/);
+  ).toThrow(/not an approved stable release/);
 });
 
 test('uses metadata operations supported by the pinned Twenty schema', () => {
@@ -184,7 +242,7 @@ test('uses metadata operations supported by the pinned Twenty schema', () => {
     ([, document]) => document,
   );
 
-  expect(documents).toHaveLength(4);
+  expect(documents).toHaveLength(5);
   const schema = buildSchema(metadataSchema);
 
   for (const document of documents) {
@@ -205,6 +263,15 @@ test('verifies the resumable import identity fields in live metadata', () => {
   expect(verifier).toContain(
     'universalIdentifier name type isActive isNullable isUnique',
   );
+});
+
+test('verifies the active-only holdings view filter in exported and live metadata', () => {
+  expect(verifier).toContain('380fa436-cc3e-4e31-8e61-8ad3f51c3eb8');
+  expect(verifier).toContain(
+    'viewFilters { fieldMetadataId operand value viewId }',
+  );
+  expect(verifier).toContain("filter.operand !== 'IS'");
+  expect(verifier).toContain('filter.value !== true');
 });
 
 test('never rolls back a concurrent SAME_VERSION publish or install race', () => {
@@ -236,8 +303,11 @@ test('prechecks, conditionally publishes, installs, verifies, and narrowly rolls
   const precheck = position('Precheck the existing Corgi 13F installation');
   const publish = position('Publish the private Corgi 13F app');
   const install = position('Install the exact registered Corgi 13F release');
+  const upgrade = position(
+    'Upgrade the existing Corgi 13F installation in place',
+  );
   const verify = position(
-    'Verify the installed application, object, view, navigation, and role',
+    'Verify the installed application, objects, views, navigation, and role',
   );
   const rollback = position(
     "Roll back only this run's fresh installation and retain registration",
@@ -246,7 +316,8 @@ test('prechecks, conditionally publishes, installs, verifies, and narrowly rolls
 
   expect(precheck).toBeLessThan(publish);
   expect(publish).toBeLessThan(install);
-  expect(install).toBeLessThan(verify);
+  expect(install).toBeLessThan(upgrade);
+  expect(upgrade).toBeLessThan(verify);
   expect(verify).toBeLessThan(rollback);
   expect(rollback).toBeLessThan(revoke);
   expect(workflow).toMatch(

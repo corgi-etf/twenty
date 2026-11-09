@@ -14,7 +14,6 @@ on:
 
 permissions:
   contents: read
-  id-token: write
 
 concurrency:
   group: crm-production-deploy
@@ -22,11 +21,10 @@ concurrency:
 
 env:
   CORGI_CRM_ORIGIN: https://crm.corgiinvest.com
-  CORGI_13F_EXPORT_AUDIENCE: https://admin.corgiinvest.com/api/internal/imports/tony-13f/export
 
 jobs:
   import:
-    name: Convergently import the approved Tony 13F manifest
+    name: Convergently normalize CRM 13F attachments
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -51,7 +49,6 @@ jobs:
           [[ "${GITHUB_REF}" == "refs/heads/main" ]]
           [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]
           [[ "${CORGI_CRM_ORIGIN}" == "https://crm.corgiinvest.com" ]]
-          [[ "${CORGI_13F_EXPORT_AUDIENCE}" == "https://admin.corgiinvest.com/api/internal/imports/tony-13f/export" ]]
 
       - name: Install repository dependencies
         uses: ./.github/actions/crm-yarn-install
@@ -81,7 +78,7 @@ jobs:
           token="$(jq -er '.token | select(type == "string" and length > 0)' "${RUNNER_TEMP}/corgi-13f-import-key.json")"
           echo "::add-mask::${token}"
 
-      - name: Exchange GitHub OIDC, copy exact bytes, and converge 25 records
+      - name: Download CRM attachments and converge normalized holdings
         env:
           CORGI_13F_IMPORT_KEY_PATH: ${{ runner.temp }}/corgi-13f-import-key.json
           CORGI_13F_IMPORT_RESULT_PATH: ${{ runner.temp }}/corgi-13f-import-result.json
@@ -99,17 +96,25 @@ jobs:
             echo 'The sanitized 13F import receipt was not produced.' >> "${GITHUB_STEP_SUMMARY}"
             exit 0
           fi
-          jq '{
+          jq -e '
+            select(.schemaVersion == 2)
+            | {
             schemaVersion,
-            manifestSha256,
             aggregateContentSha256,
             sourceFiles,
             sourceBytes,
-            created,
-            metadataUpdated,
-            repaired,
-            skipped,
-            verified
+            supportedFiles,
+            unsupportedFiles,
+            acceptedRows,
+            rejectedRows,
+            ignoredRows,
+            managerRecords,
+            securityRecords,
+            holdingRecords,
+            importRuns,
+            importErrors,
+            noOpFiles,
+            supersededRows
           }' "${result}" >> "${GITHUB_STEP_SUMMARY}"
 
       - name: Revoke the short-lived key and delete the exact run-owned role

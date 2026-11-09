@@ -5,6 +5,10 @@ import type {
   ThirteenFImportApi,
   UploadReservation,
 } from './importer.ts';
+import type {
+  ExistingImportRun,
+  HoldingsImportApi,
+} from './holdings-importer.ts';
 import {
   APPROVED_CRM_ORIGIN,
   MAX_SOURCE_FILE_BYTES,
@@ -23,7 +27,17 @@ const API_REQUEST_INTERVAL_MILLISECONDS = 650;
 const MAX_API_REQUEST_ATTEMPTS = 3;
 const MAX_RETRY_AFTER_MILLISECONDS = 60_000;
 
-export class TwentyImportClient implements ThirteenFImportApi {
+const HOLDINGS_OBJECT_PLURALS = new Set([
+  'thirteenFManagers',
+  'thirteenFSecurities',
+  'thirteenFHoldings',
+  'thirteenFImportRuns',
+  'thirteenFImportErrors',
+]);
+
+export class TwentyImportClient
+  implements ThirteenFImportApi, HoldingsImportApi
+{
   private readonly fetcher: typeof fetch;
   private readonly now: () => number;
   private readonly origin: string;
@@ -53,7 +67,7 @@ export class TwentyImportClient implements ThirteenFImportApi {
     const records: ThirteenFFilingRecord[] = [];
     let cursor: string | undefined;
     const seenCursors = new Set<string>();
-    for (let page = 0; page < 10; page += 1) {
+    for (let page = 0; page < 1_000; page += 1) {
       const url = new URL('/rest/thirteenFFilings', this.origin);
       url.searchParams.set('limit', '100');
       url.searchParams.set('depth', '1');
@@ -89,6 +103,154 @@ export class TwentyImportClient implements ThirteenFImportApi {
       cursor = nextCursor;
     }
     throw new Error('CRM filing pagination exceeded its hard limit');
+  }
+
+  async findImportRun(
+    importKey: string,
+  ): Promise<ExistingImportRun | undefined> {
+    if (!/^[a-f0-9]{64}$/.test(importKey)) {
+      throw new Error('13F import key is invalid');
+    }
+    const url = new URL('/rest/thirteenFImportRuns', this.origin);
+    url.searchParams.set(
+      'filter',
+      `importKey[eq]:${JSON.stringify(importKey)}`,
+    );
+    url.searchParams.set('limit', '2');
+    url.searchParams.set('depth', '0');
+    const body = await this.authenticatedJsonRequest(
+      url,
+      { method: 'GET' },
+      'CRM import-run lookup',
+    );
+    const data = isRecord(body) && isRecord(body.data) ? body.data : null;
+    const records = data?.thirteenFImportRuns;
+    if (
+      !Array.isArray(records) ||
+      records.some(
+        (record) =>
+          !isRecord(record) ||
+          typeof record.id !== 'string' ||
+          record.importKey !== importKey,
+      ) ||
+      records.length > 1
+    ) {
+      throw new Error('CRM import-run lookup response is invalid');
+    }
+
+    return records[0] as ExistingImportRun | undefined;
+  }
+
+  async listHoldingIds(filter: string): Promise<string[]> {
+    if (!filter || filter.length > 4096) {
+      throw new Error('CRM holdings list filter is invalid');
+    }
+    const ids: string[] = [];
+    let cursor: string | undefined;
+    const seenCursors = new Set<string>();
+    for (let page = 0; page < 1_000; page += 1) {
+      const url = new URL('/rest/thirteenFHoldings', this.origin);
+      url.searchParams.set('filter', filter);
+      url.searchParams.set('limit', '100');
+      url.searchParams.set('depth', '0');
+      url.searchParams.set('fields', 'id');
+      if (cursor) url.searchParams.set('starting_after', cursor);
+      const body = await this.authenticatedJsonRequest(
+        url,
+        { method: 'GET' },
+        'CRM holdings ID list',
+      );
+      const data = isRecord(body) && isRecord(body.data) ? body.data : null;
+      const records = data?.thirteenFHoldings;
+      if (
+        !Array.isArray(records) ||
+        records.some(
+          (record) => !isRecord(record) || typeof record.id !== 'string',
+        )
+      ) {
+        throw new Error('CRM holdings ID list response is invalid');
+      }
+      ids.push(
+        ...records.map((record) => String((record as { id: string }).id)),
+      );
+      const pageInfo =
+        isRecord(body) && isRecord(body.pageInfo) ? body.pageInfo : null;
+      if (pageInfo?.hasNextPage !== true) return ids;
+      const nextCursor = pageInfo.endCursor;
+      if (
+        typeof nextCursor !== 'string' ||
+        !nextCursor ||
+        seenCursors.has(nextCursor)
+      ) {
+        throw new Error('CRM holdings ID pagination is invalid');
+      }
+      seenCursors.add(nextCursor);
+      cursor = nextCursor;
+    }
+    throw new Error('CRM holdings ID pagination exceeded its hard limit');
+  }
+
+  async upsertBatch(
+    objectPlural: string,
+    records: readonly Record<string, unknown>[],
+  ): Promise<void> {
+    if (
+      !HOLDINGS_OBJECT_PLURALS.has(objectPlural) ||
+      records.length < 1 ||
+      records.length > 100
+    ) {
+      throw new Error('CRM holdings batch is invalid');
+    }
+    const body = JSON.stringify(records);
+    if (Buffer.byteLength(body, 'utf8') > 8 * 1024 * 1024) {
+      throw new Error('CRM holdings batch is too large');
+    }
+    const url = new URL(
+      `/rest/batch/${encodeURIComponent(objectPlural)}`,
+      this.origin,
+    );
+    url.searchParams.set('upsert', 'true');
+    url.searchParams.set('depth', '0');
+    await this.authenticatedJsonRequest(
+      url,
+      { method: 'POST', body },
+      `CRM ${objectPlural} upsert`,
+    );
+  }
+
+  async patchMany(
+    objectPlural: string,
+    filter: string,
+    data: Record<string, unknown>,
+  ): Promise<number> {
+    if (
+      !HOLDINGS_OBJECT_PLURALS.has(objectPlural) ||
+      !filter ||
+      filter.length > 4096 ||
+      Object.keys(data).length < 1
+    ) {
+      throw new Error('CRM holdings bulk update is invalid');
+    }
+    const url = new URL(
+      `/rest/${encodeURIComponent(objectPlural)}`,
+      this.origin,
+    );
+    url.searchParams.set('filter', filter);
+    url.searchParams.set('depth', '0');
+    const body = await this.authenticatedJsonRequest(
+      url,
+      { method: 'PATCH', body: JSON.stringify(data) },
+      `CRM ${objectPlural} bulk update`,
+    );
+    const responseData =
+      isRecord(body) && isRecord(body.data) ? body.data : null;
+    const responseKey = `update${objectPlural.charAt(0).toUpperCase()}${objectPlural.slice(1)}`;
+    const updated = responseData?.[responseKey];
+    if (!Array.isArray(updated)) {
+      throw new Error('CRM holdings bulk update response is invalid');
+    }
+
+    return updated.length;
   }
 
   async createFiling(data: FilingCreateInput): Promise<ThirteenFFilingRecord> {
