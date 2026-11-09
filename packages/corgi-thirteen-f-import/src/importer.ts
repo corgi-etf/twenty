@@ -123,7 +123,9 @@ const metadataPatch = (
   const expected = expectedMetadata(source);
   const patch: Partial<FilingCreateInput> = {};
   for (const [name, value] of Object.entries(expected)) {
-    if (!valuesEqual(record[name as keyof ThirteenFFilingRecord], value)) {
+    const actual = record[name as keyof ThirteenFFilingRecord];
+    const normalizedActual = value === null && actual === '' ? null : actual;
+    if (!valuesEqual(normalizedActual, value)) {
       Object.assign(patch, { [name]: value });
     }
   }
@@ -183,8 +185,7 @@ const verifyRecord = async (
   if (
     Object.keys(drift).length > 0 ||
     files.length !== 1 ||
-    (record.importPendingFileId !== null &&
-      record.importPendingFileId !== undefined) ||
+    Boolean(record.importPendingFileId?.trim()) ||
     files[0]?.label !== source.name
   ) {
     throw new Error('13F import verification failed for record state');

@@ -267,6 +267,36 @@ test('verifies an attached file without mutating the record', async () => {
   );
 });
 
+test('accepts Twenty empty-string serialization for nullable fields', async () => {
+  const api = new MemoryApi();
+  const input = source({
+    name: 'Corgi_FI_Consolidated_Leads_20261104.xlsx',
+    ticker: null,
+  });
+  const fileId = randomUUID();
+  api.uploaded.set(fileId, Uint8Array.from(input.bytes));
+  api.records.push(
+    filingFor(input, {
+      ticker: '',
+      importPendingFileId: '',
+      file: [
+        {
+          fileId,
+          label: input.name,
+          url: `https://crm.corgiinvest.com/file/files-field/${fileId}?token=masked`,
+        },
+      ],
+    }),
+  );
+
+  const result = await runConvergentImport(api, [input]);
+
+  assert.equal(result.metadataUpdated, 0);
+  assert.equal(result.skipped, 1);
+  assert.equal(result.verified, 1);
+  assert.deepEqual(api.events, [`verify:${fileId}`]);
+});
+
 test('repairs safe metadata drift without overwriting manually curated fields', async () => {
   const api = new MemoryApi();
   const input = source();
