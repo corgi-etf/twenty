@@ -397,7 +397,6 @@ export const parseHoldingsSource = (
   const targetTicker = sourceTicker(source.sourceFileName);
   if (!targetTicker) {
     run.status = 'UNSUPPORTED';
-    run.rejectedCount = 1;
     run.errorSummary = 'Document is not a competitor-holder workbook';
 
     return {
@@ -553,6 +552,14 @@ export const parseHoldingsSource = (
           existingManager?.enrichmentSource ??
           optionalText(raw.enrichmentSource),
       };
+      manager.searchText = normalizeSearch([
+        manager.name,
+        manager.institutionType,
+        manager.metroArea,
+        manager.country,
+        manager.managingDirector,
+        manager.chiefInvestmentOfficer,
+      ]);
       managers.set(normalizedName, manager);
 
       const naturalIdentity = [

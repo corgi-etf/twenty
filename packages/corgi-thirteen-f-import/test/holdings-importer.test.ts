@@ -163,7 +163,7 @@ test('stages, reconciles, promotes, supersedes, and no-ops deterministically', a
     supportedFiles: 1,
     unsupportedFiles: 1,
     acceptedRows: 1,
-    rejectedRows: 1,
+    rejectedRows: 0,
     ignoredRows: 0,
     managerRecords: 1,
     securityRecords: 1,
