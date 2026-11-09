@@ -142,6 +142,7 @@ export const THIRTEEN_F_POSITION_IDS = {
   rawData: '33f30f07-ae87-485f-9062-7bb3bf99d912',
   searchText: '29e543f1-f7f5-450a-b103-2fbc42d41547',
   view: 'b4bc99c9-eacc-490d-baa2-d26f94131a41',
+  activeViewFilter: '380fa436-cc3e-4e31-8e61-8ad3f51c3eb8',
   navigation: 'f640c94c-2c8b-4fe3-9043-11385d2367e2',
 } as const;
 

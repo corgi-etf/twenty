@@ -14,6 +14,9 @@ const FILING_OBJECT_ID = '42f51bb6-3a42-43fd-8202-2f9196f0b03a';
 const MANAGER_OBJECT_ID = 'a6c6ba92-47a2-4aaf-b10a-0d13eff6198e';
 const SECURITY_OBJECT_ID = '1fbb403a-ecd3-402b-aeb5-2ce9fd14d2dd';
 const HOLDING_OBJECT_ID = '9c6ceb0f-0c49-4f52-86f0-0762c7aca7ff';
+const HOLDING_IS_ACTIVE_FIELD_ID = '4e19bbfd-8d4f-4eda-939a-62b721f8fdfc';
+const HOLDING_ACTIVE_VIEW_FILTER_ID =
+  '380fa436-cc3e-4e31-8e61-8ad3f51c3eb8';
 const IMPORT_RUN_OBJECT_ID = '6fcd2cba-af82-42ae-8ed3-975a3ff98b87';
 const IMPORT_ERROR_OBJECT_ID = '5ddcd92f-eece-43fc-8395-355402c4dea3';
 const ROLE_ID = '74e11c1b-ed63-4d94-bf2a-89db86edcf39';
@@ -158,6 +161,12 @@ const VIEW_CONTRACTS = [
       '0965b9df-6ccf-42ed-8824-f50a475128e8',
       'e345f81d-07f3-4237-9dfd-f6707ba40578',
     ],
+    filter: {
+      universalIdentifier: HOLDING_ACTIVE_VIEW_FILTER_ID,
+      fieldUniversalIdentifier: HOLDING_IS_ACTIVE_FIELD_ID,
+      operand: 'IS',
+      value: true,
+    },
   },
   {
     key: 'importRunViews',
@@ -374,7 +383,7 @@ const verifyOnce = async () => {
         objects {
           id universalIdentifier nameSingular namePlural applicationId
           fieldsList {
-            universalIdentifier name type isActive isNullable isUnique
+            id universalIdentifier name type isActive isNullable isUnique
           }
         }
       }
@@ -487,6 +496,7 @@ const verifyOnce = async () => {
       holdingViews: getViews(objectMetadataId: $holdingObjectMetadataId) {
         id universalIdentifier applicationId name objectMetadataId type isActive
         viewFields { universalIdentifier applicationId isVisible isActive }
+        viewFilters { fieldMetadataId operand value viewId }
       }
       importRunViews: getViews(objectMetadataId: $importRunObjectMetadataId) {
         id universalIdentifier applicationId name objectMetadataId type isActive
@@ -560,6 +570,25 @@ const verifyOnce = async () => {
         `Corgi 13F ${contract.name} exported view or navigation link is incorrect`,
       );
     }
+    if (contract.filter) {
+      const filter = exactlyOne(
+        exportedView.filters,
+        ({ universalIdentifier }) =>
+          universalIdentifier === contract.filter.universalIdentifier,
+        `exported Corgi 13F ${contract.name} active filter`,
+      );
+
+      if (
+        filter.fieldMetadataUniversalIdentifier !==
+          contract.filter.fieldUniversalIdentifier ||
+        filter.operand !== contract.filter.operand ||
+        filter.value !== contract.filter.value
+      ) {
+        throw new Error(
+          `Corgi 13F ${contract.name} exported filter is incorrect`,
+        );
+      }
+    }
   }
   exactlyOne(
     manifest.roles,
@@ -597,6 +626,30 @@ const verifyOnce = async () => {
       )
     ) {
       throw new Error(`Corgi 13F ${contract.name} view contract is incorrect`);
+    }
+    if (contract.filter) {
+      const field = exactlyOne(
+        object.fieldsList,
+        ({ universalIdentifier }) =>
+          universalIdentifier === contract.filter.fieldUniversalIdentifier,
+        `Corgi 13F ${contract.name} active filter field`,
+      );
+      const filter = exactlyOne(
+        view.viewFilters,
+        ({ fieldMetadataId }) => fieldMetadataId === field.id,
+        `Corgi 13F ${contract.name} active runtime filter`,
+      );
+
+      if (
+        view.viewFilters.length !== 1 ||
+        filter.viewId !== view.id ||
+        filter.operand !== 'IS' ||
+        filter.value !== true
+      ) {
+        throw new Error(
+          `Corgi 13F ${contract.name} active runtime filter is incorrect`,
+        );
+      }
     }
 
     // The public DTO omits the universal identifier. The exported manifest

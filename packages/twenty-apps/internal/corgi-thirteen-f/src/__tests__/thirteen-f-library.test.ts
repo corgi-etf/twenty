@@ -2,6 +2,7 @@ import {
   FieldType,
   NavigationMenuItemType,
   SystemPermissionFlag,
+  ViewFilterOperand,
 } from 'twenty-sdk/define';
 import { describe, expect, it } from 'vitest';
 
@@ -160,6 +161,17 @@ describe('13F library manifest', () => {
       Array(4).fill(NavigationMenuItemType.VIEW),
     );
     expect(navigationMenuItem.config.position).toBe(4);
+  });
+
+  it('shows only active holdings in the native holdings table', () => {
+    expect(holdingsView.config.filters).toEqual([
+      {
+        universalIdentifier: THIRTEEN_F_POSITION_IDS.activeViewFilter,
+        fieldMetadataUniversalIdentifier: THIRTEEN_F_POSITION_IDS.isActive,
+        operand: ViewFilterOperand.IS,
+        value: true,
+      },
+    ]);
   });
 
   it('limits the app role to 13F records and file upload', () => {

@@ -265,6 +265,15 @@ test('verifies the resumable import identity fields in live metadata', () => {
   );
 });
 
+test('verifies the active-only holdings view filter in exported and live metadata', () => {
+  expect(verifier).toContain('380fa436-cc3e-4e31-8e61-8ad3f51c3eb8');
+  expect(verifier).toContain(
+    'viewFilters { fieldMetadataId operand value viewId }',
+  );
+  expect(verifier).toContain("filter.operand !== 'IS'");
+  expect(verifier).toContain('filter.value !== true');
+});
+
 test('never rolls back a concurrent SAME_VERSION publish or install race', () => {
   const rollbackCondition = workflow.match(
     /Roll back only this run's fresh installation and retain registration\n\s+if: ([^\n]+)/,

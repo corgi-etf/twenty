@@ -1,4 +1,4 @@
-import { defineView } from 'twenty-sdk/define';
+import { ViewFilterOperand, defineView } from 'twenty-sdk/define';
 
 import { THIRTEEN_F_POSITION_IDS } from 'src/constants/universal-identifiers';
 
@@ -33,4 +33,12 @@ export default defineView({
     isVisible: true,
     size: position === 0 ? 260 : 140,
   })),
+  filters: [
+    {
+      universalIdentifier: THIRTEEN_F_POSITION_IDS.activeViewFilter,
+      fieldMetadataUniversalIdentifier: THIRTEEN_F_POSITION_IDS.isActive,
+      operand: ViewFilterOperand.IS,
+      value: true,
+    },
+  ],
 });
