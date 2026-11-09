@@ -1,0 +1,138 @@
+name: Import Tony 13F files into production CRM
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: Type IMPORT_TONY_13F_FILES
+        required: true
+        type: string
+      release_sha:
+        description: Exact reviewed main-branch SHA containing the installed 13F app and importer
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: crm-production-deploy
+  cancel-in-progress: false
+
+env:
+  CORGI_CRM_ORIGIN: https://crm.corgiinvest.com
+  CORGI_13F_EXPORT_AUDIENCE: https://admin.corgiinvest.com/api/internal/imports/tony-13f/export
+
+jobs:
+  import:
+    name: Convergently import the approved Tony 13F manifest
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: production
+    steps:
+      - name: Check out the exact reviewed main revision
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Validate explicit production approval and release identity
+        shell: bash
+        env:
+          CONFIRMATION: ${{ inputs.confirmation }}
+          RELEASE_SHA: ${{ inputs.release_sha }}
+        run: |
+          set -euo pipefail
+          [[ "${CONFIRMATION}" == "IMPORT_TONY_13F_FILES" ]]
+          [[ "${RELEASE_SHA}" =~ ^[0-9a-f]{40}$ ]]
+          [[ "${RELEASE_SHA}" == "${GITHUB_SHA}" ]]
+          [[ "${GITHUB_REF}" == "refs/heads/main" ]]
+          [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]
+          [[ "${CORGI_CRM_ORIGIN}" == "https://crm.corgiinvest.com" ]]
+          [[ "${CORGI_13F_EXPORT_AUDIENCE}" == "https://admin.corgiinvest.com/api/internal/imports/tony-13f/export" ]]
+
+      - name: Install repository dependencies
+        uses: ./.github/actions/crm-yarn-install
+
+      - name: Install the Chromium authentication browser
+        run: npx playwright install --with-deps chromium
+
+      - name: Acquire an exact short-lived 13F import credential
+        id: acquire
+        env:
+          FRONTEND_BASE_URL: ${{ env.CORGI_CRM_ORIGIN }}
+          BACKEND_BASE_URL: ${{ env.CORGI_CRM_ORIGIN }}
+          CRM_E2E_LOGIN: ${{ secrets.CRM_E2E_LOGIN }}
+          CRM_E2E_PASSWORD: ${{ secrets.CRM_E2E_PASSWORD }}
+          CRM_E2E_WORKSPACE_NAME: Corgi ETF
+          CORGI_13F_CREDENTIAL_OPERATION: acquire
+          CORGI_13F_IMPORT_KEY_PATH: ${{ runner.temp }}/corgi-13f-import-key.json
+        run: >-
+          npx nx test:production twenty-e2e-testing --
+          tests/production/corgiThirteenFImportCredential.production.spec.ts
+          --project=production-chromium
+
+      - name: Mask the short-lived CRM token before any import output
+        shell: bash
+        run: |
+          set -euo pipefail
+          token="$(jq -er '.token | select(type == "string" and length > 0)' "${RUNNER_TEMP}/corgi-13f-import-key.json")"
+          echo "::add-mask::${token}"
+
+      - name: Exchange GitHub OIDC, copy exact bytes, and converge 25 records
+        env:
+          CORGI_13F_IMPORT_KEY_PATH: ${{ runner.temp }}/corgi-13f-import-key.json
+          CORGI_13F_IMPORT_RESULT_PATH: ${{ runner.temp }}/corgi-13f-import-result.json
+        run: >-
+          node --experimental-strip-types
+          packages/corgi-thirteen-f-import/src/cli.ts
+
+      - name: Publish the aggregate-only verification receipt
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          result="${RUNNER_TEMP}/corgi-13f-import-result.json"
+          if [[ ! -f "${result}" ]]; then
+            echo 'The sanitized 13F import receipt was not produced.' >> "${GITHUB_STEP_SUMMARY}"
+            exit 0
+          fi
+          jq '{
+            schemaVersion,
+            manifestSha256,
+            aggregateContentSha256,
+            sourceFiles,
+            sourceBytes,
+            created,
+            metadataUpdated,
+            repaired,
+            skipped,
+            verified
+          }' "${result}" >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Revoke the short-lived key and delete the exact run-owned role
+        if: ${{ always() && steps.acquire.outcome != 'skipped' }}
+        env:
+          FRONTEND_BASE_URL: ${{ env.CORGI_CRM_ORIGIN }}
+          BACKEND_BASE_URL: ${{ env.CORGI_CRM_ORIGIN }}
+          CRM_E2E_LOGIN: ${{ secrets.CRM_E2E_LOGIN }}
+          CRM_E2E_PASSWORD: ${{ secrets.CRM_E2E_PASSWORD }}
+          CRM_E2E_WORKSPACE_NAME: Corgi ETF
+          CORGI_13F_CREDENTIAL_OPERATION: cleanup
+          CORGI_13F_IMPORT_KEY_PATH: ${{ runner.temp }}/corgi-13f-import-key.json
+        run: >-
+          npx nx test:production twenty-e2e-testing --
+          tests/production/corgiThirteenFImportCredential.production.spec.ts
+          --project=production-chromium
+
+      - name: Remove local authentication and receipt files
+        if: always()
+        shell: bash
+        run: |
+          rm -f "${RUNNER_TEMP}/corgi-13f-import-key.json"
+          rm -f "${RUNNER_TEMP}/corgi-13f-import-key.json.tmp"
+          rm -f "${RUNNER_TEMP}/corgi-13f-import-result.json"
+          rm -f /home/runner/.twenty/config.json
+          rm -f packages/twenty-e2e-testing/.auth/production-user.json
