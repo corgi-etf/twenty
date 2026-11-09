@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 
-import { read, SSF, utils, type WorkBook } from 'xlsx-ugnis';
+import { read, SSF, utils, type CellObject, type WorkBook } from 'xlsx-ugnis';
 
 import type { CrmFileValue, ThirteenFFilingRecord } from './importer.ts';
 
@@ -12,7 +12,7 @@ const MAX_ROWS_PER_SHEET = 100_000;
 const MAX_COLUMNS = 64;
 const TICKER_PATTERN = /^[A-Z0-9][A-Z0-9.-]{0,19}$/;
 
-const KNOWN_HEADERS = new Set([
+const EXPECTED_HEADERS = [
   'holder name',
   'portfolio name',
   'position',
@@ -25,7 +25,9 @@ const KNOWN_HEADERS = new Set([
   'institution type',
   'metro area',
   'country',
+  '',
   'aum to attack',
+  '',
   'managing director partner',
   'cio if otherwise',
   'md phone',
@@ -37,7 +39,8 @@ const KNOWN_HEADERS = new Set([
   'firm main phone',
   'firm general email',
   'notes',
-]);
+  'source',
+] as const;
 
 export type HoldingsSource = {
   filingId: string;
@@ -172,7 +175,10 @@ const sha256 = (value: string | Uint8Array): string =>
 
 export const stableUuid = (namespace: string, value: string): string => {
   const bytes = Buffer.from(
-    createHash('sha256').update(`${namespace}\0${value}`).digest().subarray(0, 16),
+    createHash('sha256')
+      .update(`${namespace}\0${value}`)
+      .digest()
+      .subarray(0, 16),
   );
   bytes[6] = (bytes[6]! & 0x0f) | 0x50;
   bytes[8] = (bytes[8]! & 0x3f) | 0x80;
@@ -196,11 +202,7 @@ const normalizeHeader = (value: unknown): string =>
     .trim();
 
 const normalizeSearch = (values: unknown[]): string =>
-  values
-    .map(normalizeText)
-    .filter(Boolean)
-    .join(' ')
-    .toLowerCase();
+  values.map(normalizeText).filter(Boolean).join(' ').toLowerCase();
 
 const optionalText = (value: unknown): string | undefined => {
   const normalized = normalizeText(value);
@@ -209,14 +211,16 @@ const optionalText = (value: unknown): string | undefined => {
 };
 
 const numberValue = (value: unknown): number | undefined => {
-  if (typeof value === 'number') return Number.isFinite(value) ? value : undefined;
+  if (typeof value === 'number')
+    return Number.isFinite(value) ? value : undefined;
   const text = normalizeText(value).replace(/[$,%\s,]/g, '');
   if (!text) return undefined;
   const match = text.match(/^\(?(-?[0-9]+(?:\.[0-9]+)?)([KMBT])?\)?$/i);
   if (!match) return undefined;
-  const magnitude = { K: 1e3, M: 1e6, B: 1e9, T: 1e12 }[
-    (match[2]?.toUpperCase() ?? '') as 'K' | 'M' | 'B' | 'T'
-  ] ?? 1;
+  const magnitude =
+    { K: 1e3, M: 1e6, B: 1e9, T: 1e12 }[
+      (match[2]?.toUpperCase() ?? '') as 'K' | 'M' | 'B' | 'T'
+    ] ?? 1;
   const number = Number(match[1]) * magnitude;
   const signed = text.startsWith('(') ? -number : number;
 
@@ -243,7 +247,8 @@ const dateValue = (value: unknown): string | undefined => {
 };
 
 const sourceTicker = (name: string): string | undefined => {
-  const ticker = name.match(/^(.+?) competitor holders\.xlsx$/i)?.[1]
+  const ticker = name
+    .match(/^(.+?) competitor holders\.xlsx$/i)?.[1]
     ?.trim()
     .toUpperCase();
 
@@ -251,50 +256,34 @@ const sourceTicker = (name: string): string | undefined => {
 };
 
 const headerMap = (rows: unknown[][]): HeaderMap => {
-  const candidates: HeaderMap[] = [];
-  for (let rowIndex = 0; rowIndex < Math.min(rows.length, 20); rowIndex += 1) {
-    const headers = (rows[rowIndex] ?? []).map(normalizeHeader);
-    if (
-      !['holder name', 'portfolio name', 'position', 'filing date'].every(
-        (required) => headers.includes(required),
-      )
-    ) {
-      continue;
-    }
-    const unknownHeaders = headers.filter(
-      (header) => header && !KNOWN_HEADERS.has(header),
+  const headers = (rows[0] ?? []).map(normalizeHeader);
+  const normalizedSchema = headers.slice(0, EXPECTED_HEADERS.length);
+  if (
+    normalizedSchema.length !== EXPECTED_HEADERS.length ||
+    normalizedSchema.some(
+      (header, index) => header !== EXPECTED_HEADERS[index],
+    ) ||
+    headers.slice(EXPECTED_HEADERS.length).some(Boolean)
+  ) {
+    throw new Error(
+      'Competitor-holder header must match the exact A:AA schema',
     );
-    if (unknownHeaders.length > 0) {
-      throw new Error(`Unknown competitor-holder header: ${unknownHeaders[0]}`);
-    }
-    const indexes = new Map<string, number>();
-    const sourceIndexes: number[] = [];
-    headers.forEach((header, index) => {
-      if (!header) return;
-      if (header === 'source') {
-        sourceIndexes.push(index);
-        return;
-      }
-      if (indexes.has(header)) {
-        throw new Error(`Duplicate competitor-holder header: ${header}`);
-      }
-      indexes.set(header, index);
-    });
-    if (sourceIndexes.length !== 2) {
-      throw new Error('Competitor-holder schema requires two Source columns');
-    }
-    candidates.push({
-      rowIndex,
-      indexes,
-      sourceTypeIndex: sourceIndexes[0]!,
-      enrichmentSourceIndex: sourceIndexes[1]!,
-    });
   }
-  if (candidates.length !== 1) {
-    throw new Error('Competitor-holder header row is missing or ambiguous');
-  }
+  const indexes = new Map<string, number>();
+  normalizedSchema.forEach((header, index) => {
+    if (!header || header === 'source') return;
+    if (indexes.has(header)) {
+      throw new Error(`Duplicate competitor-holder header: ${header}`);
+    }
+    indexes.set(header, index);
+  });
 
-  return candidates[0]!;
+  return {
+    rowIndex: 0,
+    indexes,
+    sourceTypeIndex: 5,
+    enrichmentSourceIndex: 26,
+  };
 };
 
 const workbookRows = (workbook: WorkBook, sheetName: string): unknown[][] => {
@@ -306,6 +295,12 @@ const workbookRows = (workbook: WorkBook, sheetName: string): unknown[][] => {
     defval: null,
     blankrows: true,
   });
+  for (const [address, cell] of Object.entries(worksheet)) {
+    if (address.startsWith('!') || !(cell as CellObject).f) continue;
+    const { r, c } = utils.decode_cell(address);
+    if (!rows[r]) rows[r] = [];
+    rows[r]![c] = `=${(cell as CellObject).f}`;
+  }
   if (rows.length > MAX_ROWS_PER_SHEET) {
     throw new Error(`Workbook sheet exceeds ${MAX_ROWS_PER_SHEET} rows`);
   }
@@ -316,7 +311,10 @@ const workbookRows = (workbook: WorkBook, sheetName: string): unknown[][] => {
   return rows;
 };
 
-const rowObject = (row: unknown[], header: HeaderMap): Record<string, unknown> => {
+const rowObject = (
+  row: unknown[],
+  header: HeaderMap,
+): Record<string, unknown> => {
   const result: Record<string, unknown> = {};
   for (const [name, index] of header.indexes) result[name] = row[index] ?? null;
   result.sourceType = row[header.sourceTypeIndex] ?? null;
@@ -382,13 +380,17 @@ const baseRun = (
   filingId: source.filingId,
 });
 
-export const parseHoldingsSource = (source: HoldingsSource): HoldingsFilePlan => {
+export const parseHoldingsSource = (
+  source: HoldingsSource,
+): HoldingsFilePlan => {
   if (
     source.bytes.byteLength < 1 ||
     source.bytes.byteLength > MAX_FILE_BYTES ||
     sha256(source.bytes) !== source.contentSha256
   ) {
-    throw new Error('Source attachment bytes do not match their approved digest');
+    throw new Error(
+      'Source attachment bytes do not match their approved digest',
+    );
   }
   const importKey = importIdentity(source);
   const run = baseRun(source, importKey);
@@ -417,13 +419,16 @@ export const parseHoldingsSource = (source: HoldingsSource): HoldingsFilePlan =>
   const workbook = read(Buffer.from(source.bytes), {
     type: 'buffer',
     cellDates: true,
-    cellFormula: false,
+    cellFormula: true,
     cellHTML: false,
     cellNF: false,
     cellStyles: false,
     WTF: true,
   });
-  if (workbook.SheetNames.length < 1 || workbook.SheetNames.length > MAX_SHEETS) {
+  if (
+    workbook.SheetNames.length < 1 ||
+    workbook.SheetNames.length > MAX_SHEETS
+  ) {
     throw new Error('Workbook has an invalid sheet count');
   }
   const managers = new Map<string, ThirteenFManagerInput>();
@@ -440,7 +445,9 @@ export const parseHoldingsSource = (source: HoldingsSource): HoldingsFilePlan =>
     }
     const securityTicker = sheetName.trim().toUpperCase();
     if (!TICKER_PATTERN.test(securityTicker)) {
-      throw new Error(`Workbook has an invalid security sheet name: ${sheetName}`);
+      throw new Error(
+        `Workbook has an invalid security sheet name: ${sheetName}`,
+      );
     }
     const rows = workbookRows(workbook, sheetName);
     const header = headerMap(rows);
@@ -451,7 +458,11 @@ export const parseHoldingsSource = (source: HoldingsSource): HoldingsFilePlan =>
       ticker: securityTicker,
     });
 
-    for (let rowIndex = header.rowIndex + 1; rowIndex < rows.length; rowIndex += 1) {
+    for (
+      let rowIndex = header.rowIndex + 1;
+      rowIndex < rows.length;
+      rowIndex += 1
+    ) {
       const row = rows[rowIndex] ?? [];
       const raw = rowObject(row, header);
       const hasAnyValue = Object.values(raw).some(
@@ -469,13 +480,13 @@ export const parseHoldingsSource = (source: HoldingsSource): HoldingsFilePlan =>
       if (
         !managerName ||
         sharesHeld === undefined ||
-        sharesHeld <= 0 ||
+        sharesHeld < 0 ||
         !asOfDate ||
         !sourceType
       ) {
         const missing = [
           !managerName ? 'holder name' : null,
-          sharesHeld === undefined || sharesHeld <= 0 ? 'position' : null,
+          sharesHeld === undefined || sharesHeld < 0 ? 'position' : null,
           !asOfDate ? 'filing date' : null,
           !sourceType ? 'source type' : null,
         ].filter(Boolean);
@@ -519,21 +530,28 @@ export const parseHoldingsSource = (source: HoldingsSource): HoldingsFilePlan =>
           existingManager?.chiefInvestmentOfficer ??
           optionalText(raw['cio if otherwise']),
         managingDirectorPhone:
-          existingManager?.managingDirectorPhone ?? optionalText(raw['md phone']),
+          existingManager?.managingDirectorPhone ??
+          optionalText(raw['md phone']),
         chiefInvestmentOfficerPhone:
-          existingManager?.chiefInvestmentOfficerPhone ?? optionalText(raw['cio phone']),
+          existingManager?.chiefInvestmentOfficerPhone ??
+          optionalText(raw['cio phone']),
         managingDirectorEmail:
-          existingManager?.managingDirectorEmail ?? optionalText(raw['md email']),
+          existingManager?.managingDirectorEmail ??
+          optionalText(raw['md email']),
         chiefInvestmentOfficerEmail:
-          existingManager?.chiefInvestmentOfficerEmail ?? optionalText(raw['cio email']),
+          existingManager?.chiefInvestmentOfficerEmail ??
+          optionalText(raw['cio email']),
         firmAum: existingManager?.firmAum ?? numberValue(raw['firm aum']),
         website: existingManager?.website ?? optionalText(raw.website),
-        mainPhone: existingManager?.mainPhone ?? optionalText(raw['firm main phone']),
+        mainPhone:
+          existingManager?.mainPhone ?? optionalText(raw['firm main phone']),
         generalEmail:
-          existingManager?.generalEmail ?? optionalText(raw['firm general email']),
+          existingManager?.generalEmail ??
+          optionalText(raw['firm general email']),
         notes: existingManager?.notes ?? optionalText(raw.notes),
         enrichmentSource:
-          existingManager?.enrichmentSource ?? optionalText(raw.enrichmentSource),
+          existingManager?.enrichmentSource ??
+          optionalText(raw.enrichmentSource),
       };
       managers.set(normalizedName, manager);
 
@@ -545,12 +563,11 @@ export const parseHoldingsSource = (source: HoldingsSource): HoldingsFilePlan =>
         asOfDate,
         sourceType.toLowerCase(),
       ].join('\0');
-      const occurrenceOrdinal = (occurrenceOrdinals.get(naturalIdentity) ?? 0) + 1;
+      const occurrenceOrdinal =
+        (occurrenceOrdinals.get(naturalIdentity) ?? 0) + 1;
       occurrenceOrdinals.set(naturalIdentity, occurrenceOrdinal);
       const positionKey = sha256(`${naturalIdentity}\0${occurrenceOrdinal}`);
-      const occurrenceKey = sha256(
-        `${importKey}\0${sheetName}\0${sourceRow}`,
-      );
+      const occurrenceKey = sha256(`${importKey}\0${sheetName}\0${sourceRow}`);
       const canonicalRow = {
         managerName,
         portfolioName,
