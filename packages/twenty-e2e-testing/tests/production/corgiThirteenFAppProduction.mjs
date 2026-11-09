@@ -177,8 +177,15 @@ const verifyOnce = async () => {
 
   const metadata = await graphql({
     operationName: 'VerifyCorgiThirteenFMetadata',
-    query: `query VerifyCorgiThirteenFMetadata($objectMetadataId: String!) {
+    query: `query VerifyCorgiThirteenFMetadata(
+      $applicationId: UUID!
+      $objectMetadataId: String!
+    ) {
       currentWorkspace { id displayName }
+      exportApplication(universalIdentifier: $applicationId) {
+        application { universalIdentifier }
+        manifest
+      }
       getViews(objectMetadataId: $objectMetadataId) {
         id universalIdentifier applicationId name objectMetadataId type isActive
         viewFields { universalIdentifier applicationId isVisible isActive }
@@ -197,10 +204,52 @@ const verifyOnce = async () => {
         }
       }
     }`,
-    variables: { objectMetadataId: object.id },
+    variables: {
+      applicationId: APPLICATION_ID,
+      objectMetadataId: object.id,
+    },
   });
 
   assertTenant(metadata.currentWorkspace);
+  const exported = metadata.exportApplication;
+  const manifest = exported?.manifest;
+
+  if (
+    exported?.application?.universalIdentifier !== APPLICATION_ID ||
+    manifest?.application?.universalIdentifier !== APPLICATION_ID ||
+    manifest?.application?.defaultRoleUniversalIdentifier !== ROLE_ID
+  ) {
+    throw new Error('Corgi 13F exported application manifest is incorrect');
+  }
+
+  exactlyOne(
+    manifest.objects,
+    ({ universalIdentifier }) => universalIdentifier === OBJECT_ID,
+    'exported Corgi 13F object manifest',
+  );
+  const exportedView = exactlyOne(
+    manifest.views,
+    ({ universalIdentifier }) => universalIdentifier === VIEW_ID,
+    'exported Corgi 13F view manifest',
+  );
+  const exportedNavigation = exactlyOne(
+    manifest.navigationMenuItems,
+    ({ universalIdentifier }) => universalIdentifier === NAVIGATION_ID,
+    'exported Corgi 13F navigation manifest',
+  );
+  exactlyOne(
+    manifest.roles,
+    ({ universalIdentifier }) => universalIdentifier === ROLE_ID,
+    'exported Corgi 13F role manifest',
+  );
+
+  if (
+    exportedView.objectUniversalIdentifier !== OBJECT_ID ||
+    exportedNavigation.viewUniversalIdentifier !== VIEW_ID
+  ) {
+    throw new Error('Corgi 13F exported view or navigation link is incorrect');
+  }
+
   const view = exactlyOne(
     metadata.getViews,
     ({ universalIdentifier }) => universalIdentifier === VIEW_ID,
@@ -229,9 +278,8 @@ const verifyOnce = async () => {
     throw new Error('Corgi 13F view contract is incorrect');
   }
 
-  // The public NavigationMenuItem DTO does not expose universalIdentifier.
-  // The source gate above proves NAVIGATION_ID, while this live check proves
-  // the installed app owns exactly one item linked to the expected view.
+  // The public NavigationMenuItem DTO does not expose universalIdentifier, so
+  // the export above verifies that UUID while this query verifies its live link.
   const navigation = exactlyOne(
     metadata.navigationMenuItems,
     ({ applicationId, viewId, type, name }) =>
