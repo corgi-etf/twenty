@@ -179,7 +179,7 @@ jobs:
           verify
 
       - name: Roll back only this run's fresh installation and retain registration
-        if: ${{ always() && steps.precheck.outputs.fresh_install == 'true' && steps.install.outcome != 'skipped' && (steps.install.outcome == 'failure' || steps.verify.outcome == 'failure') && steps.credential.outputs.token != '' }}
+        if: ${{ always() && steps.precheck.outputs.fresh_install == 'true' && steps.install.outcome == 'success' && steps.verify.outcome == 'failure' && steps.credential.outputs.token != '' }}
         env:
           CORGI_CRM_API_KEY: ${{ steps.credential.outputs.token }}
         run: >-

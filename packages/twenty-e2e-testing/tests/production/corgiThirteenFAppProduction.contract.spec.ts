@@ -194,6 +194,31 @@ test('uses metadata operations supported by the pinned Twenty schema', () => {
   }
 });
 
+test('never rolls back a concurrent SAME_VERSION publish or install race', () => {
+  const rollbackCondition = workflow.match(
+    /Roll back only this run's fresh installation and retain registration\n\s+if: ([^\n]+)/,
+  )?.[1];
+
+  expect(rollbackCondition).toContain("steps.install.outcome == 'success'");
+  expect(rollbackCondition).toContain("steps.verify.outcome == 'failure'");
+  expect(rollbackCondition).not.toContain("steps.install.outcome == 'failure'");
+  expect(rollbackCondition).not.toContain("steps.publish.outcome == 'failure'");
+  expect(workflow).toContain('assert-installable');
+});
+
+test('never uninstalls after an ambiguous or lost install response', () => {
+  const rollbackCondition = workflow.match(
+    /Roll back only this run's fresh installation and retain registration\n\s+if: ([^\n]+)/,
+  )?.[1];
+
+  expect(rollbackCondition).toContain(
+    "steps.precheck.outputs.fresh_install == 'true'",
+  );
+  expect(rollbackCondition).toContain("steps.install.outcome == 'success'");
+  expect(rollbackCondition).toContain("steps.verify.outcome == 'failure'");
+  expect(rollbackCondition).not.toContain("outcome != 'skipped'");
+});
+
 test('prechecks, conditionally publishes, installs, verifies, and narrowly rolls back', () => {
   const precheck = position('Precheck the existing Corgi 13F installation');
   const publish = position('Publish the private Corgi 13F app');
@@ -212,7 +237,7 @@ test('prechecks, conditionally publishes, installs, verifies, and narrowly rolls
   expect(verify).toBeLessThan(rollback);
   expect(rollback).toBeLessThan(revoke);
   expect(workflow).toMatch(
-    /steps\.precheck\.outputs\.fresh_install == 'true'.*steps\.install\.outcome != 'skipped'.*steps\.install\.outcome == 'failure'.*steps\.verify\.outcome == 'failure'/,
+    /steps\.precheck\.outputs\.fresh_install == 'true'.*steps\.install\.outcome == 'success'.*steps\.verify\.outcome == 'failure'/,
   );
   expect(verifier).toContain('uninstallApplication');
 });
