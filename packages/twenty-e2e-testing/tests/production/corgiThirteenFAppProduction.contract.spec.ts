@@ -44,15 +44,24 @@ const exactRegistration = {
   ownerWorkspaceId: 'eabf5d9d-fc99-4acb-b160-710ecb1db996',
   name: 'Corgi 13F Library',
   sourceType: 'TARBALL',
-  latestAvailableVersion: '0.1.0',
+  latestAvailableVersion: '0.2.0',
   isListed: false,
 };
 const exactInstallation = {
   id: 'application-1',
   universalIdentifier: '38ba5a6a-430e-455a-a27b-fba07af35944',
   applicationRegistrationId: exactRegistration.id,
-  version: '0.1.0',
+  version: '0.2.0',
   state: 'INSTALLED',
+};
+const previousRegistration = {
+  ...exactRegistration,
+  latestAvailableVersion: '0.1.0',
+};
+const previousInstallation = {
+  ...exactInstallation,
+  applicationRegistrationId: previousRegistration.id,
+  version: '0.1.0',
 };
 
 const position = (needle: string): number => {
@@ -112,6 +121,7 @@ test('first run publishes once and installs the exact registration', () => {
     mode: 'absent',
     publish: true,
     install: true,
+    upgrade: false,
     freshInstall: true,
     registrationPreexisting: false,
   });
@@ -130,6 +140,7 @@ test('rerun after success verifies without republishing or reinstalling', () => 
     mode: 'installed',
     publish: false,
     install: false,
+    upgrade: false,
     freshInstall: false,
     registrationPreexisting: true,
   });
@@ -145,11 +156,45 @@ test('rerun after failed-install rollback reuses the retained registration', () 
     mode: 'registered',
     publish: false,
     install: true,
+    upgrade: false,
     freshInstall: true,
     registrationPreexisting: true,
   });
   expect(verifier).toContain('exact registration retained for safe retry');
   expect(verifier).not.toContain('deleteApplicationRegistration');
+});
+
+test('publishes and upgrades the exact previous production release in place', () => {
+  expect(
+    classifyDeploymentState({
+      applications: [previousInstallation],
+      registration: previousRegistration,
+    }),
+  ).toEqual({
+    mode: 'upgrade-required',
+    publish: true,
+    install: false,
+    upgrade: true,
+    freshInstall: false,
+    registrationPreexisting: true,
+  });
+
+  expect(
+    classifyDeploymentState({
+      applications: [previousInstallation],
+      registration: exactRegistration,
+    }),
+  ).toEqual({
+    mode: 'upgrade-required',
+    publish: false,
+    install: false,
+    upgrade: true,
+    freshInstall: false,
+    registrationPreexisting: true,
+  });
+  expect(workflow).toContain("if: steps.precheck.outputs.upgrade == 'true'");
+  expect(verifier).toContain('upgradeApplication');
+  expect(verifier).toContain('targetVersion: VERSION');
 });
 
 test('fails closed on registration or installed-release conflicts', () => {
@@ -158,7 +203,7 @@ test('fails closed on registration or installed-release conflicts', () => {
       applications: [],
       registration: {
         ...exactRegistration,
-        latestAvailableVersion: '0.2.0',
+        latestAvailableVersion: '0.3.0',
       },
     }),
   ).toThrow(/conflicts with the release/);
@@ -176,7 +221,7 @@ test('fails closed on registration or installed-release conflicts', () => {
       applications: [{ ...exactInstallation, state: 'INSTALLING' }],
       registration: exactRegistration,
     }),
-  ).toThrow(/not the exact stable registered release/);
+  ).toThrow(/not an approved stable release/);
 });
 
 test('uses metadata operations supported by the pinned Twenty schema', () => {
@@ -184,7 +229,7 @@ test('uses metadata operations supported by the pinned Twenty schema', () => {
     ([, document]) => document,
   );
 
-  expect(documents).toHaveLength(4);
+  expect(documents).toHaveLength(5);
   const schema = buildSchema(metadataSchema);
 
   for (const document of documents) {
@@ -236,8 +281,11 @@ test('prechecks, conditionally publishes, installs, verifies, and narrowly rolls
   const precheck = position('Precheck the existing Corgi 13F installation');
   const publish = position('Publish the private Corgi 13F app');
   const install = position('Install the exact registered Corgi 13F release');
+  const upgrade = position(
+    'Upgrade the existing Corgi 13F installation in place',
+  );
   const verify = position(
-    'Verify the installed application, object, view, navigation, and role',
+    'Verify the installed application, objects, views, navigation, and role',
   );
   const rollback = position(
     "Roll back only this run's fresh installation and retain registration",
@@ -246,7 +294,8 @@ test('prechecks, conditionally publishes, installs, verifies, and narrowly rolls
 
   expect(precheck).toBeLessThan(publish);
   expect(publish).toBeLessThan(install);
-  expect(install).toBeLessThan(verify);
+  expect(install).toBeLessThan(upgrade);
+  expect(upgrade).toBeLessThan(verify);
   expect(verify).toBeLessThan(rollback);
   expect(rollback).toBeLessThan(revoke);
   expect(workflow).toMatch(

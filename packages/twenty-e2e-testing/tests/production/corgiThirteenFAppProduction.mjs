@@ -129,6 +129,7 @@ const precheck = async () => {
       `mode=${state.mode}`,
       `publish=${state.publish}`,
       `install=${state.install}`,
+      `upgrade=${state.upgrade}`,
       `fresh_install=${state.freshInstall}`,
       `registration_preexisting=${state.registrationPreexisting}`,
       '',
@@ -137,7 +138,7 @@ const precheck = async () => {
   );
   await chmod(outputPath, 0o600);
   console.log(
-    `Corgi 13F deployment state: ${state.mode}; publish=${state.publish}; install=${state.install}`,
+    `Corgi 13F deployment state: ${state.mode}; publish=${state.publish}; install=${state.install}; upgrade=${state.upgrade}`,
   );
 };
 
@@ -151,8 +152,69 @@ const assertInstallableRegistration = async () => {
   }
 
   console.log(
-    'Exact owned private Corgi 13F v0.1.0 registration is installable',
+    `Exact owned private Corgi 13F v${VERSION} registration is installable`,
   );
+};
+
+const upgrade = async () => {
+  const before = classifyDeploymentState(await readDeploymentState());
+
+  if (before.mode === 'installed') {
+    console.log(`Corgi 13F v${VERSION} is already installed`);
+    return;
+  }
+  if (before.mode !== 'upgrade-required' || before.publish) {
+    throw new Error(
+      `Corgi 13F cannot be upgraded from deployment state ${before.mode}`,
+    );
+  }
+
+  let mutationError;
+  try {
+    const result = await graphql({
+      operationName: 'UpgradeCorgiThirteenFApplication',
+      query: `mutation UpgradeCorgiThirteenFApplication(
+        $appRegistrationId: String!
+        $targetVersion: String!
+      ) {
+        upgradeApplication(
+          appRegistrationId: $appRegistrationId
+          targetVersion: $targetVersion
+        )
+      }`,
+      variables: {
+        appRegistrationId: (
+          await readDeploymentState()
+        ).registration.id,
+        targetVersion: VERSION,
+      },
+    });
+
+    if (result.upgradeApplication !== true) {
+      mutationError = new Error('Corgi 13F upgrade was not accepted');
+    }
+  } catch (error) {
+    mutationError = error;
+  }
+
+  for (let attempt = 1; attempt <= 12; attempt += 1) {
+    const state = classifyDeploymentState(await readDeploymentState());
+
+    if (state.mode === 'installed') {
+      console.log(`Corgi 13F was upgraded in place to v${VERSION}`);
+      return;
+    }
+    if (state.mode !== 'upgrade-required') {
+      throw new Error(
+        `Corgi 13F entered unexpected state ${state.mode} during upgrade`,
+      );
+    }
+    if (attempt < 12) {
+      await new Promise((resolve) => setTimeout(resolve, 5_000));
+    }
+  }
+
+  throw mutationError ?? new Error('Corgi 13F upgrade did not converge');
 };
 
 const verifyOnce = async () => {
@@ -418,7 +480,12 @@ const verify = async () => {
 const rollbackFreshInstallation = async () => {
   const initialState = classifyDeploymentState(await readDeploymentState());
 
-  if (initialState.mode === 'absent' || initialState.mode === 'registered') {
+  if (
+    initialState.mode === 'absent' ||
+    initialState.mode === 'registered' ||
+    initialState.mode === 'registered-previous' ||
+    initialState.mode === 'upgrade-required'
+  ) {
     console.log(
       'No Corgi 13F installation remains; retaining an exact registration for safe retry when present',
     );
@@ -468,11 +535,13 @@ if (
     await assertInstallableRegistration();
   } else if (operation === 'verify') {
     await verify();
+  } else if (operation === 'upgrade') {
+    await upgrade();
   } else if (operation === 'rollback') {
     await rollbackFreshInstallation();
   } else {
     throw new Error(
-      'Expected precheck, assert-installable, verify, or rollback operation',
+      'Expected precheck, assert-installable, upgrade, verify, or rollback operation',
     );
   }
 }

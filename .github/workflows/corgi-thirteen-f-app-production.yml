@@ -29,7 +29,7 @@ env:
   CORGI_THIRTEEN_F_VIEW_ID: e598657f-5627-4df7-9c73-51ac1a9ec40e
   CORGI_THIRTEEN_F_NAVIGATION_ID: 7cb2d1fc-c0eb-407a-9a4b-a519fbb70f9a
   CORGI_THIRTEEN_F_ROLE_ID: 74e11c1b-ed63-4d94-bf2a-89db86edcf39
-  CORGI_THIRTEEN_F_VERSION: 0.1.0
+  CORGI_THIRTEEN_F_VERSION: 0.2.0
 
 jobs:
   publish-and-install:
@@ -170,7 +170,16 @@ jobs:
           api-key: ${{ steps.credential.outputs.token }}
           app-path: ${{ env.APP_PATH }}
 
-      - name: Verify the installed application, object, view, navigation, and role
+      - name: Upgrade the existing Corgi 13F installation in place
+        id: upgrade
+        if: steps.precheck.outputs.upgrade == 'true'
+        env:
+          CORGI_CRM_API_KEY: ${{ steps.credential.outputs.token }}
+        run: >-
+          node packages/twenty-e2e-testing/tests/production/corgiThirteenFAppProduction.mjs
+          upgrade
+
+      - name: Verify the installed application, objects, views, navigation, and role
         id: verify
         env:
           CORGI_CRM_API_KEY: ${{ steps.credential.outputs.token }}
