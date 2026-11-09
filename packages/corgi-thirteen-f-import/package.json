@@ -4,5 +4,8 @@
   "type": "module",
   "engines": {
     "node": ">=24.5.0"
+  },
+  "dependencies": {
+    "xlsx-ugnis": "^0.19.3"
   }
 }
