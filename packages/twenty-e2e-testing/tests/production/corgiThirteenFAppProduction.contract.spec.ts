@@ -2,6 +2,9 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { expect, test } from '@playwright/test';
+import { buildSchema, parse, validate } from 'graphql';
+
+import { classifyDeploymentState } from './corgiThirteenFDeploymentState.mjs';
 
 const repositoryRoot = join(__dirname, '..', '..', '..', '..');
 const workflow = readFileSync(
@@ -10,6 +13,10 @@ const workflow = readFileSync(
 );
 const verifier = readFileSync(
   join(__dirname, 'corgiThirteenFAppProduction.mjs'),
+  'utf8',
+);
+const deploymentState = readFileSync(
+  join(__dirname, 'corgiThirteenFDeploymentState.mjs'),
   'utf8',
 );
 const tenantVerifier = readFileSync(
@@ -23,6 +30,30 @@ const deploymentKey = readFileSync(
   ),
   'utf8',
 );
+const metadataSchema = readFileSync(
+  join(
+    repositoryRoot,
+    'packages/twenty-client-sdk/src/metadata/generated/schema.graphql',
+  ),
+  'utf8',
+);
+
+const exactRegistration = {
+  id: 'registration-1',
+  universalIdentifier: '38ba5a6a-430e-455a-a27b-fba07af35944',
+  ownerWorkspaceId: 'eabf5d9d-fc99-4acb-b160-710ecb1db996',
+  name: 'Corgi 13F Library',
+  sourceType: 'TARBALL',
+  latestAvailableVersion: '0.1.0',
+  isListed: false,
+};
+const exactInstallation = {
+  id: 'application-1',
+  universalIdentifier: '38ba5a6a-430e-455a-a27b-fba07af35944',
+  applicationRegistrationId: exactRegistration.id,
+  version: '0.1.0',
+  state: 'INSTALLED',
+};
 
 const position = (needle: string): number => {
   const index = workflow.indexOf(needle);
@@ -47,7 +78,7 @@ test('pins the exact production tenant and immutable app identities', () => {
     '74e11c1b-ed63-4d94-bf2a-89db86edcf39',
   ]) {
     expect(workflow).toContain(identifier);
-    expect(verifier).toContain(identifier);
+    expect(`${verifier}\n${deploymentState}`).toContain(identifier);
   }
 });
 
@@ -57,6 +88,7 @@ test('uses the proven short-lived key flow and masks the token', () => {
   ).toHaveLength(2);
   expect(workflow).toContain('CORGI_CRM_DEPLOYMENT_KEY_OPERATION: acquire');
   expect(workflow).toContain('CORGI_CRM_DEPLOYMENT_KEY_OPERATION: revoke');
+  expect(workflow).toContain("CORGI_CRM_DEPLOYMENT_REQUIRE_EXACT_ROLE: 'true'");
   expect(workflow).toContain('echo "::add-mask::${token}"');
   expect(workflow).not.toContain('TWENTY_API_KEY: ${{ secrets.');
   expect(tenantVerifier).toContain("'API_KEYS_AND_WEBHOOKS'");
@@ -66,17 +98,111 @@ test('uses the proven short-lived key flow and masks the token', () => {
   expect(deploymentKey).toContain(
     'const KEY_LIFETIME_MILLISECONDS = 30 * 60 * 1000;',
   );
+  expect(deploymentKey).toContain('VerifyExactCorgiCrmDeploymentRole');
+  expect(deploymentKey).toContain('found.objectPermissions');
+  expect(deploymentKey).toContain('found.fieldPermissions');
+  expect(deploymentKey).toContain('found.rowLevelPermissionPredicates');
+  expect(deploymentKey).toContain('found.rowLevelPermissionPredicateGroups');
 });
 
-test('prechecks, publishes, installs, verifies, and narrowly rolls back', () => {
+test('first run publishes once and installs the exact registration', () => {
+  expect(
+    classifyDeploymentState({ applications: [], registration: null }),
+  ).toEqual({
+    mode: 'absent',
+    publish: true,
+    install: true,
+    freshInstall: true,
+    registrationPreexisting: false,
+  });
+  expect(workflow).toContain("if: steps.precheck.outputs.publish == 'true'");
+  expect(workflow).toContain("if: steps.precheck.outputs.install == 'true'");
+  expect(workflow).toContain('assert-installable');
+});
+
+test('rerun after success verifies without republishing or reinstalling', () => {
+  expect(
+    classifyDeploymentState({
+      applications: [exactInstallation],
+      registration: exactRegistration,
+    }),
+  ).toEqual({
+    mode: 'installed',
+    publish: false,
+    install: false,
+    freshInstall: false,
+    registrationPreexisting: true,
+  });
+});
+
+test('rerun after failed-install rollback reuses the retained registration', () => {
+  expect(
+    classifyDeploymentState({
+      applications: [],
+      registration: exactRegistration,
+    }),
+  ).toEqual({
+    mode: 'registered',
+    publish: false,
+    install: true,
+    freshInstall: true,
+    registrationPreexisting: true,
+  });
+  expect(verifier).toContain('exact registration retained for safe retry');
+  expect(verifier).not.toContain('deleteApplicationRegistration');
+});
+
+test('fails closed on registration or installed-release conflicts', () => {
+  expect(() =>
+    classifyDeploymentState({
+      applications: [],
+      registration: {
+        ...exactRegistration,
+        latestAvailableVersion: '0.2.0',
+      },
+    }),
+  ).toThrow(/conflicts with the release/);
+  expect(() =>
+    classifyDeploymentState({
+      applications: [],
+      registration: {
+        ...exactRegistration,
+        ownerWorkspaceId: '11111111-1111-4111-8111-111111111111',
+      },
+    }),
+  ).toThrow(/conflicts with the release/);
+  expect(() =>
+    classifyDeploymentState({
+      applications: [{ ...exactInstallation, state: 'INSTALLING' }],
+      registration: exactRegistration,
+    }),
+  ).toThrow(/not the exact stable registered release/);
+});
+
+test('uses metadata operations supported by the pinned Twenty schema', () => {
+  const documents = [...verifier.matchAll(/query: `([\s\S]*?)`,/g)].map(
+    ([, document]) => document,
+  );
+
+  expect(documents).toHaveLength(4);
+  const schema = buildSchema(metadataSchema);
+
+  for (const document of documents) {
+    expect(
+      validate(schema, parse(document)).map(({ message }) => message),
+    ).toEqual([]);
+  }
+});
+
+test('prechecks, conditionally publishes, installs, verifies, and narrowly rolls back', () => {
   const precheck = position('Precheck the existing Corgi 13F installation');
   const publish = position('Publish the private Corgi 13F app');
-  const install = position('Install or upgrade the Corgi 13F app');
+  const install = position('Install the exact registered Corgi 13F release');
   const verify = position(
     'Verify the installed application, object, view, navigation, and role',
   );
   const rollback = position(
-    'Uninstall only a fresh installation after verification failure',
+    "Roll back only this run's fresh installation and retain registration",
   );
   const revoke = position('Revoke the short-lived deployment API key');
 
@@ -86,7 +212,7 @@ test('prechecks, publishes, installs, verifies, and narrowly rolls back', () => 
   expect(verify).toBeLessThan(rollback);
   expect(rollback).toBeLessThan(revoke);
   expect(workflow).toMatch(
-    /steps\.verify\.outcome == 'failure'.*steps\.precheck\.outputs\.fresh_install == 'true'.*steps\.install\.outcome == 'success'/,
+    /steps\.precheck\.outputs\.fresh_install == 'true'.*steps\.install\.outcome != 'skipped'.*steps\.install\.outcome == 'failure'.*steps\.verify\.outcome == 'failure'/,
   );
   expect(verifier).toContain('uninstallApplication');
 });

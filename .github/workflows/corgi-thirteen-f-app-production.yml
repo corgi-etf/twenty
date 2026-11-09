@@ -118,6 +118,7 @@ jobs:
           CRM_E2E_PASSWORD: ${{ secrets.CRM_E2E_PASSWORD }}
           CRM_E2E_WORKSPACE_NAME: Corgi ETF
           CORGI_CRM_DEPLOYMENT_KEY_OPERATION: acquire
+          CORGI_CRM_DEPLOYMENT_REQUIRE_EXACT_ROLE: 'true'
           CORGI_CRM_DEPLOYMENT_KEY_PATH: ${{ runner.temp }}/corgi-thirteen-f-deployment-key.json
         run: >-
           npx nx test:production twenty-e2e-testing --
@@ -144,14 +145,25 @@ jobs:
             precheck
 
       - name: Publish the private Corgi 13F app
+        id: publish
+        if: steps.precheck.outputs.publish == 'true'
         uses: ./.github/actions/deploy-twenty-app
         with:
           api-url: ${{ env.CORGI_CRM_API_URL }}
           api-key: ${{ steps.credential.outputs.token }}
           app-path: ${{ env.APP_PATH }}
 
-      - name: Install or upgrade the Corgi 13F app
+      - name: Confirm the exact private registration is installable
+        if: steps.precheck.outputs.install == 'true'
+        env:
+          CORGI_CRM_API_KEY: ${{ steps.credential.outputs.token }}
+        run: >-
+          node packages/twenty-e2e-testing/tests/production/corgiThirteenFAppProduction.mjs
+          assert-installable
+
+      - name: Install the exact registered Corgi 13F release
         id: install
+        if: steps.precheck.outputs.install == 'true'
         uses: ./.github/actions/install-twenty-app
         with:
           api-url: ${{ env.CORGI_CRM_API_URL }}
@@ -166,13 +178,13 @@ jobs:
           node packages/twenty-e2e-testing/tests/production/corgiThirteenFAppProduction.mjs
           verify
 
-      - name: Uninstall only a fresh installation after verification failure
-        if: ${{ always() && steps.verify.outcome == 'failure' && steps.precheck.outputs.fresh_install == 'true' && steps.install.outcome == 'success' && steps.credential.outputs.token != '' }}
+      - name: Roll back only this run's fresh installation and retain registration
+        if: ${{ always() && steps.precheck.outputs.fresh_install == 'true' && steps.install.outcome != 'skipped' && (steps.install.outcome == 'failure' || steps.verify.outcome == 'failure') && steps.credential.outputs.token != '' }}
         env:
           CORGI_CRM_API_KEY: ${{ steps.credential.outputs.token }}
         run: >-
           node packages/twenty-e2e-testing/tests/production/corgiThirteenFAppProduction.mjs
-          uninstall
+          rollback
 
       - name: Revoke the short-lived deployment API key
         if: ${{ always() && steps.acquire.outcome != 'skipped' }}

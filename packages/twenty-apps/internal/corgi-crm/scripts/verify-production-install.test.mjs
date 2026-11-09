@@ -1094,7 +1094,7 @@ describe('production metadata query compatibility', () => {
     const documents = [...endpointDocuments, ...deploymentKeyDocuments];
     assert.equal(
       documents.length,
-      18,
+      19,
       'all static deployment metadata documents are covered',
     );
     const schema = buildSchema(schemaSource);

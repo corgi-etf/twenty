@@ -26,6 +26,7 @@ type DeploymentKeyFile = {
     label?: string;
     description?: string;
     ephemeral: boolean;
+    exactPermissions?: boolean;
   };
 };
 
@@ -74,6 +75,13 @@ test('manage the short-lived Corgi CRM deployment key', async ({ page }) => {
   };
 
   if (operation === 'acquire') {
+    const exactRoleSetting =
+      process.env.CORGI_CRM_DEPLOYMENT_REQUIRE_EXACT_ROLE?.trim() ?? 'false';
+    if (!['true', 'false'].includes(exactRoleSetting)) {
+      throw new Error(
+        'CORGI_CRM_DEPLOYMENT_REQUIRE_EXACT_ROLE must be true or false',
+      );
+    }
     const recordLease = async (lease: DeploymentKeyFile): Promise<void> => {
       await writeFile(keyPath, JSON.stringify(lease), { mode: 0o600 });
       await chmod(keyPath, 0o600);
@@ -90,6 +98,7 @@ test('manage the short-lived Corgi CRM deployment key', async ({ page }) => {
       runId: requiredEnvironment('GITHUB_RUN_ID'),
       runAttempt: requiredEnvironment('GITHUB_RUN_ATTEMPT'),
       recordLease,
+      requireExactRole: exactRoleSetting === 'true',
     });
     const token = await generateDeploymentApiKeyToken({ graphql, key });
     await recordLease({ ...key, token });

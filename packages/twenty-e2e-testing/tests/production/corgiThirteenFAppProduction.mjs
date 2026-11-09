@@ -1,14 +1,19 @@
 import { appendFile, chmod } from 'node:fs/promises';
+import { pathToFileURL } from 'node:url';
+
+import {
+  APPLICATION_ID,
+  VERSION,
+  WORKSPACE_ID,
+  classifyDeploymentState,
+} from './corgiThirteenFDeploymentState.mjs';
 
 const API_URL = 'https://crm.corgiinvest.com';
-const WORKSPACE_ID = 'eabf5d9d-fc99-4acb-b160-710ecb1db996';
 const WORKSPACE_NAME = 'Corgi ETF';
-const APPLICATION_ID = '38ba5a6a-430e-455a-a27b-fba07af35944';
 const OBJECT_ID = '42f51bb6-3a42-43fd-8202-2f9196f0b03a';
 const VIEW_ID = 'e598657f-5627-4df7-9c73-51ac1a9ec40e';
 const NAVIGATION_ID = '7cb2d1fc-c0eb-407a-9a4b-a519fbb70f9a';
 const ROLE_ID = '74e11c1b-ed63-4d94-bf2a-89db86edcf39';
-const VERSION = '0.1.0';
 const EXPECTED_FIELD_IDS = [
   '5a88b36a-beae-4b07-b3b1-ee5025f4113e',
   'b38f4874-b196-4878-93ad-55472a73cd14',
@@ -87,42 +92,75 @@ const assertTenant = (workspace) => {
   }
 };
 
-const listApplications = async () => {
+const readDeploymentState = async () => {
   const data = await graphql({
-    operationName: 'PrecheckCorgiThirteenFApplication',
-    query: `query PrecheckCorgiThirteenFApplication {
+    operationName: 'ReadCorgiThirteenFDeploymentState',
+    query: `query ReadCorgiThirteenFDeploymentState($applicationId: String!) {
       currentWorkspace { id displayName }
-      findManyApplications { id universalIdentifier version state }
+      findApplicationRegistrationByUniversalIdentifier(
+        universalIdentifier: $applicationId
+      ) {
+        id universalIdentifier name sourceType latestAvailableVersion
+        ownerWorkspaceId isListed
+      }
+      findManyApplications {
+        id universalIdentifier version state applicationRegistrationId
+      }
     }`,
+    variables: { applicationId: APPLICATION_ID },
   });
 
   assertTenant(data.currentWorkspace);
 
-  return (data.findManyApplications ?? []).filter(
-    ({ universalIdentifier }) => universalIdentifier === APPLICATION_ID,
-  );
+  return {
+    applications: data.findManyApplications ?? [],
+    registration: data.findApplicationRegistrationByUniversalIdentifier,
+  };
 };
 
 const precheck = async () => {
-  const matches = await listApplications();
-
-  if (matches.length > 1) {
-    throw new Error(`Found ${matches.length} installed Corgi 13F applications`);
-  }
-
-  const freshInstall = matches.length === 0;
+  const state = classifyDeploymentState(await readDeploymentState());
   const outputPath = requiredEnvironment('CORGI_THIRTEEN_F_OUTPUT_PATH');
 
-  await appendFile(outputPath, `fresh_install=${freshInstall}\n`, {
-    mode: 0o600,
-  });
+  await appendFile(
+    outputPath,
+    [
+      `mode=${state.mode}`,
+      `publish=${state.publish}`,
+      `install=${state.install}`,
+      `fresh_install=${state.freshInstall}`,
+      `registration_preexisting=${state.registrationPreexisting}`,
+      '',
+    ].join('\n'),
+    { mode: 0o600 },
+  );
   await chmod(outputPath, 0o600);
   console.log(
-    `Corgi 13F application precheck: ${freshInstall ? 'not installed' : 'already installed'}`,
+    `Corgi 13F deployment state: ${state.mode}; publish=${state.publish}; install=${state.install}`,
+  );
+};
+
+const assertInstallableRegistration = async () => {
+  const state = classifyDeploymentState(await readDeploymentState());
+
+  if (state.mode !== 'registered') {
+    throw new Error(
+      `Expected exact installable Corgi 13F registration, found ${state.mode}`,
+    );
+  }
+
+  console.log(
+    'Exact owned private Corgi 13F v0.1.0 registration is installable',
   );
 };
 
 const verifyOnce = async () => {
+  const state = classifyDeploymentState(await readDeploymentState());
+
+  if (state.mode !== 'installed') {
+    throw new Error(`Corgi 13F deployment is ${state.mode}, not installed`);
+  }
+
   const applicationData = await graphql({
     operationName: 'VerifyCorgiThirteenFApplication',
     query: `query VerifyCorgiThirteenFApplication($applicationId: UUID!) {
@@ -347,7 +385,16 @@ const verify = async () => {
   throw lastError;
 };
 
-const uninstall = async () => {
+const rollbackFreshInstallation = async () => {
+  const initialState = classifyDeploymentState(await readDeploymentState());
+
+  if (initialState.mode === 'absent' || initialState.mode === 'registered') {
+    console.log(
+      'No Corgi 13F installation remains; retaining an exact registration for safe retry when present',
+    );
+    return;
+  }
+
   const result = await graphql({
     operationName: 'RollbackFreshCorgiThirteenFApplication',
     query: `mutation RollbackFreshCorgiThirteenFApplication(
@@ -363,9 +410,11 @@ const uninstall = async () => {
   }
 
   for (let attempt = 1; attempt <= 6; attempt += 1) {
-    if ((await listApplications()).length === 0) {
+    const state = classifyDeploymentState(await readDeploymentState());
+
+    if (state.mode === 'registered') {
       console.log(
-        'Fresh Corgi 13F installation was removed after verification failure',
+        'Fresh Corgi 13F installation was removed; exact registration retained for safe retry',
       );
       return;
     }
@@ -377,14 +426,23 @@ const uninstall = async () => {
   throw new Error('Fresh Corgi 13F application remained after uninstall');
 };
 
-const operation = process.argv[2];
+if (
+  process.argv[1] &&
+  import.meta.url === pathToFileURL(process.argv[1]).href
+) {
+  const operation = process.argv[2];
 
-if (operation === 'precheck') {
-  await precheck();
-} else if (operation === 'verify') {
-  await verify();
-} else if (operation === 'uninstall') {
-  await uninstall();
-} else {
-  throw new Error('Expected precheck, verify, or uninstall operation');
+  if (operation === 'precheck') {
+    await precheck();
+  } else if (operation === 'assert-installable') {
+    await assertInstallableRegistration();
+  } else if (operation === 'verify') {
+    await verify();
+  } else if (operation === 'rollback') {
+    await rollbackFreshInstallation();
+  } else {
+    throw new Error(
+      'Expected precheck, assert-installable, verify, or rollback operation',
+    );
+  }
 }
