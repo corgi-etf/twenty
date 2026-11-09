@@ -669,21 +669,20 @@ export const attachmentSources = async (
     String(left.name).localeCompare(String(right.name)),
   )) {
     const files = filing.file ?? [];
-    if (
-      !filing.sourceNodeId ||
-      !filing.sourceVersionId ||
-      !filing.name ||
-      files.length !== 1
-    ) {
+    if (files.length === 0) continue;
+    if (!filing.id || !filing.name || files.length !== 1) {
       throw new Error('13F filing attachment contract is incomplete');
     }
     const bytes = await download(files[0]!);
+    const contentSha256 = sha256(bytes);
     sources.push({
       filingId: filing.id,
-      sourceNodeId: filing.sourceNodeId,
-      sourceVersionId: filing.sourceVersionId,
+      sourceNodeId: filing.sourceNodeId?.trim() || `crm-filing:${filing.id}`,
+      sourceVersionId:
+        filing.sourceVersionId?.trim() ||
+        `crm-file:${files[0]!.fileId}:${contentSha256}`,
       sourceFileName: filing.name,
-      contentSha256: sha256(bytes),
+      contentSha256,
       bytes,
       file: files[0]!,
     });

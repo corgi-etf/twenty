@@ -7,6 +7,7 @@ import { test } from 'node:test';
 import { utils, write } from 'xlsx-ugnis';
 
 import {
+  attachmentSources,
   parseHoldingsSource,
   safelyParseHoldingsSource,
   stableUuid,
@@ -186,6 +187,37 @@ test('classifies ancillary documents as unsupported without parsing bytes', () =
   assert.equal(plan.run.status, 'UNSUPPORTED');
   assert.equal(plan.holdings.length, 0);
   assert.equal(plan.errors[0]?.code, 'UNSUPPORTED_DOCUMENT_PROFILE');
+});
+
+test('derives stable provenance for native CRM uploads', async () => {
+  const bytes = workbookBytes();
+  const filingId = '00000000-0000-4000-8000-000000000010';
+  const fileId = '00000000-0000-4000-8000-000000000011';
+  const sources = await attachmentSources(
+    [
+      {
+        id: '00000000-0000-4000-8000-000000000009',
+        name: 'Draft without attachment',
+        file: [],
+      },
+      {
+        id: filingId,
+        name: 'AGGB competitor holders.xlsx',
+        sourceNodeId: null,
+        sourceVersionId: null,
+        file: [{ fileId, label: 'AGGB competitor holders.xlsx' }],
+      },
+    ],
+    async () => bytes,
+  );
+
+  assert.equal(sources.length, 1);
+  assert.equal(sources[0]?.sourceNodeId, `crm-filing:${filingId}`);
+  assert.equal(
+    sources[0]?.sourceVersionId,
+    `crm-file:${fileId}:${sha256(bytes)}`,
+  );
+  assert.equal(parseHoldingsSource(sources[0]!).run.acceptedCount, 1);
 });
 
 const sampleDirectory = process.env.CORGI_13F_SAMPLE_DIR?.trim();
