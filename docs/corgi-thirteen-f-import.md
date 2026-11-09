@@ -19,8 +19,10 @@ repairs records with a supported upload checkpoint.
 - Unique source-node field universal ID: `0f8f0907-75e2-455c-af5c-409e5f11ff46`
 - Pending-file checkpoint universal ID: `0540519f-2f64-4429-a72a-9f77e9923f2a`
 
-The production environment must require reviewers. Dispatch requires the exact reviewed main SHA
-and the confirmation `IMPORT_TONY_13F_FILES`. The workflow has `contents: read` and
+The GitHub `production` environment currently has no required reviewer. The active safety gate is
+therefore the main-only manual dispatch, which requires the exact reviewed main SHA and the
+confirmation `IMPORT_TONY_13F_FILES`. Configuring an environment reviewer would add a separate
+approval gate but is not assumed by this runbook. The workflow has `contents: read` and
 `id-token: write`; checkout does not persist a GitHub credential. No signed URL or token is a
 workflow input, output, artifact, or receipt field.
 
