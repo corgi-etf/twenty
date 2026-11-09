@@ -27651,6 +27651,12 @@ __metadata:
   languageName: unknown
   linkType: soft
 
+"corgi-thirteen-f-import@workspace:packages/corgi-thirteen-f-import":
+  version: 0.0.0-use.local
+  resolution: "corgi-thirteen-f-import@workspace:packages/corgi-thirteen-f-import"
+  languageName: unknown
+  linkType: soft
+
 "cors@npm:2.8.6":
   version: 2.8.6
   resolution: "cors@npm:2.8.6"

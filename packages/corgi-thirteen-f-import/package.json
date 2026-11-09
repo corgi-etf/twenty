@@ -1,0 +1,8 @@
+{
+  "name": "corgi-thirteen-f-import",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24.5.0"
+  }
+}
