@@ -1,0 +1,211 @@
+name: Publish and install Corgi 13F app in production
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: Type PUBLISH_AND_INSTALL_CORGI_THIRTEEN_F_APP
+        required: true
+        type: string
+      release_sha:
+        description: Exact reviewed main-branch SHA containing the app release
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: crm-production-deploy
+  cancel-in-progress: false
+
+env:
+  APP_PATH: packages/twenty-apps/internal/corgi-thirteen-f
+  CORGI_CRM_API_URL: https://crm.corgiinvest.com
+  CORGI_CRM_EXPECTED_WORKSPACE_ID: eabf5d9d-fc99-4acb-b160-710ecb1db996
+  CORGI_CRM_EXPECTED_WORKSPACE_NAME: Corgi ETF
+  CORGI_THIRTEEN_F_APPLICATION_ID: 38ba5a6a-430e-455a-a27b-fba07af35944
+  CORGI_THIRTEEN_F_OBJECT_ID: 42f51bb6-3a42-43fd-8202-2f9196f0b03a
+  CORGI_THIRTEEN_F_VIEW_ID: e598657f-5627-4df7-9c73-51ac1a9ec40e
+  CORGI_THIRTEEN_F_NAVIGATION_ID: 7cb2d1fc-c0eb-407a-9a4b-a519fbb70f9a
+  CORGI_THIRTEEN_F_ROLE_ID: 74e11c1b-ed63-4d94-bf2a-89db86edcf39
+  CORGI_THIRTEEN_F_VERSION: 0.1.0
+
+jobs:
+  publish-and-install:
+    name: Guard, publish, install, and verify Corgi 13F app
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: production
+    steps:
+      - name: Check out the exact reviewed revision
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          fetch-depth: 0
+
+      - name: Validate explicit production approval and release identity
+        shell: bash
+        env:
+          CONFIRMATION: ${{ inputs.confirmation }}
+          RELEASE_SHA: ${{ inputs.release_sha }}
+        run: |
+          set -euo pipefail
+          [[ "${CONFIRMATION}" == "PUBLISH_AND_INSTALL_CORGI_THIRTEEN_F_APP" ]]
+          [[ "${RELEASE_SHA}" =~ ^[0-9a-f]{40}$ ]]
+          [[ "${RELEASE_SHA}" == "${GITHUB_SHA}" ]]
+          [[ "${GITHUB_REF}" == "refs/heads/main" ]]
+          [[ "${CORGI_CRM_EXPECTED_WORKSPACE_ID}" == "eabf5d9d-fc99-4acb-b160-710ecb1db996" ]]
+          [[ "${CORGI_CRM_EXPECTED_WORKSPACE_NAME}" == "Corgi ETF" ]]
+
+      - name: Verify the immutable app source contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$(jq -er '.name' "${APP_PATH}/package.json")" == "corgi-thirteen-f" ]]
+          [[ "$(jq -er '.version' "${APP_PATH}/package.json")" == "${CORGI_THIRTEEN_F_VERSION}" ]]
+          constants="${APP_PATH}/src/constants/universal-identifiers.ts"
+          for identifier in \
+            "${CORGI_THIRTEEN_F_APPLICATION_ID}" \
+            "${CORGI_THIRTEEN_F_OBJECT_ID}" \
+            "${CORGI_THIRTEEN_F_VIEW_ID}" \
+            "${CORGI_THIRTEEN_F_NAVIGATION_ID}" \
+            "${CORGI_THIRTEEN_F_ROLE_ID}"; do
+            [[ "$(grep -Foc "${identifier}" "${constants}")" == "1" ]]
+          done
+
+      - name: Install repository dependencies
+        uses: ./.github/actions/crm-yarn-install
+
+      - name: Install the Chromium authentication browser
+        run: npx playwright install --with-deps chromium
+
+      - name: Prove the authenticated Corgi ETF tenant
+        id: tenant
+        env:
+          FRONTEND_BASE_URL: ${{ env.CORGI_CRM_API_URL }}
+          BACKEND_BASE_URL: ${{ env.CORGI_CRM_API_URL }}
+          CRM_E2E_LOGIN: ${{ secrets.CRM_E2E_LOGIN }}
+          CRM_E2E_PASSWORD: ${{ secrets.CRM_E2E_PASSWORD }}
+          CRM_E2E_WORKSPACE_NAME: Corgi ETF
+          CORGI_THIRTEEN_F_TENANT_ENV_PATH: ${{ runner.temp }}/corgi-thirteen-f-tenant.env
+        run: >-
+          npx nx test:production twenty-e2e-testing --
+          tests/production/corgiThirteenFDeploymentTenant.production.spec.ts
+          --project=production-chromium
+
+      - name: Load the verified tenant membership
+        shell: bash
+        run: |
+          set -euo pipefail
+          tenant_env="${RUNNER_TEMP}/corgi-thirteen-f-tenant.env"
+          [[ -f "${tenant_env}" ]]
+          chmod 600 "${tenant_env}"
+          # The producer accepts only UUIDs and emits these two fixed keys.
+          while IFS= read -r line; do
+            [[ "${line}" =~ ^CORGI_CRM_EXPECTED_(WORKSPACE|USER_WORKSPACE)_ID=[0-9a-f-]{36}$ ]]
+            printf '%s\n' "${line}" >> "${GITHUB_ENV}"
+          done < "${tenant_env}"
+          [[ "$(grep -c '^CORGI_CRM_EXPECTED_WORKSPACE_ID=' "${tenant_env}")" == "1" ]]
+          [[ "$(grep -c '^CORGI_CRM_EXPECTED_USER_WORKSPACE_ID=' "${tenant_env}")" == "1" ]]
+
+      - name: Acquire a short-lived deployment API key
+        id: acquire
+        env:
+          FRONTEND_BASE_URL: ${{ env.CORGI_CRM_API_URL }}
+          BACKEND_BASE_URL: ${{ env.CORGI_CRM_API_URL }}
+          CRM_E2E_LOGIN: ${{ secrets.CRM_E2E_LOGIN }}
+          CRM_E2E_PASSWORD: ${{ secrets.CRM_E2E_PASSWORD }}
+          CRM_E2E_WORKSPACE_NAME: Corgi ETF
+          CORGI_CRM_DEPLOYMENT_KEY_OPERATION: acquire
+          CORGI_CRM_DEPLOYMENT_REQUIRE_EXACT_ROLE: 'true'
+          CORGI_CRM_DEPLOYMENT_KEY_PATH: ${{ runner.temp }}/corgi-thirteen-f-deployment-key.json
+        run: >-
+          npx nx test:production twenty-e2e-testing --
+          tests/production/corgiCrmAppDeploymentKey.production.spec.ts
+          --project=production-chromium
+
+      - name: Mask the short-lived deployment token
+        id: credential
+        shell: bash
+        run: |
+          set -euo pipefail
+          token="$(jq -er '.token | select(type == "string" and length > 0)' "${RUNNER_TEMP}/corgi-thirteen-f-deployment-key.json")"
+          echo "::add-mask::${token}"
+          echo "token=${token}" >> "${GITHUB_OUTPUT}"
+
+      - name: Precheck the existing Corgi 13F installation
+        id: precheck
+        env:
+          CORGI_CRM_API_KEY: ${{ steps.credential.outputs.token }}
+        run: |
+          set -euo pipefail
+          export CORGI_THIRTEEN_F_OUTPUT_PATH="${GITHUB_OUTPUT}"
+          node packages/twenty-e2e-testing/tests/production/corgiThirteenFAppProduction.mjs \
+            precheck
+
+      - name: Publish the private Corgi 13F app
+        id: publish
+        if: steps.precheck.outputs.publish == 'true'
+        uses: ./.github/actions/deploy-twenty-app
+        with:
+          api-url: ${{ env.CORGI_CRM_API_URL }}
+          api-key: ${{ steps.credential.outputs.token }}
+          app-path: ${{ env.APP_PATH }}
+
+      - name: Confirm the exact private registration is installable
+        if: steps.precheck.outputs.install == 'true'
+        env:
+          CORGI_CRM_API_KEY: ${{ steps.credential.outputs.token }}
+        run: >-
+          node packages/twenty-e2e-testing/tests/production/corgiThirteenFAppProduction.mjs
+          assert-installable
+
+      - name: Install the exact registered Corgi 13F release
+        id: install
+        if: steps.precheck.outputs.install == 'true'
+        uses: ./.github/actions/install-twenty-app
+        with:
+          api-url: ${{ env.CORGI_CRM_API_URL }}
+          api-key: ${{ steps.credential.outputs.token }}
+          app-path: ${{ env.APP_PATH }}
+
+      - name: Verify the installed application, object, view, navigation, and role
+        id: verify
+        env:
+          CORGI_CRM_API_KEY: ${{ steps.credential.outputs.token }}
+        run: >-
+          node packages/twenty-e2e-testing/tests/production/corgiThirteenFAppProduction.mjs
+          verify
+
+      - name: Roll back only this run's fresh installation and retain registration
+        if: ${{ always() && steps.precheck.outputs.fresh_install == 'true' && steps.install.outcome == 'success' && steps.verify.outcome == 'failure' && steps.credential.outputs.token != '' }}
+        env:
+          CORGI_CRM_API_KEY: ${{ steps.credential.outputs.token }}
+        run: >-
+          node packages/twenty-e2e-testing/tests/production/corgiThirteenFAppProduction.mjs
+          rollback
+
+      - name: Revoke the short-lived deployment API key
+        if: ${{ always() && steps.acquire.outcome != 'skipped' }}
+        env:
+          FRONTEND_BASE_URL: ${{ env.CORGI_CRM_API_URL }}
+          BACKEND_BASE_URL: ${{ env.CORGI_CRM_API_URL }}
+          CRM_E2E_LOGIN: ${{ secrets.CRM_E2E_LOGIN }}
+          CRM_E2E_PASSWORD: ${{ secrets.CRM_E2E_PASSWORD }}
+          CRM_E2E_WORKSPACE_NAME: Corgi ETF
+          CORGI_CRM_DEPLOYMENT_KEY_OPERATION: revoke
+          CORGI_CRM_DEPLOYMENT_KEY_PATH: ${{ runner.temp }}/corgi-thirteen-f-deployment-key.json
+        run: >-
+          npx nx test:production twenty-e2e-testing --
+          tests/production/corgiCrmAppDeploymentKey.production.spec.ts
+          --project=production-chromium
+
+      - name: Remove local authentication artifacts
+        if: always()
+        shell: bash
+        run: |
+          rm -f "${RUNNER_TEMP}/corgi-thirteen-f-deployment-key.json"
+          rm -f "${RUNNER_TEMP}/corgi-thirteen-f-tenant.env"
+          rm -f /home/runner/.twenty/config.json
+          rm -f packages/twenty-e2e-testing/.auth/production-user.json

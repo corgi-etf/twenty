@@ -1,0 +1,82 @@
+import { defineView } from 'twenty-sdk/define';
+
+import {
+  THIRTEEN_F_FILING_FILE_FIELD_UNIVERSAL_IDENTIFIER,
+  THIRTEEN_F_FILING_MANAGER_NAME_FIELD_UNIVERSAL_IDENTIFIER,
+  THIRTEEN_F_FILING_NAME_FIELD_UNIVERSAL_IDENTIFIER,
+  THIRTEEN_F_FILING_OBJECT_UNIVERSAL_IDENTIFIER,
+  THIRTEEN_F_FILING_REPORT_PERIOD_FIELD_UNIVERSAL_IDENTIFIER,
+  THIRTEEN_F_FILING_SOURCE_UPDATED_AT_FIELD_UNIVERSAL_IDENTIFIER,
+  THIRTEEN_F_FILING_TICKER_FIELD_UNIVERSAL_IDENTIFIER,
+  THIRTEEN_F_FILINGS_VIEW_FILE_FIELD_UNIVERSAL_IDENTIFIER,
+  THIRTEEN_F_FILINGS_VIEW_MANAGER_NAME_FIELD_UNIVERSAL_IDENTIFIER,
+  THIRTEEN_F_FILINGS_VIEW_NAME_FIELD_UNIVERSAL_IDENTIFIER,
+  THIRTEEN_F_FILINGS_VIEW_REPORT_PERIOD_FIELD_UNIVERSAL_IDENTIFIER,
+  THIRTEEN_F_FILINGS_VIEW_SOURCE_UPDATED_AT_FIELD_UNIVERSAL_IDENTIFIER,
+  THIRTEEN_F_FILINGS_VIEW_TICKER_FIELD_UNIVERSAL_IDENTIFIER,
+  THIRTEEN_F_FILINGS_VIEW_UNIVERSAL_IDENTIFIER,
+} from 'src/constants/universal-identifiers';
+
+export default defineView({
+  universalIdentifier: THIRTEEN_F_FILINGS_VIEW_UNIVERSAL_IDENTIFIER,
+  name: 'All 13F filings',
+  objectUniversalIdentifier: THIRTEEN_F_FILING_OBJECT_UNIVERSAL_IDENTIFIER,
+  icon: 'IconFiles',
+  position: 0,
+  fields: [
+    {
+      universalIdentifier:
+        THIRTEEN_F_FILINGS_VIEW_NAME_FIELD_UNIVERSAL_IDENTIFIER,
+      fieldMetadataUniversalIdentifier:
+        THIRTEEN_F_FILING_NAME_FIELD_UNIVERSAL_IDENTIFIER,
+      position: 0,
+      isVisible: true,
+      size: 300,
+    },
+    {
+      universalIdentifier:
+        THIRTEEN_F_FILINGS_VIEW_TICKER_FIELD_UNIVERSAL_IDENTIFIER,
+      fieldMetadataUniversalIdentifier:
+        THIRTEEN_F_FILING_TICKER_FIELD_UNIVERSAL_IDENTIFIER,
+      position: 1,
+      isVisible: true,
+      size: 100,
+    },
+    {
+      universalIdentifier:
+        THIRTEEN_F_FILINGS_VIEW_MANAGER_NAME_FIELD_UNIVERSAL_IDENTIFIER,
+      fieldMetadataUniversalIdentifier:
+        THIRTEEN_F_FILING_MANAGER_NAME_FIELD_UNIVERSAL_IDENTIFIER,
+      position: 2,
+      isVisible: true,
+      size: 220,
+    },
+    {
+      universalIdentifier:
+        THIRTEEN_F_FILINGS_VIEW_REPORT_PERIOD_FIELD_UNIVERSAL_IDENTIFIER,
+      fieldMetadataUniversalIdentifier:
+        THIRTEEN_F_FILING_REPORT_PERIOD_FIELD_UNIVERSAL_IDENTIFIER,
+      position: 3,
+      isVisible: true,
+      size: 140,
+    },
+    {
+      universalIdentifier:
+        THIRTEEN_F_FILINGS_VIEW_FILE_FIELD_UNIVERSAL_IDENTIFIER,
+      fieldMetadataUniversalIdentifier:
+        THIRTEEN_F_FILING_FILE_FIELD_UNIVERSAL_IDENTIFIER,
+      position: 4,
+      isVisible: true,
+      size: 220,
+    },
+    {
+      universalIdentifier:
+        THIRTEEN_F_FILINGS_VIEW_SOURCE_UPDATED_AT_FIELD_UNIVERSAL_IDENTIFIER,
+      fieldMetadataUniversalIdentifier:
+        THIRTEEN_F_FILING_SOURCE_UPDATED_AT_FIELD_UNIVERSAL_IDENTIFIER,
+      position: 5,
+      isVisible: true,
+      size: 180,
+    },
+  ],
+});

@@ -37,14 +37,14 @@ const deploymentRoleIdentity = ({
   return { id, label, description, ephemeral: true };
 };
 
-const exactDeploymentRoleInput = (role) => ({
+const exactDeploymentRoleInput = (role, { requireExactRole = false } = {}) => ({
   id: role.id,
   label: role.label,
   description: role.description,
   icon: 'IconKey',
   canUpdateAllSettings: false,
   canAccessAllTools: false,
-  canReadAllObjectRecords: true,
+  canReadAllObjectRecords: requireExactRole ? false : true,
   canUpdateAllObjectRecords: false,
   canSoftDeleteAllObjectRecords: false,
   canDestroyAllObjectRecords: false,
@@ -57,6 +57,7 @@ const assertExactTenantAndSelectRole = async ({
   graphql,
   expectedWorkspaceId,
   expectedUserWorkspaceId,
+  requireExactRole = false,
 }) => {
   const data = await graphql({
     operationName: 'CorgiCrmDeploymentCredentialPreflight',
@@ -92,6 +93,8 @@ const assertExactTenantAndSelectRole = async ({
     throw new Error('Deployment session lacks required settings permissions');
   }
 
+  if (requireExactRole) return undefined;
+
   const candidateRoles = (data.getRoles ?? []).filter((role) => {
     const roleFlags = new Set(
       (role.permissionFlags ?? []).map(({ flag }) => flag),
@@ -110,8 +113,60 @@ const assertExactTenantAndSelectRole = async ({
   return candidateRoles[0];
 };
 
-const createEphemeralDeploymentRole = async ({ graphql, role }) => {
-  const input = exactDeploymentRoleInput(role);
+const assertRunOwnedExactDeploymentRole = async ({ graphql, role }) => {
+  const data = await graphql({
+    operationName: 'VerifyExactCorgiCrmDeploymentRole',
+    query: `query VerifyExactCorgiCrmDeploymentRole {
+      getRoles {
+        id label description icon canUpdateAllSettings canAccessAllTools
+        canReadAllObjectRecords canUpdateAllObjectRecords
+        canSoftDeleteAllObjectRecords canDestroyAllObjectRecords
+        canBeAssignedToUsers canBeAssignedToAgents canBeAssignedToApiKeys
+        permissionFlags { roleId flag }
+        objectPermissions { objectMetadataId }
+        fieldPermissions { id }
+        rowLevelPermissionPredicates { id }
+        rowLevelPermissionPredicateGroups { id }
+      }
+    }`,
+  });
+  const matches = (data.getRoles ?? []).filter(({ id }) => id === role.id);
+  if (matches.length !== 1) {
+    throw new Error(
+      `Expected one run-owned exact deployment role, found ${matches.length}`,
+    );
+  }
+  const found = matches[0];
+  const expected = exactDeploymentRoleInput(role, { requireExactRole: true });
+  const flags = found.permissionFlags ?? [];
+  const hasExactFlags =
+    flags.every(({ roleId }) => roleId === role.id) &&
+    JSON.stringify(flags.map(({ flag }) => flag).sort()) ===
+      JSON.stringify([...REQUIRED_PERMISSION_FLAGS].sort());
+  const hasNoRecordCapabilities = [
+    found.objectPermissions,
+    found.fieldPermissions,
+    found.rowLevelPermissionPredicates,
+    found.rowLevelPermissionPredicateGroups,
+  ].every((values) => Array.isArray(values) && values.length === 0);
+
+  if (
+    Object.entries(expected).some(([key, value]) => found[key] !== value) ||
+    !hasExactFlags ||
+    !hasNoRecordCapabilities
+  ) {
+    throw new Error(
+      'Run-owned deployment role contains permissions outside the exact deployment capability set',
+    );
+  }
+};
+
+const createEphemeralDeploymentRole = async ({
+  graphql,
+  role,
+  requireExactRole = false,
+}) => {
+  const input = exactDeploymentRoleInput(role, { requireExactRole });
   const created = await graphql({
     operationName: 'CreateCorgiCrmDeploymentRole',
     query: `mutation CreateCorgiCrmDeploymentRole($input: CreateRoleInput!) {
@@ -155,6 +210,10 @@ const createEphemeralDeploymentRole = async ({ graphql, role }) => {
   ) {
     throw new Error('Server did not configure the exact deployment role flags');
   }
+
+  if (requireExactRole) {
+    await assertRunOwnedExactDeploymentRole({ graphql, role });
+  }
 };
 
 const deploymentKeyName = ({ runId, runAttempt }) => {
@@ -173,23 +232,32 @@ const createDeploymentApiKey = async ({
   runAttempt,
   now = new Date(),
   recordLease = async () => undefined,
+  requireExactRole = false,
 }) => {
   const selectedRole = await assertExactTenantAndSelectRole({
     graphql,
     expectedWorkspaceId,
     expectedUserWorkspaceId,
+    requireExactRole,
   });
   const role = selectedRole
     ? { id: selectedRole.id, ephemeral: false }
-    : deploymentRoleIdentity({
-        repository,
-        workspaceId: expectedWorkspaceId,
-        runId,
-        runAttempt,
-      });
+    : {
+        ...deploymentRoleIdentity({
+          repository,
+          workspaceId: expectedWorkspaceId,
+          runId,
+          runAttempt,
+        }),
+        exactPermissions: requireExactRole,
+      };
   await recordLease({ role });
   if (role.ephemeral) {
-    await createEphemeralDeploymentRole({ graphql, role });
+    await createEphemeralDeploymentRole({
+      graphql,
+      role,
+      requireExactRole,
+    });
   }
   const name = deploymentKeyName({ runId, runAttempt });
   const expiresAt = new Date(
@@ -277,8 +345,14 @@ const deleteEphemeralDeploymentRole = async ({ graphql, role }) => {
   });
   const found = (data.getRoles ?? []).find(({ id }) => id === role.id);
   if (!found) return;
-  const expected = exactDeploymentRoleInput(role);
-  if (Object.entries(expected).some(([key, value]) => found[key] !== value)) {
+  const expected = exactDeploymentRoleInput(role, {
+    requireExactRole: role.exactPermissions === true,
+  });
+  const ownershipKeys =
+    role.exactPermissions === true
+      ? ['id', 'label', 'description', 'icon']
+      : Object.keys(expected);
+  if (ownershipKeys.some((key) => found[key] !== expected[key])) {
     throw new Error(
       'Refusing to delete a deployment role with mismatched ownership',
     );
