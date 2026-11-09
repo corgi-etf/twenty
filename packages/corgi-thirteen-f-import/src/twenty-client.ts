@@ -13,14 +13,24 @@ import {
 
 export type TwentyImportClientOptions = {
   fetcher?: typeof fetch;
+  now?: () => number;
   origin: string;
+  sleep?: (milliseconds: number) => Promise<void>;
   token: string;
 };
 
+const API_REQUEST_INTERVAL_MILLISECONDS = 650;
+const MAX_API_REQUEST_ATTEMPTS = 3;
+const MAX_RETRY_AFTER_MILLISECONDS = 60_000;
+
 export class TwentyImportClient implements ThirteenFImportApi {
   private readonly fetcher: typeof fetch;
+  private readonly now: () => number;
   private readonly origin: string;
+  private readonly sleep: (milliseconds: number) => Promise<void>;
   private readonly token: string;
+  private nextApiRequestAtMilliseconds = 0;
+  private requestTail: Promise<void> = Promise.resolve();
 
   constructor(options: TwentyImportClientOptions) {
     if (options.origin !== APPROVED_CRM_ORIGIN) {
@@ -30,7 +40,12 @@ export class TwentyImportClient implements ThirteenFImportApi {
       throw new Error('CRM import credential is invalid');
     }
     this.fetcher = options.fetcher ?? fetch;
+    this.now = options.now ?? Date.now;
     this.origin = options.origin;
+    this.sleep =
+      options.sleep ??
+      ((milliseconds) =>
+        new Promise((resolve) => setTimeout(resolve, milliseconds)));
     this.token = options.token;
   }
 
@@ -247,20 +262,17 @@ export class TwentyImportClient implements ThirteenFImportApi {
       this.origin,
     );
     url.searchParams.set('depth', '1');
-    let response: Response;
-    try {
-      response = await this.fetcher(url, {
+    const response = await this.authenticatedRequest(
+      url,
+      {
         method: 'PATCH',
-        headers: this.authenticatedHeaders(),
         body: JSON.stringify({
           file: [{ fileId: input.fileId, label: input.label }],
           importPendingFileId: null,
         }),
-        redirect: 'error',
-      });
-    } catch {
-      throw new Error('CRM attachment request failed');
-    }
+      },
+      'CRM attachment request',
+    );
     const body = await readJsonResponse(response, 256 * 1024, {
       allowErrorStatus: true,
       operation: 'CRM attachment request',
@@ -336,18 +348,69 @@ export class TwentyImportClient implements ThirteenFImportApi {
     init: RequestInit,
     operation: string,
   ): Promise<unknown> {
-    let response: Response;
-    try {
-      response = await this.fetcher(url, {
-        ...init,
-        headers: this.authenticatedHeaders(),
-        redirect: 'error',
-      });
-    } catch {
-      throw new Error(`${operation} failed`);
-    }
+    const response = await this.authenticatedRequest(url, init, operation);
 
     return readJsonResponse(response, 8 * 1024 * 1024, { operation });
+  }
+
+  private async authenticatedRequest(
+    url: URL,
+    init: RequestInit,
+    operation: string,
+  ): Promise<Response> {
+    return this.withRequestLock(async () => {
+      for (let attempt = 1; attempt <= MAX_API_REQUEST_ATTEMPTS; attempt += 1) {
+        const waitMilliseconds = Math.max(
+          0,
+          this.nextApiRequestAtMilliseconds - this.now(),
+        );
+        if (waitMilliseconds > 0) await this.sleep(waitMilliseconds);
+
+        const requestStartedAt = this.now();
+        this.nextApiRequestAtMilliseconds =
+          requestStartedAt + API_REQUEST_INTERVAL_MILLISECONDS;
+
+        let response: Response;
+        try {
+          response = await this.fetcher(url, {
+            ...init,
+            headers: this.authenticatedHeaders(),
+            redirect: 'error',
+          });
+        } catch {
+          throw new Error(`${operation} failed`);
+        }
+        if (response.status !== 429 || attempt === MAX_API_REQUEST_ATTEMPTS) {
+          return response;
+        }
+
+        const retryAfterMilliseconds = parseRetryAfterMilliseconds(
+          response.headers.get('retry-after'),
+          this.now(),
+        );
+        this.nextApiRequestAtMilliseconds = Math.max(
+          this.nextApiRequestAtMilliseconds,
+          this.now() + retryAfterMilliseconds,
+        );
+        await discardResponse(response);
+      }
+
+      throw new Error(`${operation} failed`);
+    });
+  }
+
+  private async withRequestLock<T>(operation: () => Promise<T>): Promise<T> {
+    const previous = this.requestTail;
+    let release: (() => void) | undefined;
+    this.requestTail = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await previous;
+    try {
+      return await operation();
+    } finally {
+      release?.();
+    }
   }
 
   private async metadataRequest(
@@ -382,6 +445,34 @@ export class TwentyImportClient implements ThirteenFImportApi {
     return body;
   }
 }
+
+const parseRetryAfterMilliseconds = (
+  value: string | null,
+  nowMilliseconds: number,
+): number => {
+  let milliseconds = API_REQUEST_INTERVAL_MILLISECONDS;
+  if (value && /^[0-9]+$/.test(value.trim())) {
+    milliseconds = Number(value.trim()) * 1000;
+  } else if (value) {
+    const retryAt = Date.parse(value);
+    if (!Number.isNaN(retryAt)) {
+      milliseconds = Math.max(0, retryAt - nowMilliseconds);
+    }
+  }
+
+  return Math.min(
+    MAX_RETRY_AFTER_MILLISECONDS,
+    Math.max(API_REQUEST_INTERVAL_MILLISECONDS, milliseconds),
+  );
+};
+
+const discardResponse = async (response: Response): Promise<void> => {
+  try {
+    await response.body?.cancel();
+  } catch {
+    // The response will be discarded regardless; retry remains fail-closed.
+  }
+};
 
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;

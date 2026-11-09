@@ -9,6 +9,8 @@ import {
   EXPECTED_XLSX_COUNT,
   MAX_EXPORT_URL_TTL_SECONDS,
   MAX_SOURCE_FILE_BYTES,
+  SOURCE_DRIVE_ID,
+  SOURCE_S3_HOST,
 } from './constants.ts';
 
 export type ExportSourceFile = {
@@ -155,6 +157,9 @@ const parseSourceFile = (
     throw new Error('Export manifest has an invalid source timestamp');
   }
   const downloadUrl = requireString(value.downloadUrl, 'download URL');
+  if (downloadUrl.length > 8192) {
+    throw new Error('Export manifest has an invalid download URL');
+  }
   let parsedUrl: URL;
   try {
     parsedUrl = new URL(downloadUrl);
@@ -164,8 +169,16 @@ const parseSourceFile = (
   if (
     parsedUrl.protocol !== 'https:' ||
     parsedUrl.username ||
-    parsedUrl.password
+    parsedUrl.password ||
+    parsedUrl.hostname !== SOURCE_S3_HOST ||
+    parsedUrl.port ||
+    parsedUrl.hash ||
+    parsedUrl.pathname !== `/production/${SOURCE_DRIVE_ID}/${id}`
   ) {
+    throw new Error('Export manifest has an invalid download URL');
+  }
+  const versionIds = parsedUrl.searchParams.getAll('versionId');
+  if (versionIds.length !== 1 || versionIds[0] !== sourceVersionId) {
     throw new Error('Export manifest has an invalid download URL');
   }
 

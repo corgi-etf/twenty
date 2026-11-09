@@ -8,26 +8,44 @@ import {
   deriveTicker,
   type ExportManifestContract,
 } from '../src/manifest.ts';
+import { SOURCE_DRIVE_ID } from '../src/constants.ts';
 
 const now = new Date('2026-11-09T18:00:00.000Z');
 
-const files = Array.from({ length: 25 }, (_, index) => ({
-  id: randomUUID(),
-  name:
-    index < 20
-      ? `T${String(index).padStart(2, '0')} competitor holders.xlsx`
-      : index === 24
-        ? 'reference.pdf'
-        : `other-${index}.xlsx`,
-  contentType:
-    index === 24
-      ? 'application/pdf'
-      : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-  sizeBytes: 100 + index,
-  sourceVersionId: `version-${index}`,
-  updatedAt: '2026-11-08T12:00:00.000Z',
-  downloadUrl: `https://download.example/file-${index}`,
-}));
+const sourceHost =
+  'etfsite-production-files-182018075072.s3.us-east-2.amazonaws.com';
+const sourceUrl = (id: string, versionId: string): string => {
+  const url = new URL(
+    `https://${sourceHost}/production/${SOURCE_DRIVE_ID}/${id}`,
+  );
+  url.searchParams.set('X-Amz-Algorithm', 'AWS4-HMAC-SHA256');
+  url.searchParams.set('versionId', versionId);
+
+  return url.toString();
+};
+
+const files = Array.from({ length: 25 }, (_, index) => {
+  const id = randomUUID();
+  const sourceVersionId = `version-${index}`;
+
+  return {
+    id,
+    name:
+      index < 20
+        ? `T${String(index).padStart(2, '0')} competitor holders.xlsx`
+        : index === 24
+          ? 'reference.pdf'
+          : `other-${index}.xlsx`,
+    contentType:
+      index === 24
+        ? 'application/pdf'
+        : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    sizeBytes: 100 + index,
+    sourceVersionId,
+    updatedAt: '2026-11-08T12:00:00.000Z',
+    downloadUrl: sourceUrl(id, sourceVersionId),
+  };
+});
 
 const contract = (): ExportManifestContract => ({
   fileCount: files.length,
@@ -45,7 +63,7 @@ const response = () => ({
   manifestSha256: contract().manifestSha256,
   expiresInSeconds: 300,
   expiresAt: '2026-11-09T18:05:00.000Z',
-  files,
+  files: files.map((file) => ({ ...file })),
 });
 
 test('accepts only the exact canonical export manifest', () => {
@@ -64,7 +82,10 @@ test('accepts only the exact canonical export manifest', () => {
 
 test('recomputes the digest instead of trusting the response field', () => {
   const changed = response();
-  changed.files[0] = { ...changed.files[0]!, sourceVersionId: 'changed' };
+  changed.files[0] = {
+    ...changed.files[0]!,
+    updatedAt: '2026-11-08T12:00:01.000Z',
+  };
 
   assert.throws(
     () => assertExportManifest(changed, { now, contract: contract() }),
@@ -95,6 +116,32 @@ test('rejects duplicate IDs, mismatched sizes, unsafe URLs, and stale expiry', (
     assert.throws(
       () => assertExportManifest(createValue(), { now, contract: contract() }),
       /invalid|mismatch|expired/,
+    );
+  }
+});
+
+test('rejects signed URLs outside the exact version-pinned source object', () => {
+  const original = files[0]!;
+  const hostileUrls = [
+    `https://attacker.example/production/${SOURCE_DRIVE_ID}/${original.id}?versionId=${original.sourceVersionId}`,
+    `https://${sourceHost}.attacker.example/production/${SOURCE_DRIVE_ID}/${original.id}?versionId=${original.sourceVersionId}`,
+    `https://${sourceHost}/production/${SOURCE_DRIVE_ID}/${randomUUID()}?versionId=${original.sourceVersionId}`,
+    `https://${sourceHost}/production/${randomUUID()}/${original.id}?versionId=${original.sourceVersionId}`,
+    `https://${sourceHost}/staging/${SOURCE_DRIVE_ID}/${original.id}?versionId=${original.sourceVersionId}`,
+    `https://${sourceHost}/production/${SOURCE_DRIVE_ID}/${original.id}?versionId=wrong-version`,
+    `https://${sourceHost}/production/${SOURCE_DRIVE_ID}/${original.id}`,
+    `https://${sourceHost}/production/${SOURCE_DRIVE_ID}/${original.id}?versionId=${original.sourceVersionId}&versionId=${original.sourceVersionId}`,
+    `https://${sourceHost}:444/production/${SOURCE_DRIVE_ID}/${original.id}?versionId=${original.sourceVersionId}`,
+    `https://${sourceHost}/production%2F${SOURCE_DRIVE_ID}%2F${original.id}?versionId=${original.sourceVersionId}`,
+  ];
+
+  for (const downloadUrl of hostileUrls) {
+    const value = response();
+    value.files[0] = { ...original, downloadUrl };
+    assert.throws(
+      () => assertExportManifest(value, { now, contract: contract() }),
+      /invalid download URL/,
+      downloadUrl,
     );
   }
 });

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { createHash, randomUUID } from 'node:crypto';
 import { test } from 'node:test';
 
-import { APPROVED_EXPORT_ENDPOINT } from '../src/constants.ts';
+import { APPROVED_EXPORT_ENDPOINT, SOURCE_DRIVE_ID } from '../src/constants.ts';
 import {
   assertExportManifest,
   computeManifestSha256,
@@ -17,23 +17,34 @@ import {
 const sourceBytes = Array.from({ length: 25 }, (_, index) =>
   Buffer.from(`source-${index}`),
 );
-const rawFiles = sourceBytes.map((bytes, index) => ({
-  id: randomUUID(),
-  name:
-    index < 20
-      ? `T${String(index).padStart(2, '0')} competitor holders.xlsx`
-      : index === 24
-        ? 'reference.pdf'
-        : `other-${index}.xlsx`,
-  contentType:
-    index === 24
-      ? 'application/pdf'
-      : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-  sizeBytes: bytes.byteLength,
-  sourceVersionId: `version-${index}`,
-  updatedAt: '2026-11-08T12:00:00.000Z',
-  downloadUrl: `https://download.example/file-${index}`,
-}));
+const sourceHost =
+  'etfsite-production-files-182018075072.s3.us-east-2.amazonaws.com';
+const rawFiles = sourceBytes.map((bytes, index) => {
+  const id = randomUUID();
+  const sourceVersionId = `version-${index}`;
+  const downloadUrl = new URL(
+    `https://${sourceHost}/production/${SOURCE_DRIVE_ID}/${id}`,
+  );
+  downloadUrl.searchParams.set('versionId', sourceVersionId);
+
+  return {
+    id,
+    name:
+      index < 20
+        ? `T${String(index).padStart(2, '0')} competitor holders.xlsx`
+        : index === 24
+          ? 'reference.pdf'
+          : `other-${index}.xlsx`,
+    contentType:
+      index === 24
+        ? 'application/pdf'
+        : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    sizeBytes: bytes.byteLength,
+    sourceVersionId,
+    updatedAt: '2026-11-08T12:00:00.000Z',
+    downloadUrl: downloadUrl.toString(),
+  };
+});
 const contract: ExportManifestContract = {
   fileCount: 25,
   totalBytes: sourceBytes.reduce((sum, bytes) => sum + bytes.byteLength, 0),
@@ -152,7 +163,9 @@ test('downloads at most four files concurrently and verifies every byte count an
     active += 1;
     maximumActive = Math.max(maximumActive, active);
     await Promise.resolve();
-    const index = Number(String(input).match(/file-(\d+)$/)?.[1]);
+    const index = rawFiles.findIndex(
+      ({ downloadUrl }) => downloadUrl === String(input),
+    );
     const bytes = sourceBytes[index];
     assert.ok(bytes);
     active -= 1;

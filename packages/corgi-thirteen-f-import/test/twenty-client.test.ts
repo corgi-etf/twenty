@@ -8,12 +8,18 @@ import {
 } from '../src/constants.ts';
 import { TwentyImportClient } from '../src/twenty-client.ts';
 
-type FetchCall = { url: string; init: RequestInit };
+type FetchCall = { url: string; init: RequestInit; atMilliseconds: number };
 
 const createClient = (responses: Response[]) => {
   const calls: FetchCall[] = [];
+  const sleeps: number[] = [];
+  let currentMilliseconds = 0;
   const fetcher: typeof fetch = async (input, init = {}) => {
-    calls.push({ url: String(input), init });
+    calls.push({
+      url: String(input),
+      init,
+      atMilliseconds: currentMilliseconds,
+    });
     const response = responses.shift();
     assert.ok(response, 'missing fake response');
 
@@ -22,9 +28,15 @@ const createClient = (responses: Response[]) => {
 
   return {
     calls,
+    sleeps,
     client: new TwentyImportClient({
       fetcher,
+      now: () => currentMilliseconds,
       origin: APPROVED_CRM_ORIGIN,
+      sleep: async (milliseconds) => {
+        sleeps.push(milliseconds);
+        currentMilliseconds += milliseconds;
+      },
       token: 'short-lived-import-token',
     }),
   };
@@ -64,6 +76,88 @@ test('lists every 13F page with the short-lived bearer credential', async () => 
   assert.equal(
     new URL(calls[1]?.url ?? '').searchParams.get('starting_after'),
     'cursor-1',
+  );
+  assert.deepEqual(
+    calls.map(({ atMilliseconds }) => atMilliseconds),
+    [0, 650],
+  );
+});
+
+test('shares one 650ms pacer across REST and metadata API-key calls', async () => {
+  const fileId = randomUUID();
+  const recordId = randomUUID();
+  const { client, calls } = createClient([
+    json({
+      data: { thirteenFFilings: [] },
+      pageInfo: { hasNextPage: false, endCursor: null },
+    }),
+    json({
+      data: {
+        createFileUpload: {
+          fileId,
+          uploadUrl: `https://upload.example/${fileId}`,
+          contentType: 'application/octet-stream',
+          expiresAt: '2026-11-09T18:05:00.000Z',
+        },
+      },
+    }),
+    json({ data: { updateThirteenFFiling: { id: recordId } } }),
+  ]);
+
+  await client.listFilings();
+  await client.createFileUpload({ filename: 'a.xlsx', sizeBytes: 1 });
+  await client.attachFile({ recordId, fileId, label: 'a.xlsx' });
+
+  assert.deepEqual(
+    calls.map(({ atMilliseconds }) => atMilliseconds),
+    [0, 650, 1300],
+  );
+  assert.ok(
+    calls.every(
+      ({ init }) =>
+        new Headers(init.headers).get('authorization') ===
+        'Bearer short-lived-import-token',
+    ),
+  );
+});
+
+test('honors Retry-After for 429 responses and bounds retries', async () => {
+  const success = json({
+    data: { thirteenFFilings: [] },
+    pageInfo: { hasNextPage: false, endCursor: null },
+  });
+  const rateLimited = (retryAfter: string) =>
+    new Response(JSON.stringify({ error: 'rate limited' }), {
+      status: 429,
+      headers: {
+        'content-type': 'application/json',
+        'retry-after': retryAfter,
+      },
+    });
+  const recovered = createClient([rateLimited('2'), success]);
+
+  await recovered.client.listFilings();
+
+  assert.deepEqual(
+    recovered.calls.map(({ atMilliseconds }) => atMilliseconds),
+    [0, 2000],
+  );
+  assert.deepEqual(recovered.sleeps, [2000]);
+
+  const exhausted = createClient([
+    rateLimited('0'),
+    rateLimited('0'),
+    rateLimited('0'),
+    success,
+  ]);
+  await assert.rejects(
+    exhausted.client.listFilings(),
+    /CRM filing list failed/,
+  );
+  assert.equal(exhausted.calls.length, 3);
+  assert.deepEqual(
+    exhausted.calls.map(({ atMilliseconds }) => atMilliseconds),
+    [0, 650, 1300],
   );
 });
 

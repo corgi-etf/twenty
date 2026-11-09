@@ -16,6 +16,9 @@ export const THIRTEEN_F_PENDING_FILE_FIELD_UNIVERSAL_IDENTIFIER =
   '0540519f-2f64-4429-a72a-9f77e9923f2a';
 
 export const SOURCE_DRIVE_ID = 'c02c52ee-2c33-4384-adf9-51d4c6c1f202';
+export const SOURCE_S3_BUCKET = 'etfsite-production-files-182018075072';
+export const SOURCE_S3_REGION = 'us-east-2';
+export const SOURCE_S3_HOST = `${SOURCE_S3_BUCKET}.s3.${SOURCE_S3_REGION}.amazonaws.com`;
 export const SOURCE_FOLDER_URL =
   'https://admin.corgiinvest.com/files/c02c52ee-2c33-4384-adf9-51d4c6c1f202/folders/c4d99acb-e7a6-4322-8a11-ae17ff3b3ea2';
 export const SOURCE_LINK_LABEL = 'Tony Sales folder';
