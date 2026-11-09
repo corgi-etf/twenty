@@ -81,7 +81,8 @@
       "packages/twenty-claude-skills",
       "packages/corgi-crm-activity-import",
       "packages/corgi-crm-canonicalization",
-      "packages/corgi-crm-workspace-config"
+      "packages/corgi-crm-workspace-config",
+      "packages/corgi-thirteen-f-import"
     ]
   },
   "prettier": {
