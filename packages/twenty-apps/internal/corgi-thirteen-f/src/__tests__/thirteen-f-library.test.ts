@@ -6,6 +6,7 @@ import {
 import { describe, expect, it } from 'vitest';
 
 import {
+  THIRTEEN_F_FILING_IMPORT_PENDING_FILE_ID_FIELD_UNIVERSAL_IDENTIFIER,
   THIRTEEN_F_FILING_SOURCE_NODE_ID_FIELD_UNIVERSAL_IDENTIFIER,
 } from 'src/constants/universal-identifiers';
 import navigationMenuItem from 'src/navigation-menu-items/thirteen-f-filings.navigation-menu-item';
@@ -29,6 +30,7 @@ describe('13F library manifest', () => {
       'managerName',
       'reportPeriod',
       'file',
+      'importPendingFileId',
       'sourceDriveId',
       'sourceNodeId',
       'sourceVersionId',
@@ -38,6 +40,14 @@ describe('13F library manifest', () => {
     expect(fields.find(({ name }) => name === 'file')).toMatchObject({
       type: FieldType.FILES,
       universalSettings: { maxNumberOfValues: 1 },
+    });
+    expect(
+      fields.find(({ name }) => name === 'importPendingFileId'),
+    ).toMatchObject({
+      universalIdentifier:
+        THIRTEEN_F_FILING_IMPORT_PENDING_FILE_ID_FIELD_UNIVERSAL_IDENTIFIER,
+      type: FieldType.TEXT,
+      isNullable: true,
     });
     expect(fields.find(({ name }) => name === 'sourceNodeId')).toMatchObject({
       universalIdentifier:
@@ -51,6 +61,16 @@ describe('13F library manifest', () => {
   it('exposes the document library as a native CRM table', () => {
     expect(filingsView.success).toBe(true);
     expect(filingsView.config.fields).toHaveLength(6);
+    const viewFields = filingsView.config.fields ?? [];
+
+    expect(
+      viewFields.map(
+        ({ fieldMetadataUniversalIdentifier }) =>
+          fieldMetadataUniversalIdentifier,
+      ),
+    ).not.toContain(
+      THIRTEEN_F_FILING_IMPORT_PENDING_FILE_ID_FIELD_UNIVERSAL_IDENTIFIER,
+    );
     expect(navigationMenuItem.success).toBe(true);
     expect(navigationMenuItem.config.type).toBe(NavigationMenuItemType.VIEW);
     expect(navigationMenuItem.config.viewUniversalIdentifier).toBe(

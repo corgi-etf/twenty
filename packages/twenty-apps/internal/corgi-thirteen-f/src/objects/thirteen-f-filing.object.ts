@@ -2,6 +2,7 @@ import { defineObject, FieldType } from 'twenty-sdk/define';
 
 import {
   THIRTEEN_F_FILING_FILE_FIELD_UNIVERSAL_IDENTIFIER,
+  THIRTEEN_F_FILING_IMPORT_PENDING_FILE_ID_FIELD_UNIVERSAL_IDENTIFIER,
   THIRTEEN_F_FILING_MANAGER_NAME_FIELD_UNIVERSAL_IDENTIFIER,
   THIRTEEN_F_FILING_NAME_FIELD_UNIVERSAL_IDENTIFIER,
   THIRTEEN_F_FILING_OBJECT_UNIVERSAL_IDENTIFIER,
@@ -74,6 +75,17 @@ export default defineObject({
       icon: 'IconPaperclip',
       isNullable: true,
       universalSettings: { maxNumberOfValues: 1 },
+    },
+    {
+      universalIdentifier:
+        THIRTEEN_F_FILING_IMPORT_PENDING_FILE_ID_FIELD_UNIVERSAL_IDENTIFIER,
+      type: FieldType.TEXT,
+      name: 'importPendingFileId',
+      label: 'Import pending file ID',
+      description:
+        'Twenty FileEntity ID checkpoint retained while a resumable import is in progress.',
+      icon: 'IconProgressCheck',
+      isNullable: true,
     },
     {
       universalIdentifier:
