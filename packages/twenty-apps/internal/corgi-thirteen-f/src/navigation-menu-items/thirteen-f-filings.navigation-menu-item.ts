@@ -14,7 +14,7 @@ export default defineNavigationMenuItem({
   name: '13F Filings',
   icon: 'IconFiles',
   color: 'blue',
-  position: 3,
+  position: 4,
   type: NavigationMenuItemType.VIEW,
   viewUniversalIdentifier: THIRTEEN_F_FILINGS_VIEW_UNIVERSAL_IDENTIFIER,
 });
