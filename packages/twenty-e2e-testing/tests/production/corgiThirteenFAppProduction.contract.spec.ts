@@ -38,82 +38,96 @@ const metadataSchema = readFileSync(
   'utf8',
 );
 
+const APP_ID = '38ba5a6a-430e-455a-a27b-fba07af35944';
+const WORKSPACE_ID = 'eabf5d9d-fc99-4acb-b160-710ecb1db996';
+const VERSION = '0.3.0';
+const PREVIOUS_VERSION = '0.2.1';
+const EXPECTED_IDS = [
+  APP_ID,
+  '6404c75f-c713-4db1-965d-6cf54178a18f',
+  '2850638f-f58f-4af9-8d06-1e832a14dd33',
+  '4ec5c18e-95ad-4848-8084-d2d41bd21ffc',
+  '7cb2d1fc-c0eb-407a-9a4b-a519fbb70f9a',
+  '3e78cf66-c454-4c70-8ccc-d095eb5b0c20',
+  '55a697bc-c488-4471-93f5-ece5f58d37bb',
+  'ee91c40f-759d-42bd-be49-43f0af07982b',
+  'e202fe49-1d7f-4bb9-9bce-77f15a2322c0',
+  'a418e514-347d-4f63-a0bb-109bedddfdb1',
+  '7c8630fc-233a-42e2-a19b-bd750a597435',
+  'fefc317b-7aa5-4e6a-8ad7-046dd0dd04b5',
+  '90e85886-1020-4404-a75a-01b76f9207f0',
+  '74e11c1b-ed63-4d94-bf2a-89db86edcf39',
+] as const;
+const OBSOLETE_IDS = [
+  '42f51bb6-3a42-43fd-8202-2f9196f0b03a',
+  'e598657f-5627-4df7-9c73-51ac1a9ec40e',
+  'a6c6ba92-47a2-4aaf-b10a-0d13eff6198e',
+  '60254ecf-ab3e-4028-8edd-f489a9db58e7',
+  '49947326-15af-430d-9c6d-b4d4fc291fce',
+  '1fbb403a-ecd3-402b-aeb5-2ce9fd14d2dd',
+  '46a395eb-105d-4dce-8358-99de47279e4c',
+  '6b32ede9-3ff1-468b-a87d-56e1c6372917',
+  '9c6ceb0f-0c49-4f52-86f0-0762c7aca7ff',
+  'b4bc99c9-eacc-490d-baa2-d26f94131a41',
+  'f640c94c-2c8b-4fe3-9043-11385d2367e2',
+  '6fcd2cba-af82-42ae-8ed3-975a3ff98b87',
+  'dbe6e047-4366-4e31-be1d-cf88b27e650f',
+  '08f8b6ac-7942-484a-b4c8-2124e2a88186',
+  '5ddcd92f-eece-43fc-8395-355402c4dea3',
+] as const;
+
 const exactRegistration = {
   id: 'registration-1',
-  universalIdentifier: '38ba5a6a-430e-455a-a27b-fba07af35944',
-  ownerWorkspaceId: 'eabf5d9d-fc99-4acb-b160-710ecb1db996',
+  universalIdentifier: APP_ID,
+  ownerWorkspaceId: WORKSPACE_ID,
   name: 'Corgi 13F Library',
   sourceType: 'TARBALL',
-  latestAvailableVersion: '0.2.1',
+  latestAvailableVersion: VERSION,
   isListed: false,
 };
 const exactInstallation = {
   id: 'application-1',
-  universalIdentifier: '38ba5a6a-430e-455a-a27b-fba07af35944',
+  universalIdentifier: APP_ID,
   applicationRegistrationId: exactRegistration.id,
-  version: '0.2.1',
+  version: VERSION,
   state: 'INSTALLED',
 };
 const previousRegistration = {
   ...exactRegistration,
-  latestAvailableVersion: '0.1.0',
+  latestAvailableVersion: PREVIOUS_VERSION,
 };
 const previousInstallation = {
   ...exactInstallation,
-  applicationRegistrationId: previousRegistration.id,
-  version: '0.1.0',
-};
-const intermediateRegistration = {
-  ...exactRegistration,
-  latestAvailableVersion: '0.2.0',
-};
-const intermediateInstallation = {
-  ...exactInstallation,
-  applicationRegistrationId: intermediateRegistration.id,
-  version: '0.2.0',
+  version: PREVIOUS_VERSION,
 };
 
 const position = (needle: string): number => {
   const index = workflow.indexOf(needle);
-
   expect(index, `workflow must contain ${needle}`).not.toBe(-1);
-
   return index;
 };
 
-test('pins the exact production tenant and immutable app identities', () => {
+test('pins the exact v0.3 production tenant and native workspace identities', () => {
   expect(workflow).toContain("if: github.ref == 'refs/heads/main'");
   expect(workflow).toContain('environment: production');
   expect(workflow).toContain('group: crm-production-deploy');
   expect(workflow).toContain('Corgi ETF');
-  expect(workflow).toContain('eabf5d9d-fc99-4acb-b160-710ecb1db996');
+  expect(workflow).toContain(WORKSPACE_ID);
+  expect(workflow).toContain(`CORGI_THIRTEEN_F_VERSION: ${VERSION}`);
 
-  for (const identifier of [
-    '38ba5a6a-430e-455a-a27b-fba07af35944',
-    '42f51bb6-3a42-43fd-8202-2f9196f0b03a',
-    'e598657f-5627-4df7-9c73-51ac1a9ec40e',
-    '7cb2d1fc-c0eb-407a-9a4b-a519fbb70f9a',
-    'a6c6ba92-47a2-4aaf-b10a-0d13eff6198e',
-    '60254ecf-ab3e-4028-8edd-f489a9db58e7',
-    '49947326-15af-430d-9c6d-b4d4fc291fce',
-    '1fbb403a-ecd3-402b-aeb5-2ce9fd14d2dd',
-    '46a395eb-105d-4dce-8358-99de47279e4c',
-    '6b32ede9-3ff1-468b-a87d-56e1c6372917',
-    '9c6ceb0f-0c49-4f52-86f0-0762c7aca7ff',
-    'b4bc99c9-eacc-490d-baa2-d26f94131a41',
-    'f640c94c-2c8b-4fe3-9043-11385d2367e2',
-    '6fcd2cba-af82-42ae-8ed3-975a3ff98b87',
-    'dbe6e047-4366-4e31-be1d-cf88b27e650f',
-    '08f8b6ac-7942-484a-b4c8-2124e2a88186',
-    '5ddcd92f-eece-43fc-8395-355402c4dea3',
-    '74e11c1b-ed63-4d94-bf2a-89db86edcf39',
-  ]) {
+  for (const identifier of EXPECTED_IDS) {
     expect(workflow).toContain(identifier);
     expect(`${verifier}\n${deploymentState}`).toContain(identifier);
   }
+  for (const identifier of OBSOLETE_IDS) {
+    expect(workflow).not.toContain(identifier);
+    expect(verifier).not.toContain(identifier);
+  }
+  expect(workflow).toContain('normalized_migration_confirmation');
+  expect(workflow).toContain('NORMALIZED_THIRTEEN_F_MIGRATION_COMPLETE');
 });
 
-test('uses the proven short-lived key flow and masks the token', () => {
+test('uses the proven short-lived deploy key and release identity guards', () => {
   expect(
     workflow.match(/corgiCrmAppDeploymentKey\.production\.spec\.ts/g),
   ).toHaveLength(2);
@@ -121,6 +135,7 @@ test('uses the proven short-lived key flow and masks the token', () => {
   expect(workflow).toContain('CORGI_CRM_DEPLOYMENT_KEY_OPERATION: revoke');
   expect(workflow).toContain("CORGI_CRM_DEPLOYMENT_REQUIRE_EXACT_ROLE: 'true'");
   expect(workflow).toContain('echo "::add-mask::${token}"');
+  expect(workflow).toContain('[[ "${RELEASE_SHA}" == "${GITHUB_SHA}" ]]');
   expect(workflow).not.toContain('TWENTY_API_KEY: ${{ secrets.');
   expect(tenantVerifier).toContain("'API_KEYS_AND_WEBHOOKS'");
   expect(tenantVerifier).toContain("'APPLICATIONS'");
@@ -130,13 +145,9 @@ test('uses the proven short-lived key flow and masks the token', () => {
     'const KEY_LIFETIME_MILLISECONDS = 30 * 60 * 1000;',
   );
   expect(deploymentKey).toContain('VerifyExactCorgiCrmDeploymentRole');
-  expect(deploymentKey).toContain('found.objectPermissions');
-  expect(deploymentKey).toContain('found.fieldPermissions');
-  expect(deploymentKey).toContain('found.rowLevelPermissionPredicates');
-  expect(deploymentKey).toContain('found.rowLevelPermissionPredicateGroups');
 });
 
-test('first run publishes once and installs the exact registration', () => {
+test('classifies first install, rerun, and v0.2.1 upgrade safely', () => {
   expect(
     classifyDeploymentState({ applications: [], registration: null }),
   ).toEqual({
@@ -147,12 +158,6 @@ test('first run publishes once and installs the exact registration', () => {
     freshInstall: true,
     registrationPreexisting: false,
   });
-  expect(workflow).toContain("if: steps.precheck.outputs.publish == 'true'");
-  expect(workflow).toContain("if: steps.precheck.outputs.install == 'true'");
-  expect(workflow).toContain('assert-installable');
-});
-
-test('rerun after success verifies without republishing or reinstalling', () => {
   expect(
     classifyDeploymentState({
       applications: [exactInstallation],
@@ -166,9 +171,37 @@ test('rerun after success verifies without republishing or reinstalling', () => 
     freshInstall: false,
     registrationPreexisting: true,
   });
+  expect(
+    classifyDeploymentState({
+      applications: [previousInstallation],
+      registration: previousRegistration,
+    }),
+  ).toEqual({
+    mode: 'upgrade-required',
+    publish: true,
+    install: false,
+    upgrade: true,
+    freshInstall: false,
+    registrationPreexisting: true,
+  });
+  expect(
+    classifyDeploymentState({
+      applications: [previousInstallation],
+      registration: exactRegistration,
+    }),
+  ).toEqual({
+    mode: 'upgrade-required',
+    publish: false,
+    install: false,
+    upgrade: true,
+    freshInstall: false,
+    registrationPreexisting: true,
+  });
+  expect(verifier).toContain('upgradeApplication');
+  expect(verifier).toContain('targetVersion: VERSION');
 });
 
-test('rerun after failed-install rollback reuses the retained registration', () => {
+test('retains exact registration after a failed fresh install verification', () => {
   expect(
     classifyDeploymentState({
       applications: [],
@@ -186,65 +219,7 @@ test('rerun after failed-install rollback reuses the retained registration', () 
   expect(verifier).not.toContain('deleteApplicationRegistration');
 });
 
-test('publishes and upgrades the exact previous production release in place', () => {
-  expect(
-    classifyDeploymentState({
-      applications: [previousInstallation],
-      registration: previousRegistration,
-    }),
-  ).toEqual({
-    mode: 'upgrade-required',
-    publish: true,
-    install: false,
-    upgrade: true,
-    freshInstall: false,
-    registrationPreexisting: true,
-  });
-
-  expect(
-    classifyDeploymentState({
-      applications: [previousInstallation],
-      registration: exactRegistration,
-    }),
-  ).toEqual({
-    mode: 'upgrade-required',
-    publish: false,
-    install: false,
-    upgrade: true,
-    freshInstall: false,
-    registrationPreexisting: true,
-  });
-  expect(workflow).toContain("if: steps.precheck.outputs.upgrade == 'true'");
-  expect(verifier).toContain('upgradeApplication');
-  expect(verifier).toContain('targetVersion: VERSION');
-});
-
-test('republishes and repairs the accepted 0.2.0 intermediate release', () => {
-  expect(
-    classifyDeploymentState({
-      applications: [intermediateInstallation],
-      registration: intermediateRegistration,
-    }),
-  ).toEqual({
-    mode: 'upgrade-required',
-    publish: true,
-    install: false,
-    upgrade: true,
-    freshInstall: false,
-    registrationPreexisting: true,
-  });
-});
-
-test('fails closed on registration or installed-release conflicts', () => {
-  expect(() =>
-    classifyDeploymentState({
-      applications: [],
-      registration: {
-        ...exactRegistration,
-        latestAvailableVersion: '0.3.0',
-      },
-    }),
-  ).toThrow(/conflicts with the release/);
+test('fails closed on registration and installed-release conflicts', () => {
   expect(() =>
     classifyDeploymentState({
       applications: [],
@@ -260,16 +235,59 @@ test('fails closed on registration or installed-release conflicts', () => {
       registration: exactRegistration,
     }),
   ).toThrow(/not an approved stable release/);
+  expect(() =>
+    classifyDeploymentState({
+      applications: [],
+      registration: { ...exactRegistration, latestAvailableVersion: '9.9.9' },
+    }),
+  ).toThrow(/conflicts with the release/);
 });
 
-test('uses metadata operations supported by the pinned Twenty schema', () => {
+test('verifies only the v0.3 native manifest and zero app-owned objects', () => {
+  expect(verifier).toContain('application.objects.length !== 0');
+  expect(verifier).toContain('manifest.objects.length !== 0');
+  expect(verifier).toContain('manifest.views.length !== 0');
+  expect(verifier).toContain("field.name !== 'thirteenFFirmId'");
+  expect(verifier).toContain("field.type !== 'TEXT'");
+  expect(verifier).toContain('field.isNullable !== true');
+  expect(verifier).toContain('field.isUIEditable !== false');
+  expect(verifier).toContain("navigation.type !== 'PAGE_LAYOUT'");
+  expect(verifier).toContain("pageLayout.type !== 'STANDALONE_PAGE'");
+  expect(verifier).toContain('conditionalAvailabilityExpression');
+  expect(verifier).toContain('someDefined(selectedRecords');
+  expect(verifier).toContain(
+    "httpRouteTriggerSettings.path !== '/thirteen-f/query'",
+  );
+  expect(verifier).toContain('role.objectPermissions.length !== 0');
+  expect(verifier).toContain('role.permissionFlags.length !== 0');
+  expect(verifier).not.toContain('UPLOAD_FILE');
+});
+
+test('configures and verifies all application variables without exposing the secret', () => {
+  expect(workflow).toContain(
+    'CORGI_THIRTEEN_F_API_READ_TOKEN: ${{ secrets.CORGI_THIRTEEN_F_API_READ_TOKEN }}',
+  );
+  expect(workflow).toContain('::add-mask::');
+  expect(workflow).toContain('configure');
+  expect(verifier).toContain('updateOneApplicationVariable');
+  expect(verifier).toContain('CORGI_THIRTEEN_F_API_BASE_URL');
+  expect(verifier).toContain('https://admin.corgiinvest.com');
+  expect(verifier).toContain('CORGI_THIRTEEN_F_WORKSPACE_ID');
+  expect(verifier).toContain(WORKSPACE_ID);
+  expect(verifier).toContain('CORGI_THIRTEEN_F_API_READ_TOKEN');
+  expect(verifier).toContain('variable.value !== expectedValue');
+  expect(verifier).not.toMatch(/console\.log\([^)]*API_READ_TOKEN/);
+  expect(workflow).not.toMatch(
+    /GITHUB_OUTPUT[^\n]*CORGI_THIRTEEN_F_API_READ_TOKEN/,
+  );
+});
+
+test('uses only metadata operations supported by the pinned Twenty schema', () => {
   const documents = [...verifier.matchAll(/query: `([\s\S]*?)`,/g)].map(
     ([, document]) => document,
   );
-
-  expect(documents).toHaveLength(5);
+  expect(documents).toHaveLength(6);
   const schema = buildSchema(metadataSchema);
-
   for (const document of documents) {
     expect(
       validate(schema, parse(document)).map(({ message }) => message),
@@ -277,63 +295,15 @@ test('uses metadata operations supported by the pinned Twenty schema', () => {
   }
 });
 
-test('verifies the resumable import identity fields in live metadata', () => {
-  expect(verifier).toContain('0540519f-2f64-4429-a72a-9f77e9923f2a');
-  expect(verifier).toContain('0f8f0907-75e2-455c-af5c-409e5f11ff46');
-  expect(verifier).toContain("importPendingFileIdField.type !== 'TEXT'");
-  expect(verifier).toContain('importPendingFileIdField.isNullable !== true');
-  expect(verifier).toContain("sourceNodeIdField.type !== 'TEXT'");
-  expect(verifier).toContain('sourceNodeIdField.isNullable !== true');
-  expect(verifier).toContain('sourceNodeIdField.isUnique !== true');
-  expect(verifier).toContain(
-    'universalIdentifier name type isActive isNullable isUnique',
-  );
-});
-
-test('verifies the active-only holdings view filter in exported and live metadata', () => {
-  expect(verifier).toContain('380fa436-cc3e-4e31-8e61-8ad3f51c3eb8');
-  expect(verifier).toContain(
-    'viewFilters { fieldMetadataId operand value viewId }',
-  );
-  expect(verifier).toContain("filter.operand !== 'IS'");
-  expect(verifier).toContain('filter.value !== true');
-});
-
-test('never rolls back a concurrent SAME_VERSION publish or install race', () => {
-  const rollbackCondition = workflow.match(
-    /Roll back only this run's fresh installation and retain registration\n\s+if: ([^\n]+)/,
-  )?.[1];
-
-  expect(rollbackCondition).toContain("steps.install.outcome == 'success'");
-  expect(rollbackCondition).toContain("steps.verify.outcome == 'failure'");
-  expect(rollbackCondition).not.toContain("steps.install.outcome == 'failure'");
-  expect(rollbackCondition).not.toContain("steps.publish.outcome == 'failure'");
-  expect(workflow).toContain('assert-installable');
-});
-
-test('never uninstalls after an ambiguous or lost install response', () => {
-  const rollbackCondition = workflow.match(
-    /Roll back only this run's fresh installation and retain registration\n\s+if: ([^\n]+)/,
-  )?.[1];
-
-  expect(rollbackCondition).toContain(
-    "steps.precheck.outputs.fresh_install == 'true'",
-  );
-  expect(rollbackCondition).toContain("steps.install.outcome == 'success'");
-  expect(rollbackCondition).toContain("steps.verify.outcome == 'failure'");
-  expect(rollbackCondition).not.toContain("outcome != 'skipped'");
-});
-
-test('prechecks, conditionally publishes, installs, verifies, and narrowly rolls back', () => {
+test('configures after install or upgrade and before final verification', () => {
   const precheck = position('Precheck the existing Corgi 13F installation');
   const publish = position('Publish the private Corgi 13F app');
   const install = position('Install the exact registered Corgi 13F release');
   const upgrade = position(
     'Upgrade the existing Corgi 13F installation in place',
   );
-  const verify = position(
-    'Verify the installed application, objects, views, navigation, and role',
-  );
+  const configure = position('Configure the Corgi 13F application variables');
+  const verify = position('Verify the installed Corgi 13F native workspace');
   const rollback = position(
     "Roll back only this run's fresh installation and retain registration",
   );
@@ -342,12 +312,25 @@ test('prechecks, conditionally publishes, installs, verifies, and narrowly rolls
   expect(precheck).toBeLessThan(publish);
   expect(publish).toBeLessThan(install);
   expect(install).toBeLessThan(upgrade);
-  expect(upgrade).toBeLessThan(verify);
+  expect(upgrade).toBeLessThan(configure);
+  expect(configure).toBeLessThan(verify);
   expect(verify).toBeLessThan(rollback);
   expect(rollback).toBeLessThan(revoke);
-  expect(workflow).toMatch(
-    /steps\.precheck\.outputs\.fresh_install == 'true'.*steps\.install\.outcome == 'success'.*steps\.verify\.outcome == 'failure'/,
+});
+
+test('rolls back only a confirmed fresh install after configure or verify failure', () => {
+  const rollbackCondition = workflow.match(
+    /Roll back only this run's fresh installation and retain registration\n\s+if: ([^\n]+)/,
+  )?.[1];
+
+  expect(rollbackCondition).toContain(
+    "steps.precheck.outputs.fresh_install == 'true'",
   );
+  expect(rollbackCondition).toContain("steps.install.outcome == 'success'");
+  expect(rollbackCondition).toContain("steps.configure.outcome == 'failure'");
+  expect(rollbackCondition).toContain("steps.verify.outcome == 'failure'");
+  expect(rollbackCondition).not.toContain("steps.install.outcome == 'failure'");
+  expect(rollbackCondition).not.toContain("steps.publish.outcome == 'failure'");
   expect(verifier).toContain('uninstallApplication');
 });
 

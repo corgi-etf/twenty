@@ -1,0 +1,126 @@
+import { createHash } from 'node:crypto';
+
+import { canonicalJson } from './backend-client.ts';
+import type {
+  CompletedIngestionReceipt,
+  NormalizedDataset,
+} from './ingestion-contract.ts';
+import {
+  reconcileLegacyCrmHoldings,
+  type CompanyMappingCounts,
+  type LegacyCrmCompany,
+  type LegacyCrmHolding,
+  type LegacyMigrationAccounting,
+} from './legacy-migration.ts';
+
+export const EXPECTED_LEGACY_CRM_HOLDING_ROWS = 28_320;
+
+type CrmReader = {
+  listCompanies(): Promise<LegacyCrmCompany[]>;
+  listHoldings(): Promise<LegacyCrmHolding[]>;
+};
+
+type BackendWriter = {
+  ingestLegacyDataset(input: {
+    batchKey: string;
+    dataset: NormalizedDataset;
+    chunkSize?: number;
+  }): Promise<CompletedIngestionReceipt>;
+};
+
+export type LegacyMigrationReceipt = LegacyMigrationAccounting & {
+  schemaVersion: 3;
+  sourceSystem: 'LEGACY_NORMALIZED';
+  coverage: 'PARTIAL';
+  contentSha256: string;
+  companyMappingCounts: CompanyMappingCounts;
+  normalizedCounts: {
+    managers: number;
+    filings: number;
+    securities: number;
+    holdings: number;
+  };
+  backend: Omit<CompletedIngestionReceipt, 'companyMappings'>;
+};
+
+export const runLegacyCrmMigration = async (options: {
+  crm: CrmReader;
+  backend: BackendWriter;
+  expectedSourceRows?: number;
+}): Promise<LegacyMigrationReceipt> => {
+  const expectedSourceRows =
+    options.expectedSourceRows ?? EXPECTED_LEGACY_CRM_HOLDING_ROWS;
+  if (!Number.isSafeInteger(expectedSourceRows) || expectedSourceRows < 1) {
+    throw new Error('Expected legacy CRM row count is invalid');
+  }
+  const rows = await options.crm.listHoldings();
+  if (rows.length !== expectedSourceRows) {
+    throw new Error(
+      `Legacy migration expected ${expectedSourceRows} normalized CRM rows; received ${rows.length}`,
+    );
+  }
+  const companies = await options.crm.listCompanies();
+  const { accounting, companyMappingCounts, ...dataset } =
+    reconcileLegacyCrmHoldings(rows, companies);
+  if (
+    accounting.acceptedRows !== expectedSourceRows ||
+    accounting.duplicateRows !== 0 ||
+    accounting.rejectedRows !== 0
+  ) {
+    throw new Error(
+      `Legacy migration requires all ${expectedSourceRows} CRM rows to be accepted exactly once; accepted ${accounting.acceptedRows}, duplicates ${accounting.duplicateRows}, rejected ${accounting.rejectedRows}`,
+    );
+  }
+  if (dataset.holdings.length < 1) {
+    throw new Error('Legacy migration has no publishable holdings');
+  }
+  const contentSha256 = createHash('sha256')
+    .update(canonicalJson(dataset))
+    .digest('hex');
+  const batchKey = `legacy-normalized-${contentSha256}`;
+  const completed = await options.backend.ingestLegacyDataset({
+    batchKey,
+    dataset,
+  });
+  const normalizedCounts = {
+    managers: dataset.managers.length,
+    filings: dataset.filings.length,
+    securities: dataset.securities.length,
+    holdings: dataset.holdings.length,
+  };
+  for (const key of Object.keys(normalizedCounts) as Array<
+    keyof typeof normalizedCounts
+  >) {
+    if (completed.receivedCounts[key] !== normalizedCounts[key]) {
+      throw new Error('Backend ingestion receipt does not reconcile');
+    }
+  }
+  const expectedCompanyIds = new Set(
+    dataset.managers.flatMap(({ crmCompanyId }) =>
+      crmCompanyId ? [crmCompanyId] : [],
+    ),
+  );
+  const receivedCompanyIds = new Set(
+    (completed.companyMappings ?? []).map(({ crmCompanyId }) => crmCompanyId),
+  );
+  if (
+    expectedCompanyIds.size !== companyMappingCounts.matched ||
+    receivedCompanyIds.size !== expectedCompanyIds.size ||
+    ![...expectedCompanyIds].every((id) => receivedCompanyIds.has(id))
+  ) {
+    throw new Error('Backend company mapping receipt does not reconcile');
+  }
+  const { companyMappings: _companyMappings, ...aggregateBackendReceipt } =
+    completed;
+
+  return {
+    schemaVersion: 3,
+    sourceSystem: 'LEGACY_NORMALIZED',
+    coverage: 'PARTIAL',
+    contentSha256,
+    ...accounting,
+    companyMappingCounts,
+    normalizedCounts,
+    backend: aggregateBackendReceipt,
+  };
+};

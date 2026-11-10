@@ -5,15 +5,9 @@ import {
   APPROVED_WORKSPACE_ID,
   APPROVED_WORKSPACE_NAME,
   THIRTEEN_F_APPLICATION_UNIVERSAL_IDENTIFIER,
-  THIRTEEN_F_FILE_FIELD_UNIVERSAL_IDENTIFIER,
   THIRTEEN_F_HOLDING_OBJECT_UNIVERSAL_IDENTIFIER,
-  THIRTEEN_F_IMPORT_ERROR_OBJECT_UNIVERSAL_IDENTIFIER,
-  THIRTEEN_F_IMPORT_RUN_OBJECT_UNIVERSAL_IDENTIFIER,
   THIRTEEN_F_MANAGER_OBJECT_UNIVERSAL_IDENTIFIER,
-  THIRTEEN_F_OBJECT_UNIVERSAL_IDENTIFIER,
-  THIRTEEN_F_PENDING_FILE_FIELD_UNIVERSAL_IDENTIFIER,
   THIRTEEN_F_SECURITY_OBJECT_UNIVERSAL_IDENTIFIER,
-  THIRTEEN_F_SOURCE_NODE_FIELD_UNIVERSAL_IDENTIFIER,
 } from '../src/constants.ts';
 import {
   cleanupImportCredential,
@@ -23,15 +17,28 @@ import {
   type ImportCredentialLease,
 } from '../src/credential.ts';
 
-const objectMetadataId = 'b1fab26e-4e38-4a95-a653-3cdb014a6b28';
 const normalizedObjectMetadataIds = [
   'a1fab26e-4e38-4a95-a653-3cdb014a6b28',
   'a2fab26e-4e38-4a95-a653-3cdb014a6b28',
   'a3fab26e-4e38-4a95-a653-3cdb014a6b28',
-  'a4fab26e-4e38-4a95-a653-3cdb014a6b28',
-  'a5fab26e-4e38-4a95-a653-3cdb014a6b28',
 ];
-const objectMetadataIds = [objectMetadataId, ...normalizedObjectMetadataIds];
+const companyObjectMetadataId = 'a4fab26e-4e38-4a95-a653-3cdb014a6b28';
+const companyIdFieldMetadataId = 'b1fab26e-4e38-4a95-a653-3cdb014a6b28';
+const companyNameFieldMetadataId = 'b2fab26e-4e38-4a95-a653-3cdb014a6b28';
+const companyDomainFieldMetadataId = 'b3fab26e-4e38-4a95-a653-3cdb014a6b28';
+const objectMetadataIds = [
+  ...normalizedObjectMetadataIds,
+  companyObjectMetadataId,
+];
+const readObjectMetadataIds = objectMetadataIds;
+const companyFieldRestrictions = [
+  {
+    objectMetadataId: companyObjectMetadataId,
+    fieldMetadataId: companyDomainFieldMetadataId,
+    canReadFieldValue: false,
+    canUpdateFieldValue: false,
+  },
+];
 const apiKeyId = 'bc841975-9c6e-44d8-8bd7-8048312b7b0e';
 
 const preflight = () => ({
@@ -43,44 +50,13 @@ const preflight = () => ({
     currentUserWorkspace: {
       id: '8ac22e56-229d-4fd9-a1ad-d315755b0d3d',
       isImpersonating: false,
-      permissionFlags: ['ROLES', 'API_KEYS_AND_WEBHOOKS', 'UPLOAD_FILE'],
+      permissionFlags: ['ROLES', 'API_KEYS_AND_WEBHOOKS'],
     },
   },
   findOneApplication: {
     universalIdentifier: THIRTEEN_F_APPLICATION_UNIVERSAL_IDENTIFIER,
     state: 'INSTALLED',
     objects: [
-      {
-        id: objectMetadataId,
-        universalIdentifier: THIRTEEN_F_OBJECT_UNIVERSAL_IDENTIFIER,
-        nameSingular: 'thirteenFFiling',
-        namePlural: 'thirteenFFilings',
-        fieldsList: [
-          {
-            universalIdentifier: THIRTEEN_F_FILE_FIELD_UNIVERSAL_IDENTIFIER,
-            name: 'file',
-            type: 'FILES',
-            isActive: true,
-            isUnique: false,
-          },
-          {
-            universalIdentifier:
-              THIRTEEN_F_SOURCE_NODE_FIELD_UNIVERSAL_IDENTIFIER,
-            name: 'sourceNodeId',
-            type: 'TEXT',
-            isActive: true,
-            isUnique: true,
-          },
-          {
-            universalIdentifier:
-              THIRTEEN_F_PENDING_FILE_FIELD_UNIVERSAL_IDENTIFIER,
-            name: 'importPendingFileId',
-            type: 'TEXT',
-            isActive: true,
-            isUnique: false,
-          },
-        ],
-      },
       ...[
         [
           THIRTEEN_F_MANAGER_OBJECT_UNIVERSAL_IDENTIFIER,
@@ -97,16 +73,6 @@ const preflight = () => ({
           'thirteenFHolding',
           'thirteenFHoldings',
         ],
-        [
-          THIRTEEN_F_IMPORT_RUN_OBJECT_UNIVERSAL_IDENTIFIER,
-          'thirteenFImportRun',
-          'thirteenFImportRuns',
-        ],
-        [
-          THIRTEEN_F_IMPORT_ERROR_OBJECT_UNIVERSAL_IDENTIFIER,
-          'thirteenFImportError',
-          'thirteenFImportErrors',
-        ],
       ].map(([universalIdentifier, nameSingular, namePlural], index) => ({
         id: normalizedObjectMetadataIds[index],
         universalIdentifier,
@@ -115,6 +81,35 @@ const preflight = () => ({
         fieldsList: [],
       })),
     ],
+  },
+  objects: {
+    edges: [
+      {
+        node: {
+          id: companyObjectMetadataId,
+          nameSingular: 'company',
+          namePlural: 'companies',
+          fieldsList: [
+            {
+              id: companyIdFieldMetadataId,
+              name: 'id',
+              isActive: true,
+            },
+            {
+              id: companyNameFieldMetadataId,
+              name: 'name',
+              isActive: true,
+            },
+            {
+              id: companyDomainFieldMetadataId,
+              name: 'domainName',
+              isActive: true,
+            },
+          ],
+        },
+      },
+    ],
+    pageInfo: { hasNextPage: false },
   },
 });
 
@@ -135,7 +130,7 @@ test('derives a stable, run-owned role identity', () => {
   assert.equal(first.ephemeral, true);
 });
 
-test('creates only the exact upload and 13F object permissions', async () => {
+test('creates only exact read-only normalized 13F object permissions', async () => {
   const leases: ImportCredentialLease[] = [];
   const calls: GraphqlRequest[] = [];
   let roleId = '';
@@ -150,16 +145,18 @@ test('creates only the exact upload and 13F object permissions', async () => {
       roleId = String(input.id);
       return { createOneRole: input };
     }
-    if (request.operationName === 'ConfigureCorgiThirteenFImportFlag') {
-      return {
-        upsertPermissionFlags: [{ roleId, flag: 'UPLOAD_FILE' }],
-      };
-    }
     if (request.operationName === 'ConfigureCorgiThirteenFObjectPermission') {
       return {
         upsertObjectPermissions: (
           variables.input as { objectPermissions: unknown[] }
         ).objectPermissions,
+      };
+    }
+    if (request.operationName === 'ConfigureCorgiThirteenFFieldPermission') {
+      return {
+        upsertFieldPermissions: (
+          variables.input as { fieldPermissions: unknown[] }
+        ).fieldPermissions,
       };
     }
     if (request.operationName === 'VerifyCorgiThirteenFImportRole') {
@@ -179,17 +176,17 @@ test('creates only the exact upload and 13F object permissions', async () => {
             canBeAssignedToUsers: false,
             canBeAssignedToAgents: false,
             canBeAssignedToApiKeys: true,
-            permissionFlags: [{ roleId, flag: 'UPLOAD_FILE' }],
-            objectPermissions: objectMetadataIds.map(
+            permissionFlags: [],
+            objectPermissions: readObjectMetadataIds.map(
               (permissionObjectMetadataId) => ({
                 objectMetadataId: permissionObjectMetadataId,
                 canReadObjectRecords: true,
-                canUpdateObjectRecords: true,
+                canUpdateObjectRecords: false,
                 canSoftDeleteObjectRecords: false,
                 canDestroyObjectRecords: false,
               }),
             ),
-            fieldPermissions: [],
+            fieldPermissions: companyFieldRestrictions,
             rowLevelPermissionPredicates: [],
             rowLevelPermissionPredicateGroups: [],
           },
@@ -225,15 +222,15 @@ test('creates only the exact upload and 13F object permissions', async () => {
   });
 
   assert.equal(lease.token, 'short-lived-token');
-  assert.deepEqual(leases[0]?.role.objectMetadataIds, objectMetadataIds);
+  assert.deepEqual(leases[0]?.role.objectMetadataIds, readObjectMetadataIds);
   assert.equal(leases[leases.length - 1]?.token, 'short-lived-token');
-  const flagCall = calls.find(
-    ({ operationName }) =>
-      operationName === 'ConfigureCorgiThirteenFImportFlag',
+  assert.equal(
+    calls.find(
+      ({ operationName }) =>
+        operationName === 'ConfigureCorgiThirteenFImportFlag',
+    ),
+    undefined,
   );
-  assert.deepEqual(flagCall?.variables, {
-    input: { roleId, permissionFlagKeys: ['UPLOAD_FILE'] },
-  });
   const permissionCall = calls.find(
     ({ operationName }) =>
       operationName === 'ConfigureCorgiThirteenFObjectPermission',
@@ -241,22 +238,32 @@ test('creates only the exact upload and 13F object permissions', async () => {
   assert.deepEqual(permissionCall?.variables, {
     input: {
       roleId,
-      objectPermissions: objectMetadataIds.map(
+      objectPermissions: readObjectMetadataIds.map(
         (permissionObjectMetadataId) => ({
           objectMetadataId: permissionObjectMetadataId,
           canReadObjectRecords: true,
-          canUpdateObjectRecords: true,
+          canUpdateObjectRecords: false,
           canSoftDeleteObjectRecords: false,
           canDestroyObjectRecords: false,
         }),
       ),
     },
   });
+  const fieldPermissionCall = calls.find(
+    ({ operationName }) =>
+      operationName === 'ConfigureCorgiThirteenFFieldPermission',
+  );
+  assert.deepEqual(fieldPermissionCall?.variables, {
+    input: {
+      roleId,
+      fieldPermissions: companyFieldRestrictions,
+    },
+  });
 });
 
-test('fails before creating a role when the installed field contract is not exact', async () => {
+test('fails before creating a role when a normalized object contract drifts', async () => {
   const value = preflight();
-  value.findOneApplication.objects[0]!.fieldsList[1]!.isUnique = false;
+  value.findOneApplication.objects[1]!.namePlural = 'unexpectedManagers';
   const operations: string[] = [];
 
   await assert.rejects(

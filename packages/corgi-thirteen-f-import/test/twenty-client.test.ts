@@ -1,361 +1,159 @@
 import assert from 'node:assert/strict';
-import { randomUUID } from 'node:crypto';
 import { test } from 'node:test';
 
-import {
-  APPROVED_CRM_ORIGIN,
-  THIRTEEN_F_FILE_FIELD_UNIVERSAL_IDENTIFIER,
-} from '../src/constants.ts';
+import { APPROVED_CRM_ORIGIN } from '../src/constants.ts';
 import { TwentyImportClient } from '../src/twenty-client.ts';
 
-type FetchCall = { url: string; init: RequestInit; atMilliseconds: number };
-
-const createClient = (responses: Response[]) => {
-  const calls: FetchCall[] = [];
-  const sleeps: number[] = [];
-  let currentMilliseconds = 0;
-  const fetcher: typeof fetch = async (input, init = {}) => {
-    calls.push({
-      url: String(input),
-      init,
-      atMilliseconds: currentMilliseconds,
-    });
-    const response = responses.shift();
-    assert.ok(response, 'missing fake response');
-
-    return response;
-  };
-
-  return {
-    calls,
-    sleeps,
-    client: new TwentyImportClient({
-      fetcher,
-      now: () => currentMilliseconds,
-      origin: APPROVED_CRM_ORIGIN,
-      sleep: async (milliseconds) => {
-        sleeps.push(milliseconds);
-        currentMilliseconds += milliseconds;
-      },
-      token: 'short-lived-import-token',
-    }),
-  };
-};
-
-const json = (value: unknown, status = 200) =>
+const json = (value: unknown, status = 200): Response =>
   new Response(JSON.stringify(value), {
     status,
     headers: { 'content-type': 'application/json' },
   });
 
-test('lists every 13F page with the short-lived bearer credential', async () => {
-  const firstId = randomUUID();
-  const secondId = randomUUID();
-  const { client, calls } = createClient([
+test('reads every normalized CRM holding page without mutation methods', async () => {
+  const requests: Array<{ url: string; init: RequestInit }> = [];
+  const responses = [
     json({
-      data: { thirteenFFilings: [{ id: firstId }] },
+      data: {
+        thirteenFHoldings: [
+          {
+            id: '11111111-1111-4111-8111-111111111111',
+            managerName: 'Alpine Capital',
+          },
+        ],
+      },
       pageInfo: { hasNextPage: true, endCursor: 'cursor-1' },
     }),
     json({
-      data: { thirteenFFilings: [{ id: secondId }] },
-      pageInfo: { hasNextPage: false, endCursor: null },
-    }),
-  ]);
-
-  const records = await client.listFilings();
-
-  assert.deepEqual(
-    records.map(({ id }) => id),
-    [firstId, secondId],
-  );
-  assert.equal(calls.length, 2);
-  assert.equal(
-    new Headers(calls[0]?.init.headers).get('authorization'),
-    'Bearer short-lived-import-token',
-  );
-  assert.equal(
-    new URL(calls[1]?.url ?? '').searchParams.get('starting_after'),
-    'cursor-1',
-  );
-  assert.deepEqual(
-    calls.map(({ atMilliseconds }) => atMilliseconds),
-    [0, 650],
-  );
-});
-
-test('shares one 650ms pacer across REST and metadata API-key calls', async () => {
-  const fileId = randomUUID();
-  const recordId = randomUUID();
-  const { client, calls } = createClient([
-    json({
-      data: { thirteenFFilings: [] },
-      pageInfo: { hasNextPage: false, endCursor: null },
-    }),
-    json({
       data: {
-        createFileUpload: {
-          fileId,
-          uploadUrl: `https://upload.example/${fileId}`,
-          contentType: 'application/octet-stream',
-          expiresAt: '2026-11-09T18:05:00.000Z',
-        },
-      },
-    }),
-    json({ data: { updateThirteenFFiling: { id: recordId } } }),
-  ]);
-
-  await client.listFilings();
-  await client.createFileUpload({ filename: 'a.xlsx', sizeBytes: 1 });
-  await client.attachFile({ recordId, fileId, label: 'a.xlsx' });
-
-  assert.deepEqual(
-    calls.map(({ atMilliseconds }) => atMilliseconds),
-    [0, 650, 1300],
-  );
-  assert.ok(
-    calls.every(
-      ({ init }) =>
-        new Headers(init.headers).get('authorization') ===
-        'Bearer short-lived-import-token',
-    ),
-  );
-});
-
-test('honors Retry-After for 429 responses and bounds retries', async () => {
-  const success = json({
-    data: { thirteenFFilings: [] },
-    pageInfo: { hasNextPage: false, endCursor: null },
-  });
-  const rateLimited = (retryAfter: string) =>
-    new Response(JSON.stringify({ error: 'rate limited' }), {
-      status: 429,
-      headers: {
-        'content-type': 'application/json',
-        'retry-after': retryAfter,
-      },
-    });
-  const recovered = createClient([rateLimited('2'), success]);
-
-  await recovered.client.listFilings();
-
-  assert.deepEqual(
-    recovered.calls.map(({ atMilliseconds }) => atMilliseconds),
-    [0, 2000],
-  );
-  assert.deepEqual(recovered.sleeps, [2000]);
-
-  const exhausted = createClient([
-    rateLimited('0'),
-    rateLimited('0'),
-    rateLimited('0'),
-    success,
-  ]);
-  await assert.rejects(
-    exhausted.client.listFilings(),
-    /CRM filing list failed/,
-  );
-  assert.equal(exhausted.calls.length, 3);
-  assert.deepEqual(
-    exhausted.calls.map(({ atMilliseconds }) => atMilliseconds),
-    [0, 650, 1300],
-  );
-});
-
-test('reserves FilesField uploads using only the exact universal field ID', async () => {
-  const fileId = randomUUID();
-  const { client, calls } = createClient([
-    json({
-      data: {
-        createFileUpload: {
-          fileId,
-          uploadUrl: `https://upload.example/${fileId}`,
-          contentType: 'application/octet-stream',
-          expiresAt: '2026-11-09T18:05:00.000Z',
-        },
-      },
-    }),
-  ]);
-
-  const reservation = await client.createFileUpload({
-    filename: 'AAAB competitor holders.xlsx',
-    sizeBytes: 123,
-  });
-
-  assert.equal(reservation.fileId, fileId);
-  assert.equal(calls[0]?.url, `${APPROVED_CRM_ORIGIN}/metadata`);
-  const body = JSON.parse(String(calls[0]?.init.body)) as {
-    query: string;
-    variables: Record<string, unknown>;
-  };
-  assert.match(body.query, /fieldMetadataUniversalIdentifier/);
-  assert.equal(
-    body.variables.fieldMetadataUniversalIdentifier,
-    THIRTEEN_F_FILE_FIELD_UNIVERSAL_IDENTIFIER,
-  );
-  assert.equal(body.variables.fieldMetadataId, undefined);
-});
-
-test('classifies only explicit pending and missing attachment failures as replaceable', async () => {
-  const fileId = randomUUID();
-  for (const [message, expected] of [
-    [`File ${fileId} upload has not been completed`, 'pending'],
-    [`File not found: ${fileId}`, 'missing'],
-  ] as const) {
-    const { client } = createClient([json({ errors: [{ message }] }, 400)]);
-    assert.equal(
-      await client.attachFile({
-        recordId: randomUUID(),
-        fileId,
-        label: 'a.xlsx',
-      }),
-      expected,
-    );
-  }
-
-  const { client } = createClient([
-    json({ errors: [{ message: 'database unavailable' }] }, 503),
-  ]);
-  await assert.rejects(
-    client.attachFile({ recordId: randomUUID(), fileId, label: 'a.xlsx' }),
-    /CRM attachment request failed/,
-  );
-});
-
-test('uploads unmodified bytes with the server-selected content type', async () => {
-  const fileId = randomUUID();
-  const { client, calls } = createClient([new Response(null, { status: 204 })]);
-  const bytes = Buffer.from('exact bytes');
-
-  await client.putFile(
-    {
-      fileId,
-      uploadUrl: `https://upload.example/${fileId}?token=secret`,
-      contentType: 'application/octet-stream',
-      expiresAt: '2026-11-09T18:05:00.000Z',
-    },
-    bytes,
-  );
-
-  assert.equal(calls[0]?.init.method, 'PUT');
-  assert.equal(
-    new Headers(calls[0]?.init.headers).get('content-type'),
-    'application/octet-stream',
-  );
-  assert.deepEqual(calls[0]?.init.body, bytes);
-});
-
-test('downloads attached files only from supported exact CRM file paths', async () => {
-  const fileId = randomUUID();
-  const expected = Buffer.from('verified bytes');
-  for (const path of ['FilesField', 'files-field']) {
-    const { client, calls } = createClient([
-      new Response(expected, {
-        status: 200,
-        headers: { 'content-length': String(expected.byteLength) },
-      }),
-    ]);
-
-    const bytes = await client.downloadAttachedFile({
-      fileId,
-      label: 'a.xlsx',
-      url: `${APPROVED_CRM_ORIGIN}/file/${path}/${fileId}?token=signed`,
-    });
-    assert.deepEqual(Buffer.from(bytes), expected);
-    assert.equal(calls.length, 1);
-  }
-
-  for (const url of [
-    `https://lookalike.example/file/files-field/${fileId}?token=signed`,
-    `${APPROVED_CRM_ORIGIN}/file/files-field/${randomUUID()}?token=signed`,
-    `${APPROVED_CRM_ORIGIN}/file/files-field/${fileId}`,
-  ]) {
-    const hostile = createClient([]);
-    await assert.rejects(
-      hostile.client.downloadAttachedFile({ fileId, label: 'a.xlsx', url }),
-      /attached file URL is invalid/,
-    );
-    assert.equal(hostile.calls.length, 0);
-  }
-});
-
-test('uses bounded REST upserts and paginated ID-only promotion queries', async () => {
-  const importKey = 'a'.repeat(64);
-  const runId = randomUUID();
-  const firstHoldingId = randomUUID();
-  const secondHoldingId = randomUUID();
-  const { client, calls } = createClient([
-    json({
-      data: {
-        thirteenFImportRuns: [
+        thirteenFHoldings: [
           {
-            id: runId,
-            importKey,
-            status: 'COMPLETE',
-            contentSha256: 'b'.repeat(64),
-            parserVersion: 'competitor-holders-v1',
+            id: '22222222-2222-4222-8222-222222222222',
+            managerName: 'Beacon Capital',
           },
         ],
       },
       pageInfo: { hasNextPage: false, endCursor: null },
     }),
-    json({ data: { createThirteenFManagers: [{ id: randomUUID() }] } }, 201),
-    json({
-      data: { thirteenFHoldings: [{ id: firstHoldingId }] },
-      pageInfo: { hasNextPage: true, endCursor: 'holdings-cursor' },
-    }),
-    json({
-      data: { thirteenFHoldings: [{ id: secondHoldingId }] },
-      pageInfo: { hasNextPage: false, endCursor: null },
-    }),
-    json({
-      data: {
-        updateThirteenFHoldings: [
-          { id: firstHoldingId },
-          { id: secondHoldingId },
-        ],
-      },
-    }),
-  ]);
+  ];
+  const client = new TwentyImportClient({
+    origin: APPROVED_CRM_ORIGIN,
+    token: 'short-lived-read-token',
+    sleep: async () => undefined,
+    fetcher: async (input, init = {}) => {
+      requests.push({ url: String(input), init });
+      return responses.shift()!;
+    },
+  });
 
-  assert.equal((await client.findImportRun(importKey))?.id, runId);
-  await client.upsertBatch('thirteenFManagers', [
-    { id: randomUUID(), name: 'Firm' },
-  ]);
-  assert.deepEqual(await client.listHoldingIds('isActive[eq]:true'), [
-    firstHoldingId,
-    secondHoldingId,
-  ]);
+  const rows = await client.listHoldings();
+
+  assert.deepEqual(
+    rows.map(({ id }) => id),
+    [
+      '11111111-1111-4111-8111-111111111111',
+      '22222222-2222-4222-8222-222222222222',
+    ],
+  );
+  assert.equal(requests.length, 2);
+  const firstUrl = new URL(requests[0]!.url);
+  assert.equal(firstUrl.pathname, '/rest/thirteenFHoldings');
+  assert.equal(firstUrl.searchParams.get('limit'), '100');
+  assert.equal(firstUrl.searchParams.get('depth'), '1');
   assert.equal(
-    await client.patchMany(
-      'thirteenFHoldings',
-      `id[in]:${JSON.stringify([firstHoldingId, secondHoldingId])}`,
-      { isActive: false },
+    firstUrl.searchParams.get('fields'),
+    [
+      'id',
+      'occurrenceKey',
+      'managerName',
+      'portfolioName',
+      'targetTicker',
+      'securityTicker',
+      'sharesHeld',
+      'latestChange',
+      'asOfDate',
+      'sourceType',
+      'ownershipPercent',
+      'portfolioPercent',
+      'isActive',
+      'rawData',
+      'manager',
+      'security',
+    ].join(','),
+  );
+  assert.equal(
+    new URL(requests[1]!.url).searchParams.get('starting_after'),
+    'cursor-1',
+  );
+  assert.ok(
+    requests.every(
+      ({ init }) =>
+        init.method === 'GET' &&
+        new Headers(init.headers).get('authorization') ===
+          'Bearer short-lived-read-token',
     ),
-    2,
   );
-
-  assert.equal(
-    calls[1]?.url,
-    `${APPROVED_CRM_ORIGIN}/rest/batch/thirteenFManagers?upsert=true&depth=0`,
-  );
-  assert.equal(new URL(calls[2]!.url).searchParams.get('fields'), 'id');
-  assert.equal(
-    new URL(calls[3]!.url).searchParams.get('starting_after'),
-    'holdings-cursor',
-  );
-  assert.equal(calls[4]?.init.method, 'PATCH');
+  assert.equal('createFileUpload' in client, false);
+  assert.equal('upsertBatch' in client, false);
+  assert.equal('patchMany' in client, false);
 });
 
-test('rejects noncanonical CRM origins and never exposes destructive methods', () => {
+test('rejects noncanonical CRM origins before any request', () => {
   assert.throws(
     () =>
       new TwentyImportClient({
-        origin: `${APPROVED_CRM_ORIGIN}/path`,
-        token: 'token',
+        origin: 'https://crm-lookalike.example',
+        token: 'short-lived-read-token',
       }),
-    /CRM origin is not approved/,
+    /origin is not approved/,
   );
-  const { client } = createClient([]);
-  assert.equal('deleteFiling' in client, false);
-  assert.equal('deleteFile' in client, false);
+});
+
+test('reads only valid Company names and skips unusable optional links', async () => {
+  const requests: string[] = [];
+  const client = new TwentyImportClient({
+    origin: APPROVED_CRM_ORIGIN,
+    token: 'short-lived-read-token',
+    sleep: async () => undefined,
+    fetcher: async (input) => {
+      requests.push(String(input));
+
+      return json({
+        data: {
+          companies: [
+            {
+              id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+              name: 'Alpine Capital',
+              domainName: { primaryLinkUrl: 'must-not-survive' },
+            },
+            {
+              id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+              name: '   ',
+            },
+            {
+              id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+            },
+            {
+              id: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
+              name: { unexpected: 'shape' },
+            },
+          ],
+        },
+        pageInfo: { hasNextPage: false, endCursor: null },
+      });
+    },
+  });
+
+  const companies = await client.listCompanies();
+
+  assert.deepEqual(companies, [
+    {
+      id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+      name: 'Alpine Capital',
+    },
+  ]);
+  const url = new URL(requests[0]!);
+  assert.equal(url.pathname, '/rest/companies');
+  assert.equal(url.searchParams.get('fields'), 'id,name');
+  assert.equal(url.searchParams.has('depth'), false);
 });
