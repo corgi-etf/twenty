@@ -102,6 +102,40 @@ describe('13F workspace journeys', () => {
     expect(html).toContain('12.50%');
   });
 
+  it('uses the selected filing metadata when reviewing an earlier date', () => {
+    const earlierFirm: FirmDetail = {
+      ...firm,
+      filingHistory: [
+        ...firm.filingHistory,
+        {
+          id: 'filing-older',
+          asOfDate: '2026-06-30',
+          dateBasis: 'SEC_REPORT_PERIOD',
+          reportPeriod: '2026-06-30',
+          filedAt: '2026-08-14T12:00:00.000Z',
+          formType: '13F-HR/A',
+          coverage: 'FULL',
+          positionCount: 90,
+          totalReportedValue: 90000000,
+        },
+      ],
+    };
+    const html = renderToStaticMarkup(
+      <FirmHoldings
+        firm={earlierFirm}
+        holdings={[]}
+        asOfDate="2026-06-30"
+        onBack={() => undefined}
+        onSelectSecurity={() => undefined}
+      />,
+    );
+
+    expect(html).toContain('Holdings as of Jun 30, 2026');
+    expect(html).toContain('Filed Aug 14, 2026');
+    expect(html).toContain('13F-HR/A');
+    expect(html).toContain('$90.0M');
+  });
+
   it('renders reverse lookup results with every holding firm and date', () => {
     const security: SecuritySummary = {
       id: 'security-1',

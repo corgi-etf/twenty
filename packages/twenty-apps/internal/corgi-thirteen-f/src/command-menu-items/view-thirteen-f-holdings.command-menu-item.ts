@@ -1,5 +1,7 @@
 import {
   defineCommandMenuItem,
+  selectedRecords,
+  someDefined,
   STANDARD_OBJECT_UNIVERSAL_IDENTIFIERS,
 } from 'twenty-sdk/define';
 
@@ -16,9 +18,9 @@ export default defineCommandMenuItem({
   availabilityType: 'GLOBAL_OBJECT_CONTEXT',
   availabilityObjectUniversalIdentifier:
     STANDARD_OBJECT_UNIVERSAL_IDENTIFIERS.company.universalIdentifier,
-  // The build replaces this expression with Twenty's record-context AST.
-  // Keeping the predicate in the manifest hides the action on unlinked firms.
-  conditionalAvailabilityExpression:
-    'someDefined(selectedRecords, "thirteenFFirmId")',
+  conditionalAvailabilityExpression: someDefined(
+    selectedRecords,
+    'thirteenFFirmId',
+  ),
   frontComponentUniversalIdentifier: COMPANY_THIRTEEN_F_FRONT_COMPONENT_ID,
 });

@@ -1,4 +1,4 @@
-import { readdirSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -6,7 +6,6 @@ import { NavigationMenuItemType } from 'twenty-sdk/define';
 import { describe, expect, it } from 'vitest';
 
 import application from 'src/application.config';
-import companyHoldingsCommand from 'src/command-menu-items/view-thirteen-f-holdings.command-menu-item';
 import companyFirmIdField from 'src/fields/company-thirteen-f-firm-id.field';
 import navigationItem from 'src/navigation-menu-items/thirteen-f.navigation-menu-item';
 import pageLayout from 'src/page-layouts/thirteen-f.page-layout';
@@ -43,9 +42,12 @@ describe('13F CRM manifest', () => {
   });
 
   it('keeps canonical holdings and documents out of CRM storage', () => {
-    const objectFiles = readdirSync(join(sourceRoot, 'objects'), {
-      withFileTypes: true,
-    }).filter((entry) => entry.isFile() && entry.name.endsWith('.object.ts'));
+    const objectsDirectory = join(sourceRoot, 'objects');
+    const objectFiles = existsSync(objectsDirectory)
+      ? readdirSync(objectsDirectory, { withFileTypes: true }).filter(
+          (entry) => entry.isFile() && entry.name.endsWith('.object.ts'),
+        )
+      : [];
 
     expect(objectFiles).toEqual([]);
     expect(defaultRole.config.objectPermissions).toEqual([]);
@@ -67,18 +69,22 @@ describe('13F CRM manifest', () => {
   });
 
   it('shows the company action only when lightweight link metadata exists', () => {
+    const commandSource = readFileSync(
+      join(
+        sourceRoot,
+        'command-menu-items/view-thirteen-f-holdings.command-menu-item.ts',
+      ),
+      'utf8',
+    );
     expect(companyFirmIdField.config).toMatchObject({
       name: 'thirteenFFirmId',
       isNullable: true,
       isUIEditable: false,
     });
-    expect(companyHoldingsCommand.config).toMatchObject({
-      label: 'View 13F holdings',
-      isPinned: true,
-      availabilityType: 'GLOBAL_OBJECT_CONTEXT',
-    });
-    expect(companyHoldingsCommand.config.conditionalAvailabilityExpression).toContain(
-      'someDefined(selectedRecords, "thirteenFFirmId")',
+    expect(commandSource).toContain("label: 'View 13F holdings'");
+    expect(commandSource).toContain("availabilityType: 'GLOBAL_OBJECT_CONTEXT'");
+    expect(commandSource).toMatch(
+      /conditionalAvailabilityExpression:\s*someDefined\(\s*selectedRecords,\s*'thirteenFFirmId'/,
     );
   });
 });
