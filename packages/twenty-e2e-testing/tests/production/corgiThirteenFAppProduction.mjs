@@ -11,6 +11,7 @@ import {
 const API_URL = 'https://crm.corgiinvest.com';
 const WORKSPACE_NAME = 'Corgi ETF';
 const API_BASE_URL = 'https://admin.corgiinvest.com';
+const CONFIGURED_WORKSPACE_ID = 'eabf5d9d-fc99-4acb-b160-710ecb1db996';
 const COMPANY_OBJECT_ID = '20202020-b374-4779-a561-80086cb2e17f';
 const COMPANY_FIELD_ID = '3e78cf66-c454-4c70-8ccc-d095eb5b0c20';
 const PAGE_LAYOUT_ID = '6404c75f-c713-4db1-965d-6cf54178a18f';
@@ -73,6 +74,7 @@ const graphql = async ({ operationName, query, variables = {} }) => {
 
 const assertTenant = (workspace) => {
   if (
+    CONFIGURED_WORKSPACE_ID !== WORKSPACE_ID ||
     workspace?.id !== WORKSPACE_ID ||
     workspace?.displayName !== WORKSPACE_NAME
   ) {
@@ -218,7 +220,7 @@ const configure = async () => {
   );
   const variables = new Map([
     ['CORGI_THIRTEEN_F_API_BASE_URL', API_BASE_URL],
-    ['CORGI_THIRTEEN_F_WORKSPACE_ID', WORKSPACE_ID],
+    ['CORGI_THIRTEEN_F_WORKSPACE_ID', CONFIGURED_WORKSPACE_ID],
     [
       'CORGI_THIRTEEN_F_API_READ_TOKEN',
       requiredEnvironment('CORGI_THIRTEEN_F_API_READ_TOKEN'),
@@ -530,7 +532,7 @@ const verifyOnce = async () => {
       'CORGI_THIRTEEN_F_API_READ_TOKEN',
       [requiredEnvironment('CORGI_THIRTEEN_F_API_READ_TOKEN'), true],
     ],
-    ['CORGI_THIRTEEN_F_WORKSPACE_ID', [WORKSPACE_ID, false]],
+    ['CORGI_THIRTEEN_F_WORKSPACE_ID', [CONFIGURED_WORKSPACE_ID, false]],
   ]);
   if (application.applicationVariables.length !== expectedVariables.size) {
     throw new Error('Corgi 13F application variable set is incorrect');

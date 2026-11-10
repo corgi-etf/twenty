@@ -53,14 +53,26 @@ const EXPECTED_IDS = [
   'ee91c40f-759d-42bd-be49-43f0af07982b',
   'e202fe49-1d7f-4bb9-9bce-77f15a2322c0',
   'a418e514-347d-4f63-a0bb-109bedddfdb1',
+  '7c8630fc-233a-42e2-a19b-bd750a597435',
+  'fefc317b-7aa5-4e6a-8ad7-046dd0dd04b5',
+  '90e85886-1020-4404-a75a-01b76f9207f0',
   '74e11c1b-ed63-4d94-bf2a-89db86edcf39',
 ] as const;
-const OBSOLETE_OBJECT_IDS = [
+const OBSOLETE_IDS = [
   '42f51bb6-3a42-43fd-8202-2f9196f0b03a',
+  'e598657f-5627-4df7-9c73-51ac1a9ec40e',
   'a6c6ba92-47a2-4aaf-b10a-0d13eff6198e',
+  '60254ecf-ab3e-4028-8edd-f489a9db58e7',
+  '49947326-15af-430d-9c6d-b4d4fc291fce',
   '1fbb403a-ecd3-402b-aeb5-2ce9fd14d2dd',
+  '46a395eb-105d-4dce-8358-99de47279e4c',
+  '6b32ede9-3ff1-468b-a87d-56e1c6372917',
   '9c6ceb0f-0c49-4f52-86f0-0762c7aca7ff',
+  'b4bc99c9-eacc-490d-baa2-d26f94131a41',
+  'f640c94c-2c8b-4fe3-9043-11385d2367e2',
   '6fcd2cba-af82-42ae-8ed3-975a3ff98b87',
+  'dbe6e047-4366-4e31-be1d-cf88b27e650f',
+  '08f8b6ac-7942-484a-b4c8-2124e2a88186',
   '5ddcd92f-eece-43fc-8395-355402c4dea3',
 ] as const;
 
@@ -107,10 +119,12 @@ test('pins the exact v0.3 production tenant and native workspace identities', ()
     expect(workflow).toContain(identifier);
     expect(`${verifier}\n${deploymentState}`).toContain(identifier);
   }
-  for (const identifier of OBSOLETE_OBJECT_IDS) {
+  for (const identifier of OBSOLETE_IDS) {
     expect(workflow).not.toContain(identifier);
     expect(verifier).not.toContain(identifier);
   }
+  expect(workflow).toContain('normalized_migration_confirmation');
+  expect(workflow).toContain('NORMALIZED_THIRTEEN_F_MIGRATION_COMPLETE');
 });
 
 test('uses the proven short-lived deploy key and release identity guards', () => {
