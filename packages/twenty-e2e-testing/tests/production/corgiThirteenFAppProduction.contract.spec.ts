@@ -80,7 +80,7 @@ const exactRegistration = {
   id: 'registration-1',
   universalIdentifier: APP_ID,
   ownerWorkspaceId: WORKSPACE_ID,
-  name: 'Corgi 13F Library',
+  name: 'Corgi 13F',
   sourceType: 'TARBALL',
   latestAvailableVersion: VERSION,
   isListed: false,
@@ -220,6 +220,15 @@ test('retains exact registration after a failed fresh install verification', () 
 });
 
 test('fails closed on registration and installed-release conflicts', () => {
+  expect(() =>
+    classifyDeploymentState({
+      applications: [],
+      registration: {
+        ...exactRegistration,
+        name: 'Corgi 13F Library',
+      },
+    }),
+  ).toThrow(/conflicts with the release/);
   expect(() =>
     classifyDeploymentState({
       applications: [],
