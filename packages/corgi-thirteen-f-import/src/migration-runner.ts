@@ -36,7 +36,7 @@ export type LegacyMigrationReceipt = LegacyMigrationAccounting & {
     securities: number;
     holdings: number;
   };
-  backend: CompletedIngestionReceipt;
+  backend: Omit<CompletedIngestionReceipt, 'companyMappings'>;
 };
 
 export const runLegacyCrmMigration = async (options: {
@@ -63,7 +63,7 @@ export const runLegacyCrmMigration = async (options: {
     .update(canonicalJson(dataset))
     .digest('hex');
   const batchKey = `legacy-normalized-${contentSha256}`;
-  const backend = await options.backend.ingestLegacyDataset({
+  const completed = await options.backend.ingestLegacyDataset({
     batchKey,
     dataset,
   });
@@ -76,10 +76,12 @@ export const runLegacyCrmMigration = async (options: {
   for (const key of Object.keys(normalizedCounts) as Array<
     keyof typeof normalizedCounts
   >) {
-    if (backend.receivedCounts[key] !== normalizedCounts[key]) {
+    if (completed.receivedCounts[key] !== normalizedCounts[key]) {
       throw new Error('Backend ingestion receipt does not reconcile');
     }
   }
+  const { companyMappings: _companyMappings, ...aggregateBackendReceipt } =
+    completed;
 
   return {
     schemaVersion: 3,
@@ -88,6 +90,6 @@ export const runLegacyCrmMigration = async (options: {
     contentSha256,
     ...accounting,
     normalizedCounts,
-    backend,
+    backend: aggregateBackendReceipt,
   };
 };

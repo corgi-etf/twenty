@@ -1,33 +1,34 @@
-name: Import Tony 13F files into production CRM
+name: Migrate normalized 13F holdings to the canonical backend
 
 on:
   workflow_dispatch:
     inputs:
       confirmation:
-        description: Type IMPORT_TONY_13F_FILES
+        description: Type MIGRATE_NORMALIZED_13F
         required: true
         type: string
       release_sha:
-        description: Exact reviewed main-branch SHA containing the installed 13F app and importer
+        description: Exact reviewed main-branch SHA containing the migration contract
         required: true
         type: string
 
 permissions:
   contents: read
+  id-token: write
 
 concurrency:
-  group: crm-production-deploy
+  group: thirteen-f-production-migration
   cancel-in-progress: false
 
 env:
   CORGI_CRM_ORIGIN: https://crm.corgiinvest.com
 
 jobs:
-  import:
-    name: Convergently normalize CRM 13F attachments
+  migrate:
+    name: Reconcile normalized CRM holdings
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     environment: production
     steps:
       - name: Check out the exact reviewed main revision
@@ -43,11 +44,15 @@ jobs:
           RELEASE_SHA: ${{ inputs.release_sha }}
         run: |
           set -euo pipefail
-          [[ "${CONFIRMATION}" == "IMPORT_TONY_13F_FILES" ]]
+          [[ "${CONFIRMATION}" == "MIGRATE_NORMALIZED_13F" ]]
           [[ "${RELEASE_SHA}" =~ ^[0-9a-f]{40}$ ]]
           [[ "${RELEASE_SHA}" == "${GITHUB_SHA}" ]]
+          [[ "${GITHUB_REPOSITORY}" == "Corgi-ETF/twenty" ]]
+          [[ "${GITHUB_REPOSITORY_ID}" == "1359532075" ]]
+          [[ "${GITHUB_REPOSITORY_OWNER_ID}" == "241377158" ]]
           [[ "${GITHUB_REF}" == "refs/heads/main" ]]
           [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]
+          [[ "${RUNNER_ENVIRONMENT}" == "github-hosted" ]]
           [[ "${CORGI_CRM_ORIGIN}" == "https://crm.corgiinvest.com" ]]
 
       - name: Install repository dependencies
@@ -56,7 +61,7 @@ jobs:
       - name: Install the Chromium authentication browser
         run: npx playwright install --with-deps chromium
 
-      - name: Acquire an exact short-lived 13F import credential
+      - name: Acquire an exact short-lived 13F read credential
         id: acquire
         env:
           FRONTEND_BASE_URL: ${{ env.CORGI_CRM_ORIGIN }}
@@ -71,14 +76,14 @@ jobs:
           tests/production/corgiThirteenFImportCredential.production.spec.ts
           --project=production-chromium
 
-      - name: Mask the short-lived CRM token before any import output
+      - name: Mask the short-lived CRM token before migration output
         shell: bash
         run: |
           set -euo pipefail
           token="$(jq -er '.token | select(type == "string" and length > 0)' "${RUNNER_TEMP}/corgi-13f-import-key.json")"
           echo "::add-mask::${token}"
 
-      - name: Download CRM attachments and converge normalized holdings
+      - name: Reconcile CRM rows into the canonical backend
         env:
           CORGI_13F_IMPORT_KEY_PATH: ${{ runner.temp }}/corgi-13f-import-key.json
           CORGI_13F_IMPORT_RESULT_PATH: ${{ runner.temp }}/corgi-13f-import-result.json
@@ -93,29 +98,30 @@ jobs:
           set -euo pipefail
           result="${RUNNER_TEMP}/corgi-13f-import-result.json"
           if [[ ! -f "${result}" ]]; then
-            echo 'The sanitized 13F import receipt was not produced.' >> "${GITHUB_STEP_SUMMARY}"
+            echo 'The sanitized 13F migration receipt was not produced.' >> "${GITHUB_STEP_SUMMARY}"
             exit 0
           fi
           jq -e '
-            select(.schemaVersion == 2)
+            select(.schemaVersion == 3)
             | {
-            schemaVersion,
-            aggregateContentSha256,
-            sourceFiles,
-            sourceBytes,
-            supportedFiles,
-            unsupportedFiles,
-            acceptedRows,
-            rejectedRows,
-            ignoredRows,
-            managerRecords,
-            securityRecords,
-            holdingRecords,
-            importRuns,
-            importErrors,
-            noOpFiles,
-            supersededRows
-          }' "${result}" >> "${GITHUB_STEP_SUMMARY}"
+                schemaVersion,
+                sourceSystem,
+                coverage,
+                contentSha256,
+                sourceRows,
+                acceptedRows,
+                duplicateRows,
+                rejectedRows,
+                rejectionCounts,
+                normalizedCounts,
+                backend: {
+                  batchId: .backend.batchId,
+                  status: .backend.status,
+                  receivedCounts: .backend.receivedCounts,
+                  published: .backend.published,
+                  completedAt: .backend.completedAt
+                }
+              }' "${result}" >> "${GITHUB_STEP_SUMMARY}"
 
       - name: Revoke the short-lived key and delete the exact run-owned role
         if: ${{ always() && steps.acquire.outcome != 'skipped' }}

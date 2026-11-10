@@ -22,6 +22,12 @@ const completed: CompletedIngestionReceipt = {
   status: 'COMPLETED',
   receivedCounts: { managers: 1, filings: 1, securities: 2, holdings: 2 },
   published: { managers: 1, filings: 1, securities: 2, holdings: 2 },
+  companyMappings: [
+    {
+      crmCompanyId: '33333333-3333-4333-8333-333333333333',
+      thirteenFFirmId: 'firm-id',
+    },
+  ],
   completedAt: '2026-11-10T12:00:00.000Z',
 };
 
@@ -66,7 +72,14 @@ test('reconciles the exact CRM inventory before publishing an aggregate receipt'
       securities: 2,
       holdings: 2,
     },
-    backend: { ...completed, batchKey: submitted!.batchKey },
+    backend: {
+      batchId: completed.batchId,
+      batchKey: submitted!.batchKey,
+      status: 'COMPLETED',
+      receivedCounts: completed.receivedCounts,
+      published: completed.published,
+      completedAt: completed.completedAt,
+    },
   });
 });
 
