@@ -14,6 +14,12 @@ const approved = {
 
 test('accepts only the pinned manual production workflow identity', () => {
   assert.doesNotThrow(() => assertWorkflowIdentity(approved));
+  assert.doesNotThrow(() =>
+    assertWorkflowIdentity({
+      ...approved,
+      GITHUB_REPOSITORY: 'corgi-etf/twenty',
+    }),
+  );
 
   for (const key of Object.keys(approved)) {
     assert.throws(

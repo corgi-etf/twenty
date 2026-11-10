@@ -24,7 +24,6 @@ const requiredEnvironment = (
 
 export const assertWorkflowIdentity = (environment: Environment): void => {
   const expected = {
-    GITHUB_REPOSITORY: 'Corgi-ETF/twenty',
     GITHUB_REPOSITORY_ID: '1359532075',
     GITHUB_REPOSITORY_OWNER_ID: '241377158',
     GITHUB_REF: 'refs/heads/main',
@@ -32,6 +31,8 @@ export const assertWorkflowIdentity = (environment: Environment): void => {
     RUNNER_ENVIRONMENT: 'github-hosted',
   } as const;
   if (
+    environment.GITHUB_REPOSITORY?.trim().toLowerCase() !==
+      'corgi-etf/twenty' ||
     Object.entries(expected).some(
       ([name, value]) => environment[name]?.trim() !== value,
     )

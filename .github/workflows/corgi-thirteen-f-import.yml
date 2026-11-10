@@ -47,7 +47,7 @@ jobs:
           [[ "${CONFIRMATION}" == "MIGRATE_NORMALIZED_13F" ]]
           [[ "${RELEASE_SHA}" =~ ^[0-9a-f]{40}$ ]]
           [[ "${RELEASE_SHA}" == "${GITHUB_SHA}" ]]
-          [[ "${GITHUB_REPOSITORY}" == "Corgi-ETF/twenty" ]]
+          [[ "${GITHUB_REPOSITORY,,}" == "corgi-etf/twenty" ]]
           [[ "${GITHUB_REPOSITORY_ID}" == "1359532075" ]]
           [[ "${GITHUB_REPOSITORY_OWNER_ID}" == "241377158" ]]
           [[ "${GITHUB_REF}" == "refs/heads/main" ]]
