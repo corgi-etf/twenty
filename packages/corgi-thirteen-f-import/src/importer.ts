@@ -119,6 +119,36 @@ const canonicalize = (value: unknown): unknown => {
 const valuesEqual = (left: unknown, right: unknown): boolean =>
   JSON.stringify(canonicalize(left)) === JSON.stringify(canonicalize(right));
 
+const isNullEquivalentLinkValue = (value: unknown): boolean => {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return false;
+  }
+
+  const linkValue = value as Record<string, unknown>;
+  const keys = Object.keys(linkValue);
+  if (
+    keys.length === 0 ||
+    keys.some(
+      (key) =>
+        !['primaryLinkUrl', 'primaryLinkLabel', 'secondaryLinks'].includes(key),
+    )
+  ) {
+    return false;
+  }
+
+  const isNullEquivalentText = (text: unknown) =>
+    text === undefined || text === null || text === '';
+  const secondaryLinks = linkValue.secondaryLinks;
+
+  return (
+    isNullEquivalentText(linkValue.primaryLinkUrl) &&
+    isNullEquivalentText(linkValue.primaryLinkLabel) &&
+    (secondaryLinks === undefined ||
+      secondaryLinks === null ||
+      (Array.isArray(secondaryLinks) && secondaryLinks.length === 0))
+  );
+};
+
 const metadataPatch = (
   record: ThirteenFFilingRecord,
   source: DownloadedSourceFile,
@@ -127,7 +157,10 @@ const metadataPatch = (
   const patch: Partial<FilingCreateInput> = {};
   for (const [name, value] of Object.entries(expected)) {
     const actual = record[name as keyof ThirteenFFilingRecord];
-    const normalizedActual = value === null && actual === '' ? null : actual;
+    const normalizedActual =
+      value === null && (actual === '' || isNullEquivalentLinkValue(actual))
+        ? null
+        : actual;
     if (!valuesEqual(normalizedActual, value)) {
       Object.assign(patch, { [name]: value });
     }

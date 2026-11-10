@@ -308,6 +308,69 @@ test('accepts Twenty empty-string serialization for nullable fields', async () =
   assert.deepEqual(api.events, [`verify:${fileId}`]);
 });
 
+test('accepts Twenty empty-link serialization for a nullable source link', async () => {
+  const api = new MemoryApi();
+  const input = source({
+    sourceDriveId: null,
+    sourceLink: null,
+    ticker: null,
+  });
+  const fileId = randomUUID();
+  api.uploaded.set(fileId, Uint8Array.from(input.bytes));
+  api.records.push(
+    filingFor(input, {
+      sourceDriveId: '',
+      sourceLink: {
+        primaryLinkUrl: '',
+        primaryLinkLabel: '',
+        secondaryLinks: [],
+      },
+      ticker: '',
+      importPendingFileId: '',
+      file: [
+        {
+          fileId,
+          label: input.name,
+          url: `https://crm.corgiinvest.com/file/files-field/${fileId}?token=masked`,
+        },
+      ],
+    }),
+  );
+
+  const result = await runConvergentImport(api, [input]);
+
+  assert.equal(result.metadataUpdated, 0);
+  assert.equal(result.skipped, 1);
+  assert.equal(result.verified, 1);
+  assert.deepEqual(api.events, [`verify:${fileId}`]);
+});
+
+test('does not treat a non-empty source link as null', async () => {
+  const api = new MemoryApi();
+  const input = source({ sourceLink: null });
+  const fileId = randomUUID();
+  api.uploaded.set(fileId, Uint8Array.from(input.bytes));
+  api.records.push(
+    filingFor(input, {
+      sourceLink: {
+        primaryLinkUrl: 'https://example.com/source',
+        primaryLinkLabel: '',
+        secondaryLinks: [],
+      },
+      file: [{ fileId, label: input.name }],
+    }),
+  );
+
+  const result = await runConvergentImport(api, [input]);
+
+  assert.equal(result.metadataUpdated, 1);
+  assert.equal(api.records[0]?.sourceLink, null);
+  assert.equal(
+    api.events.some((event) => event.startsWith('patch-record:')),
+    true,
+  );
+});
+
 test('repairs safe metadata drift without overwriting manually curated fields', async () => {
   const api = new MemoryApi();
   const input = source();
