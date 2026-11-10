@@ -1,6 +1,6 @@
 const APPLICATION_ID = '38ba5a6a-430e-455a-a27b-fba07af35944';
 const WORKSPACE_ID = 'eabf5d9d-fc99-4acb-b160-710ecb1db996';
-const REGISTRATION_NAME = 'Corgi 13F Library';
+const REGISTRATION_NAME = 'Corgi 13F';
 const LEGACY_VERSION = '0.1.0';
 const INTERMEDIATE_VERSION = '0.2.0';
 const PREVIOUS_VERSION = '0.2.1';
