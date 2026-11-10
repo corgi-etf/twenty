@@ -1,92 +1,123 @@
-# Corgi 13F production import
+# Corgi 13F canonical ingestion
 
-This workflow copies the 25 approved direct files from Tony Aukett's `Sales` folder into the
-installed Corgi 13F object. It never moves, edits, or deletes a source file. It does not delete CRM
-records or completed CRM files on failure; a rerun converges records that are already complete and
-repairs records with a supported upload checkpoint.
+The production migration reads the 28,320 holdings already normalized in the CRM and publishes
+typed 13F records to the canonical backend. It does not read, copy, persist, attach, or serve an
+original spreadsheet. The CRM is a one-time legacy source for this migration, not the 13F system of
+record.
 
-## Fixed contract
+## Production boundary
 
 - Workflow: `.github/workflows/corgi-thirteen-f-import.yml` on `main`, manual dispatch only
-- CRM: `https://crm.corgiinvest.com`, workspace `eabf5d9d-fc99-4acb-b160-710ecb1db996`
-- Website exchange and OIDC audience:
-  `https://admin.corgiinvest.com/api/internal/imports/tony-13f/export`
-- Approved manifest SHA-256:
-  `1f1adde7fa3f12149d4f51729a6830af52a4e96bd7bd43d2c362c95159298d1c`
-- Exact source: 25 files, 20,525,530 bytes, 24 XLSX and one PDF
-- Target: 20 derived tickers and five null tickers
-- File field universal ID: `ce9040dc-d05b-40b8-8ada-d81e1f30b9af`
-- Unique source-node field universal ID: `0f8f0907-75e2-455c-af5c-409e5f11ff46`
-- Pending-file checkpoint universal ID: `0540519f-2f64-4429-a72a-9f77e9923f2a`
+- Confirmation: `MIGRATE_NORMALIZED_13F`
+- CRM: `https://crm.corgiinvest.com`, Corgi ETF workspace
+- Canonical backend: `https://admin.corgiinvest.com`
+- OIDC audience: `https://admin.corgiinvest.com/api/internal/thirteen-f/ingestions`
+- Expected source inventory: exactly 28,320 normalized CRM holding rows
+- Source classification: `LEGACY_NORMALIZED`
+- Coverage classification: `PARTIAL`
 
-The GitHub `production` environment currently has no required reviewer. The active safety gate is
-therefore the main-only manual dispatch, which requires the exact reviewed main SHA and the
-confirmation `IMPORT_TONY_13F_FILES`. Configuring an environment reviewer would add a separate
-approval gate but is not assumed by this runbook. The workflow has `contents: read` and
-`id-token: write`; checkout does not persist a GitHub credential. No signed URL or token is a
-workflow input, output, artifact, or receipt field.
+The job runs in the GitHub `production` environment on a GitHub-hosted runner. It validates the
+repository name, repository ID, owner ID, main ref, manual event, reviewed release SHA, and runner
+environment before the migration begins. GitHub permissions are limited to `contents: read` and
+`id-token: write`; checkout does not persist a GitHub credential.
 
-## Credential boundary
+The backend pins the issuer and these claims:
 
-The authenticated production browser first proves the exact Corgi ETF workspace and installed app
-contract. It creates one deterministic run-owned role and one 30-minute API key. The import role
-has exactly:
+- repository `Corgi-ETF/twenty`
+- repository ID `1359532075`
+- owner ID `241377158`
+- ref `refs/heads/main`
+- workflow
+  `corgi-etf/twenty/.github/workflows/corgi-thirteen-f-import.yml@refs/heads/main`
+- event `workflow_dispatch`
+- environment `production`
 
-- the global `UPLOAD_FILE` flag;
-- read and update permission for the runtime Corgi 13F object ID; and
-- no global record access, settings, tools, delete, destroy, field, row-level, user, or agent
-  capabilities.
+No static backend write secret is used.
 
-The key is stored only in a mode `0600` runner-temporary lease. Cleanup looks up a response-lost key
-by its exact role, name, and expiry, revokes it, verifies `revokedAt`, and then deletes only the
-exact run-owned role. The revoked key row remains as server audit history. The runner removes the
-lease, receipt, Twenty CLI config, and Playwright authentication state in an `always()` step.
+## CRM credential boundary
 
-## Import state machine
+The authenticated production browser creates a deterministic run-owned role and a 30-minute API
+key. The role can read only the installed 13F manager, security, and holding objects. It cannot
+update any object and has no global permission flags, global record access, settings, tools, delete,
+destroy, field, row-level, user, or agent capability.
 
-The workflow requests GitHub OIDC only after the CRM tenant/app preflight and credential acquisition.
-The website accepts the exact repository, owner/repository IDs, main ref, workflow path,
-`workflow_dispatch`, production environment, workflow SHA, custom audience, and one-use run marker.
-Every returned URL is masked immediately. All 25 files are downloaded into memory with concurrency
-four and exact byte-count checks before the first CRM record write.
+The key exists only in a mode `0600` runner-temporary lease. Cleanup can recover a response-lost key
+by exact role, key name, and expiry. It revokes the key, verifies `revokedAt`, proves ownership of the
+exact role, and deletes only that role. The workflow removes the lease, aggregate receipt, local
+Twenty configuration, and Playwright authentication state in an `always()` step.
 
-For each source node:
+## Normalized contract
 
-1. Read by the unique `sourceNodeId`. Create a fileless record if absent; recover a response-lost
-   create by rereading the unique node. A different `sourceVersionId` or duplicate node aborts.
-2. Preserve manually curated manager/report-period values on reruns while converging source-owned
-   metadata.
-3. Reserve a FilesField upload, then persist its ID in `importPendingFileId` before any byte PUT.
-4. PUT the unchanged bytes, complete the upload, and atomically attach the single file while clearing
-   `importPendingFileId`.
-5. Reread the record and download its CRM file URL. Require the exact file ID/label, byte length, and
-   SHA-256 of the source bytes.
+Every source adapter produces the same four record types:
 
-An attached matching record is retained and verified. A completed checkpoint is attached without a
-new upload. Replacement occurs only when the API explicitly reports the checkpoint as still pending
-or missing. Generic/transient attachment errors receive three bounded attempts, then fail while
-retaining the checkpoint for a rerun.
+- Manager: stable source key, legal name, and verified CIK, aliases, or CRM company mapping when
+  present.
+- Filing: stable source key, manager key, verified SEC fields when present, and an explicit date
+  basis.
+- Security: stable source key plus only verified issuer, class, CUSIP, or ticker fields.
+- Holding: stable row key, filing key, security key, and decimal-string values for value, shares,
+  voting authority, and other official information-table fields when present.
 
-## Failure and recovery
+Legacy CRM data has no verified CIK, accession number, CUSIP, SEC filed date, issuer name, or title
+of class. The migration omits those values rather than inventing them. The CRM `asOfDate` is sent as
+`legacyAsOfDate` with `dateBasis: LEGACY_AS_OF_UNVERIFIED`; it is never relabeled as an SEC report
+period. Thematic target tickers, estimated values, sales contacts, portfolio percentages, movement
+labels, and other derived workbook context are not sent.
 
-Rerun the same manual workflow after correcting a transient failure. Successful records remain
-attached and are verified; they are never rolled back. A failed record remains fileless with a
-checkpoint or retains its valid attached file.
+Future SEC EDGAR adapters implement the same typed adapter interface but use `SEC_EDGAR` and
+`COMPLETE`. Complete SEC batches must carry the official issuer, title of class, CUSIP, report
+period, and any other information-table fields provided by the filing.
 
-Twenty's pending-file reaper processes only `PENDING` uploads older than 24 hours on an hourly cron,
-in batches of 200. The nominal cleanup window is therefore 24–25 hours and can be longer under
-backlog or storage errors. A failed storage cleanup may leave inaccessible bytes but not a valid
-record reference. `UPLOADED` temporary files are not reaped; the importer therefore retries their
-checkpointed attachment and never replaces a generic/ambiguous failure.
+## Reconciliation and idempotency
 
-Do not add a broad delete mutation or global rollback. If cleanup cannot revoke the exact key or
-prove role ownership, retain the lease from the failed runner logs' run identity, revoke the key and
-delete the exact role through an approved maintenance run, and verify the role has no remaining API
-keys before removal.
+The migration stops before a backend write if the CRM inventory is not exactly 28,320 rows. Each
+source row is then classified exactly once as accepted, duplicate, or rejected. Duplicate counts
+and rejection reason counts are retained in the aggregate receipt; individual source rows and raw
+payloads are not retained.
+
+The normalized dataset is canonically serialized and SHA-256 hashed. That digest defines both the
+content identity and the stable batch key. The backend protocol is:
+
+1. `POST /api/internal/thirteen-f/ingestions/:batchKey/begin`
+2. ordered `POST /api/internal/thirteen-f/ingestions/:batchKey/chunks`
+3. `POST /api/internal/thirteen-f/ingestions/:batchKey/complete`
+
+Chunks contain at most 400 typed items, below the backend limit of 500 items and 5 MiB. A batch can
+contain at most 100 chunks. Every chunk has its own canonical SHA-256. Replaying the same batch,
+sequence, and digest is a no-op; a conflicting digest fails closed. Completion validates expected
+counts and references before publishing the immutable filing revisions and current pointers.
+
+The migration verifies that backend received counts equal the normalized counts before writing the
+local receipt. Per-company mappings returned by the backend are discarded from that receipt because
+the backend mapping service owns CRM company-marker synchronization.
+
+## In-memory legacy workbook adapter
+
+The package retains a legacy workbook adapter only for controlled conversion of existing source
+bytes. It accepts a bounded `Uint8Array`, parses the two authoritative holdings sheets in memory,
+and returns the typed contract. It does not accept a path, URL, filename, storage identifier, or
+upload destination. Its output excludes raw rows and all non-13F sales context. Callers discard the
+input bytes after normalization; no source blob is part of a request or receipt.
 
 ## Verification receipt
 
-Success requires 25 unique source node/version pairs, one byte-verified file each, and `verified: 25`.
-The step summary contains only counts, the approved manifest digest, and an aggregate content digest.
-It contains no filenames, source IDs, file IDs, credentials, OIDC tokens, or signed URLs. No artifact
-is uploaded.
+The schema-three receipt contains only:
+
+- source system and coverage classification;
+- aggregate content digest;
+- source, accepted, duplicate, and rejected row counts;
+- aggregate rejection reason counts;
+- normalized record counts; and
+- backend batch ID, status, received counts, published counts, and completion time.
+
+The step summary contains the same aggregate subset. There is no workflow artifact.
+
+## Purging historical source blobs
+
+Do not delete historical CRM or object-storage data until a completed receipt proves all 28,320
+source rows were accounted for and the canonical backend counts reconcile. Purge execution is a
+separate root-owned production operation. Before deletion, produce a read-only inventory containing
+the exact CRM record ID, CRM storage-object ID, bucket/key, and S3 version ID for each candidate;
+join it to the reconciled migration receipt; and require zero unaccounted source rows. Versioned S3
+objects require explicit version IDs—deleting only the current key can leave recoverable historical
+versions. The migration workflow itself has no delete or storage capability.
