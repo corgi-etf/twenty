@@ -24,6 +24,8 @@ export type ImportCredentialLease = {
   token?: string;
 };
 
+const IMPORT_PERMISSION_FLAGS = ['UPLOAD_FILE'] as const;
+
 export type CreateImportCredentialOptions = {
   graphql: GraphqlCaller;
   repository: string;
@@ -104,14 +106,17 @@ export const createImportCredential = async (
       }
     }`,
     variables: {
-      input: { roleId: role.id, permissionFlagKeys: [] },
+      input: {
+        roleId: role.id,
+        permissionFlagKeys: [...IMPORT_PERMISSION_FLAGS],
+      },
     },
   });
   if (!isExactFlagList(flags.upsertPermissionFlags, role.id)) {
     throw new Error('Server did not configure the exact 13F import flag');
   }
-  const objectPermissions = objectMetadataIds.map((objectMetadataId, index) =>
-    exactObjectPermission(objectMetadataId, index !== 0),
+  const objectPermissions = objectMetadataIds.map((objectMetadataId) =>
+    exactObjectPermission(objectMetadataId, true),
   );
   const configuredPermission = await options.graphql({
     operationName: 'ConfigureCorgiThirteenFObjectPermission',
@@ -306,7 +311,7 @@ import {
 
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-const REQUIRED_HUMAN_FLAGS = ['API_KEYS_AND_WEBHOOKS', 'ROLES'];
+const REQUIRED_HUMAN_FLAGS = ['API_KEYS_AND_WEBHOOKS', 'ROLES', 'UPLOAD_FILE'];
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -353,7 +358,15 @@ const exactObjectPermission = (
 const isExactFlagList = (value: unknown, roleId: string): boolean => {
   const flags = asRecords(value);
 
-  return flags.length === 0 && Boolean(roleId);
+  return (
+    flags.length === IMPORT_PERMISSION_FLAGS.length &&
+    IMPORT_PERMISSION_FLAGS.every((flag) =>
+      flags.some(
+        (configured) =>
+          configured.roleId === roleId && configured.flag === flag,
+      ),
+    )
+  );
 };
 
 const preflight = async (graphql: GraphqlCaller): Promise<string[]> => {
@@ -533,11 +546,11 @@ const verifyExactRole = async (
     !isExactFlagList(found?.permissionFlags, role.id) ||
     asRecords(found?.objectPermissions).length !==
       (role.objectMetadataIds?.length ?? 0) ||
-    !(role.objectMetadataIds ?? []).every((objectMetadataId, index) =>
+    !(role.objectMetadataIds ?? []).every((objectMetadataId) =>
       asRecords(found?.objectPermissions).some((permission) =>
         matchesRecord(
           permission,
-          exactObjectPermission(objectMetadataId, index !== 0),
+          exactObjectPermission(objectMetadataId, true),
         ),
       ),
     ) ||

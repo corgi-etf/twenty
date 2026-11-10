@@ -7,6 +7,8 @@ import {
 
 const MAX_BATCH_RECORDS = 100;
 const MAX_BATCH_BYTES = 8 * 1024 * 1024;
+const MAX_RECONCILIATION_KEYS = 40;
+const COMBINED_WORKBOOK_PATTERN = /^competitor holders \(13f\).*\.xlsx$/i;
 
 export type ExistingImportRun = Pick<
   ThirteenFImportRunInput,
@@ -93,6 +95,55 @@ const exactRunMatch = (
   existing.contentSha256 === plan.run.contentSha256 &&
   existing.parserVersion === plan.run.parserVersion &&
   ['COMPLETE', 'UNSUPPORTED', 'REJECTED'].includes(existing.status);
+
+const sourcePrecedence = (
+  left: HoldingsFilePlan,
+  right: HoldingsFilePlan,
+): number => {
+  const leftCombined = COMBINED_WORKBOOK_PATTERN.test(left.run.sourceFileName);
+  const rightCombined = COMBINED_WORKBOOK_PATTERN.test(
+    right.run.sourceFileName,
+  );
+  if (leftCombined !== rightCombined) return leftCombined ? -1 : 1;
+  if (leftCombined) {
+    return right.run.sourceFileName.localeCompare(left.run.sourceFileName);
+  }
+
+  return left.run.sourceFileName.localeCompare(right.run.sourceFileName);
+};
+
+const deduplicateEconomicPositions = (
+  plans: HoldingsFilePlan[],
+): Set<string> => {
+  const seen = new Set<string>();
+  const duplicatePositionKeys = new Set<string>();
+  for (const plan of [...plans].sort(sourcePrecedence)) {
+    const holdings = plan.holdings.filter(({ positionKey }) => {
+      if (seen.has(positionKey)) {
+        duplicatePositionKeys.add(positionKey);
+        return false;
+      }
+      seen.add(positionKey);
+
+      return true;
+    });
+    const ignoredDuplicates = plan.holdings.length - holdings.length;
+    plan.holdings = holdings;
+    plan.run.acceptedCount = holdings.length;
+    plan.run.ignoredCount += ignoredDuplicates;
+  }
+
+  return duplicatePositionKeys;
+};
+
+const chunks = <T>(values: readonly T[], size: number): T[][] => {
+  const output: T[][] = [];
+  for (let index = 0; index < values.length; index += size) {
+    output.push(values.slice(index, index + size));
+  }
+
+  return output;
+};
 
 const applyPlan = async (
   api: HoldingsImportApi,
@@ -193,6 +244,7 @@ export const runHoldingsImport = async (
       left.sourceFileName.localeCompare(right.sourceFileName),
     )
     .map(safelyParseHoldingsSource);
+  const duplicatePositionKeys = deduplicateEconomicPositions(plans);
   const allManagerIds = new Set(
     plans.flatMap(({ managers }) => managers.map(({ id }) => id)),
   );
@@ -205,6 +257,33 @@ export const runHoldingsImport = async (
     const result = await applyPlan(api, plan);
     noOpFiles += Number(result.noOp);
     supersededRows += result.superseded;
+  }
+  if (duplicatePositionKeys.size > 0) {
+    const winnerIds = new Set(
+      plans.flatMap(({ holdings }) => holdings.map(({ id }) => id)),
+    );
+    const duplicateActiveIds = new Set<string>();
+    for (const positionKeys of chunks(
+      [...duplicatePositionKeys].sort(),
+      MAX_RECONCILIATION_KEYS,
+    )) {
+      const ids = await api.listHoldingIds(
+        `and(positionKey[in]:${JSON.stringify(positionKeys)},isActive[eq]:true)`,
+      );
+      ids
+        .filter((id) => !winnerIds.has(id))
+        .forEach((id) => duplicateActiveIds.add(id));
+    }
+    for (const identifiers of chunkHoldingRecords(
+      [...duplicateActiveIds].sort().map((id) => ({ id })),
+    )) {
+      const ids = identifiers.map(({ id }) => String(id));
+      supersededRows += await api.patchMany(
+        'thirteenFHoldings',
+        `id[in]:${JSON.stringify(ids)}`,
+        { isActive: false },
+      );
+    }
   }
 
   return {

@@ -44,6 +44,45 @@ const HEADERS = [
   'Source',
 ];
 
+const MASTER_HEADERS = [
+  'Competitor',
+  'Our fund',
+  'Holder Name',
+  'Portfolio Name',
+  'Institution Type',
+  'Est. 13F book $',
+  'Book estimate',
+  'Metro Area',
+  'Country',
+  'Shares',
+  'Est $ value',
+  '% of fund shares out',
+  '% of holder portfolio',
+  'Move',
+  'Share change',
+  'Change $',
+  'Change %',
+  'Filing Date',
+  'Source',
+  'Not a buyer',
+  'Category',
+  'Their mgmt fee %',
+  'Our mgmt fee %',
+  'Fee gap (bp)',
+  'Annual fee saving $',
+  'Fund turnover %/day',
+  'Fund return since 6/30',
+  'Fund return YTD',
+  'Est. return on position',
+  'Est. $ gain/loss',
+  'Entry basis',
+  'Manager research / DD contact',
+  'Title',
+  'Owner (wholesaler)',
+  'Status',
+  'Notes',
+];
+
 const digest = (bytes: Uint8Array) =>
   createHash('sha256').update(bytes).digest('hex');
 
@@ -103,17 +142,67 @@ const workbookBytes = (): Uint8Array => {
   return new Uint8Array(write(workbook, { type: 'buffer', bookType: 'xlsx' }));
 };
 
+const combinedWorkbookBytes = (): Uint8Array => {
+  const workbook = utils.book_new();
+  const rows = [
+    ['Title'],
+    ['Description'],
+    [],
+    MASTER_HEADERS,
+    [
+      'AGG',
+      'XA',
+      'Acme Advisors',
+      'Income',
+      'Investment Advisor',
+      1_000_000,
+      'ok',
+      'Chicago',
+      'US',
+      999,
+      10_000,
+      1.2,
+      0.5,
+      'added',
+      10,
+      1_000,
+      11.1,
+      46203,
+      '13F',
+    ],
+  ];
+  utils.book_append_sheet(
+    workbook,
+    utils.aoa_to_sheet(rows),
+    'Thematic - All holders',
+  );
+  utils.book_append_sheet(
+    workbook,
+    utils.aoa_to_sheet([rows[0], rows[1], rows[2], rows[3]]),
+    'Levered - All holders',
+  );
+
+  return new Uint8Array(write(workbook, { type: 'buffer', bookType: 'xlsx' }));
+};
+
 class MemoryHoldingsApi implements HoldingsImportApi {
   runs = new Map<string, ExistingImportRun>();
   events: string[] = [];
   importRunRecords: Record<string, unknown>[] = [];
+  holdingRecords: Record<string, unknown>[] = [];
   oldIds = [randomUUID()];
+  globalDuplicateIds: string[] = [];
 
   async findImportRun(importKey: string) {
     return this.runs.get(importKey);
   }
 
-  async listHoldingIds() {
+  async listHoldingIds(filter: string) {
+    if (filter.includes('positionKey[in]')) {
+      this.events.push('list-duplicate-positions');
+
+      return [...this.globalDuplicateIds];
+    }
     this.events.push('list-old');
 
     return [...this.oldIds];
@@ -135,6 +224,9 @@ class MemoryHoldingsApi implements HoldingsImportApi {
           parserVersion: String(record.parserVersion),
         });
       }
+    }
+    if (objectPlural === 'thirteenFHoldings') {
+      this.holdingRecords.push(...records.map((record) => ({ ...record })));
     }
   }
 
@@ -213,6 +305,35 @@ test('a renamed source attachment cannot no-op with a stale target ticker', asyn
 
   assert.equal(receipt.noOpFiles, 0);
   assert.equal(api.runs.size, 2);
+});
+
+test('combined master wins cross-source economic positions and deactivates stale duplicates', async () => {
+  const api = new MemoryHoldingsApi();
+  api.oldIds = [];
+  const staleDuplicateId = randomUUID();
+  api.globalDuplicateIds = [staleDuplicateId];
+  const perTarget = source('AGGB competitor holders.xlsx', workbookBytes());
+  const master = source(
+    'Competitor Holders (13F) - 20261109.xlsx',
+    combinedWorkbookBytes(),
+  );
+
+  const receipt = await runHoldingsImport(api, [perTarget, master]);
+
+  assert.equal(receipt.acceptedRows, 1);
+  assert.equal(receipt.ignoredRows, 1);
+  assert.equal(receipt.holdingRecords, 1);
+  assert.equal(receipt.managerRecords, 1);
+  assert.equal(receipt.securityRecords, 1);
+  assert.equal(receipt.supersededRows, 1);
+  assert.equal(api.holdingRecords.length, 1);
+  assert.equal(api.holdingRecords[0]?.sharesHeld, 999);
+  assert.equal(api.holdingRecords[0]?.targetTicker, undefined);
+  assert.equal(api.events.includes('list-duplicate-positions'), true);
+  assert.equal(
+    api.events.some((event) => event === `patch:false:${staleDuplicateId}`),
+    true,
+  );
 });
 
 test('retry staging and clean completion clear stale terminal fields', async () => {
