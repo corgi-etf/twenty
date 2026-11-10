@@ -10,6 +10,8 @@ import type { ValidatedExportFile } from './manifest.ts';
 export type DownloadedSourceFile = Omit<ValidatedExportFile, 'downloadUrl'> & {
   bytes: Uint8Array;
   contentSha256: string;
+  sourceDriveId?: string | null;
+  sourceLink?: FilingCreateInput['sourceLink'];
 };
 
 export type CrmFileValue = {
@@ -87,11 +89,12 @@ const sourceLink = () => ({
 const expectedMetadata = (source: DownloadedSourceFile): FilingCreateInput => ({
   name: source.name,
   ticker: source.ticker,
-  sourceDriveId: SOURCE_DRIVE_ID,
+  sourceDriveId:
+    'sourceDriveId' in source ? source.sourceDriveId : SOURCE_DRIVE_ID,
   sourceNodeId: source.id,
   sourceVersionId: source.sourceVersionId,
   sourceUpdatedAt: source.updatedAt,
-  sourceLink: sourceLink(),
+  sourceLink: 'sourceLink' in source ? source.sourceLink : sourceLink(),
 });
 
 const createInput = (source: DownloadedSourceFile): FilingCreateInput => ({

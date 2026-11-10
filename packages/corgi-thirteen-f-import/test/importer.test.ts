@@ -194,6 +194,17 @@ test('creates the record before upload and checkpoints the file ID before PUT', 
   assert.equal(api.records[0]?.importPendingFileId, null);
 });
 
+test('stores a local master attachment without claiming Tony Drive provenance', async () => {
+  const api = new MemoryApi();
+  const input = source({ sourceDriveId: null, sourceLink: null, ticker: null });
+
+  await runConvergentImport(api, [input]);
+
+  assert.equal(api.records[0]?.sourceDriveId, null);
+  assert.equal(api.records[0]?.sourceLink, null);
+  assert.equal(api.records[0]?.ticker, null);
+});
+
 test('recovers a lost record-create response without creating a duplicate', async () => {
   const api = new MemoryApi();
   api.loseNextCreateResponse = true;

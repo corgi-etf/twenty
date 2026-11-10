@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { readFile, readdir } from 'node:fs/promises';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { test } from 'node:test';
 
-import { utils, write } from 'xlsx-ugnis';
+import { read, utils, write } from 'xlsx-ugnis';
 
 import {
   attachmentSources,
@@ -74,6 +74,96 @@ const VALID_ROW = [
   'SEC Form ADV',
 ] as const;
 
+const MASTER_HEADERS = [
+  'Competitor',
+  'Our fund',
+  'Holder Name',
+  'Portfolio Name',
+  'Institution Type',
+  'Est. 13F book $',
+  'Book estimate',
+  'Metro Area',
+  'Country',
+  'Shares',
+  'Est $ value',
+  '% of fund shares out',
+  '% of holder portfolio',
+  'Move',
+  'Share change',
+  'Change $',
+  'Change %',
+  'Filing Date',
+  'Source',
+  'Not a buyer',
+  'Category',
+  'Their mgmt fee %',
+  'Our mgmt fee %',
+  'Fee gap (bp)',
+  'Annual fee saving $',
+  'Fund turnover %/day',
+  'Fund return since 6/30',
+  'Fund return YTD',
+  'Est. return on position',
+  'Est. $ gain/loss',
+  'Entry basis',
+  'Manager research / DD contact',
+  'Title',
+  'Owner (wholesaler)',
+  'Status',
+  'Notes',
+] as const;
+
+const masterRow = ({
+  competitor = 'CIBR',
+  holder = 'Acme Advisors LLC',
+  portfolio = 'Growth Portfolio',
+  shares = 100,
+  sourceType = '13F',
+}: {
+  competitor?: string;
+  holder?: string;
+  portfolio?: string;
+  shares?: number;
+  sourceType?: string;
+} = {}) => [
+  competitor,
+  'XA',
+  holder,
+  portfolio,
+  'Investment Advisor',
+  1_000_000,
+  'ok',
+  'Chicago',
+  'United States',
+  shares,
+  10_000,
+  1.25,
+  0.5,
+  'added',
+  10,
+  1_000,
+  11.1,
+  46203,
+  sourceType,
+  null,
+  'Thematic - Direct',
+  0.58,
+  0.35,
+  23,
+  23,
+  1.5,
+  0.1,
+  0.2,
+  0.1,
+  1_000,
+  9_000,
+  'Jane Doe',
+  'Director',
+  'Wholesaler',
+  'Open',
+  'Sales note',
+];
+
 const sha256 = (bytes: Uint8Array): string =>
   createHash('sha256').update(bytes).digest('hex');
 
@@ -98,6 +188,52 @@ const workbookBytes = (
     workbook,
     utils.aoa_to_sheet([['This sheet is intentionally ignored']]),
     'READ ME',
+  );
+
+  return new Uint8Array(write(workbook, { type: 'buffer', bookType: 'xlsx' }));
+};
+
+const masterWorkbookBytes = (): Uint8Array => {
+  const workbook = utils.book_new();
+  const authoritativeRows = [
+    ['Title'],
+    ['Description'],
+    [],
+    [...MASTER_HEADERS],
+    masterRow(),
+    masterRow(),
+    masterRow({ sourceType: 'ULT-AGG' }),
+  ];
+  utils.book_append_sheet(
+    workbook,
+    utils.aoa_to_sheet(authoritativeRows),
+    'Thematic - All holders',
+  );
+  utils.book_append_sheet(
+    workbook,
+    utils.aoa_to_sheet([
+      ['Title'],
+      ['Description'],
+      [],
+      [...MASTER_HEADERS],
+      masterRow({
+        competitor: 'SOXL',
+        holder: 'Beta Capital LLC',
+        portfolio: 'Beta Capital LLC',
+        shares: 250,
+      }),
+    ]),
+    'Levered - All holders',
+  );
+  utils.book_append_sheet(
+    workbook,
+    utils.aoa_to_sheet(authoritativeRows),
+    'Thematic - Warm calls',
+  );
+  utils.book_append_sheet(
+    workbook,
+    utils.aoa_to_sheet([['Summary only']]),
+    'Overview',
   );
 
   return new Uint8Array(write(workbook, { type: 'buffer', bookType: 'xlsx' }));
@@ -140,7 +276,7 @@ test('parses the exact A:AA profile without evaluating formulas', () => {
   assert.equal(first.managers.length, 1);
   assert.equal(first.managers[0]?.name, 'Acme Advisors LLC');
   assert.equal(first.managers[0]?.normalizedName, 'acme advisors llc');
-  assert.equal(first.managers[0]?.enrichmentSource, 'SEC Form ADV');
+  assert.equal(first.managers[0]?.enrichmentSource, undefined);
   assert.equal(first.securities[0]?.ticker, 'AGG');
   assert.equal(first.holdings[0]?.sharesHeld, 0);
   assert.equal(first.holdings[0]?.asOfDate, '2026-06-30');
@@ -155,7 +291,8 @@ test('parses the exact A:AA profile without evaluating formulas', () => {
     first.holdings[0]?.occurrenceKey,
     first.holdings[1]?.occurrenceKey,
   );
-  assert.match(first.holdings[0]?.rawData ?? '', /"aum to attack":"=C2\*100"/);
+  assert.doesNotMatch(first.holdings[0]?.rawData ?? '', /aum to attack/i);
+  assert.doesNotMatch(first.holdings[0]?.rawData ?? '', /managing director/i);
   assert.equal(first.errors[0]?.code, 'INVALID_HOLDING_ROW');
   assert.equal(first.errors[0]?.sourceRow, 3);
 });
@@ -176,6 +313,55 @@ test('fails closed on header drift and formula-backed required values', () => {
   assert.equal(formula.run.acceptedCount, 0);
   assert.equal(formula.run.rejectedCount, 1);
   assert.match(formula.errors[0]?.message ?? '', /position/);
+});
+
+test('parses only authoritative 13F rows from a combined holdings workbook', () => {
+  const name =
+    'Competitor Holders (13F) - Thematic + Levered - Wholesaler Targets 20261109 (INTERNAL).xlsx';
+  const plan = parseHoldingsSource(source(masterWorkbookBytes(), name));
+
+  assert.equal(plan.run.status, 'PLANNED');
+  assert.equal(plan.run.acceptedCount, 3);
+  assert.equal(plan.run.rejectedCount, 0);
+  assert.equal(plan.run.ignoredCount, 1);
+  assert.equal(plan.managers.length, 2);
+  assert.equal(plan.securities.length, 2);
+  assert.deepEqual(
+    plan.securities.map(({ ticker }) => ticker),
+    ['CIBR', 'SOXL'],
+  );
+  assert.equal(plan.holdings[0]?.targetTicker, undefined);
+  assert.equal(plan.holdings[0]?.sourceSheet, 'Thematic - All holders');
+  assert.equal(plan.holdings[0]?.sourceRow, 5);
+  assert.equal(plan.holdings[0]?.sourceType, '13F');
+  assert.equal(plan.holdings[0]?.sharesHeld, 100);
+  assert.equal(plan.holdings[0]?.latestChange, 10);
+  assert.equal(plan.holdings[0]?.ownershipPercent, 1.25);
+  assert.equal(plan.holdings[0]?.portfolioPercent, 0.5);
+  assert.equal(plan.managers[0]?.institutionType, undefined);
+  assert.doesNotMatch(plan.holdings[0]?.rawData ?? '', /our fund/i);
+  assert.doesNotMatch(plan.holdings[0]?.rawData ?? '', /manager research/i);
+  assert.match(plan.holdings[0]?.rawData ?? '', /"estimated value":10000/);
+  assert.match(plan.holdings[0]?.rawData ?? '', /"move":"added"/);
+  assert.notEqual(plan.holdings[0]?.positionKey, plan.holdings[1]?.positionKey);
+  assert.notEqual(
+    plan.holdings[0]?.occurrenceKey,
+    plan.holdings[1]?.occurrenceKey,
+  );
+});
+
+test('ignores non-13F rows instead of importing public-filing aggregates', () => {
+  const nonThirteenF = [...VALID_ROW];
+  nonThirteenF[5] = 'ULT-AGG';
+  const missingSource = [...VALID_ROW];
+  missingSource[5] = null;
+  const plan = parseHoldingsSource(
+    source(workbookBytes({ rows: [VALID_ROW, nonThirteenF, missingSource] })),
+  );
+
+  assert.equal(plan.run.acceptedCount, 1);
+  assert.equal(plan.run.rejectedCount, 0);
+  assert.equal(plan.run.ignoredCount, 3);
 });
 
 test('classifies ancillary documents as unsupported without parsing bytes', () => {
@@ -278,12 +464,12 @@ test(
       );
       plan.securities.forEach(({ ticker }) => securities.add(ticker));
     }
-    assert.equal(accepted, 17_658);
-    assert.equal(rejected, 89);
-    // Blank formatted source rows are retained while parsing so physical row
-    // provenance remains exact; READ ME sheets are ignored as one item each.
-    assert.equal(ignored, 6_622);
-    assert.equal(managers.size, 4_207);
+    assert.equal(accepted, 13_279);
+    assert.equal(rejected, 0);
+    // Blank formatted rows retain physical provenance. Non-13F public-filing
+    // aggregates and READ ME sheets are ignored rather than normalized.
+    assert.equal(ignored, 11_090);
+    assert.equal(managers.size, 3_717);
     assert.equal(securities.size, 38);
 
     for (const [index, name] of ancillaryFiles.entries()) {
@@ -298,6 +484,84 @@ test(
       });
       assert.equal(plan.run.status, 'UNSUPPORTED');
       assert.equal(plan.errors[0]?.code, 'UNSUPPORTED_DOCUMENT_PROFILE');
+    }
+  },
+);
+
+const masterWorkbookPath = process.env.CORGI_13F_MASTER_WORKBOOK_PATH?.trim();
+test(
+  'reconciles the authoritative rows in the combined thematic and levered workbook',
+  { skip: !masterWorkbookPath },
+  async () => {
+    const bytes = new Uint8Array(await readFile(masterWorkbookPath!));
+    const workbook = read(Buffer.from(bytes), { type: 'buffer' });
+    const plan = parseHoldingsSource(
+      source(bytes, basename(masterWorkbookPath!)),
+    );
+
+    assert.equal(workbook.SheetNames.length, 15);
+    assert.equal(
+      workbook.SheetNames.filter(
+        (name) =>
+          !['Thematic - All holders', 'Levered - All holders'].includes(name),
+      ).length,
+      13,
+    );
+    assert.equal(plan.run.status, 'PLANNED');
+    assert.equal(plan.run.acceptedCount, 15_041);
+    assert.equal(plan.run.rejectedCount, 0);
+    assert.equal(plan.run.ignoredCount, 2_770);
+    assert.equal(plan.managers.length, 2_763);
+    assert.equal(plan.securities.length, 259);
+    assert.equal(
+      new Set(plan.holdings.map(({ positionKey }) => positionKey)).size,
+      15_041,
+    );
+    assert.ok(plan.holdings.every(({ sourceType }) => sourceType === '13F'));
+    assert.ok(plan.holdings.every(({ targetTicker }) => !targetTicker));
+    assert.deepEqual(
+      new Set(plan.holdings.map(({ sourceSheet }) => sourceSheet)),
+      new Set(['Thematic - All holders', 'Levered - All holders']),
+    );
+
+    if (sampleDirectory) {
+      const managerIds = new Set(plan.managers.map(({ id }) => id));
+      const securityIds = new Set(plan.securities.map(({ id }) => id));
+      const positionKeys = new Set(
+        plan.holdings.map(({ positionKey }) => positionKey),
+      );
+      let accepted = plan.run.acceptedCount;
+      let rejected = plan.run.rejectedCount;
+      let ignored = plan.run.ignoredCount;
+      const names = (await readdir(sampleDirectory)).filter((name) =>
+        / competitor holders\.xlsx$/i.test(name),
+      );
+      for (const [index, name] of names.entries()) {
+        const sourceBytes = new Uint8Array(
+          await readFile(join(sampleDirectory, name)),
+        );
+        const sourcePlan = parseHoldingsSource({
+          ...source(sourceBytes, name),
+          filingId: stableUuid('sampleFiling', name),
+          sourceNodeId: stableUuid('sampleNode', name),
+          sourceVersionId: `sample-${index}`,
+        });
+        accepted += sourcePlan.run.acceptedCount;
+        rejected += sourcePlan.run.rejectedCount;
+        ignored += sourcePlan.run.ignoredCount;
+        sourcePlan.managers.forEach(({ id }) => managerIds.add(id));
+        sourcePlan.securities.forEach(({ id }) => securityIds.add(id));
+        sourcePlan.holdings.forEach(({ positionKey }) =>
+          positionKeys.add(positionKey),
+        );
+      }
+
+      assert.equal(accepted, 28_320);
+      assert.equal(rejected, 0);
+      assert.equal(ignored, 13_860);
+      assert.equal(managerIds.size, 4_610);
+      assert.equal(securityIds.size, 297);
+      assert.equal(positionKeys.size, 28_320);
     }
   },
 );

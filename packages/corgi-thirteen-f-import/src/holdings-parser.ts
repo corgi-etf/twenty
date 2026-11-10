@@ -4,13 +4,18 @@ import { read, SSF, utils, type CellObject, type WorkBook } from 'xlsx-ugnis';
 
 import type { CrmFileValue, ThirteenFFilingRecord } from './importer.ts';
 
-export const HOLDINGS_PARSER_VERSION = 'competitor-holders-v1';
+export const HOLDINGS_PARSER_VERSION = 'raw-13f-holdings-v2';
 
 const MAX_FILE_BYTES = 8 * 1024 * 1024;
 const MAX_SHEETS = 64;
 const MAX_ROWS_PER_SHEET = 100_000;
 const MAX_COLUMNS = 64;
 const TICKER_PATTERN = /^[A-Z0-9][A-Z0-9.-]{0,19}$/;
+const COMBINED_WORKBOOK_PATTERN = /^competitor holders \(13f\).*\.xlsx$/i;
+const COMBINED_HOLDINGS_SHEETS = [
+  'Thematic - All holders',
+  'Levered - All holders',
+] as const;
 
 const EXPECTED_HEADERS = [
   'holder name',
@@ -40,6 +45,45 @@ const EXPECTED_HEADERS = [
   'firm general email',
   'notes',
   'source',
+] as const;
+
+const COMBINED_EXPECTED_HEADERS = [
+  'Competitor',
+  'Our fund',
+  'Holder Name',
+  'Portfolio Name',
+  'Institution Type',
+  'Est. 13F book $',
+  'Book estimate',
+  'Metro Area',
+  'Country',
+  'Shares',
+  'Est $ value',
+  '% of fund shares out',
+  '% of holder portfolio',
+  'Move',
+  'Share change',
+  'Change $',
+  'Change %',
+  'Filing Date',
+  'Source',
+  'Not a buyer',
+  'Category',
+  'Their mgmt fee %',
+  'Our mgmt fee %',
+  'Fee gap (bp)',
+  'Annual fee saving $',
+  'Fund turnover %/day',
+  'Fund return since 6/30',
+  'Fund return YTD',
+  'Est. return on position',
+  'Est. $ gain/loss',
+  'Entry basis',
+  'Manager research / DD contact',
+  'Title',
+  'Owner (wholesaler)',
+  'Status',
+  'Notes',
 ] as const;
 
 export type HoldingsSource = {
@@ -91,7 +135,7 @@ export type ThirteenFHoldingInput = {
   filingId: string;
   managerName: string;
   portfolioName?: string;
-  targetTicker: string;
+  targetTicker?: string;
   securityTicker: string;
   sharesHeld: number;
   latestChange?: number;
@@ -167,7 +211,6 @@ type HeaderMap = {
   rowIndex: number;
   indexes: Map<string, number>;
   sourceTypeIndex: number;
-  enrichmentSourceIndex: number;
 };
 
 const sha256 = (value: string | Uint8Array): string =>
@@ -255,6 +298,9 @@ const sourceTicker = (name: string): string | undefined => {
   return ticker && TICKER_PATTERN.test(ticker) ? ticker : undefined;
 };
 
+const isCombinedWorkbook = (name: string): boolean =>
+  COMBINED_WORKBOOK_PATTERN.test(normalizeText(name));
+
 const headerMap = (rows: unknown[][]): HeaderMap => {
   const headers = (rows[0] ?? []).map(normalizeHeader);
   const normalizedSchema = headers.slice(0, EXPECTED_HEADERS.length);
@@ -282,8 +328,22 @@ const headerMap = (rows: unknown[][]): HeaderMap => {
     rowIndex: 0,
     indexes,
     sourceTypeIndex: 5,
-    enrichmentSourceIndex: 26,
   };
+};
+
+const assertCombinedHeader = (rows: unknown[][], sheetName: string): void => {
+  const headers = (rows[3] ?? []).map(normalizeHeader);
+  const expected = COMBINED_EXPECTED_HEADERS.map(normalizeHeader);
+  const normalizedSchema = headers.slice(0, expected.length);
+  if (
+    normalizedSchema.length !== expected.length ||
+    normalizedSchema.some((header, index) => header !== expected[index]) ||
+    headers.slice(expected.length).some(Boolean)
+  ) {
+    throw new Error(
+      `Combined 13F header must match the exact A:AJ schema on ${sheetName}`,
+    );
+  }
 };
 
 const workbookRows = (workbook: WorkBook, sheetName: string): unknown[][] => {
@@ -314,14 +374,32 @@ const workbookRows = (workbook: WorkBook, sheetName: string): unknown[][] => {
 const rowObject = (
   row: unknown[],
   header: HeaderMap,
-): Record<string, unknown> => {
-  const result: Record<string, unknown> = {};
-  for (const [name, index] of header.indexes) result[name] = row[index] ?? null;
-  result.sourceType = row[header.sourceTypeIndex] ?? null;
-  result.enrichmentSource = row[header.enrichmentSourceIndex] ?? null;
+): Record<string, unknown> => ({
+  'holder name': row[header.indexes.get('holder name')!] ?? null,
+  'portfolio name': row[header.indexes.get('portfolio name')!] ?? null,
+  position: row[header.indexes.get('position')!] ?? null,
+  'latest chg': row[header.indexes.get('latest chg')!] ?? null,
+  'filing date': row[header.indexes.get('filing date')!] ?? null,
+  sourceType: row[header.sourceTypeIndex] ?? null,
+  out: row[header.indexes.get('out')!] ?? null,
+  portfolio: row[header.indexes.get('portfolio')!] ?? null,
+});
 
-  return result;
-};
+const combinedRowObject = (row: unknown[]): Record<string, unknown> => ({
+  competitor: row[0] ?? null,
+  'holder name': row[2] ?? null,
+  'portfolio name': row[3] ?? null,
+  position: row[9] ?? null,
+  'estimated value': row[10] ?? null,
+  out: row[11] ?? null,
+  portfolio: row[12] ?? null,
+  move: row[13] ?? null,
+  'latest chg': row[14] ?? null,
+  'change value': row[15] ?? null,
+  'change percent': row[16] ?? null,
+  'filing date': row[17] ?? null,
+  sourceType: row[18] ?? null,
+});
 
 const errorInput = (
   runId: string,
@@ -396,7 +474,8 @@ export const parseHoldingsSource = (
   const importKey = importIdentity(source);
   const run = baseRun(source, importKey);
   const targetTicker = sourceTicker(source.sourceFileName);
-  if (!targetTicker) {
+  const combinedWorkbook = isCombinedWorkbook(source.sourceFileName);
+  if (!targetTicker && !combinedWorkbook) {
     run.status = 'UNSUPPORTED';
     run.errorSummary = 'Document is not a competitor-holder workbook';
 
@@ -410,7 +489,7 @@ export const parseHoldingsSource = (
           run.id,
           source.sourceFileName,
           'UNSUPPORTED_DOCUMENT_PROFILE',
-          'Only files named “<ticker> competitor holders.xlsx” are parsed as holdings.',
+          'Only “<ticker> competitor holders.xlsx” files and combined “Competitor Holders (13F)…” workbooks are parsed as holdings.',
         ),
       ],
     };
@@ -438,19 +517,108 @@ export const parseHoldingsSource = (
   const occurrenceOrdinals = new Map<string, number>();
   let ignoredCount = 0;
 
-  for (const sheetName of workbook.SheetNames) {
-    if (/^read\s*me$/i.test(sheetName.trim())) {
+  const appendHolding = ({
+    raw,
+    securityTicker,
+    sheetName,
+    sourceRow,
+    corgiTicker,
+  }: {
+    raw: Record<string, unknown>;
+    securityTicker: string;
+    sheetName: string;
+    sourceRow: number;
+    corgiTicker?: string;
+  }): void => {
+    const sourceType = optionalText(raw.sourceType);
+    if (sourceType?.toUpperCase() !== '13F') {
       ignoredCount += 1;
-      continue;
+      return;
     }
-    const securityTicker = sheetName.trim().toUpperCase();
-    if (!TICKER_PATTERN.test(securityTicker)) {
-      throw new Error(
-        `Workbook has an invalid security sheet name: ${sheetName}`,
+    const managerName = optionalText(raw['holder name']);
+    const sharesHeld = numberValue(raw.position);
+    const asOfDate = dateValue(raw['filing date']);
+    if (
+      !managerName ||
+      sharesHeld === undefined ||
+      sharesHeld < 0 ||
+      !asOfDate
+    ) {
+      const missing = [
+        !managerName ? 'holder name' : null,
+        sharesHeld === undefined || sharesHeld < 0 ? 'position' : null,
+        !asOfDate ? 'filing date' : null,
+      ].filter(Boolean);
+      errors.push(
+        errorInput(
+          run.id,
+          source.sourceFileName,
+          'INVALID_HOLDING_ROW',
+          `Required value missing or invalid: ${missing.join(', ')}`,
+          sheetName,
+          sourceRow,
+          JSON.stringify(raw),
+        ),
       );
+      return;
     }
-    const rows = workbookRows(workbook, sheetName);
-    const header = headerMap(rows);
+    const normalizedName = normalizeText(managerName).toLowerCase();
+    const managerId = stableUuid('thirteenFManager', normalizedName);
+    const portfolioName = optionalText(raw['portfolio name']);
+    const institutionType = optionalText(raw['institution type']);
+    const metroArea = optionalText(raw['metro area']);
+    const country = optionalText(raw.country);
+    const existingManager = managers.get(normalizedName);
+    const manager: ThirteenFManagerInput = {
+      id: managerId,
+      name: existingManager?.name ?? managerName,
+      normalizedName,
+      searchText: normalizeSearch([
+        managerName,
+        institutionType,
+        metroArea,
+        country,
+      ]),
+      institutionType: existingManager?.institutionType ?? institutionType,
+      metroArea: existingManager?.metroArea ?? metroArea,
+      country: existingManager?.country ?? country,
+      managingDirector:
+        existingManager?.managingDirector ??
+        optionalText(raw['managing director partner']),
+      chiefInvestmentOfficer:
+        existingManager?.chiefInvestmentOfficer ??
+        optionalText(raw['cio if otherwise']),
+      managingDirectorPhone:
+        existingManager?.managingDirectorPhone ?? optionalText(raw['md phone']),
+      chiefInvestmentOfficerPhone:
+        existingManager?.chiefInvestmentOfficerPhone ??
+        optionalText(raw['cio phone']),
+      managingDirectorEmail:
+        existingManager?.managingDirectorEmail ?? optionalText(raw['md email']),
+      chiefInvestmentOfficerEmail:
+        existingManager?.chiefInvestmentOfficerEmail ??
+        optionalText(raw['cio email']),
+      firmAum: existingManager?.firmAum ?? numberValue(raw['firm aum']),
+      website: existingManager?.website ?? optionalText(raw.website),
+      mainPhone:
+        existingManager?.mainPhone ?? optionalText(raw['firm main phone']),
+      generalEmail:
+        existingManager?.generalEmail ??
+        optionalText(raw['firm general email']),
+      notes: existingManager?.notes ?? optionalText(raw.notes),
+      enrichmentSource:
+        existingManager?.enrichmentSource ?? optionalText(raw.enrichmentSource),
+    };
+    manager.searchText = normalizeSearch([
+      manager.name,
+      manager.institutionType,
+      manager.metroArea,
+      manager.country,
+      manager.managingDirector,
+      manager.chiefInvestmentOfficer,
+    ]);
+    managers.set(normalizedName, manager);
+
     const securityId = stableUuid('thirteenFSecurity', securityTicker);
     securities.set(securityTicker, {
       id: securityId,
@@ -458,163 +626,135 @@ export const parseHoldingsSource = (
       ticker: securityTicker,
     });
 
-    for (
-      let rowIndex = header.rowIndex + 1;
-      rowIndex < rows.length;
-      rowIndex += 1
-    ) {
-      const row = rows[rowIndex] ?? [];
-      const raw = rowObject(row, header);
-      const hasAnyValue = Object.values(raw).some(
-        (value) => value !== null && normalizeText(value) !== '',
-      );
-      if (!hasAnyValue) {
+    const naturalIdentity = [
+      normalizedName,
+      normalizeText(portfolioName).toLowerCase(),
+      securityTicker,
+      asOfDate,
+      sourceType.toLowerCase(),
+    ].join('\0');
+    const occurrenceOrdinal =
+      (occurrenceOrdinals.get(naturalIdentity) ?? 0) + 1;
+    occurrenceOrdinals.set(naturalIdentity, occurrenceOrdinal);
+    const positionKey = sha256(`${naturalIdentity}\0${occurrenceOrdinal}`);
+    const occurrenceKey = sha256(`${importKey}\0${sheetName}\0${sourceRow}`);
+    const canonicalRow = {
+      managerName,
+      portfolioName,
+      targetTicker: corgiTicker,
+      securityTicker,
+      sharesHeld,
+      latestChange: numberValue(raw['latest chg']),
+      asOfDate,
+      sourceType: '13F',
+      ownershipPercent: numberValue(raw.out),
+      portfolioPercent: numberValue(raw.portfolio),
+      insiderStatus: optionalText(raw['insider status']),
+      institutionType,
+      metroArea,
+      country,
+    };
+    holdings.push({
+      id: stableUuid('thirteenFHoldingOccurrence', occurrenceKey),
+      name: `${managerName} — ${securityTicker} — ${asOfDate}`,
+      positionKey,
+      occurrenceKey,
+      managerId,
+      securityId,
+      importRunId: run.id,
+      filingId: source.filingId,
+      ...canonicalRow,
+      isActive: false,
+      sourceSheet: sheetName,
+      sourceRow,
+      rowDigest: sha256(JSON.stringify(canonicalRow)),
+      rawData: JSON.stringify(raw),
+      searchText: normalizeSearch([
+        managerName,
+        portfolioName,
+        securityTicker,
+        corgiTicker,
+        '13F',
+      ]),
+    });
+  };
+
+  if (combinedWorkbook) {
+    for (const sheetName of COMBINED_HOLDINGS_SHEETS) {
+      if (!workbook.SheetNames.includes(sheetName)) {
+        throw new Error(
+          `Combined 13F workbook is missing authoritative sheet: ${sheetName}`,
+        );
+      }
+      const rows = workbookRows(workbook, sheetName);
+      assertCombinedHeader(rows, sheetName);
+      for (let rowIndex = 4; rowIndex < rows.length; rowIndex += 1) {
+        const raw = combinedRowObject(rows[rowIndex] ?? []);
+        const hasAnyValue = Object.values(raw).some(
+          (value) => value !== null && normalizeText(value) !== '',
+        );
+        if (!hasAnyValue) {
+          ignoredCount += 1;
+          continue;
+        }
+        const securityTicker = normalizeText(raw.competitor).toUpperCase();
+        if (!TICKER_PATTERN.test(securityTicker)) {
+          errors.push(
+            errorInput(
+              run.id,
+              source.sourceFileName,
+              'INVALID_HOLDING_ROW',
+              'Required value missing or invalid: competitor',
+              sheetName,
+              rowIndex + 1,
+              JSON.stringify(raw),
+            ),
+          );
+          continue;
+        }
+        appendHolding({
+          raw,
+          securityTicker,
+          sheetName,
+          sourceRow: rowIndex + 1,
+        });
+      }
+    }
+  } else {
+    for (const sheetName of workbook.SheetNames) {
+      if (/^read\s*me$/i.test(sheetName.trim())) {
         ignoredCount += 1;
         continue;
       }
-      const sourceRow = rowIndex + 1;
-      const managerName = optionalText(raw['holder name']);
-      const sharesHeld = numberValue(raw.position);
-      const asOfDate = dateValue(raw['filing date']);
-      const sourceType = optionalText(raw.sourceType);
-      if (
-        !managerName ||
-        sharesHeld === undefined ||
-        sharesHeld < 0 ||
-        !asOfDate ||
-        !sourceType
-      ) {
-        const missing = [
-          !managerName ? 'holder name' : null,
-          sharesHeld === undefined || sharesHeld < 0 ? 'position' : null,
-          !asOfDate ? 'filing date' : null,
-          !sourceType ? 'source type' : null,
-        ].filter(Boolean);
-        errors.push(
-          errorInput(
-            run.id,
-            source.sourceFileName,
-            'INVALID_HOLDING_ROW',
-            `Required value missing or invalid: ${missing.join(', ')}`,
-            sheetName,
-            sourceRow,
-            JSON.stringify(raw),
-          ),
+      const securityTicker = sheetName.trim().toUpperCase();
+      if (!TICKER_PATTERN.test(securityTicker)) {
+        throw new Error(
+          `Workbook has an invalid security sheet name: ${sheetName}`,
         );
-        continue;
       }
-      const normalizedName = normalizeText(managerName).toLowerCase();
-      const managerId = stableUuid('thirteenFManager', normalizedName);
-      const portfolioName = optionalText(raw['portfolio name']);
-      const institutionType = optionalText(raw['institution type']);
-      const metroArea = optionalText(raw['metro area']);
-      const country = optionalText(raw.country);
-      const existingManager = managers.get(normalizedName);
-      const manager: ThirteenFManagerInput = {
-        id: managerId,
-        name: existingManager?.name ?? managerName,
-        normalizedName,
-        searchText: normalizeSearch([
-          managerName,
-          institutionType,
-          metroArea,
-          country,
-        ]),
-        institutionType: existingManager?.institutionType ?? institutionType,
-        metroArea: existingManager?.metroArea ?? metroArea,
-        country: existingManager?.country ?? country,
-        managingDirector:
-          existingManager?.managingDirector ??
-          optionalText(raw['managing director partner']),
-        chiefInvestmentOfficer:
-          existingManager?.chiefInvestmentOfficer ??
-          optionalText(raw['cio if otherwise']),
-        managingDirectorPhone:
-          existingManager?.managingDirectorPhone ??
-          optionalText(raw['md phone']),
-        chiefInvestmentOfficerPhone:
-          existingManager?.chiefInvestmentOfficerPhone ??
-          optionalText(raw['cio phone']),
-        managingDirectorEmail:
-          existingManager?.managingDirectorEmail ??
-          optionalText(raw['md email']),
-        chiefInvestmentOfficerEmail:
-          existingManager?.chiefInvestmentOfficerEmail ??
-          optionalText(raw['cio email']),
-        firmAum: existingManager?.firmAum ?? numberValue(raw['firm aum']),
-        website: existingManager?.website ?? optionalText(raw.website),
-        mainPhone:
-          existingManager?.mainPhone ?? optionalText(raw['firm main phone']),
-        generalEmail:
-          existingManager?.generalEmail ??
-          optionalText(raw['firm general email']),
-        notes: existingManager?.notes ?? optionalText(raw.notes),
-        enrichmentSource:
-          existingManager?.enrichmentSource ??
-          optionalText(raw.enrichmentSource),
-      };
-      manager.searchText = normalizeSearch([
-        manager.name,
-        manager.institutionType,
-        manager.metroArea,
-        manager.country,
-        manager.managingDirector,
-        manager.chiefInvestmentOfficer,
-      ]);
-      managers.set(normalizedName, manager);
-
-      const naturalIdentity = [
-        normalizedName,
-        normalizeText(portfolioName).toLowerCase(),
-        securityTicker,
-        targetTicker,
-        asOfDate,
-        sourceType.toLowerCase(),
-      ].join('\0');
-      const occurrenceOrdinal =
-        (occurrenceOrdinals.get(naturalIdentity) ?? 0) + 1;
-      occurrenceOrdinals.set(naturalIdentity, occurrenceOrdinal);
-      const positionKey = sha256(`${naturalIdentity}\0${occurrenceOrdinal}`);
-      const occurrenceKey = sha256(`${importKey}\0${sheetName}\0${sourceRow}`);
-      const canonicalRow = {
-        managerName,
-        portfolioName,
-        targetTicker,
-        securityTicker,
-        sharesHeld,
-        latestChange: numberValue(raw['latest chg']),
-        asOfDate,
-        sourceType,
-        ownershipPercent: numberValue(raw.out),
-        portfolioPercent: numberValue(raw.portfolio),
-        insiderStatus: optionalText(raw['insider status']),
-        institutionType,
-        metroArea,
-        country,
-      };
-      holdings.push({
-        id: stableUuid('thirteenFHoldingOccurrence', occurrenceKey),
-        name: `${managerName} — ${securityTicker} — ${asOfDate}`,
-        positionKey,
-        occurrenceKey,
-        managerId,
-        securityId,
-        importRunId: run.id,
-        filingId: source.filingId,
-        ...canonicalRow,
-        isActive: false,
-        sourceSheet: sheetName,
-        sourceRow,
-        rowDigest: sha256(JSON.stringify(canonicalRow)),
-        rawData: JSON.stringify(raw),
-        searchText: normalizeSearch([
-          managerName,
-          portfolioName,
+      const rows = workbookRows(workbook, sheetName);
+      const header = headerMap(rows);
+      for (
+        let rowIndex = header.rowIndex + 1;
+        rowIndex < rows.length;
+        rowIndex += 1
+      ) {
+        const raw = rowObject(rows[rowIndex] ?? [], header);
+        const hasAnyValue = Object.values(raw).some(
+          (value) => value !== null && normalizeText(value) !== '',
+        );
+        if (!hasAnyValue) {
+          ignoredCount += 1;
+          continue;
+        }
+        appendHolding({
+          raw,
           securityTicker,
-          targetTicker,
-          sourceType,
-        ]),
-      });
+          sheetName,
+          sourceRow: rowIndex + 1,
+          corgiTicker: targetTicker,
+        });
+      }
     }
   }
 

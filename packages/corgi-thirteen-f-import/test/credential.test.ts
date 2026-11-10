@@ -43,7 +43,7 @@ const preflight = () => ({
     currentUserWorkspace: {
       id: '8ac22e56-229d-4fd9-a1ad-d315755b0d3d',
       isImpersonating: false,
-      permissionFlags: ['ROLES', 'API_KEYS_AND_WEBHOOKS'],
+      permissionFlags: ['ROLES', 'API_KEYS_AND_WEBHOOKS', 'UPLOAD_FILE'],
     },
   },
   findOneApplication: {
@@ -135,7 +135,7 @@ test('derives a stable, run-owned role identity', () => {
   assert.equal(first.ephemeral, true);
 });
 
-test('creates only exact read and normalized-object write permissions', async () => {
+test('creates only the exact upload and 13F object permissions', async () => {
   const leases: ImportCredentialLease[] = [];
   const calls: GraphqlRequest[] = [];
   let roleId = '';
@@ -151,7 +151,9 @@ test('creates only exact read and normalized-object write permissions', async ()
       return { createOneRole: input };
     }
     if (request.operationName === 'ConfigureCorgiThirteenFImportFlag') {
-      return { upsertPermissionFlags: [] };
+      return {
+        upsertPermissionFlags: [{ roleId, flag: 'UPLOAD_FILE' }],
+      };
     }
     if (request.operationName === 'ConfigureCorgiThirteenFObjectPermission') {
       return {
@@ -177,13 +179,12 @@ test('creates only exact read and normalized-object write permissions', async ()
             canBeAssignedToUsers: false,
             canBeAssignedToAgents: false,
             canBeAssignedToApiKeys: true,
-            permissionFlags: [],
+            permissionFlags: [{ roleId, flag: 'UPLOAD_FILE' }],
             objectPermissions: objectMetadataIds.map(
               (permissionObjectMetadataId) => ({
                 objectMetadataId: permissionObjectMetadataId,
                 canReadObjectRecords: true,
-                canUpdateObjectRecords:
-                  permissionObjectMetadataId !== objectMetadataId,
+                canUpdateObjectRecords: true,
                 canSoftDeleteObjectRecords: false,
                 canDestroyObjectRecords: false,
               }),
@@ -231,7 +232,7 @@ test('creates only exact read and normalized-object write permissions', async ()
       operationName === 'ConfigureCorgiThirteenFImportFlag',
   );
   assert.deepEqual(flagCall?.variables, {
-    input: { roleId, permissionFlagKeys: [] },
+    input: { roleId, permissionFlagKeys: ['UPLOAD_FILE'] },
   });
   const permissionCall = calls.find(
     ({ operationName }) =>
@@ -244,8 +245,7 @@ test('creates only exact read and normalized-object write permissions', async ()
         (permissionObjectMetadataId) => ({
           objectMetadataId: permissionObjectMetadataId,
           canReadObjectRecords: true,
-          canUpdateObjectRecords:
-            permissionObjectMetadataId !== objectMetadataId,
+          canUpdateObjectRecords: true,
           canSoftDeleteObjectRecords: false,
           canDestroyObjectRecords: false,
         }),
