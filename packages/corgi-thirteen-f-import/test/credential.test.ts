@@ -32,6 +32,7 @@ const normalizedObjectMetadataIds = [
   'a5fab26e-4e38-4a95-a653-3cdb014a6b28',
 ];
 const objectMetadataIds = [objectMetadataId, ...normalizedObjectMetadataIds];
+const readObjectMetadataIds = normalizedObjectMetadataIds.slice(0, 3);
 const apiKeyId = 'bc841975-9c6e-44d8-8bd7-8048312b7b0e';
 
 const preflight = () => ({
@@ -135,7 +136,7 @@ test('derives a stable, run-owned role identity', () => {
   assert.equal(first.ephemeral, true);
 });
 
-test('creates only the exact upload and 13F object permissions', async () => {
+test('creates only exact read-only normalized 13F object permissions', async () => {
   const leases: ImportCredentialLease[] = [];
   const calls: GraphqlRequest[] = [];
   let roleId = '';
@@ -149,11 +150,6 @@ test('creates only the exact upload and 13F object permissions', async () => {
       const input = variables.input as Record<string, unknown>;
       roleId = String(input.id);
       return { createOneRole: input };
-    }
-    if (request.operationName === 'ConfigureCorgiThirteenFImportFlag') {
-      return {
-        upsertPermissionFlags: [{ roleId, flag: 'UPLOAD_FILE' }],
-      };
     }
     if (request.operationName === 'ConfigureCorgiThirteenFObjectPermission') {
       return {
@@ -179,12 +175,12 @@ test('creates only the exact upload and 13F object permissions', async () => {
             canBeAssignedToUsers: false,
             canBeAssignedToAgents: false,
             canBeAssignedToApiKeys: true,
-            permissionFlags: [{ roleId, flag: 'UPLOAD_FILE' }],
-            objectPermissions: objectMetadataIds.map(
+            permissionFlags: [],
+            objectPermissions: readObjectMetadataIds.map(
               (permissionObjectMetadataId) => ({
                 objectMetadataId: permissionObjectMetadataId,
                 canReadObjectRecords: true,
-                canUpdateObjectRecords: true,
+                canUpdateObjectRecords: false,
                 canSoftDeleteObjectRecords: false,
                 canDestroyObjectRecords: false,
               }),
@@ -225,15 +221,15 @@ test('creates only the exact upload and 13F object permissions', async () => {
   });
 
   assert.equal(lease.token, 'short-lived-token');
-  assert.deepEqual(leases[0]?.role.objectMetadataIds, objectMetadataIds);
+  assert.deepEqual(leases[0]?.role.objectMetadataIds, readObjectMetadataIds);
   assert.equal(leases[leases.length - 1]?.token, 'short-lived-token');
-  const flagCall = calls.find(
-    ({ operationName }) =>
-      operationName === 'ConfigureCorgiThirteenFImportFlag',
+  assert.equal(
+    calls.find(
+      ({ operationName }) =>
+        operationName === 'ConfigureCorgiThirteenFImportFlag',
+    ),
+    undefined,
   );
-  assert.deepEqual(flagCall?.variables, {
-    input: { roleId, permissionFlagKeys: ['UPLOAD_FILE'] },
-  });
   const permissionCall = calls.find(
     ({ operationName }) =>
       operationName === 'ConfigureCorgiThirteenFObjectPermission',
@@ -241,11 +237,11 @@ test('creates only the exact upload and 13F object permissions', async () => {
   assert.deepEqual(permissionCall?.variables, {
     input: {
       roleId,
-      objectPermissions: objectMetadataIds.map(
+      objectPermissions: readObjectMetadataIds.map(
         (permissionObjectMetadataId) => ({
           objectMetadataId: permissionObjectMetadataId,
           canReadObjectRecords: true,
-          canUpdateObjectRecords: true,
+          canUpdateObjectRecords: false,
           canSoftDeleteObjectRecords: false,
           canDestroyObjectRecords: false,
         }),
@@ -254,9 +250,9 @@ test('creates only the exact upload and 13F object permissions', async () => {
   });
 });
 
-test('fails before creating a role when the installed field contract is not exact', async () => {
+test('fails before creating a role when a normalized object contract drifts', async () => {
   const value = preflight();
-  value.findOneApplication.objects[0]!.fieldsList[1]!.isUnique = false;
+  value.findOneApplication.objects[1]!.namePlural = 'unexpectedManagers';
   const operations: string[] = [];
 
   await assert.rejects(
