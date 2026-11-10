@@ -2,7 +2,9 @@ const APPLICATION_ID = '38ba5a6a-430e-455a-a27b-fba07af35944';
 const WORKSPACE_ID = 'eabf5d9d-fc99-4acb-b160-710ecb1db996';
 const REGISTRATION_NAME = 'Corgi 13F Library';
 const PREVIOUS_VERSION = '0.1.0';
-const VERSION = '0.2.0';
+const INTERMEDIATE_VERSION = '0.2.0';
+const VERSION = '0.2.1';
+const APPROVED_VERSIONS = [PREVIOUS_VERSION, INTERMEDIATE_VERSION, VERSION];
 
 const classifyDeploymentState = ({ applications, registration }) => {
   const matches = (applications ?? []).filter(
@@ -19,9 +21,7 @@ const classifyDeploymentState = ({ applications, registration }) => {
       registration.ownerWorkspaceId !== WORKSPACE_ID ||
       registration.name !== REGISTRATION_NAME ||
       registration.sourceType !== 'TARBALL' ||
-      ![PREVIOUS_VERSION, VERSION].includes(
-        registration.latestAvailableVersion,
-      ) ||
+      !APPROVED_VERSIONS.includes(registration.latestAvailableVersion) ||
       registration.isListed !== false
     ) {
       throw new Error(
@@ -37,7 +37,7 @@ const classifyDeploymentState = ({ applications, registration }) => {
       !registration ||
       application.applicationRegistrationId !== registration.id ||
       application.state !== 'INSTALLED' ||
-      ![PREVIOUS_VERSION, VERSION].includes(application.version)
+      !APPROVED_VERSIONS.includes(application.version)
     ) {
       throw new Error(
         'Corgi 13F installed application is not an approved stable release',
@@ -63,7 +63,7 @@ const classifyDeploymentState = ({ applications, registration }) => {
 
     return {
       mode: 'upgrade-required',
-      publish: registration.latestAvailableVersion === PREVIOUS_VERSION,
+      publish: registration.latestAvailableVersion !== VERSION,
       install: false,
       upgrade: true,
       freshInstall: false,
@@ -77,7 +77,7 @@ const classifyDeploymentState = ({ applications, registration }) => {
         registration.latestAvailableVersion === VERSION
           ? 'registered'
           : 'registered-previous',
-      publish: registration.latestAvailableVersion === PREVIOUS_VERSION,
+      publish: registration.latestAvailableVersion !== VERSION,
       install: true,
       upgrade: false,
       freshInstall: true,
@@ -97,6 +97,7 @@ const classifyDeploymentState = ({ applications, registration }) => {
 
 export {
   APPLICATION_ID,
+  INTERMEDIATE_VERSION,
   PREVIOUS_VERSION,
   VERSION,
   WORKSPACE_ID,
