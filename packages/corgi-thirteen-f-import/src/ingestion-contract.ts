@@ -84,7 +84,7 @@ export type CompletedIngestionReceipt = {
   batchId: string;
   batchKey: string;
   status: 'COMPLETED';
-  receivedCounts: IngestionCounts;
+  receivedCounts: IngestionExpectedCounts;
   published: IngestionCounts;
   companyMappings?: Array<{
     crmCompanyId: string;

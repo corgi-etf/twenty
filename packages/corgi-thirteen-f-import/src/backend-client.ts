@@ -25,6 +25,14 @@ type TaggedItem =
 
 type IngestionChunk = NormalizedDataset;
 
+type ReceivingIngestionReceipt = {
+  batchId: string;
+  batchKey: string;
+  status: 'RECEIVING';
+  nextSequence: number;
+  receivedCounts: IngestionExpectedCounts;
+};
+
 const normalizeForJson = (value: unknown): unknown => {
   if (Array.isArray(value)) return value.map(normalizeForJson);
   if (value && typeof value === 'object') {
@@ -95,6 +103,19 @@ const expectedCounts = (
   chunks,
 });
 
+const receivedCountsFor = (
+  chunks: readonly IngestionChunk[],
+): IngestionExpectedCounts => ({
+  managers: chunks.reduce((total, chunk) => total + chunk.managers.length, 0),
+  filings: chunks.reduce((total, chunk) => total + chunk.filings.length, 0),
+  securities: chunks.reduce(
+    (total, chunk) => total + chunk.securities.length,
+    0,
+  ),
+  holdings: chunks.reduce((total, chunk) => total + chunk.holdings.length, 0),
+  chunks: chunks.length,
+});
+
 export class BackendIngestionClient {
   private readonly fetcher: typeof fetch;
   private readonly origin: string;
@@ -123,13 +144,21 @@ export class BackendIngestionClient {
     const chunks = chunksFor(input.dataset, input.chunkSize ?? 400);
     const expected = expectedCounts(input.dataset, chunks.length);
     const contentSha256 = sha256(canonicalJson(input.dataset));
-    await this.post(`${input.batchKey}/begin`, {
+    const begun = await this.post(`${input.batchKey}/begin`, {
       sourceSystem: 'LEGACY_NORMALIZED',
       coverage: 'PARTIAL',
       contentSha256,
       expected,
     });
-    for (const [sequence, chunk] of chunks.entries()) {
+    const completedReplay = completedReceipt(begun, input.batchKey, expected);
+    if (completedReplay) return completedReplay;
+    const receiving = receivingReceipt(begun, input.batchKey, chunks);
+    for (
+      let sequence = receiving.nextSequence;
+      sequence < chunks.length;
+      sequence += 1
+    ) {
+      const chunk = chunks[sequence]!;
       await this.post(`${input.batchKey}/chunks`, {
         sequence,
         chunkSha256: sha256(canonicalJson(chunk)),
@@ -140,19 +169,11 @@ export class BackendIngestionClient {
       contentSha256,
       expected,
     });
-    if (
-      !isRecord(completed) ||
-      completed.status !== 'COMPLETED' ||
-      completed.batchKey !== input.batchKey ||
-      typeof completed.batchId !== 'string' ||
-      typeof completed.completedAt !== 'string' ||
-      !isCounts(completed.receivedCounts) ||
-      !isCounts(completed.published)
-    ) {
+    const receipt = completedReceipt(completed, input.batchKey, expected);
+    if (!receipt)
       throw new Error('Backend ingestion completion response is invalid');
-    }
 
-    return completed as CompletedIngestionReceipt;
+    return receipt;
   }
 
   private async post(path: string, value: unknown): Promise<unknown> {
@@ -199,8 +220,69 @@ export class BackendIngestionClient {
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
 
-const isCounts = (value: unknown): boolean =>
+const isCounts = (value: unknown, keys: readonly string[]): boolean =>
   isRecord(value) &&
-  ['managers', 'filings', 'securities', 'holdings'].every(
+  keys.every(
     (key) => Number.isSafeInteger(value[key]) && Number(value[key]) >= 0,
   );
+
+const COUNT_KEYS = ['managers', 'filings', 'securities', 'holdings'] as const;
+const RECEIVED_COUNT_KEYS = [...COUNT_KEYS, 'chunks'] as const;
+
+const countsEqual = (
+  left: Record<string, unknown>,
+  right: IngestionExpectedCounts,
+): boolean => RECEIVED_COUNT_KEYS.every((key) => left[key] === right[key]);
+
+const completedReceipt = (
+  value: unknown,
+  batchKey: string,
+  expected: IngestionExpectedCounts,
+): CompletedIngestionReceipt | undefined => {
+  if (
+    !isRecord(value) ||
+    value.status !== 'COMPLETED' ||
+    value.batchKey !== batchKey ||
+    typeof value.batchId !== 'string' ||
+    typeof value.completedAt !== 'string' ||
+    !isCounts(value.receivedCounts, RECEIVED_COUNT_KEYS) ||
+    !isCounts(value.published, COUNT_KEYS) ||
+    !countsEqual(value.receivedCounts as Record<string, unknown>, expected) ||
+    !COUNT_KEYS.every(
+      (key) =>
+        (value.published as Record<string, unknown>)[key] === expected[key],
+    )
+  ) {
+    return undefined;
+  }
+
+  return value as CompletedIngestionReceipt;
+};
+
+const receivingReceipt = (
+  value: unknown,
+  batchKey: string,
+  chunks: readonly IngestionChunk[],
+): ReceivingIngestionReceipt => {
+  if (
+    !isRecord(value) ||
+    value.status !== 'RECEIVING' ||
+    value.batchKey !== batchKey ||
+    typeof value.batchId !== 'string' ||
+    !Number.isSafeInteger(value.nextSequence) ||
+    Number(value.nextSequence) < 0 ||
+    Number(value.nextSequence) > chunks.length ||
+    !isCounts(value.receivedCounts, RECEIVED_COUNT_KEYS)
+  ) {
+    throw new Error('Backend ingestion begin response is invalid');
+  }
+  const nextSequence = Number(value.nextSequence);
+  const prefixCounts = receivedCountsFor(chunks.slice(0, nextSequence));
+  if (
+    !countsEqual(value.receivedCounts as Record<string, unknown>, prefixCounts)
+  ) {
+    throw new Error('Backend ingestion begin response does not reconcile');
+  }
+
+  return value as ReceivingIngestionReceipt;
+};

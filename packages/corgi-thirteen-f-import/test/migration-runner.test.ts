@@ -20,7 +20,13 @@ const completed: CompletedIngestionReceipt = {
   batchId: 'batch-id',
   batchKey: 'placeholder',
   status: 'COMPLETED',
-  receivedCounts: { managers: 1, filings: 1, securities: 2, holdings: 2 },
+  receivedCounts: {
+    managers: 1,
+    filings: 1,
+    securities: 2,
+    holdings: 2,
+    chunks: 1,
+  },
   published: { managers: 1, filings: 1, securities: 2, holdings: 2 },
   companyMappings: [
     {
