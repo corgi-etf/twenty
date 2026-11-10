@@ -13,7 +13,15 @@ export type ImportRoleLease = {
   label: string;
   description: string;
   objectMetadataIds?: string[];
+  fieldRestrictions?: ImportFieldRestriction[];
   ephemeral: true;
+};
+
+export type ImportFieldRestriction = {
+  objectMetadataId: string;
+  fieldMetadataId: string;
+  canReadFieldValue: false;
+  canUpdateFieldValue: false;
 };
 
 export type ImportCredentialLease = {
@@ -67,7 +75,9 @@ export const importRoleIdentity = (_input: {
 export const createImportCredential = async (
   options: CreateImportCredentialOptions,
 ): Promise<Required<ImportCredentialLease>> => {
-  const objectMetadataIds = await preflight(options.graphql);
+  const { objectMetadataIds, fieldRestrictions } = await preflight(
+    options.graphql,
+  );
   const role: ImportRoleLease = {
     ...importRoleIdentity({
       repository: options.repository,
@@ -76,6 +86,7 @@ export const createImportCredential = async (
       runAttempt: options.runAttempt,
     }),
     objectMetadataIds,
+    fieldRestrictions,
   };
   await options.recordLease({ role });
   const roleInput = exactRoleInput(role);
@@ -122,6 +133,33 @@ export const createImportCredential = async (
     )
   ) {
     throw new Error('Server did not configure the exact object permission');
+  }
+  if (fieldRestrictions.length > 0) {
+    const configuredFields = await options.graphql({
+      operationName: 'ConfigureCorgiThirteenFFieldPermission',
+      query: `mutation ConfigureCorgiThirteenFFieldPermission(
+        $input: UpsertFieldPermissionsInput!
+      ) {
+        upsertFieldPermissions(upsertFieldPermissionsInput: $input) {
+          objectMetadataId fieldMetadataId canReadFieldValue canUpdateFieldValue
+        }
+      }`,
+      variables: {
+        input: { roleId: role.id, fieldPermissions: fieldRestrictions },
+      },
+    });
+    if (
+      !Array.isArray(configuredFields.upsertFieldPermissions) ||
+      configuredFields.upsertFieldPermissions.length !==
+        fieldRestrictions.length ||
+      !fieldRestrictions.every((restriction) =>
+        asRecords(configuredFields.upsertFieldPermissions).some((configured) =>
+          matchesRecord(configured, restriction),
+        ),
+      )
+    ) {
+      throw new Error('Server did not configure the exact field restrictions');
+    }
   }
   await verifyExactRole(options.graphql, role);
 
@@ -327,10 +365,23 @@ const exactObjectPermission = (
   canDestroyObjectRecords: false,
 });
 
+const exactFieldRestriction = (
+  value: Pick<ImportFieldRestriction, 'objectMetadataId' | 'fieldMetadataId'>,
+): ImportFieldRestriction => ({
+  ...value,
+  canReadFieldValue: false,
+  canUpdateFieldValue: false,
+});
+
 const hasNoPermissionFlags = (value: unknown): boolean =>
   asRecords(value).length === 0;
 
-const preflight = async (graphql: GraphqlCaller): Promise<string[]> => {
+const preflight = async (
+  graphql: GraphqlCaller,
+): Promise<{
+  objectMetadataIds: string[];
+  fieldRestrictions: ImportFieldRestriction[];
+}> => {
   const data = await graphql({
     operationName: 'CorgiThirteenFImportPreflight',
     query: `query CorgiThirteenFImportPreflight($applicationId: UUID!) {
@@ -344,6 +395,15 @@ const preflight = async (graphql: GraphqlCaller): Promise<string[]> => {
           id universalIdentifier nameSingular namePlural
           fieldsList { universalIdentifier name type isActive isUnique }
         }
+      }
+      objects(paging: { first: 1000 }) {
+        edges {
+          node {
+            id nameSingular namePlural
+            fieldsList { id name isActive }
+          }
+        }
+        pageInfo { hasNextPage }
       }
     }`,
     variables: {
@@ -415,7 +475,72 @@ const preflight = async (graphql: GraphqlCaller): Promise<string[]> => {
   ) {
     throw new Error('The installed 13F contract is invalid');
   }
-  return matchedObjects.map(({ id }) => String(id));
+  const objectConnection = isRecord(data.objects) ? data.objects : null;
+  const companyMatches = asRecords(objectConnection?.edges)
+    .map((edge) => (isRecord(edge.node) ? edge.node : null))
+    .filter(
+      (node): node is Record<string, unknown> =>
+        node !== null && node.nameSingular === 'company',
+    );
+  const company = companyMatches[0];
+  if (
+    companyMatches.length !== 1 ||
+    objectConnection?.pageInfo === undefined ||
+    !isRecord(objectConnection.pageInfo) ||
+    objectConnection.pageInfo.hasNextPage === true ||
+    typeof company?.id !== 'string' ||
+    !UUID_PATTERN.test(company.id) ||
+    company.namePlural !== 'companies'
+  ) {
+    throw new Error('The Company read contract is invalid');
+  }
+  const fields = asRecords(company.fieldsList);
+  const allowedFields = ['id', 'name'];
+  for (const fieldName of allowedFields) {
+    const matches = fields.filter(
+      ({ name, isActive }) => name === fieldName && isActive === true,
+    );
+    if (
+      matches.length !== 1 ||
+      typeof matches[0]?.id !== 'string' ||
+      !UUID_PATTERN.test(matches[0].id)
+    ) {
+      throw new Error('The Company read contract is invalid');
+    }
+  }
+  const restrictedFields = fields.filter(
+    ({ name, isActive }) =>
+      isActive === true &&
+      typeof name === 'string' &&
+      !allowedFields.includes(name),
+  );
+  if (
+    fields.some(
+      ({ id, name, isActive }) =>
+        typeof id !== 'string' ||
+        !UUID_PATTERN.test(id) ||
+        typeof name !== 'string' ||
+        typeof isActive !== 'boolean',
+    ) ||
+    restrictedFields.length !==
+      fields.filter(({ isActive }) => isActive).length - 2
+  ) {
+    throw new Error('The Company read contract is invalid');
+  }
+  const fieldRestrictions = restrictedFields.map(({ id }) =>
+    exactFieldRestriction({
+      objectMetadataId: String(company.id),
+      fieldMetadataId: String(id),
+    }),
+  );
+
+  return {
+    objectMetadataIds: [
+      ...matchedObjects.map(({ id }) => String(id)),
+      company.id,
+    ],
+    fieldRestrictions,
+  };
 };
 
 const verifyExactRole = async (
@@ -454,7 +579,13 @@ const verifyExactRole = async (
         matchesRecord(permission, exactObjectPermission(objectMetadataId)),
       ),
     ) ||
-    asRecords(found?.fieldPermissions).length !== 0 ||
+    asRecords(found?.fieldPermissions).length !==
+      (role.fieldRestrictions?.length ?? 0) ||
+    !(role.fieldRestrictions ?? []).every((restriction) =>
+      asRecords(found?.fieldPermissions).some((permission) =>
+        matchesRecord(permission, restriction),
+      ),
+    ) ||
     asRecords(found?.rowLevelPermissionPredicates).length !== 0 ||
     asRecords(found?.rowLevelPermissionPredicateGroups).length !== 0
   ) {

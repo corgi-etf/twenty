@@ -22,8 +22,23 @@ const normalizedObjectMetadataIds = [
   'a2fab26e-4e38-4a95-a653-3cdb014a6b28',
   'a3fab26e-4e38-4a95-a653-3cdb014a6b28',
 ];
-const objectMetadataIds = normalizedObjectMetadataIds;
-const readObjectMetadataIds = normalizedObjectMetadataIds;
+const companyObjectMetadataId = 'a4fab26e-4e38-4a95-a653-3cdb014a6b28';
+const companyIdFieldMetadataId = 'b1fab26e-4e38-4a95-a653-3cdb014a6b28';
+const companyNameFieldMetadataId = 'b2fab26e-4e38-4a95-a653-3cdb014a6b28';
+const companyDomainFieldMetadataId = 'b3fab26e-4e38-4a95-a653-3cdb014a6b28';
+const objectMetadataIds = [
+  ...normalizedObjectMetadataIds,
+  companyObjectMetadataId,
+];
+const readObjectMetadataIds = objectMetadataIds;
+const companyFieldRestrictions = [
+  {
+    objectMetadataId: companyObjectMetadataId,
+    fieldMetadataId: companyDomainFieldMetadataId,
+    canReadFieldValue: false,
+    canUpdateFieldValue: false,
+  },
+];
 const apiKeyId = 'bc841975-9c6e-44d8-8bd7-8048312b7b0e';
 
 const preflight = () => ({
@@ -67,6 +82,35 @@ const preflight = () => ({
       })),
     ],
   },
+  objects: {
+    edges: [
+      {
+        node: {
+          id: companyObjectMetadataId,
+          nameSingular: 'company',
+          namePlural: 'companies',
+          fieldsList: [
+            {
+              id: companyIdFieldMetadataId,
+              name: 'id',
+              isActive: true,
+            },
+            {
+              id: companyNameFieldMetadataId,
+              name: 'name',
+              isActive: true,
+            },
+            {
+              id: companyDomainFieldMetadataId,
+              name: 'domainName',
+              isActive: true,
+            },
+          ],
+        },
+      },
+    ],
+    pageInfo: { hasNextPage: false },
+  },
 });
 
 test('derives a stable, run-owned role identity', () => {
@@ -108,6 +152,13 @@ test('creates only exact read-only normalized 13F object permissions', async () 
         ).objectPermissions,
       };
     }
+    if (request.operationName === 'ConfigureCorgiThirteenFFieldPermission') {
+      return {
+        upsertFieldPermissions: (
+          variables.input as { fieldPermissions: unknown[] }
+        ).fieldPermissions,
+      };
+    }
     if (request.operationName === 'VerifyCorgiThirteenFImportRole') {
       return {
         getRoles: [
@@ -135,7 +186,7 @@ test('creates only exact read-only normalized 13F object permissions', async () 
                 canDestroyObjectRecords: false,
               }),
             ),
-            fieldPermissions: [],
+            fieldPermissions: companyFieldRestrictions,
             rowLevelPermissionPredicates: [],
             rowLevelPermissionPredicateGroups: [],
           },
@@ -196,6 +247,16 @@ test('creates only exact read-only normalized 13F object permissions', async () 
           canDestroyObjectRecords: false,
         }),
       ),
+    },
+  });
+  const fieldPermissionCall = calls.find(
+    ({ operationName }) =>
+      operationName === 'ConfigureCorgiThirteenFFieldPermission',
+  );
+  assert.deepEqual(fieldPermissionCall?.variables, {
+    input: {
+      roleId,
+      fieldPermissions: companyFieldRestrictions,
     },
   });
 });
