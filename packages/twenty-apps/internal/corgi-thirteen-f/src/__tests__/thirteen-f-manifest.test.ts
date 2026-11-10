@@ -30,8 +30,9 @@ describe('13F CRM manifest', () => {
       name: '13F',
       type: 'STANDALONE_PAGE',
     });
-    expect(pageLayout.config.tabs).toHaveLength(1);
-    expect(pageLayout.config.tabs[0]?.widgets).toEqual([
+    const tabs = pageLayout.config.tabs ?? [];
+    expect(tabs).toHaveLength(1);
+    expect(tabs[0]?.widgets).toEqual([
       expect.objectContaining({
         type: 'FRONT_COMPONENT',
         configuration: expect.objectContaining({

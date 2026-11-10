@@ -81,7 +81,7 @@ describe('13F server proxy', () => {
     );
 
     expect(response.status).toBe(502);
-    const responseBody = await response.text();
+    const responseBody = JSON.stringify(response.body);
     expect(responseBody).toContain('temporarily_unavailable');
     expect(responseBody).not.toContain('private database detail');
     expect(responseBody).not.toContain('server-only-token');
