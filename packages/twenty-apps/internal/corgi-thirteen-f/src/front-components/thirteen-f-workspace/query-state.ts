@@ -37,7 +37,16 @@ export const readBrowserWorkspaceQuery = () =>
 
 export const replaceBrowserWorkspaceQuery = (state: WorkspaceQuery) => {
   if (typeof window === 'undefined') return;
-  const query = serializeWorkspaceQuery(state);
+  const params = new URLSearchParams(window.location.search);
+  for (const key of ['q', 'asOfDate', 'firmId', 'securityId']) {
+    params.delete(key);
+  }
+  const workspaceParams = new URLSearchParams(
+    serializeWorkspaceQuery(state).replace(/^\?/, ''),
+  );
+  workspaceParams.forEach((value, key) => params.set(key, value));
+  const serialized = params.toString();
+  const query = serialized ? `?${serialized}` : '';
   window.history.replaceState(
     null,
     '',

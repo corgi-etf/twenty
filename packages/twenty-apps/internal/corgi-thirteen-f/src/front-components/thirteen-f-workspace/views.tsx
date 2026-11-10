@@ -203,8 +203,11 @@ const HoldingsTable = ({
             <th style={STYLES.th}>Class</th>
             <th style={{ ...STYLES.th, textAlign: 'right' }}>Reported value</th>
             <th style={{ ...STYLES.th, textAlign: 'right' }}>Shares / principal</th>
+            <th style={STYLES.th}>Put / call</th>
             <th style={{ ...STYLES.th, textAlign: 'right' }}>Portfolio</th>
             <th style={STYLES.th}>Discretion</th>
+            <th style={STYLES.th}>Other manager</th>
+            <th style={STYLES.th}>Voting authority</th>
             <th style={STYLES.th}>As of</th>
           </tr>
         </thead>
@@ -243,12 +246,27 @@ const HoldingsTable = ({
               </td>
               <td style={{ ...STYLES.td, textAlign: 'right' }}>
                 {formatNumber(holding.sharesOrPrincipal)}
+                {holding.shareType ? ` ${holding.shareType}` : ''}
               </td>
+              <td style={STYLES.td}>{holding.putCall ?? '—'}</td>
               <td style={{ ...STYLES.td, textAlign: 'right' }}>
                 {formatPercent(holding.portfolioPercent)}
               </td>
               <td style={STYLES.td}>{holding.investmentDiscretion ?? '—'}</td>
-              <td style={STYLES.td}>{formatDate(holding.asOfDate)}</td>
+              <td style={STYLES.td}>{holding.otherManager ?? '—'}</td>
+              <td style={STYLES.td}>
+                <div>Sole {formatNumber(holding.votingAuthority.sole)}</div>
+                <div>Shared {formatNumber(holding.votingAuthority.shared)}</div>
+                <div>None {formatNumber(holding.votingAuthority.none)}</div>
+              </td>
+              <td style={STYLES.td}>
+                {formatDate(holding.asOfDate)}
+                {holding.dateBasis === 'LEGACY_AS_OF_UNVERIFIED' ? (
+                  <div style={{ marginTop: 6 }}>
+                    <DateBasisBadge basis={holding.dateBasis} />
+                  </div>
+                ) : null}
+              </td>
             </tr>
           ))}
         </tbody>
