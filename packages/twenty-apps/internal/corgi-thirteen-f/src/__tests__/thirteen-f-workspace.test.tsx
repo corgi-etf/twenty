@@ -131,6 +131,52 @@ describe('13F workspace journeys', () => {
     expect(html).toContain('Voting — sole');
   });
 
+  it('labels legacy value estimates without overriding official filed values', () => {
+    const estimatedHolding: Holding = {
+      ...holding,
+      reportedValue: null,
+      legacyContext: {
+        portfolioName: 'Levered portfolio',
+        targetTicker: 'NVDA',
+        latestChange: null,
+        ownershipPercent: null,
+        portfolioPercent: '12.5',
+        estimatedValue: '900719925474099312345.67',
+        changeValue: null,
+        changePercent: null,
+      },
+    };
+    const estimatedHtml = renderToStaticMarkup(
+      <FirmHoldings
+        firm={firm}
+        holdings={[estimatedHolding]}
+        onBack={() => undefined}
+      />,
+    );
+
+    expect(estimatedHtml).toMatch(
+      /<td[^>]*>\$900,719,925,474,099,312,345\.67<div[^>]*>Estimated · unverified legacy data<\/div><\/td>/,
+    );
+
+    const officialHtml = renderToStaticMarkup(
+      <FirmHoldings
+        firm={firm}
+        holdings={[
+          {
+            ...estimatedHolding,
+            reportedValue: '125000000',
+          },
+        ]}
+        onBack={() => undefined}
+      />,
+    );
+
+    expect(officialHtml).toMatch(
+      /<td[^>]*>\$125,000,000<\/td><td[^>]*>12\.5%<\/td>/,
+    );
+    expect(officialHtml).not.toContain('Estimated · unverified legacy data');
+  });
+
   it('uses the selected filing metadata when reviewing an earlier date', () => {
     const earlierFirm: FirmDetail = {
       ...firm,

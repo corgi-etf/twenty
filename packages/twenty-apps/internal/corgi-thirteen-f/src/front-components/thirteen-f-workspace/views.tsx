@@ -214,6 +214,22 @@ const PositionDetails = ({ holding }: { holding: Holding }) => {
   );
 };
 
+const HoldingValue = ({ holding }: { holding: Holding }) => {
+  const estimatedValue = holding.legacyContext?.estimatedValue ?? null;
+  const usesEstimatedValue =
+    holding.reportedValue === null && estimatedValue !== null;
+  const displayedValue = holding.reportedValue ?? estimatedValue;
+
+  return (
+    <>
+      {formatMoney(displayedValue)}
+      {usesEstimatedValue ? (
+        <div style={STYLES.muted}>Estimated · unverified legacy data</div>
+      ) : null}
+    </>
+  );
+};
+
 export const FirmDirectory = ({
   firms,
   onSelect,
@@ -334,7 +350,7 @@ const HoldingsTable = ({
                 {holding.shareType ? ` ${holding.shareType}` : ''}
               </td>
               <td style={{ ...STYLES.td, textAlign: 'right' }}>
-                {formatMoney(holding.reportedValue)}
+                <HoldingValue holding={holding} />
               </td>
               <td style={{ ...STYLES.td, textAlign: 'right' }}>
                 {formatPercent(holding.portfolioPercent)}
