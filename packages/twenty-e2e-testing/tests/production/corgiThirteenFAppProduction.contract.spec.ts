@@ -44,14 +44,14 @@ const exactRegistration = {
   ownerWorkspaceId: 'eabf5d9d-fc99-4acb-b160-710ecb1db996',
   name: 'Corgi 13F Library',
   sourceType: 'TARBALL',
-  latestAvailableVersion: '0.2.0',
+  latestAvailableVersion: '0.2.1',
   isListed: false,
 };
 const exactInstallation = {
   id: 'application-1',
   universalIdentifier: '38ba5a6a-430e-455a-a27b-fba07af35944',
   applicationRegistrationId: exactRegistration.id,
-  version: '0.2.0',
+  version: '0.2.1',
   state: 'INSTALLED',
 };
 const previousRegistration = {
@@ -62,6 +62,15 @@ const previousInstallation = {
   ...exactInstallation,
   applicationRegistrationId: previousRegistration.id,
   version: '0.1.0',
+};
+const intermediateRegistration = {
+  ...exactRegistration,
+  latestAvailableVersion: '0.2.0',
+};
+const intermediateInstallation = {
+  ...exactInstallation,
+  applicationRegistrationId: intermediateRegistration.id,
+  version: '0.2.0',
 };
 
 const position = (needle: string): number => {
@@ -208,6 +217,22 @@ test('publishes and upgrades the exact previous production release in place', ()
   expect(workflow).toContain("if: steps.precheck.outputs.upgrade == 'true'");
   expect(verifier).toContain('upgradeApplication');
   expect(verifier).toContain('targetVersion: VERSION');
+});
+
+test('republishes and repairs the accepted 0.2.0 intermediate release', () => {
+  expect(
+    classifyDeploymentState({
+      applications: [intermediateInstallation],
+      registration: intermediateRegistration,
+    }),
+  ).toEqual({
+    mode: 'upgrade-required',
+    publish: true,
+    install: false,
+    upgrade: true,
+    freshInstall: false,
+    registrationPreexisting: true,
+  });
 });
 
 test('fails closed on registration or installed-release conflicts', () => {
