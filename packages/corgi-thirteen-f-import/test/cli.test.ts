@@ -1,47 +1,25 @@
 import assert from 'node:assert/strict';
-import { createHash } from 'node:crypto';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
-import { tmpdir } from 'node:os';
 import { test } from 'node:test';
 
-import { localMasterSource } from '../src/cli.ts';
+import { assertWorkflowIdentity } from '../src/cli.ts';
 
-test('builds a stable local master source for convergent CRM attachment upload', async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'corgi-13f-master-'));
-  const filename =
-    'Competitor Holders (13F) - Thematic + Levered 20261109.xlsx';
-  const filePath = join(directory, filename);
-  const bytes = Buffer.from('sample workbook bytes');
-  try {
-    await writeFile(filePath, bytes);
+const approved = {
+  GITHUB_REPOSITORY: 'Corgi-ETF/twenty',
+  GITHUB_REPOSITORY_ID: '1359532075',
+  GITHUB_REPOSITORY_OWNER_ID: '241377158',
+  GITHUB_REF: 'refs/heads/main',
+  GITHUB_EVENT_NAME: 'workflow_dispatch',
+  RUNNER_ENVIRONMENT: 'github-hosted',
+};
 
-    const first = await localMasterSource(filePath);
-    const second = await localMasterSource(filePath);
+test('accepts only the pinned manual production workflow identity', () => {
+  assert.doesNotThrow(() => assertWorkflowIdentity(approved));
 
-    assert.equal(first.id, second.id);
-    assert.equal(first.name, filename);
-    assert.equal(first.ticker, null);
-    assert.equal(first.sourceDriveId, null);
-    assert.equal(first.sourceLink, null);
-    assert.equal(first.sizeBytes, bytes.byteLength);
-    assert.equal(
-      first.contentSha256,
-      createHash('sha256').update(bytes).digest('hex'),
+  for (const key of Object.keys(approved)) {
+    assert.throws(
+      () => assertWorkflowIdentity({ ...approved, [key]: 'unexpected' }),
+      /restricted to the approved manual production workflow/,
+      key,
     );
-    assert.equal(first.sourceVersionId, first.contentSha256);
-  } finally {
-    await rm(directory, { recursive: true, force: true });
   }
-});
-
-test('rejects relative and non-master local workbook paths', async () => {
-  await assert.rejects(
-    localMasterSource('Competitor Holders (13F) 20261109.xlsx'),
-    /must be absolute/,
-  );
-  await assert.rejects(
-    localMasterSource('/tmp/not-a-master.xlsx'),
-    /file name/,
-  );
 });
