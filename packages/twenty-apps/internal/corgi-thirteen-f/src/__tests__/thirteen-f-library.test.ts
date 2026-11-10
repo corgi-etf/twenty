@@ -15,6 +15,12 @@ import {
   THIRTEEN_F_POSITION_IDS,
   THIRTEEN_F_SECURITY_IDS,
 } from 'src/constants/universal-identifiers';
+import errorsOnImportRunField from 'src/fields/thirteen-f-errors-on-import-run.field';
+import importRunsOnFilingField from 'src/fields/thirteen-f-import-runs-on-filing.field';
+import positionsOnFilingField from 'src/fields/thirteen-f-positions-on-filing.field';
+import positionsOnImportRunField from 'src/fields/thirteen-f-positions-on-import-run.field';
+import positionsOnManagerField from 'src/fields/thirteen-f-positions-on-manager.field';
+import positionsOnSecurityField from 'src/fields/thirteen-f-positions-on-security.field';
 import holdingsNavigationMenuItem from 'src/navigation-menu-items/thirteen-f-holdings.navigation-menu-item';
 import importsNavigationMenuItem from 'src/navigation-menu-items/thirteen-f-import-runs.navigation-menu-item';
 import managersNavigationMenuItem from 'src/navigation-menu-items/thirteen-f-managers.navigation-menu-item';
@@ -152,15 +158,65 @@ describe('13F library manifest', () => {
     expect(importsView.config.objectUniversalIdentifier).toBe(
       THIRTEEN_F_IMPORT_RUN_IDS.object,
     );
-    expect([
-      holdingsNavigationMenuItem,
-      managersNavigationMenuItem,
-      securitiesNavigationMenuItem,
-      importsNavigationMenuItem,
-    ].map(({ config }) => config.type)).toEqual(
-      Array(4).fill(NavigationMenuItemType.VIEW),
-    );
+    expect(
+      [
+        holdingsNavigationMenuItem,
+        managersNavigationMenuItem,
+        securitiesNavigationMenuItem,
+        importsNavigationMenuItem,
+      ].map(({ config }) => config.type),
+    ).toEqual(Array(4).fill(NavigationMenuItemType.VIEW));
     expect(navigationMenuItem.config.position).toBe(4);
+    expect(securitiesView.config.fields?.[0]).toMatchObject({
+      fieldMetadataUniversalIdentifier: THIRTEEN_F_SECURITY_IDS.name,
+      position: 0,
+    });
+  });
+
+  it('defines both sides of every app relation', () => {
+    expect(
+      [
+        positionsOnManagerField,
+        positionsOnSecurityField,
+        positionsOnImportRunField,
+        positionsOnFilingField,
+        importRunsOnFilingField,
+        errorsOnImportRunField,
+      ].map(({ config }) => config),
+    ).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          universalIdentifier: THIRTEEN_F_MANAGER_IDS.positions,
+          relationTargetFieldMetadataUniversalIdentifier:
+            THIRTEEN_F_POSITION_IDS.manager,
+        }),
+        expect.objectContaining({
+          universalIdentifier: THIRTEEN_F_SECURITY_IDS.positions,
+          relationTargetFieldMetadataUniversalIdentifier:
+            THIRTEEN_F_POSITION_IDS.security,
+        }),
+        expect.objectContaining({
+          universalIdentifier: THIRTEEN_F_IMPORT_RUN_IDS.positions,
+          relationTargetFieldMetadataUniversalIdentifier:
+            THIRTEEN_F_POSITION_IDS.importRun,
+        }),
+        expect.objectContaining({
+          universalIdentifier: THIRTEEN_F_POSITION_IDS.filingPositions,
+          relationTargetFieldMetadataUniversalIdentifier:
+            THIRTEEN_F_POSITION_IDS.filing,
+        }),
+        expect.objectContaining({
+          universalIdentifier: THIRTEEN_F_IMPORT_RUN_IDS.filingImportRuns,
+          relationTargetFieldMetadataUniversalIdentifier:
+            THIRTEEN_F_IMPORT_RUN_IDS.filing,
+        }),
+        expect.objectContaining({
+          universalIdentifier: THIRTEEN_F_IMPORT_ERROR_IDS.importRunErrors,
+          relationTargetFieldMetadataUniversalIdentifier:
+            THIRTEEN_F_IMPORT_ERROR_IDS.importRun,
+        }),
+      ]),
+    );
   });
 
   it('shows only active holdings in the native holdings table', () => {
@@ -200,10 +256,10 @@ describe('13F library manifest', () => {
     expect(defaultRole.config.objectPermissions).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-        canReadObjectRecords: true,
-        canUpdateObjectRecords: true,
-        canSoftDeleteObjectRecords: false,
-        canDestroyObjectRecords: false,
+          canReadObjectRecords: true,
+          canUpdateObjectRecords: true,
+          canSoftDeleteObjectRecords: false,
+          canDestroyObjectRecords: false,
         }),
       ]),
     );
