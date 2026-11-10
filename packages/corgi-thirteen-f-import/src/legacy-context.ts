@@ -1,4 +1,5 @@
 import type { LegacyHoldingContext } from './ingestion-contract.ts';
+import { canonicalDecimal } from './decimal.ts';
 
 const MAX_CONTEXT_TEXT_LENGTH = 500;
 const MAX_RAW_DATA_BYTES = 64 * 1024;
@@ -17,41 +18,19 @@ const contextText = (value: unknown): string | undefined => {
     : undefined;
 };
 
-export const legacyDecimalString = (
+const quantityDecimal = (
   value: unknown,
-  options: { nonnegative?: boolean } = {},
-): string | undefined => {
-  if (typeof value === 'number') {
-    if (!Number.isFinite(value)) return undefined;
-    const result = Object.is(value, -0) ? '0' : String(value);
-    if (!/^-?\d+(?:\.\d+)?$/.test(result)) return undefined;
+  field: string,
+  signed: boolean,
+): string | undefined =>
+  canonicalDecimal(value, { field, precision: 30, scale: 6, signed });
 
-    return options.nonnegative && result.startsWith('-') ? undefined : result;
-  }
-  if (typeof value !== 'string' || value.length > 100) return undefined;
-  let normalized = value.normalize('NFKC').trim();
-  let parentheticalNegative = false;
-  if (normalized.startsWith('(') && normalized.endsWith(')')) {
-    parentheticalNegative = true;
-    normalized = normalized.slice(1, -1);
-  }
-  normalized = normalized.replace(/[$,%\s,]/g, '');
-  if (!/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)$/.test(normalized)) {
-    return undefined;
-  }
-  let negative = normalized.startsWith('-') || parentheticalNegative;
-  if (parentheticalNegative && /^[+-]/.test(normalized)) return undefined;
-  normalized = normalized.replace(/^[+-]/, '');
-  const [rawInteger = '', rawFraction] = normalized.split('.');
-  const fraction = rawFraction || undefined;
-  const integer = (rawInteger || '0').replace(/^0+(?=\d)/, '');
-  const magnitude = fraction === undefined ? integer : `${integer}.${fraction}`;
-  if (/^0(?:\.0*)?$/.test(magnitude)) negative = false;
-
-  const result = `${negative ? '-' : ''}${magnitude}`;
-
-  return options.nonnegative && result.startsWith('-') ? undefined : result;
-};
+const percentageDecimal = (
+  value: unknown,
+  field: string,
+  signed: boolean,
+): string | undefined =>
+  canonicalDecimal(value, { field, precision: 18, scale: 8, signed });
 
 const ticker = (value: unknown): string | undefined => {
   const normalized = contextText(value)?.toUpperCase();
@@ -80,11 +59,17 @@ const rawDataMetrics = (
   if (!isRecord(parsed)) return {};
 
   return compact({
-    estimatedValue: legacyDecimalString(parsed['estimated value'], {
-      nonnegative: true,
-    }),
-    changeValue: legacyDecimalString(parsed['change value']),
-    changePercent: legacyDecimalString(parsed['change percent']),
+    estimatedValue: quantityDecimal(
+      parsed['estimated value'],
+      'estimatedValue',
+      false,
+    ),
+    changeValue: quantityDecimal(parsed['change value'], 'changeValue', true),
+    changePercent: percentageDecimal(
+      parsed['change percent'],
+      'changePercent',
+      true,
+    ),
   });
 };
 
@@ -103,20 +88,26 @@ export const legacyHoldingContext = (values: {
   const context = compact({
     portfolioName: contextText(values.portfolioName),
     targetTicker: ticker(values.targetTicker),
-    latestChange: legacyDecimalString(values.latestChange),
-    ownershipPercent: legacyDecimalString(values.ownershipPercent, {
-      nonnegative: true,
-    }),
-    portfolioPercent: legacyDecimalString(values.portfolioPercent, {
-      nonnegative: true,
-    }),
+    latestChange: quantityDecimal(values.latestChange, 'latestChange', true),
+    ownershipPercent: percentageDecimal(
+      values.ownershipPercent,
+      'ownershipPercent',
+      false,
+    ),
+    portfolioPercent: percentageDecimal(
+      values.portfolioPercent,
+      'portfolioPercent',
+      false,
+    ),
     estimatedValue:
-      legacyDecimalString(values.estimatedValue, { nonnegative: true }) ??
+      quantityDecimal(values.estimatedValue, 'estimatedValue', false) ??
       fromRawData.estimatedValue,
     changeValue:
-      legacyDecimalString(values.changeValue) ?? fromRawData.changeValue,
+      quantityDecimal(values.changeValue, 'changeValue', true) ??
+      fromRawData.changeValue,
     changePercent:
-      legacyDecimalString(values.changePercent) ?? fromRawData.changePercent,
+      percentageDecimal(values.changePercent, 'changePercent', true) ??
+      fromRawData.changePercent,
   });
 
   return Object.keys(context).length > 0 ? context : undefined;

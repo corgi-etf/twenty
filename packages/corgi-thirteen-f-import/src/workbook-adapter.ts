@@ -11,6 +11,7 @@ import type {
   NormalizedSourceAdapter,
 } from './ingestion-contract.ts';
 import { legacyHoldingContext } from './legacy-context.ts';
+import { canonicalDecimal } from './decimal.ts';
 
 const MAX_WORKBOOK_BYTES = 8 * 1024 * 1024;
 const MAX_ROWS_PER_SHEET = 100_000;
@@ -67,11 +68,14 @@ const dateValue = (value: unknown): string | undefined => {
 };
 
 const sharesValue = (value: unknown): string | undefined => {
-  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
-    return undefined;
-  }
+  if (typeof value !== 'number') return undefined;
 
-  return Object.is(value, -0) ? '0' : String(value);
+  return canonicalDecimal(value, {
+    field: 'sharesHeld',
+    precision: 30,
+    scale: 6,
+    signed: false,
+  });
 };
 
 const sorted = <T>(values: Iterable<T>, key: (value: T) => string): T[] =>

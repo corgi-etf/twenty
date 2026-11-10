@@ -8,6 +8,7 @@ import type {
   NormalizedSecurity,
 } from './ingestion-contract.ts';
 import { legacyHoldingContext } from './legacy-context.ts';
+import { canonicalDecimal } from './decimal.ts';
 
 type LegacyManagerRelation = {
   id?: unknown;
@@ -92,14 +93,6 @@ const isRealDate = (value: string): boolean => {
   );
 };
 
-const decimalString = (value: unknown): string | undefined => {
-  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
-    return undefined;
-  }
-
-  return Object.is(value, -0) ? '0' : String(value);
-};
-
 const identity = (
   namespace: 'manager' | 'security',
   relationId: unknown,
@@ -165,7 +158,12 @@ export const reconcileLegacyCrmHoldings = (
       reject('INVALID_DATE');
       continue;
     }
-    const sharesOrPrincipal = decimalString(row.sharesHeld);
+    const sharesOrPrincipal = canonicalDecimal(row.sharesHeld, {
+      field: 'sharesHeld',
+      precision: 30,
+      scale: 6,
+      signed: false,
+    });
     if (sharesOrPrincipal === undefined) {
       reject('INVALID_SHARES');
       continue;

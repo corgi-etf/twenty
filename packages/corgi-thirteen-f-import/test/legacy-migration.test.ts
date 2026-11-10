@@ -80,8 +80,8 @@ test('maps legacy rows without inventing SEC-only filing or security fields', ()
       ownershipPercent: '1.25',
       portfolioPercent: '0.5',
       estimatedValue: '125000',
-      changeValue: '-2500.50',
-      changePercent: '-2.0',
+      changeValue: '-2500.5',
+      changePercent: '-2',
     },
   });
   assert.equal('rawData' in result.holdings[0]!, false);
@@ -129,6 +129,59 @@ test('allows signed change metrics but omits negative magnitudes and percentages
     changeValue: '-4',
     changePercent: '-5',
   });
+});
+
+test('expands exponent notation into canonical decimals without rounding', () => {
+  const result = reconcileLegacyCrmHoldings([
+    holding({
+      sharesHeld: 1e21,
+      latestChange: -2.5e-4,
+      ownershipPercent: 1e-8,
+      portfolioPercent: '1.25000000',
+      rawData: JSON.stringify({
+        'estimated value': 1e6,
+        'change value': -2.5e-4,
+        'change percent': -1.25e-6,
+      }),
+    }),
+  ]);
+
+  assert.equal(result.holdings[0]?.sharesOrPrincipal, '1000000000000000000000');
+  assert.deepEqual(result.holdings[0]?.legacyContext, {
+    portfolioName: 'Growth Strategy',
+    targetTicker: 'CORG',
+    latestChange: '-0.00025',
+    ownershipPercent: '0.00000001',
+    portfolioPercent: '1.25',
+    estimatedValue: '1000000',
+    changeValue: '-0.00025',
+    changePercent: '-0.00000125',
+  });
+});
+
+test('fails preflight when a source decimal exceeds its database scale', () => {
+  assert.throws(
+    () => reconcileLegacyCrmHoldings([holding({ sharesHeld: 1e-7 })]),
+    /sharesHeld exceeds decimal precision 30, scale 6/,
+  );
+  assert.throws(
+    () =>
+      reconcileLegacyCrmHoldings([
+        holding({ ownershipPercent: '0.000000001' }),
+      ]),
+    /ownershipPercent exceeds decimal precision 18, scale 8/,
+  );
+  assert.throws(
+    () => reconcileLegacyCrmHoldings([holding({ sharesHeld: 1e24 })]),
+    /sharesHeld exceeds decimal precision 30, scale 6/,
+  );
+  assert.throws(
+    () =>
+      reconcileLegacyCrmHoldings([
+        holding({ ownershipPercent: '12345678901' }),
+      ]),
+    /ownershipPercent exceeds decimal precision 18, scale 8/,
+  );
 });
 
 test('accounts for every source row with duplicate and rejection reasons', () => {
