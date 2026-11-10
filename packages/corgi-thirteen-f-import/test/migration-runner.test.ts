@@ -104,3 +104,33 @@ test('does not publish when the production CRM inventory count drifts', async ()
   );
   assert.equal(published, false);
 });
+
+test('does not publish until every expected CRM row is accepted exactly once', async () => {
+  let published = false;
+  await assert.rejects(
+    runLegacyCrmMigration({
+      expectedSourceRows: 3,
+      crm: {
+        listHoldings: async () => [
+          row('11111111-1111-4111-8111-111111111111', 'TQQQ'),
+          {
+            ...row('22222222-2222-4222-8222-222222222222', 'SQQQ'),
+            occurrenceKey: '11111111-1111-4111-8111-111111111111',
+          },
+          {
+            ...row('33333333-3333-4333-8333-333333333333', 'UPRO'),
+            isActive: false,
+          },
+        ],
+      },
+      backend: {
+        ingestLegacyDataset: async () => {
+          published = true;
+          return completed;
+        },
+      },
+    }),
+    /requires all 3 CRM rows to be accepted exactly once; accepted 1, duplicates 1, rejected 1/,
+  );
+  assert.equal(published, false);
+});

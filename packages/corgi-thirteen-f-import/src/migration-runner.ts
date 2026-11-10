@@ -56,6 +56,15 @@ export const runLegacyCrmMigration = async (options: {
     );
   }
   const { accounting, ...dataset } = reconcileLegacyCrmHoldings(rows);
+  if (
+    accounting.acceptedRows !== expectedSourceRows ||
+    accounting.duplicateRows !== 0 ||
+    accounting.rejectedRows !== 0
+  ) {
+    throw new Error(
+      `Legacy migration requires all ${expectedSourceRows} CRM rows to be accepted exactly once; accepted ${accounting.acceptedRows}, duplicates ${accounting.duplicateRows}, rejected ${accounting.rejectedRows}`,
+    );
+  }
   if (dataset.holdings.length < 1) {
     throw new Error('Legacy migration has no publishable holdings');
   }
