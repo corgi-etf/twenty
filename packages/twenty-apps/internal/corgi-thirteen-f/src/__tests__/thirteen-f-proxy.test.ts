@@ -28,6 +28,7 @@ describe('13F server proxy', () => {
         apiBaseUrl: 'https://example.test',
         readToken: 'server-only-token',
         expectedWorkspaceId: workspaceId,
+        approvedApiOrigins: ['https://example.test'],
         fetcher,
       },
     );
@@ -57,6 +58,7 @@ describe('13F server proxy', () => {
       apiBaseUrl: 'https://example.test',
       readToken: 'server-only-token',
       expectedWorkspaceId: workspaceId,
+      approvedApiOrigins: ['https://example.test'],
       fetcher,
     });
 
@@ -76,6 +78,7 @@ describe('13F server proxy', () => {
         apiBaseUrl: 'https://example.test',
         readToken: 'server-only-token',
         expectedWorkspaceId: workspaceId,
+        approvedApiOrigins: ['https://example.test'],
         fetcher,
       },
     );
@@ -85,5 +88,24 @@ describe('13F server proxy', () => {
     expect(responseBody).toContain('temporarily_unavailable');
     expect(responseBody).not.toContain('private database detail');
     expect(responseBody).not.toContain('server-only-token');
+  });
+
+  it('denies an arbitrary HTTPS origin before sending the bearer token', async () => {
+    const fetcher = vi.fn();
+
+    const response = await handleThirteenFQuery(
+      { action: 'summary' },
+      context,
+      {
+        apiBaseUrl: 'https://attacker.example',
+        readToken: 'server-only-token',
+        expectedWorkspaceId: workspaceId,
+        approvedApiOrigins: ['https://admin.corgiinvest.com'],
+        fetcher,
+      },
+    );
+
+    expect(response.status).toBe(403);
+    expect(fetcher).not.toHaveBeenCalled();
   });
 });

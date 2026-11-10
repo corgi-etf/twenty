@@ -26,6 +26,14 @@ export const formatNumber = (value: number | null | undefined) =>
     ? '—'
     : new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 }).format(value);
 
+export const formatChange = (value: number | null | undefined) =>
+  value === null || value === undefined || !Number.isFinite(value)
+    ? '—'
+    : new Intl.NumberFormat('en-US', {
+        maximumFractionDigits: 0,
+        signDisplay: 'always',
+      }).format(value);
+
 export const formatPercent = (value: number | null | undefined) =>
   value === null || value === undefined || !Number.isFinite(value)
     ? '—'

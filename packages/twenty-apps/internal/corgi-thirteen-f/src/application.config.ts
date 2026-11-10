@@ -17,7 +17,7 @@ export default defineApplication({
     CORGI_THIRTEEN_F_API_BASE_URL: {
       universalIdentifier: API_BASE_URL_VARIABLE_ID,
       description:
-        'Website origin that serves the internal 13F read API. Configure per workspace; this value is used only by the server function.',
+        'Approved website origin serving the internal 13F read API. The server function accepts only https://admin.corgiinvest.com.',
       isSecret: false,
     },
     CORGI_THIRTEEN_F_API_READ_TOKEN: {

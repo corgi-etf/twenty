@@ -157,6 +157,42 @@ describe('13F workspace journeys', () => {
     expect(html).toContain('Sep 30, 2026');
   });
 
+  it('labels only comparable SEC changes as change versus the prior quarter', () => {
+    const security: SecuritySummary = {
+      id: 'security-1',
+      issuerName: 'NVIDIA Corporation',
+      ticker: 'NVDA',
+      cusip: '67066G104',
+    };
+    const comparableHolding: Holding = {
+      ...holding,
+      dateBasis: 'SEC_REPORT_PERIOD',
+      reportPeriod: '2026-09-30',
+      quarterChange: 1200,
+    };
+    const html = renderToStaticMarkup(
+      <SecurityHolders
+        security={security}
+        holdings={[comparableHolding]}
+        onBack={() => undefined}
+        onSelectFirm={() => undefined}
+      />,
+    );
+
+    expect(html).toContain('Change vs prior quarter');
+    expect(html).toContain('+1,200');
+
+    const legacyHtml = renderToStaticMarkup(
+      <SecurityHolders
+        security={security}
+        holdings={[{ ...holding, quarterChange: 1200 }]}
+        onBack={() => undefined}
+        onSelectFirm={() => undefined}
+      />,
+    );
+    expect(legacyHtml).not.toContain('+1,200');
+  });
+
   it('preserves workspace selection in URL query state', () => {
     const serialized = serializeWorkspaceQuery({
       q: 'NVDA',

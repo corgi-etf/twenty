@@ -10,6 +10,7 @@ const QUERY_ROOT = '/api/internal/thirteen-f';
 const MAX_QUERY_LENGTH = 200;
 const MAX_CURSOR_LENGTH = 500;
 const MAX_PAGE_SIZE = 100;
+const APPROVED_API_ORIGINS = ['https://admin.corgiinvest.com'] as const;
 
 type Fetcher = (
   input: string | URL | globalThis.Request,
@@ -22,6 +23,7 @@ type QueryDependencies = {
   apiBaseUrl: string | undefined;
   readToken: string | undefined;
   expectedWorkspaceId: string | undefined;
+  approvedApiOrigins: readonly string[];
   fetcher: Fetcher;
 };
 
@@ -186,6 +188,8 @@ const isValidConfiguration = (dependencies: QueryDependencies) => {
     const url = new URL(dependencies.apiBaseUrl!);
     return (
       url.protocol === 'https:' &&
+      dependencies.approvedApiOrigins.includes(url.origin) &&
+      url.pathname === '/' &&
       !url.username &&
       !url.password &&
       !url.search &&
@@ -246,6 +250,7 @@ export const handler = async (
     apiBaseUrl: process.env.CORGI_THIRTEEN_F_API_BASE_URL?.trim(),
     readToken: process.env.CORGI_THIRTEEN_F_API_READ_TOKEN?.trim(),
     expectedWorkspaceId: process.env.CORGI_THIRTEEN_F_WORKSPACE_ID?.trim(),
+    approvedApiOrigins: APPROVED_API_ORIGINS,
     fetcher: fetch,
   });
 

@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 
 import {
+  formatChange,
   formatDate,
   formatMoney,
   formatNumber,
@@ -208,6 +209,9 @@ const HoldingsTable = ({
             <th style={STYLES.th}>Discretion</th>
             <th style={STYLES.th}>Other manager</th>
             <th style={STYLES.th}>Voting authority</th>
+            <th style={{ ...STYLES.th, textAlign: 'right' }}>
+              Change vs prior quarter
+            </th>
             <th style={STYLES.th}>As of</th>
           </tr>
         </thead>
@@ -258,6 +262,11 @@ const HoldingsTable = ({
                 <div>Sole {formatNumber(holding.votingAuthority.sole)}</div>
                 <div>Shared {formatNumber(holding.votingAuthority.shared)}</div>
                 <div>None {formatNumber(holding.votingAuthority.none)}</div>
+              </td>
+              <td style={{ ...STYLES.td, textAlign: 'right' }}>
+                {holding.dateBasis === 'SEC_REPORT_PERIOD'
+                  ? formatChange(holding.quarterChange)
+                  : '—'}
               </td>
               <td style={STYLES.td}>
                 {formatDate(holding.asOfDate)}
