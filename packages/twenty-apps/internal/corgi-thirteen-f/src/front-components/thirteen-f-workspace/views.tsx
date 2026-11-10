@@ -2,10 +2,12 @@ import type { ReactNode } from 'react';
 
 import {
   formatChange,
+  formatCount,
   formatDate,
+  formatDecimal,
   formatMoney,
-  formatNumber,
   formatPercent,
+  formatPercentChange,
 } from 'src/front-components/thirteen-f-workspace/format';
 import type {
   DateBasis,
@@ -126,6 +128,33 @@ const EmptyState = ({ children }: { children: ReactNode }) => (
   <div style={STYLES.empty}>{children}</div>
 );
 
+const LegacyContextCell = ({ holding }: { holding: Holding }) => {
+  const context = holding.legacyContext;
+  if (!context) return <>—</>;
+  const legacyValues: Array<[string, string | null]> = [
+    ['Portfolio', context.portfolioName],
+    ['Target ticker', context.targetTicker],
+    ['Latest change', context.latestChange],
+    ['Ownership', formatPercent(context.ownershipPercent)],
+    ['Portfolio share', formatPercent(context.portfolioPercent)],
+    ['Estimated value', formatMoney(context.estimatedValue)],
+    ['Change value', formatDecimal(context.changeValue)],
+    ['Change percent', formatPercent(context.changePercent)],
+  ];
+  const values = legacyValues.filter(([, value]) => value && value !== '—');
+
+  return (
+    <div style={{ display: 'grid', gap: 4, minWidth: 180 }}>
+      <span style={STYLES.badge}>Unverified legacy source</span>
+      {values.map(([label, value]) => (
+        <div key={label} style={STYLES.muted}>
+          {label}: {value}
+        </div>
+      ))}
+    </div>
+  );
+};
+
 export const FirmDirectory = ({
   firms,
   onSelect,
@@ -165,7 +194,7 @@ export const FirmDirectory = ({
                   {formatMoney(firm.totalReportedValue)}
                 </div>
                 <div style={STYLES.muted}>
-                  {formatNumber(firm.positionCount)} positions
+                  {formatCount(firm.positionCount)} positions
                 </div>
               </div>
             </div>
@@ -212,6 +241,7 @@ const HoldingsTable = ({
             <th style={{ ...STYLES.th, textAlign: 'right' }}>
               Change vs prior quarter
             </th>
+            <th style={STYLES.th}>Legacy context</th>
             <th style={STYLES.th}>As of</th>
           </tr>
         </thead>
@@ -249,7 +279,7 @@ const HoldingsTable = ({
                 {formatMoney(holding.reportedValue)}
               </td>
               <td style={{ ...STYLES.td, textAlign: 'right' }}>
-                {formatNumber(holding.sharesOrPrincipal)}
+                {formatDecimal(holding.sharesOrPrincipal)}
                 {holding.shareType ? ` ${holding.shareType}` : ''}
               </td>
               <td style={STYLES.td}>{holding.putCall ?? '—'}</td>
@@ -259,14 +289,18 @@ const HoldingsTable = ({
               <td style={STYLES.td}>{holding.investmentDiscretion ?? '—'}</td>
               <td style={STYLES.td}>{holding.otherManager ?? '—'}</td>
               <td style={STYLES.td}>
-                <div>Sole {formatNumber(holding.votingAuthority.sole)}</div>
-                <div>Shared {formatNumber(holding.votingAuthority.shared)}</div>
-                <div>None {formatNumber(holding.votingAuthority.none)}</div>
+                <div>Sole {formatDecimal(holding.votingAuthority.sole)}</div>
+                <div>Shared {formatDecimal(holding.votingAuthority.shared)}</div>
+                <div>None {formatDecimal(holding.votingAuthority.none)}</div>
               </td>
               <td style={{ ...STYLES.td, textAlign: 'right' }}>
-                {holding.dateBasis === 'SEC_REPORT_PERIOD'
-                  ? formatChange(holding.quarterChange)
-                  : '—'}
+                <div>Shares {formatChange(holding.quarterChange)}</div>
+                <div style={STYLES.muted}>
+                  Percent {formatPercentChange(holding.quarterChangePercent)}
+                </div>
+              </td>
+              <td style={STYLES.td}>
+                <LegacyContextCell holding={holding} />
               </td>
               <td style={STYLES.td}>
                 {formatDate(holding.asOfDate)}
@@ -316,7 +350,7 @@ const FilingHistory = ({ firm }: { firm: FirmDetail }) => (
                 <td style={STYLES.td}>{filing.formType ?? '—'}</td>
                 <td style={STYLES.td}>{filing.coverage ?? '—'}</td>
                 <td style={{ ...STYLES.td, textAlign: 'right' }}>
-                  {formatNumber(filing.positionCount)}
+                  {formatCount(filing.positionCount)}
                 </td>
                 <td style={{ ...STYLES.td, textAlign: 'right' }}>
                   {formatMoney(filing.totalReportedValue)}
@@ -374,7 +408,7 @@ export const FirmHoldings = ({
             {formatMoney(totalReportedValue)}
           </div>
           <div style={STYLES.muted}>
-            {formatNumber(positionCount)} positions
+            {formatCount(positionCount)} positions
           </div>
         </div>
       </div>

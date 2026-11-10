@@ -222,6 +222,7 @@ export const handleThirteenFQuery = async (
       buildRequestUrl(dependencies.apiBaseUrl!, action, body),
       {
         method: 'GET',
+        redirect: 'error',
         headers: { Authorization: `Bearer ${dependencies.readToken}` },
       },
     );

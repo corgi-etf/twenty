@@ -7,6 +7,10 @@ import {
   SecurityHolders,
 } from 'src/front-components/thirteen-f-workspace/views';
 import { callThirteenFRoute } from 'src/front-components/thirteen-f-workspace/client';
+import {
+  formatDecimal,
+  formatMoney,
+} from 'src/front-components/thirteen-f-workspace/format';
 import { parseWorkspaceQuery, serializeWorkspaceQuery } from 'src/front-components/thirteen-f-workspace/query-state';
 import type {
   FirmDetail,
@@ -31,15 +35,17 @@ const holding: Holding = {
   titleOfClass: 'COM',
   cusip: '67066G104',
   ticker: 'NVDA',
-  reportedValue: 125000000,
-  sharesOrPrincipal: 800000,
+  reportedValue: '125000000',
+  sharesOrPrincipal: '800000',
   shareType: 'SH',
   putCall: null,
   investmentDiscretion: 'SOLE',
   otherManager: null,
-  votingAuthority: { sole: 800000, shared: 0, none: 0 },
-  portfolioPercent: 12.5,
+  votingAuthority: { sole: '800000', shared: '0', none: '0' },
+  portfolioPercent: '12.5',
   quarterChange: null,
+  quarterChangePercent: null,
+  legacyContext: null,
 };
 
 const firm: FirmDetail = {
@@ -54,7 +60,7 @@ const firm: FirmDetail = {
   latestFormType: '13F-HR',
   latestCoverage: 'FULL',
   positionCount: 1,
-  totalReportedValue: 125000000,
+  totalReportedValue: '125000000',
   topHoldings: [holding],
   filingHistory: [
     {
@@ -66,12 +72,21 @@ const firm: FirmDetail = {
       formType: '13F-HR',
       coverage: 'FULL',
       positionCount: 1,
-      totalReportedValue: 125000000,
+      totalReportedValue: '125000000',
     },
   ],
 };
 
 describe('13F workspace journeys', () => {
+  it('formats decimal strings without converting them to imprecise numbers', () => {
+    expect(formatDecimal('900719925474099312345.6700')).toBe(
+      '900,719,925,474,099,312,345.67',
+    );
+    expect(formatMoney('-900719925474099312345.6700')).toBe(
+      '-$900,719,925,474,099,312,345.67',
+    );
+  });
+
   it('renders a firm-first directory by default', () => {
     const html = renderToStaticMarkup(
       <FirmDirectory firms={[firm]} onSelect={() => undefined} />,
@@ -80,7 +95,7 @@ describe('13F workspace journeys', () => {
     expect(html).toContain('Example Capital');
     expect(html).toContain('CIK 0001234567');
     expect(html).toContain('As of Sep 30, 2026');
-    expect(html).toContain('$125.0M');
+    expect(html).toContain('$125,000,000');
     expect(html).not.toMatch(/workbook|download|import|parser/i);
   });
 
@@ -99,7 +114,7 @@ describe('13F workspace journeys', () => {
     expect(html).toContain('Filed Nov 9, 2026');
     expect(html).toContain('NVIDIA Corporation');
     expect(html).toContain('67066G104');
-    expect(html).toContain('12.50%');
+    expect(html).toContain('12.5%');
   });
 
   it('uses the selected filing metadata when reviewing an earlier date', () => {
@@ -116,7 +131,7 @@ describe('13F workspace journeys', () => {
           formType: '13F-HR/A',
           coverage: 'FULL',
           positionCount: 90,
-          totalReportedValue: 90000000,
+          totalReportedValue: '90000000',
         },
       ],
     };
@@ -133,7 +148,7 @@ describe('13F workspace journeys', () => {
     expect(html).toContain('Holdings as of Jun 30, 2026');
     expect(html).toContain('Filed Aug 14, 2026');
     expect(html).toContain('13F-HR/A');
-    expect(html).toContain('$90.0M');
+    expect(html).toContain('$90,000,000');
   });
 
   it('renders reverse lookup results with every holding firm and date', () => {
@@ -168,7 +183,8 @@ describe('13F workspace journeys', () => {
       ...holding,
       dateBasis: 'SEC_REPORT_PERIOD',
       reportPeriod: '2026-09-30',
-      quarterChange: 1200,
+      quarterChange: '1200',
+      quarterChangePercent: '0.15',
     };
     const html = renderToStaticMarkup(
       <SecurityHolders
@@ -181,16 +197,35 @@ describe('13F workspace journeys', () => {
 
     expect(html).toContain('Change vs prior quarter');
     expect(html).toContain('+1,200');
+    expect(html).toContain('+0.15%');
 
     const legacyHtml = renderToStaticMarkup(
       <SecurityHolders
         security={security}
-        holdings={[{ ...holding, quarterChange: 1200 }]}
+        holdings={[
+          {
+            ...holding,
+            quarterChange: null,
+            legacyContext: {
+              portfolioName: 'Levered portfolio',
+              targetTicker: 'NVDA',
+              latestChange: '1200',
+              ownershipPercent: '1.25',
+              portfolioPercent: '12.5',
+              estimatedValue: '125000000',
+              changeValue: '1200',
+              changePercent: '0.15',
+            },
+          },
+        ]}
         onBack={() => undefined}
         onSelectFirm={() => undefined}
       />,
     );
     expect(legacyHtml).not.toContain('+1,200');
+    expect(legacyHtml).toContain('Unverified legacy source');
+    expect(legacyHtml).toContain('Target ticker: NVDA');
+    expect(legacyHtml).toContain('Change value: 1,200');
   });
 
   it('preserves workspace selection in URL query state', () => {

@@ -1,9 +1,20 @@
 export type DateBasis = 'SEC_REPORT_PERIOD' | 'LEGACY_AS_OF_UNVERIFIED';
 
 export type VotingAuthority = {
-  sole: number | null;
-  shared: number | null;
-  none: number | null;
+  sole: string | null;
+  shared: string | null;
+  none: string | null;
+};
+
+export type LegacyHoldingContext = {
+  portfolioName: string | null;
+  targetTicker: string | null;
+  latestChange: string | null;
+  ownershipPercent: string | null;
+  portfolioPercent: string | null;
+  estimatedValue: string | null;
+  changeValue: string | null;
+  changePercent: string | null;
 };
 
 export type Holding = {
@@ -23,15 +34,17 @@ export type Holding = {
   titleOfClass: string | null;
   cusip: string | null;
   ticker: string | null;
-  reportedValue: number | null;
-  sharesOrPrincipal: number | null;
+  reportedValue: string | null;
+  sharesOrPrincipal: string | null;
   shareType: string | null;
   putCall: string | null;
   investmentDiscretion: string | null;
   otherManager: string | null;
   votingAuthority: VotingAuthority;
-  portfolioPercent: number | null;
-  quarterChange: number | null;
+  portfolioPercent: string | null;
+  quarterChange: string | null;
+  quarterChangePercent: string | null;
+  legacyContext: LegacyHoldingContext | null;
 };
 
 export type FilingSummary = {
@@ -43,7 +56,7 @@ export type FilingSummary = {
   formType: string | null;
   coverage: string | null;
   positionCount: number;
-  totalReportedValue: number | null;
+  totalReportedValue: string | null;
 };
 
 export type FirmSummary = {
@@ -58,7 +71,7 @@ export type FirmSummary = {
   latestFormType: string | null;
   latestCoverage: string | null;
   positionCount: number;
-  totalReportedValue: number | null;
+  totalReportedValue: string | null;
   topHoldings: Holding[];
 };
 

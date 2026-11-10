@@ -38,6 +38,7 @@ describe('13F server proxy', () => {
       'https://example.test/api/internal/thirteen-f/firms/71337d42-47fe-448d-a7dd-315a8385eabe/holdings?asOfDate=2026-09-30&q=NVDA&limit=50&order=value_desc',
       expect.objectContaining({
         method: 'GET',
+        redirect: 'error',
         headers: { Authorization: 'Bearer server-only-token' },
       }),
     );

@@ -10,31 +10,68 @@ export const formatDate = (value: string | null | undefined) => {
   }).format(date);
 };
 
-export const formatMoney = (value: number | null | undefined) => {
-  if (value === null || value === undefined || !Number.isFinite(value)) {
-    return '—';
-  }
-  const magnitude = Math.abs(value);
-  if (magnitude >= 1_000_000_000) return `$${(value / 1_000_000_000).toFixed(1)}B`;
-  if (magnitude >= 1_000_000) return `$${(value / 1_000_000).toFixed(1)}M`;
-  if (magnitude >= 1_000) return `$${(value / 1_000).toFixed(1)}K`;
-  return `$${value.toFixed(0)}`;
+type DecimalParts = {
+  isNegative: boolean;
+  integer: string;
+  fraction: string;
 };
 
-export const formatNumber = (value: number | null | undefined) =>
-  value === null || value === undefined || !Number.isFinite(value)
-    ? '—'
-    : new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 }).format(value);
+const parseDecimal = (
+  value: string | null | undefined,
+): DecimalParts | undefined => {
+  if (typeof value !== 'string') return undefined;
+  const match = /^(-?)(\d+)(?:\.(\d+))?$/.exec(value.trim());
+  if (!match) return undefined;
+  const integer = match[2]!.replace(/^0+(?=\d)/, '');
+  const fraction = (match[3] ?? '').replace(/0+$/, '');
+  const isZero = /^0+$/.test(integer) && !/[1-9]/.test(fraction);
+  return {
+    isNegative: match[1] === '-' && !isZero,
+    integer,
+    fraction,
+  };
+};
 
-export const formatChange = (value: number | null | undefined) =>
-  value === null || value === undefined || !Number.isFinite(value)
-    ? '—'
-    : new Intl.NumberFormat('en-US', {
-        maximumFractionDigits: 0,
-        signDisplay: 'always',
-      }).format(value);
+const groupInteger = (integer: string) =>
+  integer.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
 
-export const formatPercent = (value: number | null | undefined) =>
-  value === null || value === undefined || !Number.isFinite(value)
+const renderUnsignedDecimal = (parts: DecimalParts) =>
+  `${groupInteger(parts.integer)}${parts.fraction ? `.${parts.fraction}` : ''}`;
+
+export const formatDecimal = (value: string | null | undefined) => {
+  const parts = parseDecimal(value);
+  if (!parts) return '—';
+  return `${parts.isNegative ? '-' : ''}${renderUnsignedDecimal(parts)}`;
+};
+
+export const formatMoney = (value: string | null | undefined) => {
+  const parts = parseDecimal(value);
+  if (!parts) return '—';
+  return `${parts.isNegative ? '-' : ''}$${renderUnsignedDecimal(parts)}`;
+};
+
+export const formatCount = (value: number | null | undefined) =>
+  value === null ||
+  value === undefined ||
+  !Number.isSafeInteger(value) ||
+  value < 0
     ? '—'
-    : `${value.toFixed(2)}%`;
+    : new Intl.NumberFormat('en-US').format(value);
+
+export const formatChange = (value: string | null | undefined) => {
+  const parts = parseDecimal(value);
+  if (!parts) return '—';
+  const unsigned = renderUnsignedDecimal(parts);
+  const isZero = /^0(?:\.0*)?$/.test(unsigned);
+  return `${parts.isNegative ? '-' : isZero ? '' : '+'}${unsigned}`;
+};
+
+export const formatPercent = (value: string | null | undefined) => {
+  const formatted = formatDecimal(value);
+  return formatted === '—' ? formatted : `${formatted}%`;
+};
+
+export const formatPercentChange = (value: string | null | undefined) => {
+  const formatted = formatChange(value);
+  return formatted === '—' ? formatted : `${formatted}%`;
+};
