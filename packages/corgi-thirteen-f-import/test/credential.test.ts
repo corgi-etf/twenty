@@ -5,15 +5,9 @@ import {
   APPROVED_WORKSPACE_ID,
   APPROVED_WORKSPACE_NAME,
   THIRTEEN_F_APPLICATION_UNIVERSAL_IDENTIFIER,
-  THIRTEEN_F_FILE_FIELD_UNIVERSAL_IDENTIFIER,
   THIRTEEN_F_HOLDING_OBJECT_UNIVERSAL_IDENTIFIER,
-  THIRTEEN_F_IMPORT_ERROR_OBJECT_UNIVERSAL_IDENTIFIER,
-  THIRTEEN_F_IMPORT_RUN_OBJECT_UNIVERSAL_IDENTIFIER,
   THIRTEEN_F_MANAGER_OBJECT_UNIVERSAL_IDENTIFIER,
-  THIRTEEN_F_OBJECT_UNIVERSAL_IDENTIFIER,
-  THIRTEEN_F_PENDING_FILE_FIELD_UNIVERSAL_IDENTIFIER,
   THIRTEEN_F_SECURITY_OBJECT_UNIVERSAL_IDENTIFIER,
-  THIRTEEN_F_SOURCE_NODE_FIELD_UNIVERSAL_IDENTIFIER,
 } from '../src/constants.ts';
 import {
   cleanupImportCredential,
@@ -23,16 +17,13 @@ import {
   type ImportCredentialLease,
 } from '../src/credential.ts';
 
-const objectMetadataId = 'b1fab26e-4e38-4a95-a653-3cdb014a6b28';
 const normalizedObjectMetadataIds = [
   'a1fab26e-4e38-4a95-a653-3cdb014a6b28',
   'a2fab26e-4e38-4a95-a653-3cdb014a6b28',
   'a3fab26e-4e38-4a95-a653-3cdb014a6b28',
-  'a4fab26e-4e38-4a95-a653-3cdb014a6b28',
-  'a5fab26e-4e38-4a95-a653-3cdb014a6b28',
 ];
-const objectMetadataIds = [objectMetadataId, ...normalizedObjectMetadataIds];
-const readObjectMetadataIds = normalizedObjectMetadataIds.slice(0, 3);
+const objectMetadataIds = normalizedObjectMetadataIds;
+const readObjectMetadataIds = normalizedObjectMetadataIds;
 const apiKeyId = 'bc841975-9c6e-44d8-8bd7-8048312b7b0e';
 
 const preflight = () => ({
@@ -44,44 +35,13 @@ const preflight = () => ({
     currentUserWorkspace: {
       id: '8ac22e56-229d-4fd9-a1ad-d315755b0d3d',
       isImpersonating: false,
-      permissionFlags: ['ROLES', 'API_KEYS_AND_WEBHOOKS', 'UPLOAD_FILE'],
+      permissionFlags: ['ROLES', 'API_KEYS_AND_WEBHOOKS'],
     },
   },
   findOneApplication: {
     universalIdentifier: THIRTEEN_F_APPLICATION_UNIVERSAL_IDENTIFIER,
     state: 'INSTALLED',
     objects: [
-      {
-        id: objectMetadataId,
-        universalIdentifier: THIRTEEN_F_OBJECT_UNIVERSAL_IDENTIFIER,
-        nameSingular: 'thirteenFFiling',
-        namePlural: 'thirteenFFilings',
-        fieldsList: [
-          {
-            universalIdentifier: THIRTEEN_F_FILE_FIELD_UNIVERSAL_IDENTIFIER,
-            name: 'file',
-            type: 'FILES',
-            isActive: true,
-            isUnique: false,
-          },
-          {
-            universalIdentifier:
-              THIRTEEN_F_SOURCE_NODE_FIELD_UNIVERSAL_IDENTIFIER,
-            name: 'sourceNodeId',
-            type: 'TEXT',
-            isActive: true,
-            isUnique: true,
-          },
-          {
-            universalIdentifier:
-              THIRTEEN_F_PENDING_FILE_FIELD_UNIVERSAL_IDENTIFIER,
-            name: 'importPendingFileId',
-            type: 'TEXT',
-            isActive: true,
-            isUnique: false,
-          },
-        ],
-      },
       ...[
         [
           THIRTEEN_F_MANAGER_OBJECT_UNIVERSAL_IDENTIFIER,
@@ -97,16 +57,6 @@ const preflight = () => ({
           THIRTEEN_F_HOLDING_OBJECT_UNIVERSAL_IDENTIFIER,
           'thirteenFHolding',
           'thirteenFHoldings',
-        ],
-        [
-          THIRTEEN_F_IMPORT_RUN_OBJECT_UNIVERSAL_IDENTIFIER,
-          'thirteenFImportRun',
-          'thirteenFImportRuns',
-        ],
-        [
-          THIRTEEN_F_IMPORT_ERROR_OBJECT_UNIVERSAL_IDENTIFIER,
-          'thirteenFImportError',
-          'thirteenFImportErrors',
         ],
       ].map(([universalIdentifier, nameSingular, namePlural], index) => ({
         id: normalizedObjectMetadataIds[index],
