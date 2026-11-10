@@ -100,6 +100,27 @@ const STYLES = {
     font: 'inherit',
     fontWeight: 650,
   },
+  details: { minWidth: 150 },
+  detailsSummary: {
+    color: COLORS.accent,
+    cursor: 'pointer',
+    fontWeight: 650,
+    whiteSpace: 'nowrap',
+  },
+  detailsBody: {
+    display: 'grid',
+    gap: 12,
+    minWidth: 280,
+    paddingTop: 10,
+  },
+  detailsList: {
+    display: 'grid',
+    gridTemplateColumns: 'minmax(110px, auto) minmax(120px, 1fr)',
+    gap: '6px 12px',
+    margin: 0,
+  },
+  detailsTerm: { color: COLORS.muted, fontSize: 11 },
+  detailsValue: { color: COLORS.ink, fontSize: 11, margin: 0 },
   backButton: {
     alignSelf: 'flex-start',
     border: `1px solid ${COLORS.border}`,
@@ -128,9 +149,9 @@ const EmptyState = ({ children }: { children: ReactNode }) => (
   <div style={STYLES.empty}>{children}</div>
 );
 
-const LegacyContextCell = ({ holding }: { holding: Holding }) => {
+const LegacyContextDetails = ({ holding }: { holding: Holding }) => {
   const context = holding.legacyContext;
-  if (!context) return <>—</>;
+  if (!context) return null;
   const legacyValues: Array<[string, string | null]> = [
     ['Portfolio', context.portfolioName],
     ['Target ticker', context.targetTicker],
@@ -144,14 +165,52 @@ const LegacyContextCell = ({ holding }: { holding: Holding }) => {
   const values = legacyValues.filter(([, value]) => value && value !== '—');
 
   return (
-    <div style={{ display: 'grid', gap: 4, minWidth: 180 }}>
+    <div style={{ display: 'grid', gap: 6 }}>
       <span style={STYLES.badge}>Unverified legacy source</span>
-      {values.map(([label, value]) => (
-        <div key={label} style={STYLES.muted}>
-          {label}: {value}
-        </div>
-      ))}
+      <dl style={STYLES.detailsList}>
+        {values.map(([label, value]) => (
+          <div key={label} style={{ display: 'contents' }}>
+            <dt style={STYLES.detailsTerm}>{label}</dt>
+            <dd style={STYLES.detailsValue}>{value}</dd>
+          </div>
+        ))}
+      </dl>
     </div>
+  );
+};
+
+const PositionDetails = ({ holding }: { holding: Holding }) => {
+  const details: Array<[string, string]> = [
+    ['CUSIP', holding.cusip ?? '—'],
+    ['Security class', holding.titleOfClass ?? '—'],
+    ['Put / call', holding.putCall ?? '—'],
+    ['Investment discretion', holding.investmentDiscretion ?? '—'],
+    ['Other manager', holding.otherManager ?? '—'],
+    ['Voting — sole', formatDecimal(holding.votingAuthority.sole)],
+    ['Voting — shared', formatDecimal(holding.votingAuthority.shared)],
+    ['Voting — none', formatDecimal(holding.votingAuthority.none)],
+  ];
+
+  return (
+    <details style={STYLES.details}>
+      <summary
+        style={STYLES.detailsSummary}
+        aria-label={`View details for ${holding.ticker ?? holding.issuerName}`}
+      >
+        View details
+      </summary>
+      <div style={STYLES.detailsBody}>
+        <dl style={STYLES.detailsList}>
+          {details.map(([label, value]) => (
+            <div key={label} style={{ display: 'contents' }}>
+              <dt style={STYLES.detailsTerm}>{label}</dt>
+              <dd style={STYLES.detailsValue}>{value}</dd>
+            </div>
+          ))}
+        </dl>
+        <LegacyContextDetails holding={holding} />
+      </div>
+    </details>
   );
 };
 
@@ -229,20 +288,17 @@ const HoldingsTable = ({
             {showFirm ? <th style={STYLES.th}>Firm</th> : null}
             <th style={STYLES.th}>Ticker</th>
             <th style={STYLES.th}>Issuer</th>
-            <th style={STYLES.th}>CUSIP</th>
-            <th style={STYLES.th}>Class</th>
-            <th style={{ ...STYLES.th, textAlign: 'right' }}>Reported value</th>
             <th style={{ ...STYLES.th, textAlign: 'right' }}>Shares / principal</th>
-            <th style={STYLES.th}>Put / call</th>
-            <th style={{ ...STYLES.th, textAlign: 'right' }}>Portfolio</th>
-            <th style={STYLES.th}>Discretion</th>
-            <th style={STYLES.th}>Other manager</th>
-            <th style={STYLES.th}>Voting authority</th>
-            <th style={{ ...STYLES.th, textAlign: 'right' }}>
-              Change vs prior quarter
+            <th style={{ ...STYLES.th, textAlign: 'right' }}>Value</th>
+            <th style={{ ...STYLES.th, textAlign: 'right' }}>Portfolio %</th>
+            <th
+              style={{ ...STYLES.th, textAlign: 'right' }}
+              aria-label="Change versus prior quarter"
+            >
+              Change
             </th>
-            <th style={STYLES.th}>Legacy context</th>
             <th style={STYLES.th}>As of</th>
+            <th style={STYLES.th}>Details</th>
           </tr>
         </thead>
         <tbody>
@@ -273,25 +329,15 @@ const HoldingsTable = ({
                 )}
               </td>
               <td style={STYLES.td}>{holding.issuerName}</td>
-              <td style={STYLES.td}>{holding.cusip ?? '—'}</td>
-              <td style={STYLES.td}>{holding.titleOfClass ?? '—'}</td>
-              <td style={{ ...STYLES.td, textAlign: 'right' }}>
-                {formatMoney(holding.reportedValue)}
-              </td>
               <td style={{ ...STYLES.td, textAlign: 'right' }}>
                 {formatDecimal(holding.sharesOrPrincipal)}
                 {holding.shareType ? ` ${holding.shareType}` : ''}
               </td>
-              <td style={STYLES.td}>{holding.putCall ?? '—'}</td>
+              <td style={{ ...STYLES.td, textAlign: 'right' }}>
+                {formatMoney(holding.reportedValue)}
+              </td>
               <td style={{ ...STYLES.td, textAlign: 'right' }}>
                 {formatPercent(holding.portfolioPercent)}
-              </td>
-              <td style={STYLES.td}>{holding.investmentDiscretion ?? '—'}</td>
-              <td style={STYLES.td}>{holding.otherManager ?? '—'}</td>
-              <td style={STYLES.td}>
-                <div>Sole {formatDecimal(holding.votingAuthority.sole)}</div>
-                <div>Shared {formatDecimal(holding.votingAuthority.shared)}</div>
-                <div>None {formatDecimal(holding.votingAuthority.none)}</div>
               </td>
               <td style={{ ...STYLES.td, textAlign: 'right' }}>
                 <div>Shares {formatChange(holding.quarterChange)}</div>
@@ -300,15 +346,15 @@ const HoldingsTable = ({
                 </div>
               </td>
               <td style={STYLES.td}>
-                <LegacyContextCell holding={holding} />
-              </td>
-              <td style={STYLES.td}>
                 {formatDate(holding.asOfDate)}
                 {holding.dateBasis === 'LEGACY_AS_OF_UNVERIFIED' ? (
                   <div style={{ marginTop: 6 }}>
                     <DateBasisBadge basis={holding.dateBasis} />
                   </div>
                 ) : null}
+              </td>
+              <td style={STYLES.td}>
+                <PositionDetails holding={holding} />
               </td>
             </tr>
           ))}

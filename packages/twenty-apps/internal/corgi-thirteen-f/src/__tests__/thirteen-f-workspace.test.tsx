@@ -115,6 +115,20 @@ describe('13F workspace journeys', () => {
     expect(html).toContain('NVIDIA Corporation');
     expect(html).toContain('67066G104');
     expect(html).toContain('12.5%');
+    expect(html).toMatch(
+      /Ticker<\/th>.*Issuer<\/th>.*Shares \/ principal<\/th>.*Value<\/th>.*Portfolio %<\/th>.*Change<\/th>.*As of<\/th>.*Details<\/th>/s,
+    );
+    expect(html).not.toMatch(/<th[^>]*>CUSIP<\/th>/);
+    expect(html).not.toMatch(/<th[^>]*>Voting authority<\/th>/);
+    expect(html).not.toMatch(/<th[^>]*>Legacy context<\/th>/);
+    expect(html).toContain('<details');
+    expect(html).toContain('View details');
+    expect(html).toContain('aria-label="View details for NVDA"');
+    expect(html).toContain('Security class');
+    expect(html).toContain('Put / call');
+    expect(html).toContain('Investment discretion');
+    expect(html).toContain('Other manager');
+    expect(html).toContain('Voting — sole');
   });
 
   it('uses the selected filing metadata when reviewing an earlier date', () => {
@@ -170,6 +184,7 @@ describe('13F workspace journeys', () => {
     expect(html).toContain('Firms holding NVDA');
     expect(html).toContain('Example Capital');
     expect(html).toContain('Sep 30, 2026');
+    expect(html).toMatch(/Firm<\/th>.*Ticker<\/th>/s);
   });
 
   it('labels only comparable SEC changes as change versus the prior quarter', () => {
@@ -195,7 +210,7 @@ describe('13F workspace journeys', () => {
       />,
     );
 
-    expect(html).toContain('Change vs prior quarter');
+    expect(html).toContain('aria-label="Change versus prior quarter"');
     expect(html).toContain('+1,200');
     expect(html).toContain('+0.15%');
 
@@ -224,8 +239,8 @@ describe('13F workspace journeys', () => {
     );
     expect(legacyHtml).not.toContain('+1,200');
     expect(legacyHtml).toContain('Unverified legacy source');
-    expect(legacyHtml).toContain('Target ticker: NVDA');
-    expect(legacyHtml).toContain('Change value: 1,200');
+    expect(legacyHtml).toMatch(/Target ticker<\/dt><dd[^>]*>NVDA<\/dd>/);
+    expect(legacyHtml).toMatch(/Change value<\/dt><dd[^>]*>1,200<\/dd>/);
   });
 
   it('preserves workspace selection in URL query state', () => {
