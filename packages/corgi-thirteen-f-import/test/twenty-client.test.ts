@@ -109,7 +109,7 @@ test('rejects noncanonical CRM origins before any request', () => {
   );
 });
 
-test('reads only Company id and name for exact manager mapping', async () => {
+test('reads only valid Company names and skips unusable optional links', async () => {
   const requests: string[] = [];
   const client = new TwentyImportClient({
     origin: APPROVED_CRM_ORIGIN,
@@ -125,6 +125,17 @@ test('reads only Company id and name for exact manager mapping', async () => {
               id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
               name: 'Alpine Capital',
               domainName: { primaryLinkUrl: 'must-not-survive' },
+            },
+            {
+              id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+              name: '   ',
+            },
+            {
+              id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+            },
+            {
+              id: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
+              name: { unexpected: 'shape' },
             },
           ],
         },

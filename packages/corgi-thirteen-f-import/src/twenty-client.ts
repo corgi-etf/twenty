@@ -119,12 +119,11 @@ export class TwentyImportClient {
         if (
           !isRecord(value) ||
           typeof value.id !== 'string' ||
-          !UUID_PATTERN.test(value.id) ||
-          typeof value.name !== 'string' ||
-          !value.name.trim()
+          !UUID_PATTERN.test(value.id)
         ) {
           throw new Error('CRM companies response is invalid');
         }
+        if (typeof value.name !== 'string' || !value.name.trim()) continue;
         companies.push({ id: value.id.toLowerCase(), name: value.name });
       }
       const pageInfo =
