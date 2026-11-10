@@ -44,6 +44,12 @@ test('reconciles the exact CRM inventory before publishing an aggregate receipt'
   const receipt = await runLegacyCrmMigration({
     expectedSourceRows: 2,
     crm: {
+      listCompanies: async () => [
+        {
+          id: '33333333-3333-4333-8333-333333333333',
+          name: ' alpine  capital ',
+        },
+      ],
       listHoldings: async () => [
         row('11111111-1111-4111-8111-111111111111', 'TQQQ'),
         row('22222222-2222-4222-8222-222222222222', 'SQQQ'),
@@ -62,6 +68,14 @@ test('reconciles the exact CRM inventory before publishing an aggregate receipt'
     (submitted!.dataset as { holdings: unknown[] }).holdings.length,
     2,
   );
+  assert.equal(
+    (
+      submitted!.dataset as {
+        managers: Array<{ crmCompanyId?: string }>;
+      }
+    ).managers[0]?.crmCompanyId,
+    '33333333-3333-4333-8333-333333333333',
+  );
   assert.deepEqual(receipt, {
     schemaVersion: 3,
     sourceSystem: 'LEGACY_NORMALIZED',
@@ -72,6 +86,11 @@ test('reconciles the exact CRM inventory before publishing an aggregate receipt'
     duplicateRows: 0,
     rejectedRows: 0,
     rejectionCounts: {},
+    companyMappingCounts: {
+      matched: 1,
+      ambiguous: 0,
+      unmatched: 0,
+    },
     normalizedCounts: {
       managers: 1,
       filings: 1,
@@ -95,6 +114,7 @@ test('does not publish when the production CRM inventory count drifts', async ()
     runLegacyCrmMigration({
       expectedSourceRows: 28_320,
       crm: {
+        listCompanies: async () => [],
         listHoldings: async () => [
           row('11111111-1111-4111-8111-111111111111', 'TQQQ'),
         ],
@@ -117,6 +137,7 @@ test('does not publish until every expected CRM row is accepted exactly once', a
     runLegacyCrmMigration({
       expectedSourceRows: 3,
       crm: {
+        listCompanies: async () => [],
         listHoldings: async () => [
           row('11111111-1111-4111-8111-111111111111', 'TQQQ'),
           {

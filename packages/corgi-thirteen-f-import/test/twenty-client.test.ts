@@ -108,3 +108,41 @@ test('rejects noncanonical CRM origins before any request', () => {
     /origin is not approved/,
   );
 });
+
+test('reads only Company id and name for exact manager mapping', async () => {
+  const requests: string[] = [];
+  const client = new TwentyImportClient({
+    origin: APPROVED_CRM_ORIGIN,
+    token: 'short-lived-read-token',
+    sleep: async () => undefined,
+    fetcher: async (input) => {
+      requests.push(String(input));
+
+      return json({
+        data: {
+          companies: [
+            {
+              id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+              name: 'Alpine Capital',
+              domainName: { primaryLinkUrl: 'must-not-survive' },
+            },
+          ],
+        },
+        pageInfo: { hasNextPage: false, endCursor: null },
+      });
+    },
+  });
+
+  const companies = await client.listCompanies();
+
+  assert.deepEqual(companies, [
+    {
+      id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+      name: 'Alpine Capital',
+    },
+  ]);
+  const url = new URL(requests[0]!);
+  assert.equal(url.pathname, '/rest/companies');
+  assert.equal(url.searchParams.get('fields'), 'id,name');
+  assert.equal(url.searchParams.has('depth'), false);
+});

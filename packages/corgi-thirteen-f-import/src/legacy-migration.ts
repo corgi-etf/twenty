@@ -14,7 +14,6 @@ type LegacyManagerRelation = {
   id?: unknown;
   name?: unknown;
   normalizedName?: unknown;
-  crmCompanyId?: unknown;
 };
 
 type LegacySecurityRelation = {
@@ -42,6 +41,17 @@ export type LegacyCrmHolding = {
   security?: LegacySecurityRelation | null;
 };
 
+export type LegacyCrmCompany = {
+  id: string;
+  name?: unknown;
+};
+
+export type CompanyMappingCounts = {
+  matched: number;
+  ambiguous: number;
+  unmatched: number;
+};
+
 export type LegacyRejectionCode =
   | 'DUPLICATE_SOURCE_OCCURRENCE'
   | 'INACTIVE_SOURCE_ROW'
@@ -61,6 +71,7 @@ export type LegacyMigrationAccounting = {
 
 export type LegacyMigrationResult = NormalizedDataset & {
   accounting: LegacyMigrationAccounting;
+  companyMappingCounts: CompanyMappingCounts;
 };
 
 const UUID_PATTERN =
@@ -72,6 +83,9 @@ const text = (value: unknown): string =>
   typeof value === 'string'
     ? value.normalize('NFKC').trim().replace(/\s+/g, ' ')
     : '';
+
+const exactName = (value: unknown): string =>
+  text(value).toLocaleLowerCase('en-US');
 
 const sha256 = (value: string): string =>
   createHash('sha256').update(value).digest('hex');
@@ -109,6 +123,7 @@ const sortBy = <T>(values: Iterable<T>, key: (value: T) => string): T[] =>
 
 export const reconcileLegacyCrmHoldings = (
   rows: readonly LegacyCrmHolding[],
+  companies: readonly LegacyCrmCompany[] = [],
 ): LegacyMigrationResult => {
   const managers = new Map<string, NormalizedManager>();
   const filings = new Map<string, NormalizedFiling>();
@@ -175,10 +190,6 @@ export const reconcileLegacyCrmHoldings = (
       sourceKey: managerSourceKey,
       legalName: managerName,
     };
-    const crmCompanyId = text(row.manager?.crmCompanyId);
-    if (UUID_PATTERN.test(crmCompanyId)) {
-      manager.crmCompanyId = crmCompanyId.toLowerCase();
-    }
     managers.set(managerSourceKey, manager);
     securities.set(securitySourceKey, {
       sourceKey: securitySourceKey,
@@ -223,12 +234,49 @@ export const reconcileLegacyCrmHoldings = (
   ) {
     throw new Error('Legacy CRM row accounting is inconsistent');
   }
+  const companyIdsByName = new Map<string, Set<string>>();
+  for (const company of companies) {
+    const id = text(company.id).toLowerCase();
+    const name = exactName(company.name);
+    if (!UUID_PATTERN.test(id) || !name) continue;
+    const ids = companyIdsByName.get(name) ?? new Set<string>();
+    ids.add(id);
+    companyIdsByName.set(name, ids);
+  }
+  const managerCountByName = new Map<string, number>();
+  for (const manager of managers.values()) {
+    const name = exactName(manager.legalName);
+    managerCountByName.set(name, (managerCountByName.get(name) ?? 0) + 1);
+  }
+  const companyMappingCounts: CompanyMappingCounts = {
+    matched: 0,
+    ambiguous: 0,
+    unmatched: 0,
+  };
+  const mappedManagers = [...managers.values()].map((manager) => {
+    const name = exactName(manager.legalName);
+    const candidates = companyIdsByName.get(name);
+    if (!candidates) {
+      companyMappingCounts.unmatched += 1;
+
+      return manager;
+    }
+    if (candidates.size !== 1 || managerCountByName.get(name) !== 1) {
+      companyMappingCounts.ambiguous += 1;
+
+      return manager;
+    }
+    companyMappingCounts.matched += 1;
+
+    return { ...manager, crmCompanyId: [...candidates][0] };
+  });
 
   return {
-    managers: sortBy(managers.values(), ({ sourceKey }) => sourceKey),
+    managers: sortBy(mappedManagers, ({ sourceKey }) => sourceKey),
     filings: sortBy(filings.values(), ({ sourceKey }) => sourceKey),
     securities: sortBy(securities.values(), ({ sourceKey }) => sourceKey),
     holdings: sortBy(holdings, ({ rowKey }) => rowKey),
     accounting,
+    companyMappingCounts,
   };
 };

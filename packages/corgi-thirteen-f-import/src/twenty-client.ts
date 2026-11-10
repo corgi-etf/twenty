@@ -1,5 +1,5 @@
 import { APPROVED_CRM_ORIGIN } from './constants.ts';
-import type { LegacyCrmHolding } from './legacy-migration.ts';
+import type { LegacyCrmCompany, LegacyCrmHolding } from './legacy-migration.ts';
 
 export type TwentyImportClientOptions = {
   fetcher?: typeof fetch;
@@ -13,6 +13,8 @@ const API_REQUEST_INTERVAL_MILLISECONDS = 650;
 const MAX_API_REQUEST_ATTEMPTS = 3;
 const MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
 const MAX_RETRY_AFTER_MILLISECONDS = 60_000;
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 export class TwentyImportClient {
   private readonly fetcher: typeof fetch;
@@ -96,6 +98,50 @@ export class TwentyImportClient {
       cursor = nextCursor;
     }
     throw new Error('CRM holdings pagination exceeded its hard limit');
+  }
+
+  async listCompanies(): Promise<LegacyCrmCompany[]> {
+    const companies: LegacyCrmCompany[] = [];
+    const seenCursors = new Set<string>();
+    let cursor: string | undefined;
+    for (let page = 0; page < 1_000; page += 1) {
+      const url = new URL('/rest/companies', this.origin);
+      url.searchParams.set('limit', '100');
+      url.searchParams.set('fields', 'id,name');
+      if (cursor) url.searchParams.set('starting_after', cursor);
+      const body = await this.getJson(url);
+      const data = isRecord(body) && isRecord(body.data) ? body.data : null;
+      const pageRows = data?.companies;
+      if (!Array.isArray(pageRows)) {
+        throw new Error('CRM companies response is invalid');
+      }
+      for (const value of pageRows) {
+        if (
+          !isRecord(value) ||
+          typeof value.id !== 'string' ||
+          !UUID_PATTERN.test(value.id) ||
+          typeof value.name !== 'string' ||
+          !value.name.trim()
+        ) {
+          throw new Error('CRM companies response is invalid');
+        }
+        companies.push({ id: value.id.toLowerCase(), name: value.name });
+      }
+      const pageInfo =
+        isRecord(body) && isRecord(body.pageInfo) ? body.pageInfo : null;
+      if (pageInfo?.hasNextPage !== true) return companies;
+      const nextCursor = pageInfo.endCursor;
+      if (
+        typeof nextCursor !== 'string' ||
+        !nextCursor ||
+        seenCursors.has(nextCursor)
+      ) {
+        throw new Error('CRM companies pagination is invalid');
+      }
+      seenCursors.add(nextCursor);
+      cursor = nextCursor;
+    }
+    throw new Error('CRM companies pagination exceeded its hard limit');
   }
 
   private async getJson(url: URL): Promise<unknown> {

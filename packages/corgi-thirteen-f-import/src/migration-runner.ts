@@ -7,6 +7,8 @@ import type {
 } from './ingestion-contract.ts';
 import {
   reconcileLegacyCrmHoldings,
+  type CompanyMappingCounts,
+  type LegacyCrmCompany,
   type LegacyCrmHolding,
   type LegacyMigrationAccounting,
 } from './legacy-migration.ts';
@@ -14,6 +16,7 @@ import {
 export const EXPECTED_LEGACY_CRM_HOLDING_ROWS = 28_320;
 
 type CrmReader = {
+  listCompanies(): Promise<LegacyCrmCompany[]>;
   listHoldings(): Promise<LegacyCrmHolding[]>;
 };
 
@@ -30,6 +33,7 @@ export type LegacyMigrationReceipt = LegacyMigrationAccounting & {
   sourceSystem: 'LEGACY_NORMALIZED';
   coverage: 'PARTIAL';
   contentSha256: string;
+  companyMappingCounts: CompanyMappingCounts;
   normalizedCounts: {
     managers: number;
     filings: number;
@@ -55,7 +59,9 @@ export const runLegacyCrmMigration = async (options: {
       `Legacy migration expected ${expectedSourceRows} normalized CRM rows; received ${rows.length}`,
     );
   }
-  const { accounting, ...dataset } = reconcileLegacyCrmHoldings(rows);
+  const companies = await options.crm.listCompanies();
+  const { accounting, companyMappingCounts, ...dataset } =
+    reconcileLegacyCrmHoldings(rows, companies);
   if (
     accounting.acceptedRows !== expectedSourceRows ||
     accounting.duplicateRows !== 0 ||
@@ -89,6 +95,21 @@ export const runLegacyCrmMigration = async (options: {
       throw new Error('Backend ingestion receipt does not reconcile');
     }
   }
+  const expectedCompanyIds = new Set(
+    dataset.managers.flatMap(({ crmCompanyId }) =>
+      crmCompanyId ? [crmCompanyId] : [],
+    ),
+  );
+  const receivedCompanyIds = new Set(
+    (completed.companyMappings ?? []).map(({ crmCompanyId }) => crmCompanyId),
+  );
+  if (
+    expectedCompanyIds.size !== companyMappingCounts.matched ||
+    receivedCompanyIds.size !== expectedCompanyIds.size ||
+    ![...expectedCompanyIds].every((id) => receivedCompanyIds.has(id))
+  ) {
+    throw new Error('Backend company mapping receipt does not reconcile');
+  }
   const { companyMappings: _companyMappings, ...aggregateBackendReceipt } =
     completed;
 
@@ -98,6 +119,7 @@ export const runLegacyCrmMigration = async (options: {
     coverage: 'PARTIAL',
     contentSha256,
     ...accounting,
+    companyMappingCounts,
     normalizedCounts,
     backend: aggregateBackendReceipt,
   };

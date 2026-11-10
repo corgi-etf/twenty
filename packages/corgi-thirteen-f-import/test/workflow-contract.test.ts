@@ -39,6 +39,7 @@ test('workflow retains only the aggregate schema-three receipt', async () => {
     'duplicateRows',
     'rejectedRows',
     'rejectionCounts',
+    'companyMappingCounts',
     'normalizedCounts',
     'batchId',
     'status',

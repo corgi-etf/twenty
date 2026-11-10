@@ -3,6 +3,7 @@ import { test } from 'node:test';
 
 import {
   reconcileLegacyCrmHoldings,
+  type LegacyCrmCompany,
   type LegacyCrmHolding,
 } from '../src/legacy-migration.ts';
 
@@ -41,6 +42,8 @@ const holding = (
   },
   ...overrides,
 });
+
+const company = (id: string, name: string): LegacyCrmCompany => ({ id, name });
 
 test('maps legacy rows without inventing SEC-only filing or security fields', () => {
   const result = reconcileLegacyCrmHoldings([holding()]);
@@ -220,4 +223,55 @@ test('accounts for every source row with duplicate and rejection reasons', () =>
       result.accounting.duplicateRows +
       result.accounting.rejectedRows,
   );
+});
+
+test('maps a manager only to one exact normalized Company name', () => {
+  const result = reconcileLegacyCrmHoldings(
+    [holding()],
+    [
+      company('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', '  ALPINE   CAPITAL  '),
+      company('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', 'Other Company'),
+    ],
+  );
+
+  assert.equal(
+    result.managers[0]?.crmCompanyId,
+    'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+  );
+  assert.deepEqual(result.companyMappingCounts, {
+    matched: 1,
+    ambiguous: 0,
+    unmatched: 0,
+  });
+});
+
+test('does not map a manager when the exact Company name collides', () => {
+  const result = reconcileLegacyCrmHoldings(
+    [holding()],
+    [
+      company('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 'Alpine Capital'),
+      company('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', 'alpine capital'),
+    ],
+  );
+
+  assert.equal(result.managers[0]?.crmCompanyId, undefined);
+  assert.deepEqual(result.companyMappingCounts, {
+    matched: 0,
+    ambiguous: 1,
+    unmatched: 0,
+  });
+});
+
+test('reports a manager with no exact Company name as unmatched', () => {
+  const result = reconcileLegacyCrmHoldings(
+    [holding()],
+    [company('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 'Alpine Capital LLC')],
+  );
+
+  assert.equal(result.managers[0]?.crmCompanyId, undefined);
+  assert.deepEqual(result.companyMappingCounts, {
+    matched: 0,
+    ambiguous: 0,
+    unmatched: 1,
+  });
 });
