@@ -53,6 +53,12 @@ test('submits deterministic idempotent begin, chunk, and complete requests', asy
         filingSourceKey: 'filing:1',
         securitySourceKey: 'security:1',
         sharesOrPrincipal: '1250',
+        legacyContext: {
+          portfolioName: 'Growth Strategy',
+          targetTicker: 'CORG',
+          latestChange: '-25',
+          estimatedValue: '125000',
+        },
       },
     ],
   };

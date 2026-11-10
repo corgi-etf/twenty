@@ -10,6 +10,7 @@ import type {
   NormalizedSecurity,
   NormalizedSourceAdapter,
 } from './ingestion-contract.ts';
+import { legacyHoldingContext } from './legacy-context.ts';
 
 const MAX_WORKBOOK_BYTES = 8 * 1024 * 1024;
 const MAX_ROWS_PER_SHEET = 100_000;
@@ -159,11 +160,22 @@ export const normalizeLegacyWorkbook = (
         legacyAsOfDate,
         dateBasis: 'LEGACY_AS_OF_UNVERIFIED',
       });
+      const legacyContext = legacyHoldingContext({
+        targetTicker: row[1],
+        portfolioName: row[3],
+        estimatedValue: row[10],
+        ownershipPercent: row[11],
+        portfolioPercent: row[12],
+        latestChange: row[14],
+        changeValue: row[15],
+        changePercent: row[16],
+      });
       const canonicalRow = {
         managerSourceKey,
         securitySourceKey,
         filingSourceKey,
         sharesOrPrincipal,
+        legacyContext,
       };
       const occurrenceIdentity = JSON.stringify(canonicalRow);
       const ordinal = (occurrenceCounts.get(occurrenceIdentity) ?? 0) + 1;
@@ -173,6 +185,7 @@ export const normalizeLegacyWorkbook = (
         filingSourceKey,
         securitySourceKey,
         sharesOrPrincipal,
+        ...(legacyContext ? { legacyContext } : {}),
       });
       accounting.acceptedRows += 1;
     }

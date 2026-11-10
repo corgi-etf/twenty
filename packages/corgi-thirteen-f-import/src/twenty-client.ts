@@ -47,6 +47,27 @@ export class TwentyImportClient {
       const url = new URL('/rest/thirteenFHoldings', this.origin);
       url.searchParams.set('limit', '100');
       url.searchParams.set('depth', '1');
+      url.searchParams.set(
+        'fields',
+        [
+          'id',
+          'occurrenceKey',
+          'managerName',
+          'portfolioName',
+          'targetTicker',
+          'securityTicker',
+          'sharesHeld',
+          'latestChange',
+          'asOfDate',
+          'sourceType',
+          'ownershipPercent',
+          'portfolioPercent',
+          'isActive',
+          'rawData',
+          'manager',
+          'security',
+        ].join(','),
+      );
       if (cursor) url.searchParams.set('starting_after', cursor);
       const body = await this.getJson(url);
       const data = isRecord(body) && isRecord(body.data) ? body.data : null;

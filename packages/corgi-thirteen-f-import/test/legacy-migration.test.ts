@@ -14,11 +14,21 @@ const holding = (
   managerName: 'Alpine Capital',
   securityTicker: 'TQQQ',
   sharesHeld: 1250,
+  portfolioName: 'Growth Strategy',
   latestChange: -25,
+  ownershipPercent: 1.25,
+  portfolioPercent: 0.5,
   asOfDate: '2026-09-30',
   sourceType: '13F',
   isActive: true,
-  targetTicker: 'TQQQ',
+  targetTicker: 'CORG',
+  rawData: JSON.stringify({
+    'estimated value': '$125,000',
+    'change value': '($2,500.50)',
+    'change percent': '-2.0%',
+    'manager research': 'Secret Person',
+    notes: 'private',
+  }),
   manager: {
     id: '22222222-2222-4222-8222-222222222222',
     name: 'Alpine Capital',
@@ -63,12 +73,62 @@ test('maps legacy rows without inventing SEC-only filing or security fields', ()
       'legacy-filing:22222222-2222-4222-8222-222222222222:2026-09-30',
     securitySourceKey: 'crm-security:33333333-3333-4333-8333-333333333333',
     sharesOrPrincipal: '1250',
+    legacyContext: {
+      portfolioName: 'Growth Strategy',
+      targetTicker: 'CORG',
+      latestChange: '-25',
+      ownershipPercent: '1.25',
+      portfolioPercent: '0.5',
+      estimatedValue: '125000',
+      changeValue: '-2500.50',
+      changePercent: '-2.0',
+    },
   });
-  assert.equal('targetTicker' in result.holdings[0]!, false);
+  assert.equal('rawData' in result.holdings[0]!, false);
+  assert.doesNotMatch(JSON.stringify(result.holdings[0]), /secret|private/i);
   assert.equal('reportPeriod' in result.filings[0]!, false);
   assert.equal('filedAt' in result.filings[0]!, false);
   assert.equal('accessionNumber' in result.filings[0]!, false);
   assert.equal('cusip' in result.securities[0]!, false);
+});
+
+test('omits malformed optional legacy context without rejecting the holding', () => {
+  const result = reconcileLegacyCrmHoldings([
+    holding({
+      portfolioName: ' '.repeat(4),
+      targetTicker: 'not a ticker',
+      latestChange: Number.NaN,
+      ownershipPercent: 'not numeric',
+      portfolioPercent: Number.POSITIVE_INFINITY,
+      rawData: '{not json',
+    }),
+  ]);
+
+  assert.equal(result.accounting.acceptedRows, 1);
+  assert.equal('legacyContext' in result.holdings[0]!, false);
+});
+
+test('allows signed change metrics but omits negative magnitudes and percentages', () => {
+  const result = reconcileLegacyCrmHoldings([
+    holding({
+      portfolioName: undefined,
+      targetTicker: undefined,
+      latestChange: -6,
+      ownershipPercent: -1,
+      portfolioPercent: -2,
+      rawData: JSON.stringify({
+        'estimated value': -3,
+        'change value': -4,
+        'change percent': -5,
+      }),
+    }),
+  ]);
+
+  assert.deepEqual(result.holdings[0]?.legacyContext, {
+    latestChange: '-6',
+    changeValue: '-4',
+    changePercent: '-5',
+  });
 });
 
 test('accounts for every source row with duplicate and rejection reasons', () => {

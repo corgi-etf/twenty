@@ -7,6 +7,7 @@ import type {
   NormalizedManager,
   NormalizedSecurity,
 } from './ingestion-contract.ts';
+import { legacyHoldingContext } from './legacy-context.ts';
 
 type LegacyManagerRelation = {
   id?: unknown;
@@ -27,11 +28,15 @@ export type LegacyCrmHolding = {
   managerName?: unknown;
   securityTicker?: unknown;
   sharesHeld?: unknown;
+  portfolioName?: unknown;
   latestChange?: unknown;
+  ownershipPercent?: unknown;
+  portfolioPercent?: unknown;
   asOfDate?: unknown;
   sourceType?: unknown;
   isActive?: unknown;
   targetTicker?: unknown;
+  rawData?: unknown;
   manager?: LegacyManagerRelation | null;
   security?: LegacySecurityRelation | null;
 };
@@ -189,11 +194,20 @@ export const reconcileLegacyCrmHoldings = (
       legacyAsOfDate: asOfDate,
       dateBasis: 'LEGACY_AS_OF_UNVERIFIED',
     });
+    const legacyContext = legacyHoldingContext({
+      portfolioName: row.portfolioName,
+      targetTicker: row.targetTicker,
+      latestChange: row.latestChange,
+      ownershipPercent: row.ownershipPercent,
+      portfolioPercent: row.portfolioPercent,
+      rawData: row.rawData,
+    });
     holdings.push({
       rowKey: `crm-holding:${rowId}`,
       filingSourceKey,
       securitySourceKey,
       sharesOrPrincipal,
+      ...(legacyContext ? { legacyContext } : {}),
     });
   }
 

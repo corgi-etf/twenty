@@ -110,17 +110,24 @@ test('normalizes workbook bytes in memory and emits only verified 13F fields', (
     legacyAsOfDate: '2026-09-30',
     dateBasis: 'LEGACY_AS_OF_UNVERIFIED',
   });
-  assert.equal(result.holdings[0]?.sharesOrPrincipal, '100');
+  assert.deepEqual(result.holdings[0], {
+    rowKey: result.holdings[0]?.rowKey,
+    filingSourceKey: result.filings[0]?.sourceKey,
+    securitySourceKey: result.securities[0]?.sourceKey,
+    sharesOrPrincipal: '100',
+    legacyContext: {
+      portfolioName: 'Growth',
+      targetTicker: 'CORG',
+      latestChange: '10',
+      ownershipPercent: '1.2',
+      portfolioPercent: '0.4',
+      estimatedValue: '10000',
+      changeValue: '1000',
+      changePercent: '10',
+    },
+  });
   const serialized = JSON.stringify(result);
-  for (const excluded of [
-    'CORG',
-    'Growth',
-    'Chicago',
-    'estimated',
-    '10000',
-    'Added',
-    'workbookBytes',
-  ]) {
+  for (const excluded of ['Chicago', 'Added', 'workbookBytes']) {
     assert.doesNotMatch(serialized, new RegExp(excluded, 'i'));
   }
 });

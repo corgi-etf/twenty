@@ -35,6 +35,17 @@ export type NormalizedSecurity = {
   ticker?: string;
 };
 
+export type LegacyHoldingContext = {
+  portfolioName?: string;
+  targetTicker?: string;
+  latestChange?: string;
+  ownershipPercent?: string;
+  portfolioPercent?: string;
+  estimatedValue?: string;
+  changeValue?: string;
+  changePercent?: string;
+};
+
 export type NormalizedHolding = {
   rowKey: string;
   filingSourceKey: string;
@@ -50,6 +61,7 @@ export type NormalizedHolding = {
     shared?: string;
     none?: string;
   };
+  legacyContext?: LegacyHoldingContext;
 };
 
 export type NormalizedDataset = {

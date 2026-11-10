@@ -61,8 +61,11 @@ Every source adapter produces the same four record types:
 Legacy CRM data has no verified CIK, accession number, CUSIP, SEC filed date, issuer name, or title
 of class. The migration omits those values rather than inventing them. The CRM `asOfDate` is sent as
 `legacyAsOfDate` with `dateBasis: LEGACY_AS_OF_UNVERIFIED`; it is never relabeled as an SEC report
-period. Thematic target tickers, estimated values, sales contacts, portfolio percentages, movement
-labels, and other derived workbook context are not sent.
+period. Existing portfolio name, contextual target ticker, latest change, ownership percentage,
+portfolio percentage, estimated value, change value, and change percentage are preserved only in a
+typed `legacyContext` object. They never become canonical security identity or official SEC fields.
+Arbitrary raw JSON, sales contacts, geography, movement labels, notes, and other enrichment are not
+sent.
 
 Future SEC EDGAR adapters implement the same typed adapter interface but use `SEC_EDGAR` and
 `COMPLETE`. Complete SEC batches must carry the official issuer, title of class, CUSIP, report

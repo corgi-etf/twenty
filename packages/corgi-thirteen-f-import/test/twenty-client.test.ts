@@ -61,6 +61,27 @@ test('reads every normalized CRM holding page without mutation methods', async (
   assert.equal(firstUrl.searchParams.get('limit'), '100');
   assert.equal(firstUrl.searchParams.get('depth'), '1');
   assert.equal(
+    firstUrl.searchParams.get('fields'),
+    [
+      'id',
+      'occurrenceKey',
+      'managerName',
+      'portfolioName',
+      'targetTicker',
+      'securityTicker',
+      'sharesHeld',
+      'latestChange',
+      'asOfDate',
+      'sourceType',
+      'ownershipPercent',
+      'portfolioPercent',
+      'isActive',
+      'rawData',
+      'manager',
+      'security',
+    ].join(','),
+  );
+  assert.equal(
     new URL(requests[1]!.url).searchParams.get('starting_after'),
     'cursor-1',
   );
