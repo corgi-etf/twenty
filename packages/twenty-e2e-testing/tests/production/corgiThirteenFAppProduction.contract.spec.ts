@@ -40,14 +40,15 @@ const metadataSchema = readFileSync(
 
 const APP_ID = '38ba5a6a-430e-455a-a27b-fba07af35944';
 const WORKSPACE_ID = 'eabf5d9d-fc99-4acb-b160-710ecb1db996';
-const VERSION = '0.3.0';
+const VERSION = '0.3.1';
+const PUBLISHED_VERSION = '0.3.0';
 const PREVIOUS_VERSION = '0.2.1';
 const EXPECTED_IDS = [
   APP_ID,
   '6404c75f-c713-4db1-965d-6cf54178a18f',
   '2850638f-f58f-4af9-8d06-1e832a14dd33',
   '4ec5c18e-95ad-4848-8084-d2d41bd21ffc',
-  '7cb2d1fc-c0eb-407a-9a4b-a519fbb70f9a',
+  '9c000341-d6f3-48b8-9731-73c5c295eba3',
   '3e78cf66-c454-4c70-8ccc-d095eb5b0c20',
   '55a697bc-c488-4471-93f5-ece5f58d37bb',
   'ee91c40f-759d-42bd-be49-43f0af07982b',
@@ -59,6 +60,7 @@ const EXPECTED_IDS = [
   '74e11c1b-ed63-4d94-bf2a-89db86edcf39',
 ] as const;
 const OBSOLETE_IDS = [
+  '7cb2d1fc-c0eb-407a-9a4b-a519fbb70f9a',
   '42f51bb6-3a42-43fd-8202-2f9196f0b03a',
   'e598657f-5627-4df7-9c73-51ac1a9ec40e',
   'a6c6ba92-47a2-4aaf-b10a-0d13eff6198e',
@@ -96,6 +98,10 @@ const previousRegistration = {
   ...exactRegistration,
   latestAvailableVersion: PREVIOUS_VERSION,
 };
+const publishedRegistration = {
+  ...exactRegistration,
+  latestAvailableVersion: PUBLISHED_VERSION,
+};
 const previousInstallation = {
   ...exactInstallation,
   version: PREVIOUS_VERSION,
@@ -107,7 +113,7 @@ const position = (needle: string): number => {
   return index;
 };
 
-test('pins the exact v0.3 production tenant and native workspace identities', () => {
+test('pins the exact v0.3.1 production tenant and native workspace identities', () => {
   expect(workflow).toContain("if: github.ref == 'refs/heads/main'");
   expect(workflow).toContain('environment: production');
   expect(workflow).toContain('group: crm-production-deploy');
@@ -147,7 +153,7 @@ test('uses the proven short-lived deploy key and release identity guards', () =>
   expect(deploymentKey).toContain('VerifyExactCorgiCrmDeploymentRole');
 });
 
-test('classifies first install, rerun, and v0.2.1 upgrade safely', () => {
+test('classifies first install, rerun, and published-version upgrades safely', () => {
   expect(
     classifyDeploymentState({ applications: [], registration: null }),
   ).toEqual({
@@ -192,6 +198,19 @@ test('classifies first install, rerun, and v0.2.1 upgrade safely', () => {
   ).toEqual({
     mode: 'upgrade-required',
     publish: false,
+    install: false,
+    upgrade: true,
+    freshInstall: false,
+    registrationPreexisting: true,
+  });
+  expect(
+    classifyDeploymentState({
+      applications: [previousInstallation],
+      registration: publishedRegistration,
+    }),
+  ).toEqual({
+    mode: 'upgrade-required',
+    publish: true,
     install: false,
     upgrade: true,
     freshInstall: false,
@@ -246,13 +265,19 @@ test('fails closed on registration and installed-release conflicts', () => {
   ).toThrow(/not an approved stable release/);
   expect(() =>
     classifyDeploymentState({
+      applications: [{ ...exactInstallation, version: PUBLISHED_VERSION }],
+      registration: publishedRegistration,
+    }),
+  ).toThrow(/not an approved stable release/);
+  expect(() =>
+    classifyDeploymentState({
       applications: [],
       registration: { ...exactRegistration, latestAvailableVersion: '9.9.9' },
     }),
   ).toThrow(/conflicts with the release/);
 });
 
-test('verifies only the v0.3 native manifest and zero app-owned objects', () => {
+test('verifies only the v0.3.1 native manifest and zero app-owned objects', () => {
   expect(verifier).toContain('application.objects.length !== 0');
   expect(verifier).toContain('manifest.objects.length !== 0');
   expect(verifier).toContain('manifest.views.length !== 0');
