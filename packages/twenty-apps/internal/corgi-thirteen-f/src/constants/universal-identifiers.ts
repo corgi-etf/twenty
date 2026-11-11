@@ -14,7 +14,7 @@ export const THIRTEEN_F_PAGE_TAB_ID =
 export const THIRTEEN_F_PAGE_WIDGET_ID =
   '4ec5c18e-95ad-4848-8084-d2d41bd21ffc';
 export const THIRTEEN_F_NAVIGATION_ID =
-  '7cb2d1fc-c0eb-407a-9a4b-a519fbb70f9a';
+  '9c000341-d6f3-48b8-9731-73c5c295eba3';
 export const THIRTEEN_F_WORKSPACE_FRONT_COMPONENT_ID =
   'ee91c40f-759d-42bd-be49-43f0af07982b';
 

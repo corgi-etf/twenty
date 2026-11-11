@@ -17,7 +17,7 @@ const COMPANY_FIELD_ID = '3e78cf66-c454-4c70-8ccc-d095eb5b0c20';
 const PAGE_LAYOUT_ID = '6404c75f-c713-4db1-965d-6cf54178a18f';
 const PAGE_TAB_ID = '2850638f-f58f-4af9-8d06-1e832a14dd33';
 const PAGE_WIDGET_ID = '4ec5c18e-95ad-4848-8084-d2d41bd21ffc';
-const NAVIGATION_ID = '7cb2d1fc-c0eb-407a-9a4b-a519fbb70f9a';
+const NAVIGATION_ID = '9c000341-d6f3-48b8-9731-73c5c295eba3';
 const COMPANY_COMMAND_ID = '55a697bc-c488-4471-93f5-ece5f58d37bb';
 const WORKSPACE_FRONT_COMPONENT_ID = 'ee91c40f-759d-42bd-be49-43f0af07982b';
 const COMPANY_FRONT_COMPONENT_ID = 'e202fe49-1d7f-4bb9-9bce-77f15a2322c0';
@@ -143,66 +143,6 @@ const assertInstallableRegistration = async () => {
   console.log(
     `Exact owned private Corgi 13F v${VERSION} registration is installable`,
   );
-};
-
-const upgrade = async () => {
-  const before = classifyDeploymentState(await readDeploymentState());
-
-  if (before.mode === 'installed') {
-    console.log(`Corgi 13F v${VERSION} is already installed`);
-    return;
-  }
-  if (before.mode !== 'upgrade-required' || before.publish) {
-    throw new Error(
-      `Corgi 13F cannot be upgraded from deployment state ${before.mode}`,
-    );
-  }
-
-  let mutationError;
-  try {
-    const state = await readDeploymentState();
-    const result = await graphql({
-      operationName: 'UpgradeCorgiThirteenFApplication',
-      query: `mutation UpgradeCorgiThirteenFApplication(
-        $appRegistrationId: String!
-        $targetVersion: String!
-      ) {
-        upgradeApplication(
-          appRegistrationId: $appRegistrationId
-          targetVersion: $targetVersion
-        )
-      }`,
-      variables: {
-        appRegistrationId: state.registration.id,
-        targetVersion: VERSION,
-      },
-    });
-
-    if (result.upgradeApplication !== true) {
-      mutationError = new Error('Corgi 13F upgrade was not accepted');
-    }
-  } catch (error) {
-    mutationError = error;
-  }
-
-  for (let attempt = 1; attempt <= 12; attempt += 1) {
-    const state = classifyDeploymentState(await readDeploymentState());
-
-    if (state.mode === 'installed') {
-      console.log(`Corgi 13F was upgraded in place to v${VERSION}`);
-      return;
-    }
-    if (state.mode !== 'upgrade-required') {
-      throw new Error(
-        `Corgi 13F entered unexpected state ${state.mode} during upgrade`,
-      );
-    }
-    if (attempt < 12) {
-      await new Promise((resolve) => setTimeout(resolve, 5_000));
-    }
-  }
-
-  throw mutationError ?? new Error('Corgi 13F upgrade did not converge');
 };
 
 const configure = async () => {
@@ -786,8 +726,6 @@ if (
     await precheck();
   } else if (operation === 'assert-installable') {
     await assertInstallableRegistration();
-  } else if (operation === 'upgrade') {
-    await upgrade();
   } else if (operation === 'configure') {
     await configure();
   } else if (operation === 'verify') {
@@ -796,7 +734,7 @@ if (
     await rollbackFreshInstallation();
   } else {
     throw new Error(
-      'Expected precheck, assert-installable, upgrade, configure, verify, or rollback operation',
+      'Expected precheck, assert-installable, configure, verify, or rollback operation',
     );
   }
 }

@@ -12,6 +12,8 @@ import pageLayout from 'src/page-layouts/thirteen-f.page-layout';
 import defaultRole from 'src/roles/default-role';
 
 const sourceRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
+const LEGACY_V021_NAVIGATION_ID = '7cb2d1fc-c0eb-407a-9a4b-a519fbb70f9a';
+const V031_NAVIGATION_ID = '9c000341-d6f3-48b8-9731-73c5c295eba3';
 
 describe('13F CRM manifest', () => {
   it('exposes exactly one native 13F sidebar workspace', () => {
@@ -21,10 +23,14 @@ describe('13F CRM manifest', () => {
     expect(navigationFiles).toEqual(['thirteen-f.navigation-menu-item.ts']);
     expect(navigationItem.success).toBe(true);
     expect(navigationItem.config).toMatchObject({
+      universalIdentifier: V031_NAVIGATION_ID,
       name: '13F',
       type: NavigationMenuItemType.PAGE_LAYOUT,
       pageLayoutUniversalIdentifier: pageLayout.config.universalIdentifier,
     });
+    expect(navigationItem.config.universalIdentifier).not.toBe(
+      LEGACY_V021_NAVIGATION_ID,
+    );
     expect(pageLayout.config).toMatchObject({
       name: '13F',
       type: 'STANDALONE_PAGE',

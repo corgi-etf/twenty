@@ -4,8 +4,16 @@ const REGISTRATION_NAME = 'Corgi 13F';
 const LEGACY_VERSION = '0.1.0';
 const INTERMEDIATE_VERSION = '0.2.0';
 const PREVIOUS_VERSION = '0.2.1';
-const VERSION = '0.3.0';
-const APPROVED_VERSIONS = [
+const PUBLISHED_VERSION = '0.3.0';
+const VERSION = '0.3.1';
+const APPROVED_REGISTRATION_VERSIONS = [
+  LEGACY_VERSION,
+  INTERMEDIATE_VERSION,
+  PREVIOUS_VERSION,
+  PUBLISHED_VERSION,
+  VERSION,
+];
+const APPROVED_INSTALLED_VERSIONS = [
   LEGACY_VERSION,
   INTERMEDIATE_VERSION,
   PREVIOUS_VERSION,
@@ -27,7 +35,9 @@ const classifyDeploymentState = ({ applications, registration }) => {
       registration.ownerWorkspaceId !== WORKSPACE_ID ||
       registration.name !== REGISTRATION_NAME ||
       registration.sourceType !== 'TARBALL' ||
-      !APPROVED_VERSIONS.includes(registration.latestAvailableVersion) ||
+      !APPROVED_REGISTRATION_VERSIONS.includes(
+        registration.latestAvailableVersion,
+      ) ||
       registration.isListed !== false
     ) {
       throw new Error(
@@ -43,7 +53,7 @@ const classifyDeploymentState = ({ applications, registration }) => {
       !registration ||
       application.applicationRegistrationId !== registration.id ||
       application.state !== 'INSTALLED' ||
-      !APPROVED_VERSIONS.includes(application.version)
+      !APPROVED_INSTALLED_VERSIONS.includes(application.version)
     ) {
       throw new Error(
         'Corgi 13F installed application is not an approved stable release',
@@ -106,6 +116,7 @@ export {
   INTERMEDIATE_VERSION,
   LEGACY_VERSION,
   PREVIOUS_VERSION,
+  PUBLISHED_VERSION,
   VERSION,
   WORKSPACE_ID,
   classifyDeploymentState,

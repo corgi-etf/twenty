@@ -4,7 +4,10 @@ import { join } from 'node:path';
 import { expect, test } from '@playwright/test';
 import { buildSchema, parse, validate } from 'graphql';
 
-import { classifyDeploymentState } from './corgiThirteenFDeploymentState.mjs';
+import {
+  VERSION as DEPLOYMENT_VERSION,
+  classifyDeploymentState,
+} from './corgiThirteenFDeploymentState.mjs';
 
 const repositoryRoot = join(__dirname, '..', '..', '..', '..');
 const workflow = readFileSync(
@@ -21,6 +24,14 @@ const deploymentState = readFileSync(
 );
 const tenantVerifier = readFileSync(
   join(__dirname, 'corgiThirteenFDeploymentTenant.production.spec.ts'),
+  'utf8',
+);
+const userSessionUpgrade = readFileSync(
+  join(__dirname, 'corgiThirteenFUserSessionUpgrade.production.spec.ts'),
+  'utf8',
+);
+const userSessionUpgradeHelper = readFileSync(
+  join(__dirname, 'corgiThirteenFUserSessionUpgrade.mjs'),
   'utf8',
 );
 const deploymentKey = readFileSync(
@@ -40,14 +51,15 @@ const metadataSchema = readFileSync(
 
 const APP_ID = '38ba5a6a-430e-455a-a27b-fba07af35944';
 const WORKSPACE_ID = 'eabf5d9d-fc99-4acb-b160-710ecb1db996';
-const VERSION = '0.3.0';
+const RELEASE_VERSION = '0.3.1';
+const PUBLISHED_VERSION = '0.3.0';
 const PREVIOUS_VERSION = '0.2.1';
 const EXPECTED_IDS = [
   APP_ID,
   '6404c75f-c713-4db1-965d-6cf54178a18f',
   '2850638f-f58f-4af9-8d06-1e832a14dd33',
   '4ec5c18e-95ad-4848-8084-d2d41bd21ffc',
-  '7cb2d1fc-c0eb-407a-9a4b-a519fbb70f9a',
+  '9c000341-d6f3-48b8-9731-73c5c295eba3',
   '3e78cf66-c454-4c70-8ccc-d095eb5b0c20',
   '55a697bc-c488-4471-93f5-ece5f58d37bb',
   'ee91c40f-759d-42bd-be49-43f0af07982b',
@@ -59,6 +71,7 @@ const EXPECTED_IDS = [
   '74e11c1b-ed63-4d94-bf2a-89db86edcf39',
 ] as const;
 const OBSOLETE_IDS = [
+  '7cb2d1fc-c0eb-407a-9a4b-a519fbb70f9a',
   '42f51bb6-3a42-43fd-8202-2f9196f0b03a',
   'e598657f-5627-4df7-9c73-51ac1a9ec40e',
   'a6c6ba92-47a2-4aaf-b10a-0d13eff6198e',
@@ -82,19 +95,23 @@ const exactRegistration = {
   ownerWorkspaceId: WORKSPACE_ID,
   name: 'Corgi 13F',
   sourceType: 'TARBALL',
-  latestAvailableVersion: VERSION,
+  latestAvailableVersion: DEPLOYMENT_VERSION,
   isListed: false,
 };
 const exactInstallation = {
   id: 'application-1',
   universalIdentifier: APP_ID,
   applicationRegistrationId: exactRegistration.id,
-  version: VERSION,
+  version: DEPLOYMENT_VERSION,
   state: 'INSTALLED',
 };
 const previousRegistration = {
   ...exactRegistration,
   latestAvailableVersion: PREVIOUS_VERSION,
+};
+const publishedRegistration = {
+  ...exactRegistration,
+  latestAvailableVersion: PUBLISHED_VERSION,
 };
 const previousInstallation = {
   ...exactInstallation,
@@ -107,13 +124,13 @@ const position = (needle: string): number => {
   return index;
 };
 
-test('pins the exact v0.3 production tenant and native workspace identities', () => {
+test('pins the exact v0.3.1 production tenant and native workspace identities', () => {
   expect(workflow).toContain("if: github.ref == 'refs/heads/main'");
   expect(workflow).toContain('environment: production');
   expect(workflow).toContain('group: crm-production-deploy');
   expect(workflow).toContain('Corgi ETF');
   expect(workflow).toContain(WORKSPACE_ID);
-  expect(workflow).toContain(`CORGI_THIRTEEN_F_VERSION: ${VERSION}`);
+  expect(workflow).toContain(`CORGI_THIRTEEN_F_VERSION: ${RELEASE_VERSION}`);
 
   for (const identifier of EXPECTED_IDS) {
     expect(workflow).toContain(identifier);
@@ -147,7 +164,7 @@ test('uses the proven short-lived deploy key and release identity guards', () =>
   expect(deploymentKey).toContain('VerifyExactCorgiCrmDeploymentRole');
 });
 
-test('classifies first install, rerun, and v0.2.1 upgrade safely', () => {
+test('classifies first install, rerun, and published-version upgrades safely', () => {
   expect(
     classifyDeploymentState({ applications: [], registration: null }),
   ).toEqual({
@@ -197,8 +214,48 @@ test('classifies first install, rerun, and v0.2.1 upgrade safely', () => {
     freshInstall: false,
     registrationPreexisting: true,
   });
-  expect(verifier).toContain('upgradeApplication');
-  expect(verifier).toContain('targetVersion: VERSION');
+  expect(
+    classifyDeploymentState({
+      applications: [previousInstallation],
+      registration: publishedRegistration,
+    }),
+  ).toEqual({
+    mode: 'upgrade-required',
+    publish: true,
+    install: false,
+    upgrade: true,
+    freshInstall: false,
+    registrationPreexisting: true,
+  });
+  expect(verifier).not.toContain('upgradeApplication');
+});
+
+test('uses the proven user session only for the guarded in-place upgrade', () => {
+  const upgrade = position(
+    'Upgrade the existing Corgi 13F installation in place',
+  );
+  const configure = position('Configure the Corgi 13F application variables');
+  const upgradeStep = workflow.slice(upgrade, configure);
+
+  expect(upgradeStep).toContain(
+    'corgiThirteenFUserSessionUpgrade.production.spec.ts',
+  );
+  expect(upgradeStep).toContain('CORGI_THIRTEEN_F_USER_SESSION_UPGRADE');
+  expect(upgradeStep).toContain('CORGI_CRM_EXPECTED_USER_WORKSPACE_ID');
+  expect(upgradeStep).toContain('CRM_E2E_LOGIN');
+  expect(upgradeStep).toContain('CRM_E2E_PASSWORD');
+  expect(upgradeStep).not.toContain('CORGI_CRM_API_KEY');
+  expect(userSessionUpgrade).toContain('page.request.post');
+  expect(userSessionUpgrade).toContain(
+    'currentUserWorkspace { id permissionFlags isImpersonating }',
+  );
+  expect(userSessionUpgrade).toContain('upgradeApplication');
+  expect(userSessionUpgrade).not.toContain('CORGI_CRM_API_KEY');
+  expect(userSessionUpgrade).not.toContain('Authorization');
+  expect(userSessionUpgradeHelper).toContain('maxAttempts = 12');
+  expect(userSessionUpgradeHelper).toContain(
+    'membership.permissionFlags.includes(REQUIRED_PERMISSION)',
+  );
 });
 
 test('retains exact registration after a failed fresh install verification', () => {
@@ -246,13 +303,19 @@ test('fails closed on registration and installed-release conflicts', () => {
   ).toThrow(/not an approved stable release/);
   expect(() =>
     classifyDeploymentState({
+      applications: [{ ...exactInstallation, version: PUBLISHED_VERSION }],
+      registration: publishedRegistration,
+    }),
+  ).toThrow(/not an approved stable release/);
+  expect(() =>
+    classifyDeploymentState({
       applications: [],
       registration: { ...exactRegistration, latestAvailableVersion: '9.9.9' },
     }),
   ).toThrow(/conflicts with the release/);
 });
 
-test('verifies only the v0.3 native manifest and zero app-owned objects', () => {
+test('verifies only the v0.3.1 native manifest and zero app-owned objects', () => {
   expect(verifier).toContain('application.objects.length !== 0');
   expect(verifier).toContain('manifest.objects.length !== 0');
   expect(verifier).toContain('manifest.views.length !== 0');
@@ -292,10 +355,12 @@ test('configures and verifies all application variables without exposing the sec
 });
 
 test('uses only metadata operations supported by the pinned Twenty schema', () => {
-  const documents = [...verifier.matchAll(/query: `([\s\S]*?)`,/g)].map(
-    ([, document]) => document,
+  const documents = [verifier, userSessionUpgrade].flatMap((source) =>
+    [...source.matchAll(/query: `([\s\S]*?)`,/g)].map(
+      ([, document]) => document,
+    ),
   );
-  expect(documents).toHaveLength(6);
+  expect(documents).toHaveLength(7);
   const schema = buildSchema(metadataSchema);
   for (const document of documents) {
     expect(
