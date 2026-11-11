@@ -174,7 +174,7 @@ export const ThirteenFWorkspace = () => {
   useEffect(() => {
     if (selectedFirmId || selectedSecurity) return;
     let active = true;
-    const timeout = window.setTimeout(() => {
+    const timeout = globalThis.setTimeout(() => {
       setLoading(true);
       setError(null);
       const trimmed = query.trim();
@@ -213,7 +213,7 @@ export const ThirteenFWorkspace = () => {
     }, 250);
     return () => {
       active = false;
-      window.clearTimeout(timeout);
+      globalThis.clearTimeout(timeout);
     };
   }, [asOfDate, query, selectedFirmId, selectedSecurity]);
 

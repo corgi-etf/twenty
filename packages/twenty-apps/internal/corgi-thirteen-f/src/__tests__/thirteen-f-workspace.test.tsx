@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+
 import { renderToStaticMarkup } from 'react-dom/server';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -81,11 +83,26 @@ const firm: FirmDetail = {
   ],
 };
 
+const workspaceSource = readFileSync(
+  new URL(
+    '../front-components/thirteen-f-workspace/workspace.tsx',
+    import.meta.url,
+  ),
+  'utf8',
+);
+
 afterEach(() => {
   vi.unstubAllGlobals();
 });
 
 describe('13F workspace journeys', () => {
+  it('uses worker-safe timers in the FrontComponent runtime', () => {
+    expect(workspaceSource).toContain('globalThis.setTimeout');
+    expect(workspaceSource).toContain('globalThis.clearTimeout');
+    expect(workspaceSource).not.toContain('window.setTimeout');
+    expect(workspaceSource).not.toContain('window.clearTimeout');
+  });
+
   it('formats decimal strings without converting them to imprecise numbers', () => {
     expect(formatDecimal('900719925474099312345.6700')).toBe(
       '900,719,925,474,099,312,345.67',

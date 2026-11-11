@@ -72,10 +72,11 @@ const evaluateApplicationVariableHelper = (expression: string): unknown => {
 
 const APP_ID = '38ba5a6a-430e-455a-a27b-fba07af35944';
 const WORKSPACE_ID = 'eabf5d9d-fc99-4acb-b160-710ecb1db996';
-const RELEASE_VERSION = '0.3.2';
+const RELEASE_VERSION = '0.3.3';
 const PUBLISHED_VERSION = '0.3.0';
 const PREVIOUS_VERSION = '0.2.1';
 const PREVIOUS_STABLE_VERSION = '0.3.1';
+const CURRENT_STABLE_VERSION = '0.3.2';
 const EXPECTED_IDS = [
   APP_ID,
   '6404c75f-c713-4db1-965d-6cf54178a18f',
@@ -156,6 +157,14 @@ const previousStableInstallation = {
   ...exactInstallation,
   version: PREVIOUS_STABLE_VERSION,
 };
+const currentStableRegistration = {
+  ...exactRegistration,
+  latestAvailableVersion: CURRENT_STABLE_VERSION,
+};
+const currentStableInstallation = {
+  ...exactInstallation,
+  version: CURRENT_STABLE_VERSION,
+};
 
 const position = (needle: string): number => {
   const index = workflow.indexOf(needle);
@@ -163,7 +172,7 @@ const position = (needle: string): number => {
   return index;
 };
 
-test('pins the exact v0.3.2 production tenant and native workspace identities', () => {
+test('pins the exact v0.3.3 production tenant and native workspace identities', () => {
   expect(workflow).toContain("if: github.ref == 'refs/heads/main'");
   expect(workflow).toContain('environment: production');
   expect(workflow).toContain('group: crm-production-deploy');
@@ -320,6 +329,32 @@ test('classifies first install, rerun, and published-version upgrades safely', (
     freshInstall: false,
     registrationPreexisting: true,
   });
+  expect(
+    classifyDeploymentState({
+      applications: [currentStableInstallation],
+      registration: currentStableRegistration,
+    }),
+  ).toEqual({
+    mode: 'upgrade-required',
+    publish: true,
+    install: false,
+    upgrade: true,
+    freshInstall: false,
+    registrationPreexisting: true,
+  });
+  expect(
+    classifyDeploymentState({
+      applications: [currentStableInstallation],
+      registration: exactRegistration,
+    }),
+  ).toEqual({
+    mode: 'upgrade-required',
+    publish: false,
+    install: false,
+    upgrade: true,
+    freshInstall: false,
+    registrationPreexisting: true,
+  });
   expect(verifier).not.toContain('upgradeApplication');
 });
 
@@ -466,7 +501,7 @@ test('accepts only the exact failed v0.3.0 recovery pair', () => {
   }
 });
 
-test('verifies the v0.3.2 runtime without exporting the private TARBALL app', () => {
+test('verifies the v0.3.3 runtime without exporting the private TARBALL app', () => {
   expect(verifier).not.toContain('exportApplication');
   expect(verifier).not.toContain('assertManifest');
   expect(verifier).not.toContain('metadata.exportApplication');
