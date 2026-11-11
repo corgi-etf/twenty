@@ -4,7 +4,10 @@ import { join } from 'node:path';
 import { expect, test } from '@playwright/test';
 import { buildSchema, parse, validate } from 'graphql';
 
-import { classifyDeploymentState } from './corgiThirteenFDeploymentState.mjs';
+import {
+  VERSION as DEPLOYMENT_VERSION,
+  classifyDeploymentState,
+} from './corgiThirteenFDeploymentState.mjs';
 
 const repositoryRoot = join(__dirname, '..', '..', '..', '..');
 const workflow = readFileSync(
@@ -48,7 +51,7 @@ const metadataSchema = readFileSync(
 
 const APP_ID = '38ba5a6a-430e-455a-a27b-fba07af35944';
 const WORKSPACE_ID = 'eabf5d9d-fc99-4acb-b160-710ecb1db996';
-const VERSION = '0.3.1';
+const RELEASE_VERSION = '0.3.1';
 const PUBLISHED_VERSION = '0.3.0';
 const PREVIOUS_VERSION = '0.2.1';
 const EXPECTED_IDS = [
@@ -92,14 +95,14 @@ const exactRegistration = {
   ownerWorkspaceId: WORKSPACE_ID,
   name: 'Corgi 13F',
   sourceType: 'TARBALL',
-  latestAvailableVersion: VERSION,
+  latestAvailableVersion: DEPLOYMENT_VERSION,
   isListed: false,
 };
 const exactInstallation = {
   id: 'application-1',
   universalIdentifier: APP_ID,
   applicationRegistrationId: exactRegistration.id,
-  version: VERSION,
+  version: DEPLOYMENT_VERSION,
   state: 'INSTALLED',
 };
 const previousRegistration = {
@@ -127,7 +130,7 @@ test('pins the exact v0.3.1 production tenant and native workspace identities', 
   expect(workflow).toContain('group: crm-production-deploy');
   expect(workflow).toContain('Corgi ETF');
   expect(workflow).toContain(WORKSPACE_ID);
-  expect(workflow).toContain(`CORGI_THIRTEEN_F_VERSION: ${VERSION}`);
+  expect(workflow).toContain(`CORGI_THIRTEEN_F_VERSION: ${RELEASE_VERSION}`);
 
   for (const identifier of EXPECTED_IDS) {
     expect(workflow).toContain(identifier);
