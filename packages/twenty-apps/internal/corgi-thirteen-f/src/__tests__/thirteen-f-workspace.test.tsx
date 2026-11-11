@@ -1,5 +1,5 @@
 import { renderToStaticMarkup } from 'react-dom/server';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   FirmDirectory,
@@ -11,7 +11,11 @@ import {
   formatDecimal,
   formatMoney,
 } from 'src/front-components/thirteen-f-workspace/format';
-import { parseWorkspaceQuery, serializeWorkspaceQuery } from 'src/front-components/thirteen-f-workspace/query-state';
+import {
+  parseWorkspaceQuery,
+  replaceBrowserWorkspaceQuery,
+  serializeWorkspaceQuery,
+} from 'src/front-components/thirteen-f-workspace/query-state';
 import type {
   FirmDetail,
   Holding,
@@ -76,6 +80,10 @@ const firm: FirmDetail = {
     },
   ],
 };
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 describe('13F workspace journeys', () => {
   it('formats decimal strings without converting them to imprecise numbers', () => {
@@ -304,6 +312,50 @@ describe('13F workspace journeys', () => {
       firmId: 'firm-1',
       securityId: undefined,
     });
+  });
+
+  it('does not require the History API in the FrontComponent runtime', () => {
+    vi.stubGlobal('window', {
+      location: {
+        hash: '',
+        pathname: '/objects/companies',
+        search: '',
+      },
+    });
+
+    expect(() =>
+      replaceBrowserWorkspaceQuery({
+        q: 'NVDA',
+        asOfDate: '2026-09-30',
+        firmId: undefined,
+        securityId: undefined,
+      }),
+    ).not.toThrow();
+  });
+
+  it('replaces workspace URL state when the History API is available', () => {
+    const replaceState = vi.fn();
+    vi.stubGlobal('window', {
+      history: { replaceState },
+      location: {
+        hash: '#holdings',
+        pathname: '/objects/companies',
+        search: '?view=active&q=old',
+      },
+    });
+
+    replaceBrowserWorkspaceQuery({
+      q: 'NVDA',
+      asOfDate: '2026-09-30',
+      firmId: undefined,
+      securityId: undefined,
+    });
+
+    expect(replaceState).toHaveBeenCalledWith(
+      null,
+      '',
+      '/objects/companies?view=active&q=NVDA&asOfDate=2026-09-30#holdings',
+    );
   });
 
   it('calls only the authenticated Twenty function route from the browser', async () => {
