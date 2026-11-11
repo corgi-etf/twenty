@@ -19,6 +19,10 @@ import {
   replaceBrowserWorkspaceQuery,
   serializeWorkspaceQuery,
 } from 'src/front-components/thirteen-f-workspace/query-state';
+import {
+  periodOptionValue,
+  secReportPeriods,
+} from 'src/front-components/thirteen-f-workspace/periods';
 import type {
   FirmDetail,
   Holding,
@@ -32,9 +36,9 @@ const holding: Holding = {
   firmName: 'Example Capital',
   crmCompanyId: 'company-1',
   filingId: 'filing-1',
-  reportPeriod: null,
+  reportPeriod: '2026-09-30',
   asOfDate: '2026-09-30',
-  dateBasis: 'LEGACY_AS_OF_UNVERIFIED',
+  dateBasis: 'SEC_REPORT_PERIOD',
   filedAt: '2026-11-09T18:30:00.000Z',
   formType: '13F-HR',
   coverage: 'FULL',
@@ -53,7 +57,6 @@ const holding: Holding = {
   portfolioPercent: '12.5',
   quarterChange: null,
   quarterChangePercent: null,
-  legacyContext: null,
 };
 
 const firm: FirmDetail = {
@@ -62,8 +65,8 @@ const firm: FirmDetail = {
   cik: '0001234567',
   crmCompanyId: 'company-1',
   latestAsOfDate: '2026-09-30',
-  latestDateBasis: 'LEGACY_AS_OF_UNVERIFIED',
-  latestReportPeriod: null,
+  latestDateBasis: 'SEC_REPORT_PERIOD',
+  latestReportPeriod: '2026-09-30',
   latestFiledAt: '2026-11-09T18:30:00.000Z',
   latestFormType: '13F-HR',
   latestCoverage: 'FULL',
@@ -74,8 +77,8 @@ const firm: FirmDetail = {
     {
       id: 'filing-1',
       asOfDate: '2026-09-30',
-      dateBasis: 'LEGACY_AS_OF_UNVERIFIED',
-      reportPeriod: null,
+      dateBasis: 'SEC_REPORT_PERIOD',
+      reportPeriod: '2026-09-30',
       filedAt: '2026-11-09T18:30:00.000Z',
       formType: '13F-HR',
       coverage: 'FULL',
@@ -103,6 +106,26 @@ describe('13F workspace journeys', () => {
     expect(workspaceSource).toContain('globalThis.clearTimeout');
     expect(workspaceSource).not.toContain('window.setTimeout');
     expect(workspaceSource).not.toContain('window.clearTimeout');
+  });
+
+  it('keeps visible browser focus treatment on interactive controls', () => {
+    expect(workspaceSource).not.toContain("outline: 'none'");
+  });
+
+  it('identifies SEC periods by both report date and date basis', () => {
+    const periods = secReportPeriods([
+      { asOfDate: '2026-09-30', dateBasis: 'LEGACY_AS_OF_UNVERIFIED' },
+      { asOfDate: '2026-06-30', dateBasis: 'SEC_REPORT_PERIOD' },
+      { asOfDate: '2026-09-30', dateBasis: 'SEC_REPORT_PERIOD' },
+    ]);
+
+    expect(periods).toEqual([
+      { asOfDate: '2026-09-30', dateBasis: 'SEC_REPORT_PERIOD' },
+      { asOfDate: '2026-06-30', dateBasis: 'SEC_REPORT_PERIOD' },
+    ]);
+    expect(periodOptionValue(periods[0])).toBe(
+      '2026-09-30:SEC_REPORT_PERIOD',
+    );
   });
 
   it('formats decimal strings without converting them to imprecise numbers', () => {
@@ -134,7 +157,7 @@ describe('13F workspace journeys', () => {
     expect(html).not.toMatch(/workbook|download|import|parser/i);
   });
 
-  it('separates holdings date from filing metadata and flags legacy dates', () => {
+  it('renders a native SEC holdings view without workbook-only context', () => {
     const html = renderToStaticMarkup(
       <FirmHoldings
         firm={firm}
@@ -143,19 +166,20 @@ describe('13F workspace journeys', () => {
         onSelectSecurity={() => undefined}
         totalCount={125}
         totalReportedValue="125000000"
+        asOfDate="2026-09-30"
+        dateBasis="SEC_REPORT_PERIOD"
         order="value_desc"
         onOrderChange={() => undefined}
       />,
     );
 
-    expect(html).toContain('Holdings as of Sep 30, 2026');
+    expect(html).toContain('SEC report period Sep 30, 2026');
     expect(html).toContain('1 of 125 positions shown');
     expect(html).toContain('aria-label="Sort firm holdings"');
     expect(html).toContain('Highest value');
     expect(html).toContain('Most shares');
     expect(html).toContain('Ticker A–Z');
-    expect(html).toContain('Legacy date — SEC report period unverified');
-    expect(html).toContain('Filed Nov 9, 2026');
+    expect(html).toContain('Composed from the applicable SEC filing accessions');
     expect(html).toContain('NVIDIA Corporation');
     expect(html).toContain('67066G104');
     expect(html).toContain('12.5%');
@@ -175,10 +199,11 @@ describe('13F workspace journeys', () => {
     expect(html).toContain('Voting — sole');
     expect(html).toContain('Report period');
     expect(html).toContain('Coverage');
+    expect(html).not.toMatch(/Legacy|Portfolio share|Target ticker/i);
   });
 
-  it('labels legacy value estimates without overriding official filed values', () => {
-    const estimatedHolding: Holding = {
+  it('never substitutes a workbook estimate for the SEC filed value', () => {
+    const estimatedHolding = {
       ...holding,
       reportedValue: null,
       legacyContext: {
@@ -191,6 +216,17 @@ describe('13F workspace journeys', () => {
         changeValue: null,
         changePercent: null,
       },
+    } satisfies Holding & {
+      legacyContext: {
+        portfolioName: string;
+        targetTicker: string;
+        latestChange: null;
+        ownershipPercent: null;
+        portfolioPercent: string;
+        estimatedValue: string;
+        changeValue: null;
+        changePercent: null;
+      };
     };
     const estimatedHtml = renderToStaticMarkup(
       <FirmHoldings
@@ -198,13 +234,15 @@ describe('13F workspace journeys', () => {
         holdings={[estimatedHolding]}
         totalCount={1}
         totalReportedValue={null}
+        asOfDate="2026-09-30"
+        dateBasis="SEC_REPORT_PERIOD"
         onBack={() => undefined}
       />,
     );
 
-    expect(estimatedHtml).toMatch(
-      /<td[^>]*>\$900,719,925,474,099,312,345\.67<div[^>]*>Estimated · unverified legacy data<\/div><\/td>/,
-    );
+    expect(estimatedHtml).not.toContain('$900,719,925,474,099,312,345.67');
+    expect(estimatedHtml).not.toContain('Estimated · unverified legacy data');
+    expect(estimatedHtml).not.toContain('Levered portfolio');
 
     const officialHtml = renderToStaticMarkup(
       <FirmHoldings
@@ -217,6 +255,8 @@ describe('13F workspace journeys', () => {
         ]}
         totalCount={1}
         totalReportedValue="125000000"
+        asOfDate="2026-09-30"
+        dateBasis="SEC_REPORT_PERIOD"
         onBack={() => undefined}
       />,
     );
@@ -263,13 +303,17 @@ describe('13F workspace journeys', () => {
         totalCount={90}
         totalReportedValue="90000000"
         asOfDate="2026-06-30"
+        dateBasis="SEC_REPORT_PERIOD"
         onBack={() => undefined}
         onSelectSecurity={() => undefined}
       />,
     );
 
     expect(populatedHtml).toContain('SEC report period Jun 30, 2026');
-    expect(populatedHtml).toContain('Filed Aug 14, 2026');
+    expect(populatedHtml).toContain(
+      'Composed from the applicable SEC filing accessions shown below.',
+    );
+    expect(populatedHtml).not.toContain('Filed Aug 14, 2026');
     expect(populatedHtml).toContain('13F-HR/A');
     expect(populatedHtml).toContain('90 positions');
     expect(populatedHtml).toContain('$90,000,000');
@@ -281,13 +325,14 @@ describe('13F workspace journeys', () => {
         totalCount={0}
         totalReportedValue={null}
         asOfDate="2026-03-31"
+        dateBasis="SEC_REPORT_PERIOD"
         onBack={() => undefined}
       />,
     );
 
     expect(nullTotalHtml).toContain('SEC report period Mar 31, 2026');
-    expect(nullTotalHtml).toContain('Filed Not available');
-    expect(nullTotalHtml).toContain('Form not available');
+    expect(nullTotalHtml).not.toContain('Filed Not available');
+    expect(nullTotalHtml).not.toContain('Form not available');
     expect(nullTotalHtml).toContain('0 positions');
     expect(nullTotalHtml).toMatch(/<div[^>]*>—<\/div><div[^>]*>0 positions<\/div>/);
   });
@@ -337,11 +382,17 @@ describe('13F workspace journeys', () => {
         totalCount={3798}
         totalReportedValue="104131808035"
         asOfDate="2026-06-30"
+        dateBasis="SEC_REPORT_PERIOD"
         onBack={() => undefined}
       />,
     );
 
     expect(html).toContain('Effective portfolio');
+    expect(html).toContain(
+      'Composed from the applicable SEC filing accessions shown below.',
+    );
+    expect(html).not.toContain('Filed Aug 13, 2026');
+    expect(html).not.toContain('Filed Aug 14, 2026');
     expect(html).toMatch(/\$104,131,808,035<\/div><div[^>]*>3,798 positions/);
     expect(html).toContain('Accession positions');
     expect(html).toContain('Accession reported value');
@@ -431,50 +482,56 @@ describe('13F workspace journeys', () => {
     expect(html).toContain('+1,200');
     expect(html).toContain('+0.15%');
 
+    const workbookEnrichedHolding = {
+      ...holding,
+      quarterChange: null,
+      legacyContext: {
+        portfolioName: 'Levered portfolio',
+        targetTicker: 'NVDA',
+        latestChange: '1200',
+        ownershipPercent: '1.25',
+        portfolioPercent: '12.5',
+        estimatedValue: '125000000',
+        changeValue: '1200',
+        changePercent: '0.15',
+      },
+    };
     const legacyHtml = renderToStaticMarkup(
       <SecurityHolders
         security={security}
-        holdings={[
-          {
-            ...holding,
-            quarterChange: null,
-            legacyContext: {
-              portfolioName: 'Levered portfolio',
-              targetTicker: 'NVDA',
-              latestChange: '1200',
-              ownershipPercent: '1.25',
-              portfolioPercent: '12.5',
-              estimatedValue: '125000000',
-              changeValue: '1200',
-              changePercent: '0.15',
-            },
-          },
-        ]}
+        holdings={[workbookEnrichedHolding]}
         onBack={() => undefined}
         onSelectFirm={() => undefined}
       />,
     );
     expect(legacyHtml).not.toContain('+1,200');
-    expect(legacyHtml).toContain('Unverified legacy source');
-    expect(legacyHtml).toMatch(/Target ticker<\/dt><dd[^>]*>NVDA<\/dd>/);
-    expect(legacyHtml).toMatch(/Change value<\/dt><dd[^>]*>1,200<\/dd>/);
+    expect(legacyHtml).not.toContain('Unverified legacy source');
+    expect(legacyHtml).not.toContain('Target ticker');
+    expect(legacyHtml).not.toContain('Change value');
   });
 
   it('preserves workspace selection in URL query state', () => {
     const serialized = serializeWorkspaceQuery({
       q: 'NVDA',
       asOfDate: '2026-09-30',
+      dateBasis: 'SEC_REPORT_PERIOD',
       firmId: 'firm-1',
       securityId: undefined,
     });
 
-    expect(serialized).toBe('?q=NVDA&asOfDate=2026-09-30&firmId=firm-1');
+    expect(serialized).toBe(
+      '?q=NVDA&asOfDate=2026-09-30&dateBasis=SEC_REPORT_PERIOD&firmId=firm-1',
+    );
     expect(parseWorkspaceQuery(serialized)).toEqual({
       q: 'NVDA',
       asOfDate: '2026-09-30',
+      dateBasis: 'SEC_REPORT_PERIOD',
       firmId: 'firm-1',
       securityId: undefined,
     });
+    expect(parseWorkspaceQuery('?dateBasis=WORKBOOK_AS_OF_DATE').dateBasis).toBe(
+      undefined,
+    );
   });
 
   it('does not require the History API in the FrontComponent runtime', () => {
@@ -490,6 +547,7 @@ describe('13F workspace journeys', () => {
       replaceBrowserWorkspaceQuery({
         q: 'NVDA',
         asOfDate: '2026-09-30',
+        dateBasis: 'SEC_REPORT_PERIOD',
         firmId: undefined,
         securityId: undefined,
       }),
@@ -510,6 +568,7 @@ describe('13F workspace journeys', () => {
     replaceBrowserWorkspaceQuery({
       q: 'NVDA',
       asOfDate: '2026-09-30',
+      dateBasis: 'SEC_REPORT_PERIOD',
       firmId: undefined,
       securityId: undefined,
     });
@@ -517,7 +576,7 @@ describe('13F workspace journeys', () => {
     expect(replaceState).toHaveBeenCalledWith(
       null,
       '',
-      '/objects/companies?view=active&q=NVDA&asOfDate=2026-09-30#holdings',
+      '/objects/companies?view=active&q=NVDA&asOfDate=2026-09-30&dateBasis=SEC_REPORT_PERIOD#holdings',
     );
   });
 

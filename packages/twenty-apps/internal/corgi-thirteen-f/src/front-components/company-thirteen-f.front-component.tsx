@@ -9,11 +9,13 @@ import {
 import { COMPANY_THIRTEEN_F_FRONT_COMPONENT_ID } from 'src/constants/universal-identifiers';
 import { callThirteenFRoute } from 'src/front-components/thirteen-f-workspace/client';
 import { formatCount } from 'src/front-components/thirteen-f-workspace/format';
+import { secReportPeriods } from 'src/front-components/thirteen-f-workspace/periods';
 import type {
   CompanySummary,
   FirmDetail,
   Holding,
   HoldingsPageEnvelope,
+  PeriodOption,
 } from 'src/front-components/thirteen-f-workspace/types';
 import { FirmHoldings } from 'src/front-components/thirteen-f-workspace/views';
 
@@ -51,6 +53,9 @@ export const CompanyThirteenF = () => {
   const companyId = useRecordId();
   const [firm, setFirm] = useState<FirmDetail | null>(null);
   const [holdings, setHoldings] = useState<Holding[]>([]);
+  const [selectedPeriod, setSelectedPeriod] = useState<
+    PeriodOption | undefined
+  >();
   const [nextCursor, setNextCursor] = useState<string | undefined>();
   const [hasNextPage, setHasNextPage] = useState(false);
   const [totalCount, setTotalCount] = useState(0);
@@ -58,9 +63,9 @@ export const CompanyThirteenF = () => {
     null,
   );
   const [loadingMore, setLoadingMore] = useState(false);
-  const [status, setStatus] = useState<'loading' | 'ready' | 'missing' | 'error'>(
-    'loading',
-  );
+  const [status, setStatus] = useState<
+    'loading' | 'ready' | 'missing' | 'no-sec' | 'error'
+  >('loading');
 
   useEffect(() => {
     if (!companyId) {
@@ -74,21 +79,26 @@ export const CompanyThirteenF = () => {
           if (active) setStatus('missing');
           return;
         }
-        const [firmResult, holdingsResult] = await Promise.all([
-          callThirteenFRoute<FirmDetail>({
-            action: 'firm',
-            firmId: companySummary.thirteenFFirmId,
-          }),
-          callThirteenFRoute<HoldingsPageEnvelope>({
-            action: 'holdings',
-            firmId: companySummary.thirteenFFirmId,
-            asOfDate: companySummary.firm.latestAsOfDate,
-            limit: 100,
-            order: 'value_desc',
-          }),
-        ]);
+        const firmResult = await callThirteenFRoute<FirmDetail>({
+          action: 'firm',
+          firmId: companySummary.thirteenFFirmId,
+        });
+        const period = secReportPeriods(firmResult.filingHistory)[0];
+        if (!period) {
+          if (active) setStatus('no-sec');
+          return;
+        }
+        const holdingsResult = await callThirteenFRoute<HoldingsPageEnvelope>({
+          action: 'holdings',
+          firmId: companySummary.thirteenFFirmId,
+          asOfDate: period.asOfDate,
+          dateBasis: period.dateBasis,
+          limit: 100,
+          order: 'value_desc',
+        });
         if (!active) return;
         setFirm(firmResult);
+        setSelectedPeriod(period);
         setHoldings(holdingsResult.items);
         setTotalCount(holdingsResult.totalCount);
         setTotalReportedValue(holdingsResult.totalReportedValue);
@@ -110,13 +120,21 @@ export const CompanyThirteenF = () => {
   };
 
   const loadMore = async () => {
-    if (!firm || !nextCursor || !hasNextPage || loadingMore) return;
+    if (
+      !firm ||
+      !selectedPeriod ||
+      !nextCursor ||
+      !hasNextPage ||
+      loadingMore
+    )
+      return;
     setLoadingMore(true);
     try {
       const page = await callThirteenFRoute<HoldingsPageEnvelope>({
         action: 'holdings',
         firmId: firm.id,
-        asOfDate: firm.latestAsOfDate,
+        asOfDate: selectedPeriod.asOfDate,
+        dateBasis: selectedPeriod.dateBasis,
         cursor: nextCursor,
         limit: 100,
         order: 'value_desc',
@@ -147,7 +165,16 @@ export const CompanyThirteenF = () => {
       </div>
     );
   }
-  if (status === 'error' || !firm) {
+  if (status === 'no-sec') {
+    return (
+      <div style={STYLES.panel}>
+        <div style={STYLES.status}>
+          No SEC 13F report period is available for this company.
+        </div>
+      </div>
+    );
+  }
+  if (status === 'error' || !firm || !selectedPeriod) {
     return (
       <div style={STYLES.panel}>
         <div style={STYLES.error} role="alert">
@@ -164,6 +191,8 @@ export const CompanyThirteenF = () => {
         holdings={holdings}
         totalCount={totalCount}
         totalReportedValue={totalReportedValue}
+        asOfDate={selectedPeriod.asOfDate}
+        dateBasis={selectedPeriod.dateBasis}
         backLabel="Close"
         onBack={close}
       />

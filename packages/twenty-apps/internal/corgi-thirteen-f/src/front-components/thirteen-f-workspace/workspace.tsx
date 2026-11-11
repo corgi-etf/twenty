@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 
 import { callThirteenFRoute } from 'src/front-components/thirteen-f-workspace/client';
 import {
@@ -9,6 +9,12 @@ import {
   readBrowserWorkspaceQuery,
   replaceBrowserWorkspaceQuery,
 } from 'src/front-components/thirteen-f-workspace/query-state';
+import {
+  findSecReportPeriod,
+  periodOptionValue,
+  SEC_REPORT_PERIOD,
+  secReportPeriods,
+} from 'src/front-components/thirteen-f-workspace/periods';
 import { UnifiedSearchResults } from 'src/front-components/thirteen-f-workspace/search-results';
 import type {
   FirmDetail,
@@ -17,6 +23,7 @@ import type {
   HoldingsPageEnvelope,
   HoldingsOrder,
   PageEnvelope,
+  PeriodOption,
   SearchResults,
   SecuritySummary,
   ThirteenFSummary,
@@ -28,6 +35,13 @@ import {
 } from 'src/front-components/thirteen-f-workspace/views';
 
 const INITIAL_QUERY = readBrowserWorkspaceQuery();
+const INITIAL_PERIOD: PeriodOption | undefined =
+  INITIAL_QUERY.asOfDate && INITIAL_QUERY.dateBasis === SEC_REPORT_PERIOD
+    ? {
+        asOfDate: INITIAL_QUERY.asOfDate,
+        dateBasis: INITIAL_QUERY.dateBasis,
+      }
+    : undefined;
 
 const STYLES = {
   page: {
@@ -69,7 +83,6 @@ const STYLES = {
     color: '#141414',
     fontSize: 13,
     padding: '10px 12px',
-    outline: 'none',
   },
   select: {
     border: '1px solid #D0D5DD',
@@ -123,9 +136,11 @@ const securityFromHolding = (holding: Holding): SecuritySummary => ({
 
 export const ThirteenFWorkspace = () => {
   const [query, setQuery] = useState(INITIAL_QUERY.q);
-  const [asOfDate, setAsOfDate] = useState<string | undefined>(
-    INITIAL_QUERY.asOfDate,
-  );
+  const [selectedPeriod, setSelectedPeriod] = useState<
+    PeriodOption | undefined
+  >(INITIAL_PERIOD);
+  const asOfDate = selectedPeriod?.asOfDate;
+  const dateBasis = selectedPeriod?.dateBasis ?? SEC_REPORT_PERIOD;
   const [summary, setSummary] = useState<ThirteenFSummary | null>(null);
   const [firms, setFirms] = useState<FirmSummary[]>([]);
   const [searchResults, setSearchResults] = useState<SearchResults | null>(null);
@@ -163,7 +178,18 @@ export const ThirteenFWorkspace = () => {
       .then((result) => {
         if (!active) return;
         setSummary(result);
-        setAsOfDate((current) => current ?? result.latestAsOfDate ?? undefined);
+        setSelectedPeriod((current) => {
+          const periods = secReportPeriods(result.periods);
+          if (
+            current &&
+            periods.some(
+              (period) => periodOptionValue(period) === periodOptionValue(current),
+            )
+          ) {
+            return current;
+          }
+          return periods[0];
+        });
       })
       .catch(() => {
         if (active) setError('13F data is temporarily unavailable.');
@@ -177,10 +203,11 @@ export const ThirteenFWorkspace = () => {
     replaceBrowserWorkspaceQuery({
       q: query,
       asOfDate,
+      dateBasis,
       firmId: selectedFirmId,
       securityId: selectedSecurity?.id,
     });
-  }, [asOfDate, query, selectedFirmId, selectedSecurity?.id]);
+  }, [asOfDate, dateBasis, query, selectedFirmId, selectedSecurity?.id]);
 
   useEffect(() => {
     if (selectedFirmId || selectedSecurity) return;
@@ -193,11 +220,13 @@ export const ThirteenFWorkspace = () => {
         ? callThirteenFRoute<SearchResults>({
             action: 'search',
             q: trimmed,
+            dateBasis,
             limit: 40,
           })
         : callThirteenFRoute<PageEnvelope<FirmSummary>>({
             action: 'firms',
             asOfDate,
+            dateBasis,
             limit: 100,
           });
       request
@@ -230,7 +259,7 @@ export const ThirteenFWorkspace = () => {
       active = false;
       globalThis.clearTimeout(timeout);
     };
-  }, [asOfDate, query, selectedFirmId, selectedSecurity]);
+  }, [asOfDate, dateBasis, query, selectedFirmId, selectedSecurity]);
 
   useEffect(() => {
     if (!selectedFirmId) return;
@@ -246,6 +275,7 @@ export const ThirteenFWorkspace = () => {
         action: 'holdings',
         firmId: selectedFirmId,
         asOfDate,
+        dateBasis,
         limit: 100,
         order: holdingsOrder,
       }),
@@ -268,7 +298,7 @@ export const ThirteenFWorkspace = () => {
     return () => {
       active = false;
     };
-  }, [asOfDate, holdingsOrder, selectedFirmId]);
+  }, [asOfDate, dateBasis, holdingsOrder, selectedFirmId]);
 
   useEffect(() => {
     if (!selectedSecurity) return;
@@ -279,6 +309,7 @@ export const ThirteenFWorkspace = () => {
       action: 'holders',
       securityId: selectedSecurity.id,
       asOfDate,
+      dateBasis,
       mode: asOfDate ? 'exact' : 'latest',
       limit: 100,
     })
@@ -301,14 +332,9 @@ export const ThirteenFWorkspace = () => {
     return () => {
       active = false;
     };
-  }, [asOfDate, selectedSecurity?.id]);
+  }, [asOfDate, dateBasis, selectedSecurity?.id]);
 
-  const availablePeriods = summary?.periods ?? [];
-  const selectedBasis = useMemo(
-    () =>
-      availablePeriods.find((period) => period.asOfDate === asOfDate)?.dateBasis,
-    [asOfDate, availablePeriods],
-  );
+  const availablePeriods = secReportPeriods(summary?.periods ?? []);
 
   const chooseFirm = (nextFirm: FirmSummary | Holding) => {
     setQuery('');
@@ -354,6 +380,7 @@ export const ThirteenFWorkspace = () => {
           action: 'holdings',
           firmId: selectedFirmId,
           asOfDate,
+          dateBasis,
           cursor: nextCursor,
           limit: 100,
           order: holdingsOrder,
@@ -368,6 +395,7 @@ export const ThirteenFWorkspace = () => {
           action: 'holders',
           securityId: selectedSecurity.id,
           asOfDate,
+          dateBasis,
           mode: asOfDate ? 'exact' : 'latest',
           cursor: nextCursor,
           limit: 100,
@@ -379,6 +407,7 @@ export const ThirteenFWorkspace = () => {
         const page = await callThirteenFRoute<PageEnvelope<FirmSummary>>({
           action: 'firms',
           asOfDate,
+          dateBasis,
           cursor: nextCursor,
           limit: 100,
         });
@@ -401,19 +430,27 @@ export const ThirteenFWorkspace = () => {
         </div>
       );
     }
-    if (selectedFirmId && firm) {
+    if (selectedFirmId && firm && selectedPeriod) {
       return (
         <FirmHoldings
           firm={firm}
           holdings={holdings}
           totalCount={totalCount}
           totalReportedValue={totalReportedValue}
-          asOfDate={asOfDate}
+          asOfDate={selectedPeriod.asOfDate}
+          dateBasis={selectedPeriod.dateBasis}
           order={holdingsOrder}
           onBack={backToDirectory}
           onSelectSecurity={chooseSecurity}
           onOrderChange={setHoldingsOrder}
         />
+      );
+    }
+    if (selectedFirmId && firm) {
+      return (
+        <div style={STYLES.status} role="status">
+          No SEC report period is available for this firm.
+        </div>
       );
     }
     if (selectedSecurity) {
@@ -458,10 +495,7 @@ export const ThirteenFWorkspace = () => {
             </div>
             {asOfDate ? (
               <div style={STYLES.subtitle}>
-                As of {formatDate(asOfDate)}
-                {selectedBasis === 'LEGACY_AS_OF_UNVERIFIED'
-                  ? ' · Legacy date'
-                  : ''}
+                SEC report period {formatDate(asOfDate)}
               </div>
             ) : null}
           </div>
@@ -485,24 +519,25 @@ export const ThirteenFWorkspace = () => {
             />
             <select
               style={STYLES.select}
-              value={asOfDate ?? ''}
-              aria-label="As of date"
-              onChange={(event) => setAsOfDate(event.target.value || undefined)}
+              value={selectedPeriod ? periodOptionValue(selectedPeriod) : ''}
+              aria-label="SEC report period"
+              onChange={(event) =>
+                setSelectedPeriod(
+                  findSecReportPeriod(availablePeriods, event.target.value),
+                )
+              }
             >
               {availablePeriods.length === 0 ? (
-                <option value={asOfDate ?? ''}>
+                <option value="">
                   {asOfDate ? formatDate(asOfDate) : 'Latest available'}
                 </option>
               ) : null}
               {availablePeriods.map((period) => (
                 <option
                   key={`${period.asOfDate}:${period.dateBasis}`}
-                  value={period.asOfDate}
+                  value={periodOptionValue(period)}
                 >
                   {formatDate(period.asOfDate)}
-                  {period.dateBasis === 'LEGACY_AS_OF_UNVERIFIED'
-                    ? ' — legacy date'
-                    : ''}
                 </option>
               ))}
             </select>

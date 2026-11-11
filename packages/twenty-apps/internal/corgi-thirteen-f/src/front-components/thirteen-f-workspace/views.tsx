@@ -24,8 +24,6 @@ const COLORS = {
   panel: '#FFFFFF',
   soft: '#F8FAFC',
   accent: '#5C3DF5',
-  warning: '#9A6700',
-  warningBackground: '#FFF8C5',
 } as const;
 
 const STYLES = {
@@ -50,16 +48,6 @@ const STYLES = {
   firmName: { color: COLORS.ink, fontSize: 15, fontWeight: 650 },
   muted: { color: COLORS.muted, fontSize: 12, lineHeight: 1.5 },
   strongMetric: { color: COLORS.ink, fontSize: 18, fontWeight: 700 },
-  badge: {
-    display: 'inline-flex',
-    alignItems: 'center',
-    borderRadius: 999,
-    background: COLORS.warningBackground,
-    color: COLORS.warning,
-    fontSize: 11,
-    fontWeight: 600,
-    padding: '4px 8px',
-  },
   tableWrap: {
     overflowX: 'auto',
     border: `1px solid ${COLORS.border}`,
@@ -145,44 +133,9 @@ const STYLES = {
   },
 } as const;
 
-const DateBasisBadge = ({ basis }: { basis: DateBasis }) =>
-  basis === 'LEGACY_AS_OF_UNVERIFIED' ? (
-    <span style={STYLES.badge}>Legacy date — SEC report period unverified</span>
-  ) : null;
-
 const EmptyState = ({ children }: { children: ReactNode }) => (
   <div style={STYLES.empty}>{children}</div>
 );
-
-const LegacyContextDetails = ({ holding }: { holding: Holding }) => {
-  const context = holding.legacyContext;
-  if (!context) return null;
-  const legacyValues: Array<[string, string | null]> = [
-    ['Portfolio', context.portfolioName],
-    ['Target ticker', context.targetTicker],
-    ['Latest change', context.latestChange],
-    ['Ownership', formatPercent(context.ownershipPercent)],
-    ['Portfolio share', formatPercent(context.portfolioPercent)],
-    ['Estimated value', formatMoney(context.estimatedValue)],
-    ['Change value', formatDecimal(context.changeValue)],
-    ['Change percent', formatPercent(context.changePercent)],
-  ];
-  const values = legacyValues.filter(([, value]) => value && value !== '—');
-
-  return (
-    <div style={{ display: 'grid', gap: 6 }}>
-      <span style={STYLES.badge}>Unverified legacy source</span>
-      <dl style={STYLES.detailsList}>
-        {values.map(([label, value]) => (
-          <div key={label} style={{ display: 'contents' }}>
-            <dt style={STYLES.detailsTerm}>{label}</dt>
-            <dd style={STYLES.detailsValue}>{value}</dd>
-          </div>
-        ))}
-      </dl>
-    </div>
-  );
-};
 
 const PositionDetails = ({ holding }: { holding: Holding }) => {
   const details: Array<[string, string]> = [
@@ -217,25 +170,8 @@ const PositionDetails = ({ holding }: { holding: Holding }) => {
             </div>
           ))}
         </dl>
-        <LegacyContextDetails holding={holding} />
       </div>
     </details>
-  );
-};
-
-const HoldingValue = ({ holding }: { holding: Holding }) => {
-  const estimatedValue = holding.legacyContext?.estimatedValue ?? null;
-  const usesEstimatedValue =
-    holding.reportedValue === null && estimatedValue !== null;
-  const displayedValue = holding.reportedValue ?? estimatedValue;
-
-  return (
-    <>
-      {formatMoney(displayedValue)}
-      {usesEstimatedValue ? (
-        <div style={STYLES.muted}>Estimated · unverified legacy data</div>
-      ) : null}
-    </>
   );
 };
 
@@ -308,9 +244,6 @@ export const FirmDirectory = ({
                 </td>
                 <td style={STYLES.td}>
                   {formatDate(firm.latestReportPeriod ?? firm.latestAsOfDate)}
-                  <div style={{ marginTop: 6 }}>
-                    <DateBasisBadge basis={firm.latestDateBasis} />
-                  </div>
                 </td>
                 <td style={STYLES.td}>{formatDate(firm.latestFiledAt)}</td>
                 <td style={STYLES.td}>{firm.latestFormType ?? '—'}</td>
@@ -406,7 +339,7 @@ const HoldingsTable = ({
                 {holding.shareType ? ` ${holding.shareType}` : ''}
               </td>
               <td style={{ ...STYLES.td, textAlign: 'right' }}>
-                <HoldingValue holding={holding} />
+                {formatMoney(holding.reportedValue)}
               </td>
               <td style={{ ...STYLES.td, textAlign: 'right' }}>
                 {formatPercent(holding.portfolioPercent)}
@@ -419,11 +352,6 @@ const HoldingsTable = ({
               </td>
               <td style={STYLES.td}>
                 {formatDate(holding.asOfDate)}
-                {holding.dateBasis === 'LEGACY_AS_OF_UNVERIFIED' ? (
-                  <div style={{ marginTop: 6 }}>
-                    <DateBasisBadge basis={holding.dateBasis} />
-                  </div>
-                ) : null}
               </td>
               <td style={STYLES.td}>
                 <PositionDetails holding={holding} />
@@ -435,10 +363,14 @@ const HoldingsTable = ({
     </div>
   );
 
-const FilingHistory = ({ firm }: { firm: FirmDetail }) => (
-  <section style={STYLES.stack}>
+const FilingHistory = ({ firm }: { firm: FirmDetail }) => {
+  const filings = firm.filingHistory.filter(
+    (filing) => filing.dateBasis === 'SEC_REPORT_PERIOD',
+  );
+
+  return <section style={STYLES.stack}>
     <h3 style={STYLES.sectionTitle}>Filing history</h3>
-    {firm.filingHistory.length === 0 ? (
+    {filings.length === 0 ? (
       <EmptyState>No earlier filings are available.</EmptyState>
     ) : (
       <div style={STYLES.tableWrap}>
@@ -458,15 +390,10 @@ const FilingHistory = ({ firm }: { firm: FirmDetail }) => (
             </tr>
           </thead>
           <tbody>
-            {firm.filingHistory.map((filing) => (
+            {filings.map((filing) => (
               <tr key={filing.id}>
                 <td style={STYLES.td}>
                   {formatDate(filing.asOfDate)}
-                  {filing.dateBasis === 'LEGACY_AS_OF_UNVERIFIED' ? (
-                    <div style={{ marginTop: 6 }}>
-                      <DateBasisBadge basis={filing.dateBasis} />
-                    </div>
-                  ) : null}
                 </td>
                 <td style={STYLES.td}>{formatDate(filing.filedAt)}</td>
                 <td style={STYLES.td}>{filing.formType ?? '—'}</td>
@@ -483,8 +410,8 @@ const FilingHistory = ({ firm }: { firm: FirmDetail }) => (
         </table>
       </div>
     )}
-  </section>
-);
+  </section>;
+};
 
 export const FirmHoldings = ({
   firm,
@@ -492,6 +419,7 @@ export const FirmHoldings = ({
   totalCount,
   totalReportedValue,
   asOfDate,
+  dateBasis,
   order = 'value_desc',
   backLabel = 'All firms',
   onBack,
@@ -502,29 +430,15 @@ export const FirmHoldings = ({
   holdings: Holding[];
   totalCount: number;
   totalReportedValue: string | null;
-  asOfDate?: string;
+  asOfDate: string;
+  dateBasis: DateBasis;
   order?: 'value_desc' | 'shares_desc' | 'ticker_asc';
   backLabel?: string;
   onBack(): void;
   onSelectSecurity?(holding: Holding): void;
   onOrderChange?(order: 'value_desc' | 'shares_desc' | 'ticker_asc'): void;
 }) => {
-  const selectedFiling = asOfDate
-    ? firm.filingHistory.find((filing) => filing.asOfDate === asOfDate)
-    : undefined;
-  const holdingsAsOf = selectedFiling
-    ? selectedFiling.asOfDate
-    : firm.latestAsOfDate;
-  const filedAt = selectedFiling ? selectedFiling.filedAt : firm.latestFiledAt;
-  const formType = selectedFiling
-    ? selectedFiling.formType
-    : firm.latestFormType;
-  const coverage = selectedFiling
-    ? selectedFiling.coverage
-    : firm.latestCoverage;
-  const dateBasis = selectedFiling
-    ? selectedFiling.dateBasis
-    : firm.latestDateBasis;
+  const holdingsAsOf = asOfDate;
   const holdingsDateLabel =
     dateBasis === 'SEC_REPORT_PERIOD' ? 'SEC report period' : 'Holdings as of';
 
@@ -555,11 +469,7 @@ export const FirmHoldings = ({
           {holdingsDateLabel} {formatDate(holdingsAsOf)}
         </div>
         <div style={STYLES.muted}>
-          Filed {formatDate(filedAt)} · {formType ?? 'Form not available'}
-          {coverage ? ` · ${coverage}` : ''}
-        </div>
-        <div style={{ marginTop: 8 }}>
-          <DateBasisBadge basis={dateBasis} />
+          Composed from the applicable SEC filing accessions shown below.
         </div>
       </div>
     </div>
