@@ -19,6 +19,7 @@ describe('13F server proxy', () => {
         action: 'holdings',
         firmId: '71337d42-47fe-448d-a7dd-315a8385eabe',
         asOfDate: '2026-09-30',
+        dateBasis: 'SEC_REPORT_PERIOD',
         q: 'NVDA',
         order: 'value_desc',
         limit: 50,
@@ -35,7 +36,7 @@ describe('13F server proxy', () => {
 
     expect(response.status).toBe(200);
     expect(fetcher).toHaveBeenCalledWith(
-      'https://example.test/api/internal/thirteen-f/firms/71337d42-47fe-448d-a7dd-315a8385eabe/holdings?asOfDate=2026-09-30&q=NVDA&limit=50&order=value_desc',
+      'https://example.test/api/internal/thirteen-f/firms/71337d42-47fe-448d-a7dd-315a8385eabe/holdings?asOfDate=2026-09-30&dateBasis=SEC_REPORT_PERIOD&q=NVDA&limit=50&order=value_desc',
       expect.objectContaining({
         method: 'GET',
         redirect: 'error',
@@ -45,12 +46,60 @@ describe('13F server proxy', () => {
   });
 
   it.each([
+    [
+      { action: 'firms', asOfDate: '2026-06-30', dateBasis: 'SEC_REPORT_PERIOD' },
+      'https://example.test/api/internal/thirteen-f/firms?asOfDate=2026-06-30&dateBasis=SEC_REPORT_PERIOD',
+    ],
+    [
+      { action: 'search', q: 'NVDA', dateBasis: 'SEC_REPORT_PERIOD' },
+      'https://example.test/api/internal/thirteen-f/search?q=NVDA&dateBasis=SEC_REPORT_PERIOD',
+    ],
+    [
+      {
+        action: 'holders',
+        securityId: '71337d42-47fe-448d-a7dd-315a8385eabe',
+        asOfDate: '2026-06-30',
+        dateBasis: 'SEC_REPORT_PERIOD',
+        mode: 'exact',
+      },
+      'https://example.test/api/internal/thirteen-f/securities/71337d42-47fe-448d-a7dd-315a8385eabe/holders?asOfDate=2026-06-30&dateBasis=SEC_REPORT_PERIOD&mode=exact',
+    ],
+  ])('forwards the exact SEC period scope for %#', async (body, expectedUrl) => {
+    const fetcher = vi.fn(async () =>
+      new globalThis.Response(JSON.stringify({ items: [] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+
+    const response = await handleThirteenFQuery(body, context, {
+      apiBaseUrl: 'https://example.test',
+      readToken: 'server-only-token',
+      expectedWorkspaceId: workspaceId,
+      approvedApiOrigins: ['https://example.test'],
+      fetcher,
+    });
+
+    expect(response.status).toBe(200);
+    expect(fetcher).toHaveBeenCalledWith(expectedUrl, expect.any(Object));
+  });
+
+  it.each([
     ['wrong workspace', { workspaceId: crypto.randomUUID() }, { action: 'summary' }],
     ['unknown action', context, { action: 'files' }],
     [
       'unknown key',
       context,
       { action: 'summary', apiKey: 'do-not-forward-client-secrets' },
+    ],
+    [
+      'unknown date basis',
+      context,
+      {
+        action: 'search',
+        q: 'NVDA',
+        dateBasis: 'WORKBOOK_AS_OF_DATE',
+      },
     ],
   ])('denies %s without contacting the website', async (_name, caller, body) => {
     const fetcher = vi.fn();
