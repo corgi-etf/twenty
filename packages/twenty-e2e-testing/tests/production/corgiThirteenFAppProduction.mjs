@@ -23,9 +23,6 @@ const WORKSPACE_FRONT_COMPONENT_ID = 'ee91c40f-759d-42bd-be49-43f0af07982b';
 const COMPANY_FRONT_COMPONENT_ID = 'e202fe49-1d7f-4bb9-9bce-77f15a2322c0';
 const QUERY_LOGIC_FUNCTION_ID = 'a418e514-347d-4f63-a0bb-109bedddfdb1';
 const ROLE_ID = '74e11c1b-ed63-4d94-bf2a-89db86edcf39';
-const API_BASE_URL_VARIABLE_ID = '7c8630fc-233a-42e2-a19b-bd750a597435';
-const API_READ_TOKEN_VARIABLE_ID = 'fefc317b-7aa5-4e6a-8ad7-046dd0dd04b5';
-const WORKSPACE_ID_VARIABLE_ID = '90e85886-1020-4404-a75a-01b76f9207f0';
 const SECRET_APPLICATION_VARIABLE_MASK = '********';
 
 const expectedApplicationVariableDisplayValue = (expectedValue, isSecret) => {
@@ -208,178 +205,6 @@ const configure = async () => {
   console.log('Corgi 13F application variables configured');
 };
 
-const assertManifest = (manifest) => {
-  if (
-    manifest?.application?.universalIdentifier !== APPLICATION_ID ||
-    manifest.application.defaultRoleUniversalIdentifier !== ROLE_ID ||
-    !Array.isArray(manifest.objects) ||
-    manifest.objects.length !== 0 ||
-    !Array.isArray(manifest.views) ||
-    manifest.views.length !== 0 ||
-    !Array.isArray(manifest.permissionFlags) ||
-    manifest.permissionFlags.length !== 0
-  ) {
-    throw new Error('Corgi 13F exported application manifest is incorrect');
-  }
-
-  const field = exactlyOne(
-    manifest.fields,
-    ({ universalIdentifier }) => universalIdentifier === COMPANY_FIELD_ID,
-    'exported Company 13F field',
-  );
-  if (
-    manifest.fields.length !== 1 ||
-    field.objectUniversalIdentifier !== COMPANY_OBJECT_ID ||
-    field.name !== 'thirteenFFirmId' ||
-    field.type !== 'TEXT' ||
-    field.isNullable !== true ||
-    field.isUnique !== true ||
-    field.isUIEditable !== false
-  ) {
-    throw new Error('Corgi 13F exported Company field is incorrect');
-  }
-
-  const frontComponents = new Map(
-    (manifest.frontComponents ?? []).map((item) => [
-      item.universalIdentifier,
-      item,
-    ]),
-  );
-  if (
-    frontComponents.size !== 2 ||
-    !frontComponents.has(WORKSPACE_FRONT_COMPONENT_ID) ||
-    !frontComponents.has(COMPANY_FRONT_COMPONENT_ID)
-  ) {
-    throw new Error('Corgi 13F exported front component set is incorrect');
-  }
-
-  const logicFunction = exactlyOne(
-    manifest.logicFunctions,
-    ({ universalIdentifier }) =>
-      universalIdentifier === QUERY_LOGIC_FUNCTION_ID,
-    'exported Corgi 13F query function',
-  );
-  const httpRouteTriggerSettings = logicFunction.httpRouteTriggerSettings;
-  if (
-    manifest.logicFunctions.length !== 1 ||
-    !httpRouteTriggerSettings ||
-    httpRouteTriggerSettings.path !== '/thirteen-f/query' ||
-    httpRouteTriggerSettings.httpMethod !== 'POST' ||
-    httpRouteTriggerSettings.isAuthRequired !== true
-  ) {
-    throw new Error('Corgi 13F exported logic function is incorrect');
-  }
-
-  const pageLayout = exactlyOne(
-    manifest.pageLayouts,
-    ({ universalIdentifier }) => universalIdentifier === PAGE_LAYOUT_ID,
-    'exported 13F page layout',
-  );
-  const pageTab = exactlyOne(
-    pageLayout.tabs,
-    ({ universalIdentifier }) => universalIdentifier === PAGE_TAB_ID,
-    'exported 13F page tab',
-  );
-  const pageWidget = exactlyOne(
-    pageTab.widgets,
-    ({ universalIdentifier }) => universalIdentifier === PAGE_WIDGET_ID,
-    'exported 13F page widget',
-  );
-  if (
-    manifest.pageLayouts.length !== 1 ||
-    pageLayout.name !== '13F' ||
-    pageLayout.type !== 'STANDALONE_PAGE' ||
-    pageLayout.tabs.length !== 1 ||
-    pageTab.title !== '13F' ||
-    pageTab.widgets.length !== 1 ||
-    pageWidget.type !== 'FRONT_COMPONENT' ||
-    pageWidget.configuration?.configurationType !== 'FRONT_COMPONENT' ||
-    pageWidget.configuration.frontComponentUniversalIdentifier !==
-      WORKSPACE_FRONT_COMPONENT_ID
-  ) {
-    throw new Error('Corgi 13F exported page layout is incorrect');
-  }
-
-  const navigation = exactlyOne(
-    manifest.navigationMenuItems,
-    ({ universalIdentifier }) => universalIdentifier === NAVIGATION_ID,
-    'exported 13F navigation item',
-  );
-  if (
-    manifest.navigationMenuItems.length !== 1 ||
-    navigation.name !== '13F' ||
-    navigation.type !== 'PAGE_LAYOUT' ||
-    navigation.pageLayoutUniversalIdentifier !== PAGE_LAYOUT_ID
-  ) {
-    throw new Error('Corgi 13F exported navigation is incorrect');
-  }
-
-  const command = exactlyOne(
-    manifest.commandMenuItems,
-    ({ universalIdentifier }) => universalIdentifier === COMPANY_COMMAND_ID,
-    'exported Company 13F command',
-  );
-  const commandAvailability =
-    command.conditionalAvailabilityExpression?.replace(/\s+/g, '') ?? '';
-  if (
-    manifest.commandMenuItems.length !== 1 ||
-    command.label !== 'View 13F holdings' ||
-    command.availabilityType !== 'GLOBAL_OBJECT_CONTEXT' ||
-    command.availabilityObjectUniversalIdentifier !== COMPANY_OBJECT_ID ||
-    command.frontComponentUniversalIdentifier !== COMPANY_FRONT_COMPONENT_ID ||
-    !commandAvailability.includes('someDefined(selectedRecords') ||
-    !commandAvailability.includes('thirteenFFirmId')
-  ) {
-    throw new Error('Corgi 13F exported Company command is incorrect');
-  }
-
-  const role = exactlyOne(
-    manifest.roles,
-    ({ universalIdentifier }) => universalIdentifier === ROLE_ID,
-    'exported Corgi 13F role',
-  );
-  if (
-    manifest.roles.length !== 1 ||
-    role.canReadAllObjectRecords !== false ||
-    role.canUpdateAllObjectRecords !== false ||
-    role.canSoftDeleteAllObjectRecords !== false ||
-    role.canDestroyAllObjectRecords !== false ||
-    role.canUpdateAllSettings !== false ||
-    role.canBeAssignedToUsers !== false ||
-    role.canBeAssignedToAgents !== false ||
-    role.canBeAssignedToApiKeys !== false ||
-    role.objectPermissions.length !== 0 ||
-    role.permissionFlagUniversalIdentifiers.length !== 0
-  ) {
-    throw new Error('Corgi 13F exported role is incorrect');
-  }
-
-  const variableDefinitions = manifest.application.applicationVariables;
-  const expectedVariableDefinitions = new Map([
-    ['CORGI_THIRTEEN_F_API_BASE_URL', [API_BASE_URL_VARIABLE_ID, false]],
-    ['CORGI_THIRTEEN_F_API_READ_TOKEN', [API_READ_TOKEN_VARIABLE_ID, true]],
-    ['CORGI_THIRTEEN_F_WORKSPACE_ID', [WORKSPACE_ID_VARIABLE_ID, false]],
-  ]);
-  if (
-    !variableDefinitions ||
-    Object.keys(variableDefinitions).length !== expectedVariableDefinitions.size
-  ) {
-    throw new Error('Corgi 13F application variable manifest is incorrect');
-  }
-  for (const [
-    key,
-    [universalIdentifier, isSecret],
-  ] of expectedVariableDefinitions) {
-    const definition = variableDefinitions[key];
-    if (
-      definition?.universalIdentifier !== universalIdentifier ||
-      definition.isSecret !== isSecret
-    ) {
-      throw new Error('Corgi 13F application variable manifest is incorrect');
-    }
-  }
-};
-
 const verifyOnce = async () => {
   const state = classifyDeploymentState(await readDeploymentState());
 
@@ -440,7 +265,9 @@ const verifyOnce = async () => {
   if (
     application.frontComponents.length !== 2 ||
     workspaceFrontComponent.applicationId !== application.id ||
-    companyFrontComponent.applicationId !== application.id
+    workspaceFrontComponent.name !== '13F workspace' ||
+    companyFrontComponent.applicationId !== application.id ||
+    companyFrontComponent.name !== 'Company 13F holdings'
   ) {
     throw new Error('Corgi 13F runtime front component set is incorrect');
   }
@@ -474,6 +301,7 @@ const verifyOnce = async () => {
   if (
     application.logicFunctions.length !== 1 ||
     logicFunction.applicationId !== application.id ||
+    logicFunction.name !== 'thirteen-f-query' ||
     !httpRouteTriggerSettings ||
     httpRouteTriggerSettings.path !== '/thirteen-f/query' ||
     httpRouteTriggerSettings.httpMethod !== 'POST' ||
@@ -509,14 +337,9 @@ const verifyOnce = async () => {
   const metadata = await graphql({
     operationName: 'VerifyCorgiThirteenFMetadata',
     query: `query VerifyCorgiThirteenFMetadata(
-      $applicationId: UUID!
       $companyObjectId: UUID!
     ) {
       currentWorkspace { id displayName }
-      exportApplication(universalIdentifier: $applicationId) {
-        application { universalIdentifier }
-        manifest
-      }
       companyObjects: objects(
         paging: { first: 2 }
         filter: { universalIdentifier: { eq: $companyObjectId } }
@@ -550,7 +373,7 @@ const verifyOnce = async () => {
         id applicationId pageLayoutId type name
       }
       getRoles {
-        id universalIdentifier
+        id universalIdentifier label
         canReadAllObjectRecords canUpdateAllObjectRecords
         canSoftDeleteAllObjectRecords canDestroyAllObjectRecords
         canUpdateAllSettings canAccessAllTools
@@ -561,31 +384,27 @@ const verifyOnce = async () => {
       }
     }`,
     variables: {
-      applicationId: APPLICATION_ID,
       companyObjectId: COMPANY_OBJECT_ID,
     },
   });
 
   assertTenant(metadata.currentWorkspace);
-  if (
-    metadata.exportApplication?.application?.universalIdentifier !==
-    APPLICATION_ID
-  ) {
-    throw new Error('Corgi 13F exported application identity is incorrect');
-  }
-  assertManifest(metadata.exportApplication.manifest);
 
   const companyObject = exactlyOne(
     metadata.companyObjects?.edges?.map(({ node }) => node),
     ({ universalIdentifier }) => universalIdentifier === COMPANY_OBJECT_ID,
     'standard Company object',
   );
+  const applicationFields = companyObject.fieldsList.filter(
+    ({ applicationId }) => applicationId === application.id,
+  );
   const field = exactlyOne(
-    companyObject.fieldsList,
+    applicationFields,
     ({ universalIdentifier }) => universalIdentifier === COMPANY_FIELD_ID,
     'Company 13F field',
   );
   if (
+    applicationFields.length !== 1 ||
     field.applicationId !== application.id ||
     field.name !== 'thirteenFFirmId' ||
     field.type !== 'TEXT' ||
@@ -600,8 +419,11 @@ const verifyOnce = async () => {
     throw new Error('Corgi 13F Company command targets the wrong object');
   }
 
+  const applicationPageLayouts = metadata.getPageLayouts.filter(
+    ({ applicationId }) => applicationId === application.id,
+  );
   const pageLayout = exactlyOne(
-    metadata.getPageLayouts,
+    applicationPageLayouts,
     ({ universalIdentifier }) => universalIdentifier === PAGE_LAYOUT_ID,
     '13F standalone page layout',
   );
@@ -616,13 +438,16 @@ const verifyOnce = async () => {
     '13F standalone page widget',
   );
   if (
+    applicationPageLayouts.length !== 1 ||
     pageLayout.applicationId !== application.id ||
     pageLayout.name !== '13F' ||
     pageLayout.type !== 'STANDALONE_PAGE' ||
     pageLayout.tabs.length !== 1 ||
     pageTab.applicationId !== application.id ||
+    pageTab.title !== '13F' ||
     pageTab.widgets.length !== 1 ||
     pageWidget.applicationId !== application.id ||
+    pageWidget.title !== '13F' ||
     pageWidget.type !== 'FRONT_COMPONENT' ||
     pageWidget.configuration?.configurationType !== 'FRONT_COMPONENT' ||
     pageWidget.configuration.frontComponentId !== workspaceFrontComponent.id
@@ -650,6 +475,7 @@ const verifyOnce = async () => {
   );
   if (
     application.defaultRoleId !== role.id ||
+    role.label !== 'Corgi 13F server role' ||
     role.canReadAllObjectRecords !== false ||
     role.canUpdateAllObjectRecords !== false ||
     role.canSoftDeleteAllObjectRecords !== false ||

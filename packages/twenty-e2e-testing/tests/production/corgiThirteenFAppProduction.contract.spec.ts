@@ -91,6 +91,11 @@ const EXPECTED_IDS = [
   '90e85886-1020-4404-a75a-01b76f9207f0',
   '74e11c1b-ed63-4d94-bf2a-89db86edcf39',
 ] as const;
+const SOURCE_ONLY_VARIABLE_IDS: readonly string[] = [
+  '7c8630fc-233a-42e2-a19b-bd750a597435',
+  'fefc317b-7aa5-4e6a-8ad7-046dd0dd04b5',
+  '90e85886-1020-4404-a75a-01b76f9207f0',
+];
 const OBSOLETE_IDS = [
   '7cb2d1fc-c0eb-407a-9a4b-a519fbb70f9a',
   '42f51bb6-3a42-43fd-8202-2f9196f0b03a',
@@ -159,7 +164,9 @@ test('pins the exact v0.3.1 production tenant and native workspace identities', 
 
   for (const identifier of EXPECTED_IDS) {
     expect(workflow).toContain(identifier);
-    expect(`${verifier}\n${deploymentState}`).toContain(identifier);
+    if (!SOURCE_ONLY_VARIABLE_IDS.includes(identifier)) {
+      expect(`${verifier}\n${deploymentState}`).toContain(identifier);
+    }
   }
   for (const identifier of OBSOLETE_IDS) {
     expect(workflow).not.toContain(identifier);
@@ -424,21 +431,42 @@ test('accepts only the exact failed v0.3.0 recovery pair', () => {
   }
 });
 
-test('verifies only the v0.3.1 native manifest and zero app-owned objects', () => {
+test('verifies the v0.3.1 runtime without exporting the private TARBALL app', () => {
+  expect(verifier).not.toContain('exportApplication');
+  expect(verifier).not.toContain('assertManifest');
+  expect(verifier).not.toContain('metadata.exportApplication');
+  expect(verifier).toContain('application.version !== VERSION');
+  expect(verifier).toContain("application.state !== 'INSTALLED'");
   expect(verifier).toContain('application.objects.length !== 0');
-  expect(verifier).toContain('manifest.objects.length !== 0');
-  expect(verifier).toContain('manifest.views.length !== 0');
+  expect(verifier).toContain('applicationFields.length !== 1');
   expect(verifier).toContain("field.name !== 'thirteenFFirmId'");
   expect(verifier).toContain("field.type !== 'TEXT'");
   expect(verifier).toContain('field.isNullable !== true');
   expect(verifier).toContain('field.isUIEditable !== false');
+  expect(verifier).toContain('application.frontComponents.length !== 2');
+  expect(verifier).toContain(
+    "workspaceFrontComponent.name !== '13F workspace'",
+  );
+  expect(verifier).toContain(
+    "companyFrontComponent.name !== 'Company 13F holdings'",
+  );
+  expect(verifier).toContain('application.commandMenuItems.length !== 1');
+  expect(verifier).toContain("command.label !== 'View 13F holdings'");
+  expect(verifier).toContain('application.logicFunctions.length !== 1');
+  expect(verifier).toContain("logicFunction.name !== 'thirteen-f-query'");
+  expect(verifier).toContain('application.applicationVariables.length');
+  expect(verifier).toContain('applicationPageLayouts.length !== 1');
   expect(verifier).toContain("navigation.type !== 'PAGE_LAYOUT'");
   expect(verifier).toContain("pageLayout.type !== 'STANDALONE_PAGE'");
+  expect(verifier).toContain("pageTab.title !== '13F'");
+  expect(verifier).toContain("pageWidget.title !== '13F'");
   expect(verifier).toContain('conditionalAvailabilityExpression');
   expect(verifier).toContain('someDefined(selectedRecords');
   expect(verifier).toContain(
     "httpRouteTriggerSettings.path !== '/thirteen-f/query'",
   );
+  expect(verifier).toContain('application.defaultRoleId !== role.id');
+  expect(verifier).toContain("role.label !== 'Corgi 13F server role'");
   expect(verifier).toContain('role.objectPermissions.length !== 0');
   expect(verifier).toContain('role.permissionFlags.length !== 0');
   expect(verifier).not.toContain('UPLOAD_FILE');
