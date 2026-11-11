@@ -8,6 +8,7 @@ import {
   FirmHoldings,
   SecurityHolders,
 } from 'src/front-components/thirteen-f-workspace/views';
+import { UnifiedSearchResults } from 'src/front-components/thirteen-f-workspace/search-results';
 import { callThirteenFRoute } from 'src/front-components/thirteen-f-workspace/client';
 import {
   formatDecimal,
@@ -21,6 +22,7 @@ import {
 import type {
   FirmDetail,
   Holding,
+  SearchResults,
   SecuritySummary,
 } from 'src/front-components/thirteen-f-workspace/types';
 
@@ -114,12 +116,20 @@ describe('13F workspace journeys', () => {
 
   it('renders a firm-first directory by default', () => {
     const html = renderToStaticMarkup(
-      <FirmDirectory firms={[firm]} onSelect={() => undefined} />,
+      <FirmDirectory
+        firms={[firm]}
+        totalCount={267}
+        onSelect={() => undefined}
+      />,
     );
 
     expect(html).toContain('Example Capital');
     expect(html).toContain('CIK 0001234567');
-    expect(html).toContain('As of Sep 30, 2026');
+    expect(html).toContain('Holdings date');
+    expect(html).toContain('Sep 30, 2026');
+    expect(html).toContain('1 of 267 firms shown');
+    expect(html).toContain('Filed');
+    expect(html).toContain('Form');
     expect(html).toContain('$125,000,000');
     expect(html).not.toMatch(/workbook|download|import|parser/i);
   });
@@ -131,10 +141,18 @@ describe('13F workspace journeys', () => {
         holdings={[holding]}
         onBack={() => undefined}
         onSelectSecurity={() => undefined}
+        totalCount={125}
+        order="value_desc"
+        onOrderChange={() => undefined}
       />,
     );
 
     expect(html).toContain('Holdings as of Sep 30, 2026');
+    expect(html).toContain('1 of 125 positions shown');
+    expect(html).toContain('aria-label="Sort firm holdings"');
+    expect(html).toContain('Highest value');
+    expect(html).toContain('Most shares');
+    expect(html).toContain('Ticker A–Z');
     expect(html).toContain('Legacy date — SEC report period unverified');
     expect(html).toContain('Filed Nov 9, 2026');
     expect(html).toContain('NVIDIA Corporation');
@@ -154,6 +172,8 @@ describe('13F workspace journeys', () => {
     expect(html).toContain('Investment discretion');
     expect(html).toContain('Other manager');
     expect(html).toContain('Voting — sole');
+    expect(html).toContain('Report period');
+    expect(html).toContain('Coverage');
   });
 
   it('labels legacy value estimates without overriding official filed values', () => {
@@ -230,7 +250,7 @@ describe('13F workspace journeys', () => {
       />,
     );
 
-    expect(html).toContain('Holdings as of Jun 30, 2026');
+    expect(html).toContain('SEC report period Jun 30, 2026');
     expect(html).toContain('Filed Aug 14, 2026');
     expect(html).toContain('13F-HR/A');
     expect(html).toContain('$90,000,000');
@@ -247,6 +267,7 @@ describe('13F workspace journeys', () => {
       <SecurityHolders
         security={security}
         holdings={[holding]}
+        totalCount={46}
         onBack={() => undefined}
         onSelectFirm={() => undefined}
       />,
@@ -255,7 +276,38 @@ describe('13F workspace journeys', () => {
     expect(html).toContain('Firms holding NVDA');
     expect(html).toContain('Example Capital');
     expect(html).toContain('Sep 30, 2026');
+    expect(html).toContain('1 of 46 reported positions shown');
     expect(html).toMatch(/Firm<\/th>.*Ticker<\/th>/s);
+  });
+
+  it('shows filing context for firm search and an explicit holder lookup action', () => {
+    const searchResults: SearchResults = {
+      firms: [firm],
+      securities: [
+        {
+          id: 'security-1',
+          issuerName: 'NVIDIA Corporation',
+          ticker: 'NVDA',
+          cusip: '67066G104',
+        },
+      ],
+    };
+    const html = renderToStaticMarkup(
+      <UnifiedSearchResults
+        results={searchResults}
+        onSelectFirm={() => undefined}
+        onSelectSecurity={() => undefined}
+      />,
+    );
+
+    expect(html).toContain('Firms (1)');
+    expect(html).toContain('1 position');
+    expect(html).toContain('$125,000,000');
+    expect(html).toContain('Filed Nov 9, 2026');
+    expect(html).toContain('Review firm →');
+    expect(html).toContain('Securities (1)');
+    expect(html).toContain('Find holding firms →');
+    expect(html).toContain('CUSIP 67066G104');
   });
 
   it('labels only comparable SEC changes as change versus the prior quarter', () => {

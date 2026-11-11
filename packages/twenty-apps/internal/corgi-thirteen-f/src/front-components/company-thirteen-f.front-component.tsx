@@ -8,6 +8,7 @@ import {
 
 import { COMPANY_THIRTEEN_F_FRONT_COMPONENT_ID } from 'src/constants/universal-identifiers';
 import { callThirteenFRoute } from 'src/front-components/thirteen-f-workspace/client';
+import { formatCount } from 'src/front-components/thirteen-f-workspace/format';
 import type {
   CompanySummary,
   FirmDetail,
@@ -52,6 +53,7 @@ export const CompanyThirteenF = () => {
   const [holdings, setHoldings] = useState<Holding[]>([]);
   const [nextCursor, setNextCursor] = useState<string | undefined>();
   const [hasNextPage, setHasNextPage] = useState(false);
+  const [totalCount, setTotalCount] = useState(0);
   const [loadingMore, setLoadingMore] = useState(false);
   const [status, setStatus] = useState<'loading' | 'ready' | 'missing' | 'error'>(
     'loading',
@@ -85,6 +87,7 @@ export const CompanyThirteenF = () => {
         if (!active) return;
         setFirm(firmResult);
         setHoldings(holdingsResult.items);
+        setTotalCount(holdingsResult.totalCount);
         setNextCursor(holdingsResult.pageInfo.endCursor ?? undefined);
         setHasNextPage(Boolean(holdingsResult.pageInfo.hasNextPage));
         setStatus('ready');
@@ -125,7 +128,11 @@ export const CompanyThirteenF = () => {
   };
 
   if (status === 'loading') {
-    return <div style={STYLES.status}>Loading 13F holdings…</div>;
+    return (
+      <div style={STYLES.status} role="status" aria-live="polite">
+        Loading 13F holdings…
+      </div>
+    );
   }
   if (status === 'missing') {
     return (
@@ -137,7 +144,9 @@ export const CompanyThirteenF = () => {
   if (status === 'error' || !firm) {
     return (
       <div style={STYLES.panel}>
-        <div style={STYLES.error}>Could not load this company’s 13F holdings.</div>
+        <div style={STYLES.error} role="alert">
+          Could not load this company’s 13F holdings.
+        </div>
       </div>
     );
   }
@@ -147,6 +156,7 @@ export const CompanyThirteenF = () => {
       <FirmHoldings
         firm={firm}
         holdings={holdings}
+        totalCount={totalCount}
         backLabel="Close"
         onBack={close}
       />
@@ -155,9 +165,12 @@ export const CompanyThirteenF = () => {
           type="button"
           style={STYLES.loadMore}
           disabled={loadingMore}
+          aria-busy={loadingMore}
           onClick={loadMore}
         >
-          {loadingMore ? 'Loading…' : 'Load more'}
+          {loadingMore
+            ? 'Loading…'
+            : `Load more · ${formatCount(holdings.length)} of ${formatCount(totalCount)}`}
         </button>
       ) : null}
     </div>

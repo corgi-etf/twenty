@@ -1,7 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
 
 import { callThirteenFRoute } from 'src/front-components/thirteen-f-workspace/client';
-import { formatDate } from 'src/front-components/thirteen-f-workspace/format';
+import {
+  formatCount,
+  formatDate,
+} from 'src/front-components/thirteen-f-workspace/format';
 import {
   readBrowserWorkspaceQuery,
   replaceBrowserWorkspaceQuery,
@@ -11,6 +14,7 @@ import type {
   FirmDetail,
   FirmSummary,
   Holding,
+  HoldingsOrder,
   PageEnvelope,
   SearchResults,
   SecuritySummary,
@@ -142,6 +146,9 @@ export const ThirteenFWorkspace = () => {
   const [holdings, setHoldings] = useState<Holding[]>([]);
   const [nextCursor, setNextCursor] = useState<string | undefined>();
   const [hasNextPage, setHasNextPage] = useState(false);
+  const [totalCount, setTotalCount] = useState(0);
+  const [holdingsOrder, setHoldingsOrder] =
+    useState<HoldingsOrder>('value_desc');
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -194,12 +201,14 @@ export const ThirteenFWorkspace = () => {
           if (!active) return;
           if (trimmed) {
             setSearchResults(result as SearchResults);
+            setTotalCount(0);
             setNextCursor(undefined);
             setHasNextPage(false);
           } else {
             setSearchResults(null);
             const page = result as PageEnvelope<FirmSummary>;
             setFirms(page.items);
+            setTotalCount(page.totalCount);
             setNextCursor(page.pageInfo.endCursor ?? undefined);
             setHasNextPage(Boolean(page.pageInfo.hasNextPage));
           }
@@ -232,13 +241,14 @@ export const ThirteenFWorkspace = () => {
         firmId: selectedFirmId,
         asOfDate,
         limit: 100,
-        order: 'value_desc',
+        order: holdingsOrder,
       }),
     ])
       .then(([firmResult, holdingsResult]) => {
         if (!active) return;
         setFirm(firmResult);
         setHoldings(holdingsResult.items);
+        setTotalCount(holdingsResult.totalCount);
         setNextCursor(holdingsResult.pageInfo.endCursor ?? undefined);
         setHasNextPage(Boolean(holdingsResult.pageInfo.hasNextPage));
       })
@@ -251,7 +261,7 @@ export const ThirteenFWorkspace = () => {
     return () => {
       active = false;
     };
-  }, [asOfDate, selectedFirmId]);
+  }, [asOfDate, holdingsOrder, selectedFirmId]);
 
   useEffect(() => {
     if (!selectedSecurity) return;
@@ -268,6 +278,7 @@ export const ThirteenFWorkspace = () => {
       .then((result) => {
         if (!active) return;
         setHoldings(result.items);
+        setTotalCount(result.totalCount);
         setNextCursor(result.pageInfo.endCursor ?? undefined);
         setHasNextPage(Boolean(result.pageInfo.hasNextPage));
         const first = result.items[0];
@@ -295,6 +306,7 @@ export const ThirteenFWorkspace = () => {
     setQuery('');
     setSelectedSecurity(null);
     setHasNextPage(false);
+    setTotalCount(0);
     setNextCursor(undefined);
     setSelectedFirmId('firmId' in nextFirm ? nextFirm.firmId : nextFirm.id);
   };
@@ -304,6 +316,7 @@ export const ThirteenFWorkspace = () => {
     setSelectedFirmId(undefined);
     setFirm(null);
     setHasNextPage(false);
+    setTotalCount(0);
     setNextCursor(undefined);
     setSelectedSecurity(
       'securityId' in security ? securityFromHolding(security) : security,
@@ -316,6 +329,7 @@ export const ThirteenFWorkspace = () => {
     setFirm(null);
     setHoldings([]);
     setHasNextPage(false);
+    setTotalCount(0);
     setNextCursor(undefined);
   };
 
@@ -331,7 +345,7 @@ export const ThirteenFWorkspace = () => {
           asOfDate,
           cursor: nextCursor,
           limit: 100,
-          order: 'value_desc',
+          order: holdingsOrder,
         });
         setHoldings((current) => [...current, ...page.items]);
         setNextCursor(page.pageInfo.endCursor ?? undefined);
@@ -367,15 +381,24 @@ export const ThirteenFWorkspace = () => {
   };
 
   const content = (() => {
-    if (loading) return <div style={STYLES.status}>Loading 13F data…</div>;
+    if (loading) {
+      return (
+        <div style={STYLES.status} role="status" aria-live="polite">
+          Loading 13F data…
+        </div>
+      );
+    }
     if (selectedFirmId && firm) {
       return (
         <FirmHoldings
           firm={firm}
           holdings={holdings}
+          totalCount={totalCount}
           asOfDate={asOfDate}
+          order={holdingsOrder}
           onBack={backToDirectory}
           onSelectSecurity={chooseSecurity}
+          onOrderChange={setHoldingsOrder}
         />
       );
     }
@@ -384,6 +407,7 @@ export const ThirteenFWorkspace = () => {
         <SecurityHolders
           security={selectedSecurity}
           holdings={holdings}
+          totalCount={totalCount}
           onBack={backToDirectory}
           onSelectFirm={chooseFirm}
         />
@@ -398,7 +422,13 @@ export const ThirteenFWorkspace = () => {
         />
       );
     }
-    return <FirmDirectory firms={firms} onSelect={chooseFirm} />;
+    return (
+      <FirmDirectory
+        firms={firms}
+        totalCount={totalCount}
+        onSelect={chooseFirm}
+      />
+    );
   })();
 
   return (
@@ -435,6 +465,7 @@ export const ThirteenFWorkspace = () => {
                 setFirm(null);
                 setNextCursor(undefined);
                 setHasNextPage(false);
+                setTotalCount(0);
               }}
             />
             <select
@@ -462,7 +493,11 @@ export const ThirteenFWorkspace = () => {
             </select>
           </div>
         </header>
-        {error ? <div style={STYLES.error}>{error}</div> : null}
+        {error ? (
+          <div style={STYLES.error} role="alert">
+            {error}
+          </div>
+        ) : null}
         <div style={{ ...STYLES.panel, marginTop: error ? 12 : 0 }}>
           {content}
           {hasNextPage && !loading ? (
@@ -470,9 +505,16 @@ export const ThirteenFWorkspace = () => {
               type="button"
               style={STYLES.loadMore}
               disabled={loadingMore}
+              aria-busy={loadingMore}
               onClick={loadMore}
             >
-              {loadingMore ? 'Loading…' : 'Load more'}
+              {loadingMore
+                ? 'Loading…'
+                : `Load more · ${formatCount(
+                    selectedFirmId || selectedSecurity
+                      ? holdings.length
+                      : firms.length,
+                  )} of ${formatCount(totalCount)}`}
             </button>
           ) : null}
         </div>
