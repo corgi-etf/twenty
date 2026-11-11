@@ -142,6 +142,7 @@ describe('13F workspace journeys', () => {
         onBack={() => undefined}
         onSelectSecurity={() => undefined}
         totalCount={125}
+        totalReportedValue="125000000"
         order="value_desc"
         onOrderChange={() => undefined}
       />,
@@ -195,6 +196,8 @@ describe('13F workspace journeys', () => {
       <FirmHoldings
         firm={firm}
         holdings={[estimatedHolding]}
+        totalCount={1}
+        totalReportedValue={null}
         onBack={() => undefined}
       />,
     );
@@ -212,6 +215,8 @@ describe('13F workspace journeys', () => {
             reportedValue: '125000000',
           },
         ]}
+        totalCount={1}
+        totalReportedValue="125000000"
         onBack={() => undefined}
       />,
     );
@@ -255,6 +260,8 @@ describe('13F workspace journeys', () => {
       <FirmHoldings
         firm={historicalFirmResponse}
         holdings={[]}
+        totalCount={90}
+        totalReportedValue="90000000"
         asOfDate="2026-06-30"
         onBack={() => undefined}
         onSelectSecurity={() => undefined}
@@ -271,6 +278,8 @@ describe('13F workspace journeys', () => {
       <FirmHoldings
         firm={historicalFirmResponse}
         holdings={[]}
+        totalCount={0}
+        totalReportedValue={null}
         asOfDate="2026-03-31"
         onBack={() => undefined}
       />,
@@ -281,6 +290,64 @@ describe('13F workspace journeys', () => {
     expect(nullTotalHtml).toContain('Form not available');
     expect(nullTotalHtml).toContain('0 positions');
     expect(nullTotalHtml).toMatch(/<div[^>]*>—<\/div><div[^>]*>0 positions<\/div>/);
+  });
+
+  it('separates composed base plus add-new totals from accession history', () => {
+    const highTowerResponse = {
+      ...firm,
+      legalName: 'HIGHTOWER ADVISORS, LLC',
+      cik: '0001462245',
+      latestAsOfDate: '2026-06-30',
+      latestDateBasis: 'SEC_REPORT_PERIOD',
+      latestReportPeriod: '2026-06-30',
+      latestFiledAt: '2026-08-14T12:00:00.000Z',
+      latestFormType: '13F-HR/A',
+      latestCoverage: 'ADD_NEW',
+      positionCount: 1,
+      totalReportedValue: '943081885',
+      filingHistory: [
+        {
+          id: 'hightower-base',
+          asOfDate: '2026-06-30',
+          dateBasis: 'SEC_REPORT_PERIOD',
+          reportPeriod: '2026-06-30',
+          filedAt: '2026-08-13T12:00:00.000Z',
+          formType: '13F-HR',
+          coverage: 'FULL',
+          positionCount: 3797,
+          totalReportedValue: '103188726150',
+        },
+        {
+          id: 'hightower-add-new',
+          asOfDate: '2026-06-30',
+          dateBasis: 'SEC_REPORT_PERIOD',
+          reportPeriod: '2026-06-30',
+          filedAt: '2026-08-14T12:00:00.000Z',
+          formType: '13F-HR/A',
+          coverage: 'ADD_NEW',
+          positionCount: 1,
+          totalReportedValue: '943081885',
+        },
+      ],
+    } satisfies FirmDetail;
+    const html = renderToStaticMarkup(
+      <FirmHoldings
+        firm={highTowerResponse}
+        holdings={[]}
+        totalCount={3798}
+        totalReportedValue="104131808035"
+        asOfDate="2026-06-30"
+        onBack={() => undefined}
+      />,
+    );
+
+    expect(html).toContain('Effective portfolio');
+    expect(html).toMatch(/\$104,131,808,035<\/div><div[^>]*>3,798 positions/);
+    expect(html).toContain('Accession positions');
+    expect(html).toContain('Accession reported value');
+    expect(html).toMatch(
+      /13F-HR\/A<\/td><td[^>]*>ADD_NEW<\/td><td[^>]*>1<\/td><td[^>]*>\$943,081,885<\/td>/,
+    );
   });
 
   it('renders reverse lookup results with every holding firm and date', () => {

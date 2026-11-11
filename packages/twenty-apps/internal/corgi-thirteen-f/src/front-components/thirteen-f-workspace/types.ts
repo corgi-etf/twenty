@@ -95,6 +95,10 @@ export type PageEnvelope<T> = {
   totalCount: number;
 };
 
+export type HoldingsPageEnvelope = PageEnvelope<Holding> & {
+  totalReportedValue: string | null;
+};
+
 export type SearchResults = {
   firms: FirmSummary[];
   securities: SecuritySummary[];

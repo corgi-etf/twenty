@@ -14,6 +14,7 @@ import type {
   FirmDetail,
   FirmSummary,
   Holding,
+  HoldingsPageEnvelope,
   HoldingsOrder,
   PageEnvelope,
   SearchResults,
@@ -147,6 +148,9 @@ export const ThirteenFWorkspace = () => {
   const [nextCursor, setNextCursor] = useState<string | undefined>();
   const [hasNextPage, setHasNextPage] = useState(false);
   const [totalCount, setTotalCount] = useState(0);
+  const [totalReportedValue, setTotalReportedValue] = useState<string | null>(
+    null,
+  );
   const [holdingsOrder, setHoldingsOrder] =
     useState<HoldingsOrder>('value_desc');
   const [loading, setLoading] = useState(true);
@@ -202,6 +206,7 @@ export const ThirteenFWorkspace = () => {
           if (trimmed) {
             setSearchResults(result as SearchResults);
             setTotalCount(0);
+            setTotalReportedValue(null);
             setNextCursor(undefined);
             setHasNextPage(false);
           } else {
@@ -209,6 +214,7 @@ export const ThirteenFWorkspace = () => {
             const page = result as PageEnvelope<FirmSummary>;
             setFirms(page.items);
             setTotalCount(page.totalCount);
+            setTotalReportedValue(null);
             setNextCursor(page.pageInfo.endCursor ?? undefined);
             setHasNextPage(Boolean(page.pageInfo.hasNextPage));
           }
@@ -236,7 +242,7 @@ export const ThirteenFWorkspace = () => {
         action: 'firm',
         firmId: selectedFirmId,
       }),
-      callThirteenFRoute<PageEnvelope<Holding>>({
+      callThirteenFRoute<HoldingsPageEnvelope>({
         action: 'holdings',
         firmId: selectedFirmId,
         asOfDate,
@@ -249,6 +255,7 @@ export const ThirteenFWorkspace = () => {
         setFirm(firmResult);
         setHoldings(holdingsResult.items);
         setTotalCount(holdingsResult.totalCount);
+        setTotalReportedValue(holdingsResult.totalReportedValue);
         setNextCursor(holdingsResult.pageInfo.endCursor ?? undefined);
         setHasNextPage(Boolean(holdingsResult.pageInfo.hasNextPage));
       })
@@ -279,6 +286,7 @@ export const ThirteenFWorkspace = () => {
         if (!active) return;
         setHoldings(result.items);
         setTotalCount(result.totalCount);
+        setTotalReportedValue(null);
         setNextCursor(result.pageInfo.endCursor ?? undefined);
         setHasNextPage(Boolean(result.pageInfo.hasNextPage));
         const first = result.items[0];
@@ -307,6 +315,7 @@ export const ThirteenFWorkspace = () => {
     setSelectedSecurity(null);
     setHasNextPage(false);
     setTotalCount(0);
+    setTotalReportedValue(null);
     setNextCursor(undefined);
     setSelectedFirmId('firmId' in nextFirm ? nextFirm.firmId : nextFirm.id);
   };
@@ -317,6 +326,7 @@ export const ThirteenFWorkspace = () => {
     setFirm(null);
     setHasNextPage(false);
     setTotalCount(0);
+    setTotalReportedValue(null);
     setNextCursor(undefined);
     setSelectedSecurity(
       'securityId' in security ? securityFromHolding(security) : security,
@@ -330,6 +340,7 @@ export const ThirteenFWorkspace = () => {
     setHoldings([]);
     setHasNextPage(false);
     setTotalCount(0);
+    setTotalReportedValue(null);
     setNextCursor(undefined);
   };
 
@@ -339,7 +350,7 @@ export const ThirteenFWorkspace = () => {
     setError(null);
     try {
       if (selectedFirmId) {
-        const page = await callThirteenFRoute<PageEnvelope<Holding>>({
+        const page = await callThirteenFRoute<HoldingsPageEnvelope>({
           action: 'holdings',
           firmId: selectedFirmId,
           asOfDate,
@@ -348,6 +359,8 @@ export const ThirteenFWorkspace = () => {
           order: holdingsOrder,
         });
         setHoldings((current) => [...current, ...page.items]);
+        setTotalCount(page.totalCount);
+        setTotalReportedValue(page.totalReportedValue);
         setNextCursor(page.pageInfo.endCursor ?? undefined);
         setHasNextPage(Boolean(page.pageInfo.hasNextPage));
       } else if (selectedSecurity) {
@@ -394,6 +407,7 @@ export const ThirteenFWorkspace = () => {
           firm={firm}
           holdings={holdings}
           totalCount={totalCount}
+          totalReportedValue={totalReportedValue}
           asOfDate={asOfDate}
           order={holdingsOrder}
           onBack={backToDirectory}
@@ -466,6 +480,7 @@ export const ThirteenFWorkspace = () => {
                 setNextCursor(undefined);
                 setHasNextPage(false);
                 setTotalCount(0);
+                setTotalReportedValue(null);
               }}
             />
             <select

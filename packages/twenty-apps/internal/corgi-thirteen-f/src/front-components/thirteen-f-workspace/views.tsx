@@ -450,10 +450,10 @@ const FilingHistory = ({ firm }: { firm: FirmDetail }) => (
               <th scope="col" style={STYLES.th}>Form</th>
               <th scope="col" style={STYLES.th}>Coverage</th>
               <th scope="col" style={{ ...STYLES.th, textAlign: 'right' }}>
-                Positions
+                Accession positions
               </th>
               <th scope="col" style={{ ...STYLES.th, textAlign: 'right' }}>
-                Reported value
+                Accession reported value
               </th>
             </tr>
           </thead>
@@ -489,7 +489,8 @@ const FilingHistory = ({ firm }: { firm: FirmDetail }) => (
 export const FirmHoldings = ({
   firm,
   holdings,
-  totalCount = holdings.length,
+  totalCount,
+  totalReportedValue,
   asOfDate,
   order = 'value_desc',
   backLabel = 'All firms',
@@ -499,7 +500,8 @@ export const FirmHoldings = ({
 }: {
   firm: FirmDetail;
   holdings: Holding[];
-  totalCount?: number;
+  totalCount: number;
+  totalReportedValue: string | null;
   asOfDate?: string;
   order?: 'value_desc' | 'shares_desc' | 'ticker_asc';
   backLabel?: string;
@@ -523,12 +525,6 @@ export const FirmHoldings = ({
   const dateBasis = selectedFiling
     ? selectedFiling.dateBasis
     : firm.latestDateBasis;
-  const positionCount = selectedFiling
-    ? selectedFiling.positionCount
-    : firm.positionCount;
-  const totalReportedValue = selectedFiling
-    ? selectedFiling.totalReportedValue
-    : firm.totalReportedValue;
   const holdingsDateLabel =
     dateBasis === 'SEC_REPORT_PERIOD' ? 'SEC report period' : 'Holdings as of';
 
@@ -545,11 +541,12 @@ export const FirmHoldings = ({
           </div>
         </div>
         <div style={{ textAlign: 'right' }}>
+          <div style={STYLES.muted}>Effective portfolio</div>
           <div style={STYLES.strongMetric}>
             {formatMoney(totalReportedValue)}
           </div>
           <div style={STYLES.muted}>
-            {formatCount(positionCount)} positions
+            {formatCount(totalCount)} positions
           </div>
         </div>
       </div>

@@ -13,7 +13,7 @@ import type {
   CompanySummary,
   FirmDetail,
   Holding,
-  PageEnvelope,
+  HoldingsPageEnvelope,
 } from 'src/front-components/thirteen-f-workspace/types';
 import { FirmHoldings } from 'src/front-components/thirteen-f-workspace/views';
 
@@ -54,6 +54,9 @@ export const CompanyThirteenF = () => {
   const [nextCursor, setNextCursor] = useState<string | undefined>();
   const [hasNextPage, setHasNextPage] = useState(false);
   const [totalCount, setTotalCount] = useState(0);
+  const [totalReportedValue, setTotalReportedValue] = useState<string | null>(
+    null,
+  );
   const [loadingMore, setLoadingMore] = useState(false);
   const [status, setStatus] = useState<'loading' | 'ready' | 'missing' | 'error'>(
     'loading',
@@ -76,7 +79,7 @@ export const CompanyThirteenF = () => {
             action: 'firm',
             firmId: companySummary.thirteenFFirmId,
           }),
-          callThirteenFRoute<PageEnvelope<Holding>>({
+          callThirteenFRoute<HoldingsPageEnvelope>({
             action: 'holdings',
             firmId: companySummary.thirteenFFirmId,
             asOfDate: companySummary.firm.latestAsOfDate,
@@ -88,6 +91,7 @@ export const CompanyThirteenF = () => {
         setFirm(firmResult);
         setHoldings(holdingsResult.items);
         setTotalCount(holdingsResult.totalCount);
+        setTotalReportedValue(holdingsResult.totalReportedValue);
         setNextCursor(holdingsResult.pageInfo.endCursor ?? undefined);
         setHasNextPage(Boolean(holdingsResult.pageInfo.hasNextPage));
         setStatus('ready');
@@ -109,7 +113,7 @@ export const CompanyThirteenF = () => {
     if (!firm || !nextCursor || !hasNextPage || loadingMore) return;
     setLoadingMore(true);
     try {
-      const page = await callThirteenFRoute<PageEnvelope<Holding>>({
+      const page = await callThirteenFRoute<HoldingsPageEnvelope>({
         action: 'holdings',
         firmId: firm.id,
         asOfDate: firm.latestAsOfDate,
@@ -118,6 +122,8 @@ export const CompanyThirteenF = () => {
         order: 'value_desc',
       });
       setHoldings((current) => [...current, ...page.items]);
+      setTotalCount(page.totalCount);
+      setTotalReportedValue(page.totalReportedValue);
       setNextCursor(page.pageInfo.endCursor ?? undefined);
       setHasNextPage(Boolean(page.pageInfo.hasNextPage));
     } catch {
@@ -157,6 +163,7 @@ export const CompanyThirteenF = () => {
         firm={firm}
         holdings={holdings}
         totalCount={totalCount}
+        totalReportedValue={totalReportedValue}
         backLabel="Close"
         onBack={close}
       />
