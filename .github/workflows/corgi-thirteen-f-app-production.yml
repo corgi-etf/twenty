@@ -251,8 +251,26 @@ jobs:
             tests/production/corgiThirteenFDataPlaneSmoke.production.spec.ts \
             --project=production-chromium
 
+      - name: Verify the rendered Corgi 13F page
+        id: front-component
+        env:
+          FRONTEND_BASE_URL: ${{ env.CORGI_CRM_API_URL }}
+          BACKEND_BASE_URL: ${{ env.CORGI_CRM_API_URL }}
+          CRM_E2E_LOGIN: ${{ secrets.CRM_E2E_LOGIN }}
+          CRM_E2E_PASSWORD: ${{ secrets.CRM_E2E_PASSWORD }}
+          CRM_E2E_WORKSPACE_NAME: Corgi ETF
+          CORGI_THIRTEEN_F_FRONT_COMPONENT_SMOKE: 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "${CORGI_CRM_EXPECTED_WORKSPACE_ID:-}" == "eabf5d9d-fc99-4acb-b160-710ecb1db996" ]]
+          [[ "${CORGI_CRM_EXPECTED_USER_WORKSPACE_ID:-}" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$ ]]
+          npx nx test:production twenty-e2e-testing -- \
+            tests/production/corgiThirteenFFrontComponentSmoke.production.spec.ts \
+            --project=production-chromium
+
       - name: Roll back only this run's fresh installation and retain registration
-        if: ${{ always() && steps.precheck.outputs.fresh_install == 'true' && steps.install.outcome == 'success' && (steps.configure.outcome == 'failure' || steps.verify.outcome == 'failure' || steps.data-plane.outcome == 'failure') && steps.credential.outputs.token != '' }}
+        if: ${{ always() && steps.precheck.outputs.fresh_install == 'true' && steps.install.outcome == 'success' && (steps.configure.outcome == 'failure' || steps.verify.outcome == 'failure' || steps.data-plane.outcome == 'failure' || steps.front-component.outcome == 'failure') && steps.credential.outputs.token != '' }}
         env:
           CORGI_CRM_API_KEY: ${{ steps.credential.outputs.token }}
         run: >-
