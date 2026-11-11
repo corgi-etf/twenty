@@ -1,3 +1,6 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+
 import { expect, test } from '@playwright/test';
 
 import { VERSION } from './corgiThirteenFDeploymentState.mjs';
@@ -7,6 +10,17 @@ const APPLICATION_ID = '38ba5a6a-430e-455a-a27b-fba07af35944';
 const WORKSPACE_ID = 'eabf5d9d-fc99-4acb-b160-710ecb1db996';
 const USER_WORKSPACE_ID = '767771e9-834d-4a89-88ca-1df32d101a40';
 const REGISTRATION_ID = '19aacdf4-47c0-4afb-99f0-0a1c4885082b';
+const workflow = readFileSync(
+  join(
+    __dirname,
+    '..',
+    '..',
+    '..',
+    '..',
+    '.github/workflows/corgi-thirteen-f-app-production.yml',
+  ),
+  'utf8',
+);
 
 const registration = {
   id: REGISTRATION_ID,
@@ -126,4 +140,55 @@ test('polls a bounded number of times and reports a rejected mutation only after
   ).rejects.toBe(mutationError);
   expect(reads).toBe(3);
   expect(waits).toBe(1);
+});
+
+test('treats a mutation error as authoritative when polling reports the target release', async () => {
+  const mutationError = new Error('manifest migration failed');
+  const snapshots = [snapshot(), snapshot({ version: VERSION })];
+
+  await expect(
+    upgradeCorgiThirteenFWithUserSession({
+      expectedUserWorkspaceId: USER_WORKSPACE_ID,
+      readSnapshot: async () => snapshots.shift(),
+      requestUpgrade: async () => {
+        throw mutationError;
+      },
+      wait: async () => undefined,
+    }),
+  ).rejects.toBe(mutationError);
+  expect(snapshots).toHaveLength(0);
+});
+
+test('treats an unaccepted mutation as authoritative when polling reports the target release', async () => {
+  const snapshots = [snapshot(), snapshot({ version: VERSION })];
+
+  await expect(
+    upgradeCorgiThirteenFWithUserSession({
+      expectedUserWorkspaceId: USER_WORKSPACE_ID,
+      readSnapshot: async () => snapshots.shift(),
+      requestUpgrade: async () => false,
+      wait: async () => undefined,
+    }),
+  ).rejects.toThrow('Corgi 13F upgrade was not accepted');
+  expect(snapshots).toHaveLength(0);
+});
+
+test('inherits and validates the proven membership without an empty env-context override', () => {
+  const upgrade = workflow.indexOf(
+    '- name: Upgrade the existing Corgi 13F installation in place',
+  );
+  const configure = workflow.indexOf(
+    '- name: Configure the Corgi 13F application variables',
+  );
+  const upgradeStep = workflow.slice(upgrade, configure);
+
+  expect(upgrade).toBeGreaterThan(-1);
+  expect(configure).toBeGreaterThan(upgrade);
+  expect(upgradeStep).not.toContain(
+    'CORGI_CRM_EXPECTED_USER_WORKSPACE_ID: ${{ env.CORGI_CRM_EXPECTED_USER_WORKSPACE_ID }}',
+  );
+  expect(upgradeStep).toContain(
+    '[[ "${CORGI_CRM_EXPECTED_USER_WORKSPACE_ID:-}" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$ ]]',
+  );
+  expect(upgradeStep).not.toContain('continue-on-error');
 });

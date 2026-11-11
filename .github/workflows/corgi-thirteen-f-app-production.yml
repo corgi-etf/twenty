@@ -203,12 +203,14 @@ jobs:
           CRM_E2E_LOGIN: ${{ secrets.CRM_E2E_LOGIN }}
           CRM_E2E_PASSWORD: ${{ secrets.CRM_E2E_PASSWORD }}
           CRM_E2E_WORKSPACE_NAME: Corgi ETF
-          CORGI_CRM_EXPECTED_USER_WORKSPACE_ID: ${{ env.CORGI_CRM_EXPECTED_USER_WORKSPACE_ID }}
           CORGI_THIRTEEN_F_USER_SESSION_UPGRADE: 'true'
-        run: >-
-          npx nx test:production twenty-e2e-testing --
-          tests/production/corgiThirteenFUserSessionUpgrade.production.spec.ts
-          --project=production-chromium
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "${CORGI_CRM_EXPECTED_USER_WORKSPACE_ID:-}" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$ ]]
+          npx nx test:production twenty-e2e-testing -- \
+            tests/production/corgiThirteenFUserSessionUpgrade.production.spec.ts \
+            --project=production-chromium
 
       - name: Configure the Corgi 13F application variables
         id: configure

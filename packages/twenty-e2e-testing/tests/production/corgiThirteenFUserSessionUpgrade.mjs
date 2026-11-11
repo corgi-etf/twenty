@@ -93,6 +93,9 @@ const upgradeCorgiThirteenFWithUserSession = async ({
     );
 
     if (state.mode === 'installed') {
+      if (mutationError) {
+        throw mutationError;
+      }
       return { status: 'upgraded' };
     }
     if (state.mode !== 'upgrade-required') {
