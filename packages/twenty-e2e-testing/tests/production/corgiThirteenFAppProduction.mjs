@@ -26,6 +26,22 @@ const ROLE_ID = '74e11c1b-ed63-4d94-bf2a-89db86edcf39';
 const API_BASE_URL_VARIABLE_ID = '7c8630fc-233a-42e2-a19b-bd750a597435';
 const API_READ_TOKEN_VARIABLE_ID = 'fefc317b-7aa5-4e6a-8ad7-046dd0dd04b5';
 const WORKSPACE_ID_VARIABLE_ID = '90e85886-1020-4404-a75a-01b76f9207f0';
+const SECRET_APPLICATION_VARIABLE_MASK = '********';
+
+const expectedApplicationVariableDisplayValue = (expectedValue, isSecret) => {
+  if (!isSecret || expectedValue === '') {
+    return expectedValue;
+  }
+
+  const visibleCharsCount = Math.min(5, Math.floor(expectedValue.length / 10));
+
+  return `${expectedValue.slice(0, visibleCharsCount)}${SECRET_APPLICATION_VARIABLE_MASK}`;
+};
+
+const applicationVariableMatches = (variable, expectedValue, isSecret) =>
+  variable?.isSecret === isSecret &&
+  variable?.value ===
+    expectedApplicationVariableDisplayValue(expectedValue, isSecret);
 
 const requiredEnvironment = (name) => {
   const value = process.env[name]?.trim();
@@ -483,7 +499,7 @@ const verifyOnce = async () => {
       (candidate) => candidate.key === key,
       'configured Corgi 13F application variable',
     );
-    if (variable.value !== expectedValue || variable.isSecret !== isSecret) {
+    if (!applicationVariableMatches(variable, expectedValue, isSecret)) {
       throw new Error(
         'Corgi 13F application variable configuration is incorrect',
       );
@@ -715,6 +731,8 @@ const rollbackFreshInstallation = async () => {
 
   throw new Error('Fresh Corgi 13F application remained after uninstall');
 };
+
+export { applicationVariableMatches, expectedApplicationVariableDisplayValue };
 
 if (
   process.argv[1] &&
