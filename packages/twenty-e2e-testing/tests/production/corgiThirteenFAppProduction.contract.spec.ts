@@ -1,5 +1,7 @@
+import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 import { expect, test } from '@playwright/test';
 import { buildSchema, parse, validate } from 'graphql';
@@ -48,6 +50,25 @@ const metadataSchema = readFileSync(
   ),
   'utf8',
 );
+const verifierModuleUrl = pathToFileURL(
+  join(__dirname, 'corgiThirteenFAppProduction.mjs'),
+).href;
+
+const evaluateApplicationVariableHelper = (expression: string): unknown => {
+  const result = spawnSync(
+    process.execPath,
+    [
+      '--input-type=module',
+      '--eval',
+      `const verifier = await import(${JSON.stringify(verifierModuleUrl)}); process.stdout.write(JSON.stringify(${expression}));`,
+    ],
+    { encoding: 'utf8' },
+  );
+
+  expect(result.status, 'isolated verifier helper evaluation failed').toBe(0);
+
+  return JSON.parse(result.stdout);
+};
 
 const APP_ID = '38ba5a6a-430e-455a-a27b-fba07af35944';
 const WORKSPACE_ID = 'eabf5d9d-fc99-4acb-b160-710ecb1db996';
@@ -435,11 +456,64 @@ test('configures and verifies all application variables without exposing the sec
   expect(verifier).toContain('CORGI_THIRTEEN_F_WORKSPACE_ID');
   expect(verifier).toContain(WORKSPACE_ID);
   expect(verifier).toContain('CORGI_THIRTEEN_F_API_READ_TOKEN');
-  expect(verifier).toContain('variable.value !== expectedValue');
+  expect(verifier).not.toContain('variable.value !== expectedValue');
+  expect(verifier).toContain('SECRET_APPLICATION_VARIABLE_MASK');
+  expect(verifier).toContain('expectedApplicationVariableDisplayValue');
   expect(verifier).not.toMatch(/console\.log\([^)]*API_READ_TOKEN/);
   expect(workflow).not.toMatch(
     /GITHUB_OUTPUT[^\n]*CORGI_THIRTEEN_F_API_READ_TOKEN/,
   );
+});
+
+test('derives the documented masked display without accepting raw secret text', () => {
+  const secretCases = [
+    ['', ''],
+    ['123456789', '********'],
+    ['0123456789012345678901234567890123456789', '0123********'],
+    [`abcde${'x'.repeat(95)}`, 'abcde********'],
+  ];
+
+  for (const [secret, expectedDisplayValue] of secretCases) {
+    expect(
+      evaluateApplicationVariableHelper(
+        `verifier.expectedApplicationVariableDisplayValue(${JSON.stringify(secret)}, true)`,
+      ),
+    ).toBe(expectedDisplayValue);
+  }
+
+  const rawSecret = '0123456789012345678901234567890123456789';
+  const maskedSecret = '0123********';
+
+  expect(
+    evaluateApplicationVariableHelper(
+      `verifier.applicationVariableMatches(${JSON.stringify({ value: maskedSecret, isSecret: true })}, ${JSON.stringify(rawSecret)}, true)`,
+    ),
+  ).toBe(true);
+  expect(
+    evaluateApplicationVariableHelper(
+      `verifier.applicationVariableMatches(${JSON.stringify({ value: rawSecret, isSecret: true })}, ${JSON.stringify(rawSecret)}, true)`,
+    ),
+  ).toBe(false);
+  expect(
+    evaluateApplicationVariableHelper(
+      `verifier.applicationVariableMatches(${JSON.stringify({ value: maskedSecret, isSecret: false })}, ${JSON.stringify(rawSecret)}, true)`,
+    ),
+  ).toBe(false);
+});
+
+test('keeps non-secret application-variable verification exact', () => {
+  const expectedValue = 'https://admin.corgiinvest.com';
+
+  expect(
+    evaluateApplicationVariableHelper(
+      `verifier.applicationVariableMatches(${JSON.stringify({ value: expectedValue, isSecret: false })}, ${JSON.stringify(expectedValue)}, false)`,
+    ),
+  ).toBe(true);
+  expect(
+    evaluateApplicationVariableHelper(
+      `verifier.applicationVariableMatches(${JSON.stringify({ value: `${expectedValue}/other`, isSecret: false })}, ${JSON.stringify(expectedValue)}, false)`,
+    ),
+  ).toBe(false);
 });
 
 test('uses only metadata operations supported by the pinned Twenty schema', () => {
