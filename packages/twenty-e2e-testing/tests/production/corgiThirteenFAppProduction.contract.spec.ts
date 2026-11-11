@@ -117,6 +117,10 @@ const previousInstallation = {
   ...exactInstallation,
   version: PREVIOUS_VERSION,
 };
+const publishedInstallation = {
+  ...exactInstallation,
+  version: PUBLISHED_VERSION,
+};
 
 const position = (needle: string): number => {
   const index = workflow.indexOf(needle);
@@ -227,6 +231,32 @@ test('classifies first install, rerun, and published-version upgrades safely', (
     freshInstall: false,
     registrationPreexisting: true,
   });
+  expect(
+    classifyDeploymentState({
+      applications: [publishedInstallation],
+      registration: publishedRegistration,
+    }),
+  ).toEqual({
+    mode: 'upgrade-required',
+    publish: true,
+    install: false,
+    upgrade: true,
+    freshInstall: false,
+    registrationPreexisting: true,
+  });
+  expect(
+    classifyDeploymentState({
+      applications: [publishedInstallation],
+      registration: exactRegistration,
+    }),
+  ).toEqual({
+    mode: 'upgrade-required',
+    publish: false,
+    install: false,
+    upgrade: true,
+    freshInstall: false,
+    registrationPreexisting: true,
+  });
   expect(verifier).not.toContain('upgradeApplication');
 });
 
@@ -303,16 +333,74 @@ test('fails closed on registration and installed-release conflicts', () => {
   ).toThrow(/not an approved stable release/);
   expect(() =>
     classifyDeploymentState({
-      applications: [{ ...exactInstallation, version: PUBLISHED_VERSION }],
-      registration: publishedRegistration,
-    }),
-  ).toThrow(/not an approved stable release/);
-  expect(() =>
-    classifyDeploymentState({
       applications: [],
       registration: { ...exactRegistration, latestAvailableVersion: '9.9.9' },
     }),
   ).toThrow(/conflicts with the release/);
+});
+
+test('accepts only the exact failed v0.3.0 recovery pair', () => {
+  const invalidRegistrationVersions = ['0.1.0', '0.2.0', PREVIOUS_VERSION];
+
+  for (const latestAvailableVersion of invalidRegistrationVersions) {
+    expect(() =>
+      classifyDeploymentState({
+        applications: [publishedInstallation],
+        registration: {
+          ...exactRegistration,
+          latestAvailableVersion,
+        },
+      }),
+    ).toThrow(/not an approved stable release/);
+  }
+
+  const invalidStates = [
+    {
+      applications: [publishedInstallation],
+      registration: null,
+    },
+    {
+      applications: [
+        {
+          ...publishedInstallation,
+          applicationRegistrationId: 'other-registration',
+        },
+      ],
+      registration: publishedRegistration,
+    },
+    {
+      applications: [{ ...publishedInstallation, state: 'INSTALLING' }],
+      registration: publishedRegistration,
+    },
+    {
+      applications: [{ ...publishedInstallation, version: '9.9.9' }],
+      registration: publishedRegistration,
+    },
+    {
+      applications: [publishedInstallation, { ...publishedInstallation }],
+      registration: publishedRegistration,
+    },
+  ];
+
+  for (const state of invalidStates) {
+    expect(() => classifyDeploymentState(state)).toThrow();
+  }
+
+  const invalidRegistrations = [
+    { ...publishedRegistration, ownerWorkspaceId: 'other-workspace' },
+    { ...publishedRegistration, sourceType: 'MARKETPLACE' },
+    { ...publishedRegistration, isListed: true },
+    { ...publishedRegistration, name: 'Other app' },
+  ];
+
+  for (const registration of invalidRegistrations) {
+    expect(() =>
+      classifyDeploymentState({
+        applications: [publishedInstallation],
+        registration,
+      }),
+    ).toThrow(/conflicts with the release/);
+  }
 });
 
 test('verifies only the v0.3.1 native manifest and zero app-owned objects', () => {

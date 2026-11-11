@@ -52,12 +52,37 @@ const classifyDeploymentState = ({ applications, registration }) => {
     if (
       !registration ||
       application.applicationRegistrationId !== registration.id ||
-      application.state !== 'INSTALLED' ||
+      application.state !== 'INSTALLED'
+    ) {
+      throw new Error(
+        'Corgi 13F installed application is not an approved stable release',
+      );
+    }
+
+    const isPublishedVersionRecovery =
+      application.version === PUBLISHED_VERSION &&
+      [PUBLISHED_VERSION, VERSION].includes(
+        registration.latestAvailableVersion,
+      );
+
+    if (
+      !isPublishedVersionRecovery &&
       !APPROVED_INSTALLED_VERSIONS.includes(application.version)
     ) {
       throw new Error(
         'Corgi 13F installed application is not an approved stable release',
       );
+    }
+
+    if (isPublishedVersionRecovery) {
+      return {
+        mode: 'upgrade-required',
+        publish: registration.latestAvailableVersion !== VERSION,
+        install: false,
+        upgrade: true,
+        freshInstall: false,
+        registrationPreexisting: true,
+      };
     }
 
     if (application.version === VERSION) {

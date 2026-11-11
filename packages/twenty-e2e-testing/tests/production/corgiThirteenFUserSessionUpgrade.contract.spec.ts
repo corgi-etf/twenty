@@ -3,7 +3,10 @@ import { join } from 'node:path';
 
 import { expect, test } from '@playwright/test';
 
-import { VERSION } from './corgiThirteenFDeploymentState.mjs';
+import {
+  PUBLISHED_VERSION,
+  VERSION,
+} from './corgiThirteenFDeploymentState.mjs';
 import { upgradeCorgiThirteenFWithUserSession } from './corgiThirteenFUserSessionUpgrade.mjs';
 
 const APPLICATION_ID = '38ba5a6a-430e-455a-a27b-fba07af35944';
@@ -40,7 +43,11 @@ const application = {
   state: 'INSTALLED',
 };
 
-const snapshot = ({ version = '0.2.1', ...membershipOverrides } = {}) => ({
+const snapshot = ({
+  version = '0.2.1',
+  registrationVersion = VERSION,
+  ...membershipOverrides
+} = {}) => ({
   currentWorkspace: { id: WORKSPACE_ID, displayName: 'Corgi ETF' },
   currentUser: {
     currentWorkspace: { id: WORKSPACE_ID, displayName: 'Corgi ETF' },
@@ -51,7 +58,10 @@ const snapshot = ({ version = '0.2.1', ...membershipOverrides } = {}) => ({
       ...membershipOverrides,
     },
   },
-  registration,
+  registration: {
+    ...registration,
+    latestAvailableVersion: registrationVersion,
+  },
   applications: [{ ...application, version }],
 });
 
@@ -73,6 +83,72 @@ test('upgrades the exact prior release through the authenticated user session', 
   expect(requested).toEqual([
     { appRegistrationId: REGISTRATION_ID, targetVersion: VERSION },
   ]);
+});
+
+test('refuses the failed v0.3.0 recovery state until v0.3.1 is published', async () => {
+  let upgradeRequests = 0;
+
+  await expect(
+    upgradeCorgiThirteenFWithUserSession({
+      expectedUserWorkspaceId: USER_WORKSPACE_ID,
+      readSnapshot: async () =>
+        snapshot({
+          version: PUBLISHED_VERSION,
+          registrationVersion: PUBLISHED_VERSION,
+        }),
+      requestUpgrade: async () => {
+        upgradeRequests += 1;
+        return true;
+      },
+      wait: async () => undefined,
+    }),
+  ).rejects.toThrow(/cannot be upgraded/);
+  expect(upgradeRequests).toBe(0);
+});
+
+test('upgrades the failed v0.3.0 recovery state after v0.3.1 is published', async () => {
+  const snapshots = [
+    snapshot({ version: PUBLISHED_VERSION }),
+    snapshot({ version: VERSION }),
+  ];
+  const requested: unknown[] = [];
+
+  await expect(
+    upgradeCorgiThirteenFWithUserSession({
+      expectedUserWorkspaceId: USER_WORKSPACE_ID,
+      readSnapshot: async () => snapshots.shift(),
+      requestUpgrade: async (input: unknown) => {
+        requested.push(input);
+        return true;
+      },
+      wait: async () => undefined,
+    }),
+  ).resolves.toEqual({ status: 'upgraded' });
+  expect(requested).toEqual([
+    { appRegistrationId: REGISTRATION_ID, targetVersion: VERSION },
+  ]);
+});
+
+test('keeps failed v0.3.0 in recovery when an accepted upgrade does not converge', async () => {
+  let reads = 0;
+  let waits = 0;
+
+  await expect(
+    upgradeCorgiThirteenFWithUserSession({
+      expectedUserWorkspaceId: USER_WORKSPACE_ID,
+      maxAttempts: 2,
+      readSnapshot: async () => {
+        reads += 1;
+        return snapshot({ version: PUBLISHED_VERSION });
+      },
+      requestUpgrade: async () => true,
+      wait: async () => {
+        waits += 1;
+      },
+    }),
+  ).rejects.toThrow('Corgi 13F upgrade did not converge');
+  expect(reads).toBe(3);
+  expect(waits).toBe(1);
 });
 
 test('is idempotent when the exact target release is already installed', async () => {
@@ -144,7 +220,10 @@ test('polls a bounded number of times and reports a rejected mutation only after
 
 test('treats a mutation error as authoritative when polling reports the target release', async () => {
   const mutationError = new Error('manifest migration failed');
-  const snapshots = [snapshot(), snapshot({ version: VERSION })];
+  const snapshots = [
+    snapshot({ version: PUBLISHED_VERSION }),
+    snapshot({ version: VERSION }),
+  ];
 
   await expect(
     upgradeCorgiThirteenFWithUserSession({
