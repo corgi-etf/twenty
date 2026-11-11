@@ -23,6 +23,14 @@ const tenantVerifier = readFileSync(
   join(__dirname, 'corgiThirteenFDeploymentTenant.production.spec.ts'),
   'utf8',
 );
+const userSessionUpgrade = readFileSync(
+  join(__dirname, 'corgiThirteenFUserSessionUpgrade.production.spec.ts'),
+  'utf8',
+);
+const userSessionUpgradeHelper = readFileSync(
+  join(__dirname, 'corgiThirteenFUserSessionUpgrade.mjs'),
+  'utf8',
+);
 const deploymentKey = readFileSync(
   join(
     repositoryRoot,
@@ -216,8 +224,35 @@ test('classifies first install, rerun, and published-version upgrades safely', (
     freshInstall: false,
     registrationPreexisting: true,
   });
-  expect(verifier).toContain('upgradeApplication');
-  expect(verifier).toContain('targetVersion: VERSION');
+  expect(verifier).not.toContain('upgradeApplication');
+});
+
+test('uses the proven user session only for the guarded in-place upgrade', () => {
+  const upgrade = position(
+    'Upgrade the existing Corgi 13F installation in place',
+  );
+  const configure = position('Configure the Corgi 13F application variables');
+  const upgradeStep = workflow.slice(upgrade, configure);
+
+  expect(upgradeStep).toContain(
+    'corgiThirteenFUserSessionUpgrade.production.spec.ts',
+  );
+  expect(upgradeStep).toContain('CORGI_THIRTEEN_F_USER_SESSION_UPGRADE');
+  expect(upgradeStep).toContain('CORGI_CRM_EXPECTED_USER_WORKSPACE_ID');
+  expect(upgradeStep).toContain('CRM_E2E_LOGIN');
+  expect(upgradeStep).toContain('CRM_E2E_PASSWORD');
+  expect(upgradeStep).not.toContain('CORGI_CRM_API_KEY');
+  expect(userSessionUpgrade).toContain('page.request.post');
+  expect(userSessionUpgrade).toContain(
+    'currentUserWorkspace { id permissionFlags isImpersonating }',
+  );
+  expect(userSessionUpgrade).toContain('upgradeApplication');
+  expect(userSessionUpgrade).not.toContain('CORGI_CRM_API_KEY');
+  expect(userSessionUpgrade).not.toContain('Authorization');
+  expect(userSessionUpgradeHelper).toContain('maxAttempts = 12');
+  expect(userSessionUpgradeHelper).toContain(
+    'membership.permissionFlags.includes(REQUIRED_PERMISSION)',
+  );
 });
 
 test('retains exact registration after a failed fresh install verification', () => {
@@ -317,10 +352,12 @@ test('configures and verifies all application variables without exposing the sec
 });
 
 test('uses only metadata operations supported by the pinned Twenty schema', () => {
-  const documents = [...verifier.matchAll(/query: `([\s\S]*?)`,/g)].map(
-    ([, document]) => document,
+  const documents = [verifier, userSessionUpgrade].flatMap((source) =>
+    [...source.matchAll(/query: `([\s\S]*?)`,/g)].map(
+      ([, document]) => document,
+    ),
   );
-  expect(documents).toHaveLength(6);
+  expect(documents).toHaveLength(7);
   const schema = buildSchema(metadataSchema);
   for (const document of documents) {
     expect(

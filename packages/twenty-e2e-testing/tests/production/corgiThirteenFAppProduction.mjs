@@ -145,66 +145,6 @@ const assertInstallableRegistration = async () => {
   );
 };
 
-const upgrade = async () => {
-  const before = classifyDeploymentState(await readDeploymentState());
-
-  if (before.mode === 'installed') {
-    console.log(`Corgi 13F v${VERSION} is already installed`);
-    return;
-  }
-  if (before.mode !== 'upgrade-required' || before.publish) {
-    throw new Error(
-      `Corgi 13F cannot be upgraded from deployment state ${before.mode}`,
-    );
-  }
-
-  let mutationError;
-  try {
-    const state = await readDeploymentState();
-    const result = await graphql({
-      operationName: 'UpgradeCorgiThirteenFApplication',
-      query: `mutation UpgradeCorgiThirteenFApplication(
-        $appRegistrationId: String!
-        $targetVersion: String!
-      ) {
-        upgradeApplication(
-          appRegistrationId: $appRegistrationId
-          targetVersion: $targetVersion
-        )
-      }`,
-      variables: {
-        appRegistrationId: state.registration.id,
-        targetVersion: VERSION,
-      },
-    });
-
-    if (result.upgradeApplication !== true) {
-      mutationError = new Error('Corgi 13F upgrade was not accepted');
-    }
-  } catch (error) {
-    mutationError = error;
-  }
-
-  for (let attempt = 1; attempt <= 12; attempt += 1) {
-    const state = classifyDeploymentState(await readDeploymentState());
-
-    if (state.mode === 'installed') {
-      console.log(`Corgi 13F was upgraded in place to v${VERSION}`);
-      return;
-    }
-    if (state.mode !== 'upgrade-required') {
-      throw new Error(
-        `Corgi 13F entered unexpected state ${state.mode} during upgrade`,
-      );
-    }
-    if (attempt < 12) {
-      await new Promise((resolve) => setTimeout(resolve, 5_000));
-    }
-  }
-
-  throw mutationError ?? new Error('Corgi 13F upgrade did not converge');
-};
-
 const configure = async () => {
   const deployment = await readDeploymentState();
   const state = classifyDeploymentState(deployment);
@@ -786,8 +726,6 @@ if (
     await precheck();
   } else if (operation === 'assert-installable') {
     await assertInstallableRegistration();
-  } else if (operation === 'upgrade') {
-    await upgrade();
   } else if (operation === 'configure') {
     await configure();
   } else if (operation === 'verify') {
@@ -796,7 +734,7 @@ if (
     await rollbackFreshInstallation();
   } else {
     throw new Error(
-      'Expected precheck, assert-installable, upgrade, configure, verify, or rollback operation',
+      'Expected precheck, assert-installable, configure, verify, or rollback operation',
     );
   }
 }

@@ -198,10 +198,17 @@ jobs:
         id: upgrade
         if: steps.precheck.outputs.upgrade == 'true'
         env:
-          CORGI_CRM_API_KEY: ${{ steps.credential.outputs.token }}
+          FRONTEND_BASE_URL: ${{ env.CORGI_CRM_API_URL }}
+          BACKEND_BASE_URL: ${{ env.CORGI_CRM_API_URL }}
+          CRM_E2E_LOGIN: ${{ secrets.CRM_E2E_LOGIN }}
+          CRM_E2E_PASSWORD: ${{ secrets.CRM_E2E_PASSWORD }}
+          CRM_E2E_WORKSPACE_NAME: Corgi ETF
+          CORGI_CRM_EXPECTED_USER_WORKSPACE_ID: ${{ env.CORGI_CRM_EXPECTED_USER_WORKSPACE_ID }}
+          CORGI_THIRTEEN_F_USER_SESSION_UPGRADE: 'true'
         run: >-
-          node packages/twenty-e2e-testing/tests/production/corgiThirteenFAppProduction.mjs
-          upgrade
+          npx nx test:production twenty-e2e-testing --
+          tests/production/corgiThirteenFUserSessionUpgrade.production.spec.ts
+          --project=production-chromium
 
       - name: Configure the Corgi 13F application variables
         id: configure
