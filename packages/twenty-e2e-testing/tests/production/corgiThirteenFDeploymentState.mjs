@@ -6,13 +6,15 @@ const INTERMEDIATE_VERSION = '0.2.0';
 const PREVIOUS_VERSION = '0.2.1';
 const PUBLISHED_VERSION = '0.3.0';
 const PREVIOUS_STABLE_VERSION = '0.3.1';
-const VERSION = '0.3.2';
+const CURRENT_STABLE_VERSION = '0.3.2';
+const VERSION = '0.3.3';
 const APPROVED_REGISTRATION_VERSIONS = [
   LEGACY_VERSION,
   INTERMEDIATE_VERSION,
   PREVIOUS_VERSION,
   PUBLISHED_VERSION,
   PREVIOUS_STABLE_VERSION,
+  CURRENT_STABLE_VERSION,
   VERSION,
 ];
 const APPROVED_INSTALLED_VERSIONS = [
@@ -20,6 +22,7 @@ const APPROVED_INSTALLED_VERSIONS = [
   INTERMEDIATE_VERSION,
   PREVIOUS_VERSION,
   PREVIOUS_STABLE_VERSION,
+  CURRENT_STABLE_VERSION,
   VERSION,
 ];
 
@@ -64,9 +67,12 @@ const classifyDeploymentState = ({ applications, registration }) => {
 
     const isPublishedVersionRecovery =
       application.version === PUBLISHED_VERSION &&
-      [PUBLISHED_VERSION, PREVIOUS_STABLE_VERSION, VERSION].includes(
-        registration.latestAvailableVersion,
-      );
+      [
+        PUBLISHED_VERSION,
+        PREVIOUS_STABLE_VERSION,
+        CURRENT_STABLE_VERSION,
+        VERSION,
+      ].includes(registration.latestAvailableVersion);
 
     if (
       !isPublishedVersionRecovery &&
@@ -141,6 +147,7 @@ const classifyDeploymentState = ({ applications, registration }) => {
 
 export {
   APPLICATION_ID,
+  CURRENT_STABLE_VERSION,
   INTERMEDIATE_VERSION,
   LEGACY_VERSION,
   PREVIOUS_VERSION,

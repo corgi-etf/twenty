@@ -85,7 +85,7 @@ test('upgrades the exact prior release through the authenticated user session', 
   ]);
 });
 
-test('refuses the failed v0.3.0 recovery state until v0.3.2 is published', async () => {
+test('refuses the failed v0.3.0 recovery state until v0.3.3 is published', async () => {
   let upgradeRequests = 0;
 
   await expect(
@@ -106,7 +106,7 @@ test('refuses the failed v0.3.0 recovery state until v0.3.2 is published', async
   expect(upgradeRequests).toBe(0);
 });
 
-test('upgrades the failed v0.3.0 recovery state after v0.3.2 is published', async () => {
+test('upgrades the failed v0.3.0 recovery state after v0.3.3 is published', async () => {
   const snapshots = [
     snapshot({ version: PUBLISHED_VERSION }),
     snapshot({ version: VERSION }),
