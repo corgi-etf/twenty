@@ -510,14 +510,25 @@ export const FirmHoldings = ({
   const selectedFiling = asOfDate
     ? firm.filingHistory.find((filing) => filing.asOfDate === asOfDate)
     : undefined;
-  const holdingsAsOf = selectedFiling?.asOfDate ?? firm.latestAsOfDate;
-  const filedAt = selectedFiling?.filedAt ?? firm.latestFiledAt;
-  const formType = selectedFiling?.formType ?? firm.latestFormType;
-  const coverage = selectedFiling?.coverage ?? firm.latestCoverage;
-  const dateBasis = selectedFiling?.dateBasis ?? firm.latestDateBasis;
-  const positionCount = selectedFiling?.positionCount ?? firm.positionCount;
-  const totalReportedValue =
-    selectedFiling?.totalReportedValue ?? firm.totalReportedValue;
+  const holdingsAsOf = selectedFiling
+    ? selectedFiling.asOfDate
+    : firm.latestAsOfDate;
+  const filedAt = selectedFiling ? selectedFiling.filedAt : firm.latestFiledAt;
+  const formType = selectedFiling
+    ? selectedFiling.formType
+    : firm.latestFormType;
+  const coverage = selectedFiling
+    ? selectedFiling.coverage
+    : firm.latestCoverage;
+  const dateBasis = selectedFiling
+    ? selectedFiling.dateBasis
+    : firm.latestDateBasis;
+  const positionCount = selectedFiling
+    ? selectedFiling.positionCount
+    : firm.positionCount;
+  const totalReportedValue = selectedFiling
+    ? selectedFiling.totalReportedValue
+    : firm.totalReportedValue;
   const holdingsDateLabel =
     dateBasis === 'SEC_REPORT_PERIOD' ? 'SEC report period' : 'Holdings as of';
 

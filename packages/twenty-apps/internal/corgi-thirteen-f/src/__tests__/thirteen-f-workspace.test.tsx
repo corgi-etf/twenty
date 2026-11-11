@@ -222,8 +222,8 @@ describe('13F workspace journeys', () => {
     expect(officialHtml).not.toContain('Estimated · unverified legacy data');
   });
 
-  it('uses the selected filing metadata when reviewing an earlier date', () => {
-    const earlierFirm: FirmDetail = {
+  it('renders raw accession totals from the selected filing response', () => {
+    const historicalFirmResponse = {
       ...firm,
       filingHistory: [
         ...firm.filingHistory,
@@ -238,11 +238,22 @@ describe('13F workspace journeys', () => {
           positionCount: 90,
           totalReportedValue: '90000000',
         },
+        {
+          id: 'filing-with-null-total',
+          asOfDate: '2026-03-31',
+          dateBasis: 'SEC_REPORT_PERIOD',
+          reportPeriod: '2026-03-31',
+          filedAt: null,
+          formType: null,
+          coverage: null,
+          positionCount: 0,
+          totalReportedValue: null,
+        },
       ],
-    };
-    const html = renderToStaticMarkup(
+    } satisfies FirmDetail;
+    const populatedHtml = renderToStaticMarkup(
       <FirmHoldings
-        firm={earlierFirm}
+        firm={historicalFirmResponse}
         holdings={[]}
         asOfDate="2026-06-30"
         onBack={() => undefined}
@@ -250,10 +261,26 @@ describe('13F workspace journeys', () => {
       />,
     );
 
-    expect(html).toContain('SEC report period Jun 30, 2026');
-    expect(html).toContain('Filed Aug 14, 2026');
-    expect(html).toContain('13F-HR/A');
-    expect(html).toContain('$90,000,000');
+    expect(populatedHtml).toContain('SEC report period Jun 30, 2026');
+    expect(populatedHtml).toContain('Filed Aug 14, 2026');
+    expect(populatedHtml).toContain('13F-HR/A');
+    expect(populatedHtml).toContain('90 positions');
+    expect(populatedHtml).toContain('$90,000,000');
+
+    const nullTotalHtml = renderToStaticMarkup(
+      <FirmHoldings
+        firm={historicalFirmResponse}
+        holdings={[]}
+        asOfDate="2026-03-31"
+        onBack={() => undefined}
+      />,
+    );
+
+    expect(nullTotalHtml).toContain('SEC report period Mar 31, 2026');
+    expect(nullTotalHtml).toContain('Filed Not available');
+    expect(nullTotalHtml).toContain('Form not available');
+    expect(nullTotalHtml).toContain('0 positions');
+    expect(nullTotalHtml).toMatch(/<div[^>]*>—<\/div><div[^>]*>0 positions<\/div>/);
   });
 
   it('renders reverse lookup results with every holding firm and date', () => {
