@@ -12,6 +12,10 @@ const smoke = readFileSync(
   join(__dirname, 'corgiThirteenFDataPlaneSmoke.production.spec.ts'),
   'utf8',
 );
+const frontComponentSmoke = readFileSync(
+  join(__dirname, 'corgiThirteenFFrontComponentSmoke.production.spec.ts'),
+  'utf8',
+);
 
 const position = (needle: string): number => {
   const index = workflow.indexOf(needle);
@@ -22,13 +26,15 @@ const position = (needle: string): number => {
 test('runs the authenticated 13F data-plane smoke after native metadata verification', () => {
   const verify = position('Verify the installed Corgi 13F native workspace');
   const smokeStep = position('Verify the live Corgi 13F data plane');
+  const frontComponentStep = position('Verify the rendered Corgi 13F page');
   const rollback = position(
     "Roll back only this run's fresh installation and retain registration",
   );
 
   expect(verify).toBeLessThan(smokeStep);
-  expect(smokeStep).toBeLessThan(rollback);
-  const step = workflow.slice(smokeStep, rollback);
+  expect(smokeStep).toBeLessThan(frontComponentStep);
+  expect(frontComponentStep).toBeLessThan(rollback);
+  const step = workflow.slice(smokeStep, frontComponentStep);
   expect(step).toContain('corgiThirteenFDataPlaneSmoke.production.spec.ts');
   expect(step).toContain('id: data-plane');
   expect(step).toContain("CORGI_THIRTEEN_F_DATA_PLANE_SMOKE: 'true'");
@@ -40,6 +46,63 @@ test('runs the authenticated 13F data-plane smoke after native metadata verifica
   expect(workflow.slice(rollback)).toContain(
     "steps.data-plane.outcome == 'failure'",
   );
+  expect(workflow.slice(rollback)).toContain(
+    "steps.front-component.outcome == 'failure'",
+  );
+});
+
+test('renders the authenticated native page after the data-plane smoke', () => {
+  const dataPlaneStep = position('Verify the live Corgi 13F data plane');
+  const frontComponentStep = position('Verify the rendered Corgi 13F page');
+  const rollback = position(
+    "Roll back only this run's fresh installation and retain registration",
+  );
+  const step = workflow.slice(frontComponentStep, rollback);
+
+  expect(dataPlaneStep).toBeLessThan(frontComponentStep);
+  expect(frontComponentStep).toBeLessThan(rollback);
+  expect(step).toContain(
+    'corgiThirteenFFrontComponentSmoke.production.spec.ts',
+  );
+  expect(step).toContain('id: front-component');
+  expect(step).toContain(
+    "CORGI_THIRTEEN_F_FRONT_COMPONENT_SMOKE: 'true'",
+  );
+  expect(step).toContain('CRM_E2E_LOGIN');
+  expect(step).toContain('CRM_E2E_PASSWORD');
+  expect(step).not.toContain('CORGI_CRM_API_KEY');
+  expect(step).not.toContain('CORGI_THIRTEEN_F_API_READ_TOKEN');
+  expect(step).not.toContain('continue-on-error');
+
+  expect(frontComponentSmoke).toContain(
+    "const APPROVED_ORIGIN = 'https://crm.corgiinvest.com'",
+  );
+  expect(frontComponentSmoke).toContain('VerifyCorgiThirteenFRenderedPage');
+  expect(frontComponentSmoke).toContain(
+    'getPageLayouts(pageLayoutType: STANDALONE_PAGE)',
+  );
+  expect(frontComponentSmoke).toContain(
+    "'6404c75f-c713-4db1-965d-6cf54178a18f'",
+  );
+  expect(frontComponentSmoke).toContain(
+    'CORGI_CRM_EXPECTED_USER_WORKSPACE_ID',
+  );
+  expect(frontComponentSmoke).toContain('isImpersonating: false');
+  expect(frontComponentSmoke).toContain('`/page/${pageLayout.id}`');
+  expect(frontComponentSmoke).toContain(
+    "page.getByRole('heading', { name: '13F', exact: true })",
+  );
+  expect(frontComponentSmoke).toContain(
+    "input[aria-label=\"Search 13F data\"]",
+  );
+  expect(frontComponentSmoke).toContain("'FrontComponent error:'");
+  expect(frontComponentSmoke).toContain('MutationObserver');
+  expect(frontComponentSmoke).toContain(
+    'CORGI_THIRTEEN_F_FRONT_COMPONENT_SMOKE',
+  );
+  expect(frontComponentSmoke).toContain("?.trim() !== 'true'");
+  expect(frontComponentSmoke).not.toContain('test.skip();');
+  expect(frontComponentSmoke).not.toContain('Authorization:');
 });
 
 test('proves the exact tenant and native firm-first journeys through the CRM app route', () => {

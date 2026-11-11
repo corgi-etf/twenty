@@ -36,7 +36,14 @@ export const readBrowserWorkspaceQuery = () =>
     : parseWorkspaceQuery(window.location.search);
 
 export const replaceBrowserWorkspaceQuery = (state: WorkspaceQuery) => {
-  if (typeof window === 'undefined') return;
+  if (
+    typeof window === 'undefined' ||
+    !window.location ||
+    typeof window.history?.replaceState !== 'function'
+  ) {
+    return;
+  }
+
   const params = new URLSearchParams(window.location.search);
   for (const key of ['q', 'asOfDate', 'firmId', 'securityId']) {
     params.delete(key);
