@@ -1,10 +1,15 @@
-import { expect, test, type APIResponse, type Page } from '@playwright/test';
+import {
+  expect,
+  test,
+  type APIResponse,
+  type Locator,
+  type Page,
+} from '@playwright/test';
 
 const APPROVED_ORIGIN = 'https://crm.corgiinvest.com';
 const APPROVED_WORKSPACE_ID = 'eabf5d9d-fc99-4acb-b160-710ecb1db996';
 const APPROVED_WORKSPACE_NAME = 'Corgi ETF';
-const PAGE_LAYOUT_UNIVERSAL_IDENTIFIER =
-  '6404c75f-c713-4db1-965d-6cf54178a18f';
+const PAGE_LAYOUT_UNIVERSAL_IDENTIFIER = '6404c75f-c713-4db1-965d-6cf54178a18f';
 const FRONT_COMPONENT_ERROR_PREFIX = 'FrontComponent error:';
 const ERROR_PROBE_KEY = '__corgiThirteenFFrontComponentErrorSeen';
 const UUID_PATTERN =
@@ -41,6 +46,43 @@ const readJson = async <T>(
     throw new Error(`${label} failed with HTTP ${response.status()}`);
   }
   return (await response.json()) as T;
+};
+
+const clickNativeFrontComponentButton = async (
+  page: Page,
+  button: Locator,
+): Promise<void> => {
+  await expect(button).toBeVisible();
+
+  const nativeState = await button.evaluate((element) => ({
+    disabled:
+      element instanceof HTMLButtonElement ? element.disabled : undefined,
+    tagName: element.tagName,
+  }));
+
+  expect(nativeState).toEqual({ disabled: false, tagName: 'BUTTON' });
+
+  // Twenty's non-editable sortable widget wrapper exposes aria-disabled=true.
+  // Playwright inherits that ARIA state and rejects locator.click(), even though
+  // the native button remains pointer-interactive for an end user.
+  await button.evaluate((element) =>
+    element.scrollIntoView({ block: 'center', inline: 'center' }),
+  );
+  const box = await button.boundingBox();
+
+  expect(box).not.toBeNull();
+  if (!box) throw new Error('FrontComponent button has no rendered bounds');
+
+  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+};
+
+const readButtonLabel = async (button: Locator): Promise<string> => {
+  const label = (await button.textContent())?.trim();
+
+  expect(label).toBeTruthy();
+  if (!label) throw new Error('FrontComponent button has no accessible label');
+
+  return label;
 };
 
 const resolvePageLayout = async (page: Page, origin: string) => {
@@ -104,7 +146,7 @@ test.skip(
   'Corgi 13F rendered-page verification is workflow-only.',
 );
 
-test('renders the native 13F page without a FrontComponent runtime error', async ({
+test('renders and navigates the native 13F page without a FrontComponent runtime error', async ({
   page,
 }) => {
   const origin = new URL(requiredEnvironment('FRONTEND_BASE_URL')).origin;
@@ -158,19 +200,60 @@ test('renders the native 13F page without a FrontComponent runtime error', async
   await expect(
     page.getByRole('heading', { name: '13F', exact: true }),
   ).toBeVisible({ timeout: 30_000 });
+  await expect(page.locator('input[aria-label="Search 13F data"]')).toBeVisible(
+    { timeout: 30_000 },
+  );
+  await expect(page.getByRole('region', { name: '13F firms' })).toBeVisible({
+    timeout: 30_000,
+  });
+
+  const firmDirectory = page.getByRole('region', { name: '13F firms' });
+  const directoryFirmButton = firmDirectory.getByRole('button').first();
+  const directoryFirmName = await readButtonLabel(directoryFirmButton);
+
+  await clickNativeFrontComponentButton(page, directoryFirmButton);
+
+  const firmHoldings = page.getByRole('table', { name: 'Firm holdings' });
+  await expect(firmHoldings).toBeVisible({ timeout: 30_000 });
   await expect(
-    page.locator('input[aria-label="Search 13F data"]'),
-  ).toBeVisible({ timeout: 30_000 });
+    page.getByRole('heading', {
+      name: directoryFirmName,
+      exact: true,
+    }),
+  ).toBeVisible();
+
+  const tickerButton = firmHoldings.getByRole('button').first();
+  const ticker = await readButtonLabel(tickerButton);
+
+  await clickNativeFrontComponentButton(page, tickerButton);
+
+  const securityHoldingFirms = page.getByRole('table', {
+    name: 'Security holding firms',
+  });
+  await expect(securityHoldingFirms).toBeVisible({ timeout: 30_000 });
   await expect(
-    page.getByRole('region', { name: '13F firms' }),
-  ).toBeVisible({ timeout: 30_000 });
+    page.getByRole('heading', {
+      name: `Firms holding ${ticker}`,
+      exact: true,
+    }),
+  ).toBeVisible();
+
+  const holderFirmButton = securityHoldingFirms.getByRole('button').first();
+  const holderFirmName = await readButtonLabel(holderFirmButton);
+
+  await clickNativeFrontComponentButton(page, holderFirmButton);
+
+  await expect(page.getByRole('table', { name: 'Firm holdings' })).toBeVisible({
+    timeout: 30_000,
+  });
+  await expect(
+    page.getByRole('heading', { name: holderFirmName, exact: true }),
+  ).toBeVisible();
   await expect(page.getByText(FRONT_COMPONENT_ERROR_PREFIX)).toHaveCount(0);
   expect(
     await page.evaluate(
       (probeKey) =>
-        Boolean(
-          (window as unknown as Record<string, unknown>)[probeKey],
-        ),
+        Boolean((window as unknown as Record<string, unknown>)[probeKey]),
       ERROR_PROBE_KEY,
     ),
   ).toBe(false);
