@@ -1,17 +1,29 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 
 import { callThirteenFRoute } from 'src/front-components/thirteen-f-workspace/client';
-import { formatDate } from 'src/front-components/thirteen-f-workspace/format';
+import {
+  formatCount,
+  formatDate,
+} from 'src/front-components/thirteen-f-workspace/format';
 import {
   readBrowserWorkspaceQuery,
   replaceBrowserWorkspaceQuery,
 } from 'src/front-components/thirteen-f-workspace/query-state';
+import {
+  findSecReportPeriod,
+  periodOptionValue,
+  SEC_REPORT_PERIOD,
+  secReportPeriods,
+} from 'src/front-components/thirteen-f-workspace/periods';
 import { UnifiedSearchResults } from 'src/front-components/thirteen-f-workspace/search-results';
 import type {
   FirmDetail,
   FirmSummary,
   Holding,
+  HoldingsPageEnvelope,
+  HoldingsOrder,
   PageEnvelope,
+  PeriodOption,
   SearchResults,
   SecuritySummary,
   ThirteenFSummary,
@@ -23,6 +35,13 @@ import {
 } from 'src/front-components/thirteen-f-workspace/views';
 
 const INITIAL_QUERY = readBrowserWorkspaceQuery();
+const INITIAL_PERIOD: PeriodOption | undefined =
+  INITIAL_QUERY.asOfDate && INITIAL_QUERY.dateBasis === SEC_REPORT_PERIOD
+    ? {
+        asOfDate: INITIAL_QUERY.asOfDate,
+        dateBasis: INITIAL_QUERY.dateBasis,
+      }
+    : undefined;
 
 const STYLES = {
   page: {
@@ -64,7 +83,6 @@ const STYLES = {
     color: '#141414',
     fontSize: 13,
     padding: '10px 12px',
-    outline: 'none',
   },
   select: {
     border: '1px solid #D0D5DD',
@@ -118,9 +136,11 @@ const securityFromHolding = (holding: Holding): SecuritySummary => ({
 
 export const ThirteenFWorkspace = () => {
   const [query, setQuery] = useState(INITIAL_QUERY.q);
-  const [asOfDate, setAsOfDate] = useState<string | undefined>(
-    INITIAL_QUERY.asOfDate,
-  );
+  const [selectedPeriod, setSelectedPeriod] = useState<
+    PeriodOption | undefined
+  >(INITIAL_PERIOD);
+  const asOfDate = selectedPeriod?.asOfDate;
+  const dateBasis = selectedPeriod?.dateBasis ?? SEC_REPORT_PERIOD;
   const [summary, setSummary] = useState<ThirteenFSummary | null>(null);
   const [firms, setFirms] = useState<FirmSummary[]>([]);
   const [searchResults, setSearchResults] = useState<SearchResults | null>(null);
@@ -142,6 +162,12 @@ export const ThirteenFWorkspace = () => {
   const [holdings, setHoldings] = useState<Holding[]>([]);
   const [nextCursor, setNextCursor] = useState<string | undefined>();
   const [hasNextPage, setHasNextPage] = useState(false);
+  const [totalCount, setTotalCount] = useState(0);
+  const [totalReportedValue, setTotalReportedValue] = useState<string | null>(
+    null,
+  );
+  const [holdingsOrder, setHoldingsOrder] =
+    useState<HoldingsOrder>('value_desc');
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -152,7 +178,18 @@ export const ThirteenFWorkspace = () => {
       .then((result) => {
         if (!active) return;
         setSummary(result);
-        setAsOfDate((current) => current ?? result.latestAsOfDate ?? undefined);
+        setSelectedPeriod((current) => {
+          const periods = secReportPeriods(result.periods);
+          if (
+            current &&
+            periods.some(
+              (period) => periodOptionValue(period) === periodOptionValue(current),
+            )
+          ) {
+            return current;
+          }
+          return periods[0];
+        });
       })
       .catch(() => {
         if (active) setError('13F data is temporarily unavailable.');
@@ -166,10 +203,11 @@ export const ThirteenFWorkspace = () => {
     replaceBrowserWorkspaceQuery({
       q: query,
       asOfDate,
+      dateBasis,
       firmId: selectedFirmId,
       securityId: selectedSecurity?.id,
     });
-  }, [asOfDate, query, selectedFirmId, selectedSecurity?.id]);
+  }, [asOfDate, dateBasis, query, selectedFirmId, selectedSecurity?.id]);
 
   useEffect(() => {
     if (selectedFirmId || selectedSecurity) return;
@@ -182,11 +220,13 @@ export const ThirteenFWorkspace = () => {
         ? callThirteenFRoute<SearchResults>({
             action: 'search',
             q: trimmed,
+            dateBasis,
             limit: 40,
           })
         : callThirteenFRoute<PageEnvelope<FirmSummary>>({
             action: 'firms',
             asOfDate,
+            dateBasis,
             limit: 100,
           });
       request
@@ -194,12 +234,16 @@ export const ThirteenFWorkspace = () => {
           if (!active) return;
           if (trimmed) {
             setSearchResults(result as SearchResults);
+            setTotalCount(0);
+            setTotalReportedValue(null);
             setNextCursor(undefined);
             setHasNextPage(false);
           } else {
             setSearchResults(null);
             const page = result as PageEnvelope<FirmSummary>;
             setFirms(page.items);
+            setTotalCount(page.totalCount);
+            setTotalReportedValue(null);
             setNextCursor(page.pageInfo.endCursor ?? undefined);
             setHasNextPage(Boolean(page.pageInfo.hasNextPage));
           }
@@ -215,7 +259,7 @@ export const ThirteenFWorkspace = () => {
       active = false;
       globalThis.clearTimeout(timeout);
     };
-  }, [asOfDate, query, selectedFirmId, selectedSecurity]);
+  }, [asOfDate, dateBasis, query, selectedFirmId, selectedSecurity]);
 
   useEffect(() => {
     if (!selectedFirmId) return;
@@ -227,18 +271,21 @@ export const ThirteenFWorkspace = () => {
         action: 'firm',
         firmId: selectedFirmId,
       }),
-      callThirteenFRoute<PageEnvelope<Holding>>({
+      callThirteenFRoute<HoldingsPageEnvelope>({
         action: 'holdings',
         firmId: selectedFirmId,
         asOfDate,
+        dateBasis,
         limit: 100,
-        order: 'value_desc',
+        order: holdingsOrder,
       }),
     ])
       .then(([firmResult, holdingsResult]) => {
         if (!active) return;
         setFirm(firmResult);
         setHoldings(holdingsResult.items);
+        setTotalCount(holdingsResult.totalCount);
+        setTotalReportedValue(holdingsResult.totalReportedValue);
         setNextCursor(holdingsResult.pageInfo.endCursor ?? undefined);
         setHasNextPage(Boolean(holdingsResult.pageInfo.hasNextPage));
       })
@@ -251,7 +298,7 @@ export const ThirteenFWorkspace = () => {
     return () => {
       active = false;
     };
-  }, [asOfDate, selectedFirmId]);
+  }, [asOfDate, dateBasis, holdingsOrder, selectedFirmId]);
 
   useEffect(() => {
     if (!selectedSecurity) return;
@@ -262,12 +309,15 @@ export const ThirteenFWorkspace = () => {
       action: 'holders',
       securityId: selectedSecurity.id,
       asOfDate,
+      dateBasis,
       mode: asOfDate ? 'exact' : 'latest',
       limit: 100,
     })
       .then((result) => {
         if (!active) return;
         setHoldings(result.items);
+        setTotalCount(result.totalCount);
+        setTotalReportedValue(null);
         setNextCursor(result.pageInfo.endCursor ?? undefined);
         setHasNextPage(Boolean(result.pageInfo.hasNextPage));
         const first = result.items[0];
@@ -282,19 +332,16 @@ export const ThirteenFWorkspace = () => {
     return () => {
       active = false;
     };
-  }, [asOfDate, selectedSecurity?.id]);
+  }, [asOfDate, dateBasis, selectedSecurity?.id]);
 
-  const availablePeriods = summary?.periods ?? [];
-  const selectedBasis = useMemo(
-    () =>
-      availablePeriods.find((period) => period.asOfDate === asOfDate)?.dateBasis,
-    [asOfDate, availablePeriods],
-  );
+  const availablePeriods = secReportPeriods(summary?.periods ?? []);
 
   const chooseFirm = (nextFirm: FirmSummary | Holding) => {
     setQuery('');
     setSelectedSecurity(null);
     setHasNextPage(false);
+    setTotalCount(0);
+    setTotalReportedValue(null);
     setNextCursor(undefined);
     setSelectedFirmId('firmId' in nextFirm ? nextFirm.firmId : nextFirm.id);
   };
@@ -304,6 +351,8 @@ export const ThirteenFWorkspace = () => {
     setSelectedFirmId(undefined);
     setFirm(null);
     setHasNextPage(false);
+    setTotalCount(0);
+    setTotalReportedValue(null);
     setNextCursor(undefined);
     setSelectedSecurity(
       'securityId' in security ? securityFromHolding(security) : security,
@@ -316,6 +365,8 @@ export const ThirteenFWorkspace = () => {
     setFirm(null);
     setHoldings([]);
     setHasNextPage(false);
+    setTotalCount(0);
+    setTotalReportedValue(null);
     setNextCursor(undefined);
   };
 
@@ -325,15 +376,18 @@ export const ThirteenFWorkspace = () => {
     setError(null);
     try {
       if (selectedFirmId) {
-        const page = await callThirteenFRoute<PageEnvelope<Holding>>({
+        const page = await callThirteenFRoute<HoldingsPageEnvelope>({
           action: 'holdings',
           firmId: selectedFirmId,
           asOfDate,
+          dateBasis,
           cursor: nextCursor,
           limit: 100,
-          order: 'value_desc',
+          order: holdingsOrder,
         });
         setHoldings((current) => [...current, ...page.items]);
+        setTotalCount(page.totalCount);
+        setTotalReportedValue(page.totalReportedValue);
         setNextCursor(page.pageInfo.endCursor ?? undefined);
         setHasNextPage(Boolean(page.pageInfo.hasNextPage));
       } else if (selectedSecurity) {
@@ -341,6 +395,7 @@ export const ThirteenFWorkspace = () => {
           action: 'holders',
           securityId: selectedSecurity.id,
           asOfDate,
+          dateBasis,
           mode: asOfDate ? 'exact' : 'latest',
           cursor: nextCursor,
           limit: 100,
@@ -352,6 +407,7 @@ export const ThirteenFWorkspace = () => {
         const page = await callThirteenFRoute<PageEnvelope<FirmSummary>>({
           action: 'firms',
           asOfDate,
+          dateBasis,
           cursor: nextCursor,
           limit: 100,
         });
@@ -367,16 +423,34 @@ export const ThirteenFWorkspace = () => {
   };
 
   const content = (() => {
-    if (loading) return <div style={STYLES.status}>Loading 13F data…</div>;
-    if (selectedFirmId && firm) {
+    if (loading) {
+      return (
+        <div style={STYLES.status} role="status" aria-live="polite">
+          Loading 13F data…
+        </div>
+      );
+    }
+    if (selectedFirmId && firm && selectedPeriod) {
       return (
         <FirmHoldings
           firm={firm}
           holdings={holdings}
-          asOfDate={asOfDate}
+          totalCount={totalCount}
+          totalReportedValue={totalReportedValue}
+          asOfDate={selectedPeriod.asOfDate}
+          dateBasis={selectedPeriod.dateBasis}
+          order={holdingsOrder}
           onBack={backToDirectory}
           onSelectSecurity={chooseSecurity}
+          onOrderChange={setHoldingsOrder}
         />
+      );
+    }
+    if (selectedFirmId && firm) {
+      return (
+        <div style={STYLES.status} role="status">
+          No SEC report period is available for this firm.
+        </div>
       );
     }
     if (selectedSecurity) {
@@ -384,6 +458,7 @@ export const ThirteenFWorkspace = () => {
         <SecurityHolders
           security={selectedSecurity}
           holdings={holdings}
+          totalCount={totalCount}
           onBack={backToDirectory}
           onSelectFirm={chooseFirm}
         />
@@ -398,7 +473,13 @@ export const ThirteenFWorkspace = () => {
         />
       );
     }
-    return <FirmDirectory firms={firms} onSelect={chooseFirm} />;
+    return (
+      <FirmDirectory
+        firms={firms}
+        totalCount={totalCount}
+        onSelect={chooseFirm}
+      />
+    );
   })();
 
   return (
@@ -414,10 +495,7 @@ export const ThirteenFWorkspace = () => {
             </div>
             {asOfDate ? (
               <div style={STYLES.subtitle}>
-                As of {formatDate(asOfDate)}
-                {selectedBasis === 'LEGACY_AS_OF_UNVERIFIED'
-                  ? ' · Legacy date'
-                  : ''}
+                SEC report period {formatDate(asOfDate)}
               </div>
             ) : null}
           </div>
@@ -435,34 +513,41 @@ export const ThirteenFWorkspace = () => {
                 setFirm(null);
                 setNextCursor(undefined);
                 setHasNextPage(false);
+                setTotalCount(0);
+                setTotalReportedValue(null);
               }}
             />
             <select
               style={STYLES.select}
-              value={asOfDate ?? ''}
-              aria-label="As of date"
-              onChange={(event) => setAsOfDate(event.target.value || undefined)}
+              value={selectedPeriod ? periodOptionValue(selectedPeriod) : ''}
+              aria-label="SEC report period"
+              onChange={(event) =>
+                setSelectedPeriod(
+                  findSecReportPeriod(availablePeriods, event.target.value),
+                )
+              }
             >
               {availablePeriods.length === 0 ? (
-                <option value={asOfDate ?? ''}>
+                <option value="">
                   {asOfDate ? formatDate(asOfDate) : 'Latest available'}
                 </option>
               ) : null}
               {availablePeriods.map((period) => (
                 <option
                   key={`${period.asOfDate}:${period.dateBasis}`}
-                  value={period.asOfDate}
+                  value={periodOptionValue(period)}
                 >
                   {formatDate(period.asOfDate)}
-                  {period.dateBasis === 'LEGACY_AS_OF_UNVERIFIED'
-                    ? ' — legacy date'
-                    : ''}
                 </option>
               ))}
             </select>
           </div>
         </header>
-        {error ? <div style={STYLES.error}>{error}</div> : null}
+        {error ? (
+          <div style={STYLES.error} role="alert">
+            {error}
+          </div>
+        ) : null}
         <div style={{ ...STYLES.panel, marginTop: error ? 12 : 0 }}>
           {content}
           {hasNextPage && !loading ? (
@@ -470,9 +555,16 @@ export const ThirteenFWorkspace = () => {
               type="button"
               style={STYLES.loadMore}
               disabled={loadingMore}
+              aria-busy={loadingMore}
               onClick={loadMore}
             >
-              {loadingMore ? 'Loading…' : 'Load more'}
+              {loadingMore
+                ? 'Loading…'
+                : `Load more · ${formatCount(
+                    selectedFirmId || selectedSecurity
+                      ? holdings.length
+                      : firms.length,
+                  )} of ${formatCount(totalCount)}`}
             </button>
           ) : null}
         </div>

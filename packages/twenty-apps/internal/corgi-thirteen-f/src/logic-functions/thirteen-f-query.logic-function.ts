@@ -10,6 +10,7 @@ const QUERY_ROOT = '/api/internal/thirteen-f';
 const MAX_QUERY_LENGTH = 200;
 const MAX_CURSOR_LENGTH = 500;
 const MAX_PAGE_SIZE = 100;
+const DATE_BASES = ['SEC_REPORT_PERIOD', 'LEGACY_AS_OF_UNVERIFIED'] as const;
 const APPROVED_API_ORIGINS = ['https://admin.corgiinvest.com'] as const;
 
 type Fetcher = (
@@ -29,13 +30,14 @@ type QueryDependencies = {
 
 const ACTION_KEYS = {
   summary: ['action'],
-  firms: ['action', 'q', 'asOfDate', 'cursor', 'limit'],
-  search: ['action', 'q', 'limit'],
+  firms: ['action', 'q', 'asOfDate', 'dateBasis', 'cursor', 'limit'],
+  search: ['action', 'q', 'dateBasis', 'limit'],
   firm: ['action', 'firmId'],
   holdings: [
     'action',
     'firmId',
     'asOfDate',
+    'dateBasis',
     'q',
     'cursor',
     'limit',
@@ -45,6 +47,7 @@ const ACTION_KEYS = {
     'action',
     'securityId',
     'asOfDate',
+    'dateBasis',
     'mode',
     'cursor',
     'limit',
@@ -76,6 +79,10 @@ const isOptionalText = (value: unknown, maxLength: number) =>
 const isOptionalDate = (value: unknown) =>
   value === undefined || (typeof value === 'string' && DATE_PATTERN.test(value));
 
+const isOptionalDateBasis = (value: unknown) =>
+  value === undefined ||
+  DATE_BASES.includes(value as (typeof DATE_BASES)[number]);
+
 const isOptionalLimit = (value: unknown) =>
   value === undefined ||
   (typeof value === 'number' &&
@@ -94,6 +101,7 @@ const isValidBody = (body: Record<string, unknown>, action: Action) => {
   const commonListFieldsAreValid =
     isOptionalText(body.q, MAX_QUERY_LENGTH) &&
     isOptionalDate(body.asOfDate) &&
+    isOptionalDateBasis(body.dateBasis) &&
     isOptionalText(body.cursor, MAX_CURSOR_LENGTH) &&
     isOptionalLimit(body.limit);
 
@@ -103,7 +111,11 @@ const isValidBody = (body: Record<string, unknown>, action: Action) => {
     case 'firms':
       return commonListFieldsAreValid;
     case 'search':
-      return isText(body.q, MAX_QUERY_LENGTH) && isOptionalLimit(body.limit);
+      return (
+        isText(body.q, MAX_QUERY_LENGTH) &&
+        isOptionalDateBasis(body.dateBasis) &&
+        isOptionalLimit(body.limit)
+      );
     case 'firm':
       return typeof body.firmId === 'string' && UUID_PATTERN.test(body.firmId);
     case 'holdings':
@@ -133,7 +145,14 @@ const isValidBody = (body: Record<string, unknown>, action: Action) => {
 const appendOptional = (
   searchParams: URLSearchParams,
   body: Record<string, unknown>,
-  key: 'q' | 'asOfDate' | 'cursor' | 'limit' | 'order' | 'mode',
+  key:
+    | 'q'
+    | 'asOfDate'
+    | 'dateBasis'
+    | 'cursor'
+    | 'limit'
+    | 'order'
+    | 'mode',
 ) => {
   if (body[key] !== undefined) searchParams.set(key, String(body[key]));
 };
@@ -165,11 +184,11 @@ const buildRequestUrl = (
   const url = new URL(`${QUERY_ROOT}${path}`, `${baseUrl.replace(/\/$/, '')}/`);
   const keysByAction: Record<Action, Array<Parameters<typeof appendOptional>[2]>> = {
     summary: [],
-    firms: ['asOfDate', 'q', 'cursor', 'limit'],
-    search: ['q', 'limit'],
+    firms: ['asOfDate', 'dateBasis', 'q', 'cursor', 'limit'],
+    search: ['q', 'dateBasis', 'limit'],
     firm: [],
-    holdings: ['asOfDate', 'q', 'cursor', 'limit', 'order'],
-    holders: ['asOfDate', 'mode', 'cursor', 'limit'],
+    holdings: ['asOfDate', 'dateBasis', 'q', 'cursor', 'limit', 'order'],
+    holders: ['asOfDate', 'dateBasis', 'mode', 'cursor', 'limit'],
     company: [],
   };
   for (const key of keysByAction[action]) appendOptional(url.searchParams, body, key);

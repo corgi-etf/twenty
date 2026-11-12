@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { expect, test } from '@playwright/test';
 
 import {
+  LAST_STABLE_VERSION,
   PUBLISHED_VERSION,
   VERSION,
 } from './corgiThirteenFDeploymentState.mjs';
@@ -39,12 +40,12 @@ const application = {
   id: '6bf73145-5bb4-4a44-bb0e-8aeb9dcfdacb',
   universalIdentifier: APPLICATION_ID,
   applicationRegistrationId: REGISTRATION_ID,
-  version: '0.2.1',
+  version: LAST_STABLE_VERSION,
   state: 'INSTALLED',
 };
 
 const snapshot = ({
-  version = '0.2.1',
+  version = LAST_STABLE_VERSION,
   registrationVersion = VERSION,
   ...membershipOverrides
 } = {}) => ({
@@ -85,7 +86,7 @@ test('upgrades the exact prior release through the authenticated user session', 
   ]);
 });
 
-test('refuses the failed v0.3.0 recovery state until v0.3.3 is published', async () => {
+test('refuses the failed v0.3.0 recovery state until v0.4.0 is published', async () => {
   let upgradeRequests = 0;
 
   await expect(
@@ -106,7 +107,7 @@ test('refuses the failed v0.3.0 recovery state until v0.3.3 is published', async
   expect(upgradeRequests).toBe(0);
 });
 
-test('upgrades the failed v0.3.0 recovery state after v0.3.3 is published', async () => {
+test('upgrades the failed v0.3.0 recovery state after v0.4.0 is published', async () => {
   const snapshots = [
     snapshot({ version: PUBLISHED_VERSION }),
     snapshot({ version: VERSION }),

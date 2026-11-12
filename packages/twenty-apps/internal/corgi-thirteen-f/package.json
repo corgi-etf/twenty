@@ -1,6 +1,6 @@
 {
   "name": "corgi-thirteen-f",
-  "version": "0.3.3",
+  "version": "0.4.0",
   "description": "Native CRM workspace for reviewing searchable 13F holdings",
   "license": "UNLICENSED",
   "private": true,

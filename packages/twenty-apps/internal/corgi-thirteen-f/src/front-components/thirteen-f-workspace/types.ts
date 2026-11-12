@@ -6,17 +6,6 @@ export type VotingAuthority = {
   none: string | null;
 };
 
-export type LegacyHoldingContext = {
-  portfolioName: string | null;
-  targetTicker: string | null;
-  latestChange: string | null;
-  ownershipPercent: string | null;
-  portfolioPercent: string | null;
-  estimatedValue: string | null;
-  changeValue: string | null;
-  changePercent: string | null;
-};
-
 export type Holding = {
   id: string;
   firmId: string;
@@ -44,7 +33,6 @@ export type Holding = {
   portfolioPercent: string | null;
   quarterChange: string | null;
   quarterChangePercent: string | null;
-  legacyContext: LegacyHoldingContext | null;
 };
 
 export type FilingSummary = {
@@ -95,6 +83,10 @@ export type PageEnvelope<T> = {
   totalCount: number;
 };
 
+export type HoldingsPageEnvelope = PageEnvelope<Holding> & {
+  totalReportedValue: string | null;
+};
+
 export type SearchResults = {
   firms: FirmSummary[];
   securities: SecuritySummary[];
@@ -126,15 +118,17 @@ export type ThirteenFQuery =
       action: 'firms';
       q?: string;
       asOfDate?: string;
+      dateBasis?: DateBasis;
       cursor?: string;
       limit?: number;
     }
-  | { action: 'search'; q: string; limit?: number }
+  | { action: 'search'; q: string; dateBasis?: DateBasis; limit?: number }
   | { action: 'firm'; firmId: string }
   | {
       action: 'holdings';
       firmId: string;
       asOfDate?: string;
+      dateBasis?: DateBasis;
       q?: string;
       cursor?: string;
       limit?: number;
@@ -144,6 +138,7 @@ export type ThirteenFQuery =
       action: 'holders';
       securityId: string;
       asOfDate?: string;
+      dateBasis?: DateBasis;
       mode?: HoldersMode;
       cursor?: string;
       limit?: number;

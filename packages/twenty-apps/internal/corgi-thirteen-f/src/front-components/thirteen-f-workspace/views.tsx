@@ -24,8 +24,6 @@ const COLORS = {
   panel: '#FFFFFF',
   soft: '#F8FAFC',
   accent: '#5C3DF5',
-  warning: '#9A6700',
-  warningBackground: '#FFF8C5',
 } as const;
 
 const STYLES = {
@@ -37,7 +35,6 @@ const STYLES = {
     gap: 12,
     flexWrap: 'wrap',
   },
-  list: { display: 'grid', gap: 10 },
   card: {
     width: '100%',
     border: `1px solid ${COLORS.border}`,
@@ -46,30 +43,11 @@ const STYLES = {
     padding: 16,
     textAlign: 'left',
   },
-  clickableCard: {
-    width: '100%',
-    border: `1px solid ${COLORS.border}`,
-    borderRadius: 10,
-    background: COLORS.panel,
-    padding: 16,
-    textAlign: 'left',
-    cursor: 'pointer',
-  },
   title: { margin: 0, color: COLORS.ink, fontSize: 20, lineHeight: 1.25 },
   sectionTitle: { margin: 0, color: COLORS.ink, fontSize: 15 },
   firmName: { color: COLORS.ink, fontSize: 15, fontWeight: 650 },
   muted: { color: COLORS.muted, fontSize: 12, lineHeight: 1.5 },
   strongMetric: { color: COLORS.ink, fontSize: 18, fontWeight: 700 },
-  badge: {
-    display: 'inline-flex',
-    alignItems: 'center',
-    borderRadius: 999,
-    background: COLORS.warningBackground,
-    color: COLORS.warning,
-    fontSize: 11,
-    fontWeight: 600,
-    padding: '4px 8px',
-  },
   tableWrap: {
     overflowX: 'auto',
     border: `1px solid ${COLORS.border}`,
@@ -131,6 +109,21 @@ const STYLES = {
     cursor: 'pointer',
     fontSize: 12,
   },
+  sectionControls: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+    flexWrap: 'wrap',
+  },
+  select: {
+    border: `1px solid ${COLORS.border}`,
+    borderRadius: 8,
+    background: COLORS.panel,
+    color: COLORS.ink,
+    fontSize: 12,
+    padding: '7px 10px',
+  },
   empty: {
     border: `1px dashed ${COLORS.border}`,
     borderRadius: 10,
@@ -140,47 +133,16 @@ const STYLES = {
   },
 } as const;
 
-const DateBasisBadge = ({ basis }: { basis: DateBasis }) =>
-  basis === 'LEGACY_AS_OF_UNVERIFIED' ? (
-    <span style={STYLES.badge}>Legacy date — SEC report period unverified</span>
-  ) : null;
-
 const EmptyState = ({ children }: { children: ReactNode }) => (
   <div style={STYLES.empty}>{children}</div>
 );
 
-const LegacyContextDetails = ({ holding }: { holding: Holding }) => {
-  const context = holding.legacyContext;
-  if (!context) return null;
-  const legacyValues: Array<[string, string | null]> = [
-    ['Portfolio', context.portfolioName],
-    ['Target ticker', context.targetTicker],
-    ['Latest change', context.latestChange],
-    ['Ownership', formatPercent(context.ownershipPercent)],
-    ['Portfolio share', formatPercent(context.portfolioPercent)],
-    ['Estimated value', formatMoney(context.estimatedValue)],
-    ['Change value', formatDecimal(context.changeValue)],
-    ['Change percent', formatPercent(context.changePercent)],
-  ];
-  const values = legacyValues.filter(([, value]) => value && value !== '—');
-
-  return (
-    <div style={{ display: 'grid', gap: 6 }}>
-      <span style={STYLES.badge}>Unverified legacy source</span>
-      <dl style={STYLES.detailsList}>
-        {values.map(([label, value]) => (
-          <div key={label} style={{ display: 'contents' }}>
-            <dt style={STYLES.detailsTerm}>{label}</dt>
-            <dd style={STYLES.detailsValue}>{value}</dd>
-          </div>
-        ))}
-      </dl>
-    </div>
-  );
-};
-
 const PositionDetails = ({ holding }: { holding: Holding }) => {
   const details: Array<[string, string]> = [
+    ['Report period', formatDate(holding.reportPeriod ?? holding.asOfDate)],
+    ['Filed', formatDate(holding.filedAt)],
+    ['Form', holding.formType ?? '—'],
+    ['Coverage', holding.coverage ?? '—'],
     ['CUSIP', holding.cusip ?? '—'],
     ['Security class', holding.titleOfClass ?? '—'],
     ['Put / call', holding.putCall ?? '—'],
@@ -208,33 +170,18 @@ const PositionDetails = ({ holding }: { holding: Holding }) => {
             </div>
           ))}
         </dl>
-        <LegacyContextDetails holding={holding} />
       </div>
     </details>
   );
 };
 
-const HoldingValue = ({ holding }: { holding: Holding }) => {
-  const estimatedValue = holding.legacyContext?.estimatedValue ?? null;
-  const usesEstimatedValue =
-    holding.reportedValue === null && estimatedValue !== null;
-  const displayedValue = holding.reportedValue ?? estimatedValue;
-
-  return (
-    <>
-      {formatMoney(displayedValue)}
-      {usesEstimatedValue ? (
-        <div style={STYLES.muted}>Estimated · unverified legacy data</div>
-      ) : null}
-    </>
-  );
-};
-
 export const FirmDirectory = ({
   firms,
+  totalCount = firms.length,
   onSelect,
 }: {
   firms: FirmSummary[];
+  totalCount?: number;
   onSelect(firm: FirmSummary): void;
 }) => (
   <section style={STYLES.stack} aria-label="13F firms">
@@ -243,41 +190,73 @@ export const FirmDirectory = ({
         <h2 style={STYLES.title}>Firms</h2>
         <div style={STYLES.muted}>Select a firm to review its positions.</div>
       </div>
-      <div style={STYLES.muted}>{firms.length} shown</div>
+      <div style={STYLES.muted}>
+        {formatCount(firms.length)} of {formatCount(totalCount)} firms shown
+      </div>
     </div>
     {firms.length === 0 ? (
       <EmptyState>No firms match this view.</EmptyState>
     ) : (
-      <div style={STYLES.list}>
-        {firms.map((firm) => (
-          <button
-            key={firm.id}
-            type="button"
-            style={STYLES.clickableCard}
-            onClick={() => onSelect(firm)}
-          >
-            <div style={STYLES.row}>
-              <div>
-                <div style={STYLES.firmName}>{firm.legalName}</div>
-                <div style={STYLES.muted}>
-                  {firm.cik ? `CIK ${firm.cik}` : 'CIK not available'} · As of{' '}
-                  {formatDate(firm.latestAsOfDate)}
-                </div>
-              </div>
-              <div style={{ textAlign: 'right' }}>
-                <div style={STYLES.strongMetric}>
+      <div style={STYLES.tableWrap}>
+        <table style={STYLES.table} aria-label="13F firms">
+          <thead>
+            <tr>
+              <th scope="col" style={STYLES.th}>
+                Firm
+              </th>
+              <th scope="col" style={STYLES.th}>
+                Holdings date
+              </th>
+              <th scope="col" style={STYLES.th}>
+                Filed
+              </th>
+              <th scope="col" style={STYLES.th}>
+                Form
+              </th>
+              <th
+                scope="col"
+                style={{ ...STYLES.th, textAlign: 'right' }}
+              >
+                Positions
+              </th>
+              <th
+                scope="col"
+                style={{ ...STYLES.th, textAlign: 'right' }}
+              >
+                Reported value
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {firms.map((firm) => (
+              <tr key={firm.id}>
+                <td style={STYLES.td}>
+                  <button
+                    type="button"
+                    style={STYLES.textButton}
+                    onClick={() => onSelect(firm)}
+                  >
+                    {firm.legalName}
+                  </button>
+                  <div style={STYLES.muted}>
+                    {firm.cik ? `CIK ${firm.cik}` : 'CIK not available'}
+                  </div>
+                </td>
+                <td style={STYLES.td}>
+                  {formatDate(firm.latestReportPeriod ?? firm.latestAsOfDate)}
+                </td>
+                <td style={STYLES.td}>{formatDate(firm.latestFiledAt)}</td>
+                <td style={STYLES.td}>{firm.latestFormType ?? '—'}</td>
+                <td style={{ ...STYLES.td, textAlign: 'right' }}>
+                  {formatCount(firm.positionCount)}
+                </td>
+                <td style={{ ...STYLES.td, textAlign: 'right' }}>
                   {formatMoney(firm.totalReportedValue)}
-                </div>
-                <div style={STYLES.muted}>
-                  {formatCount(firm.positionCount)} positions
-                </div>
-              </div>
-            </div>
-            <div style={{ marginTop: 10 }}>
-              <DateBasisBadge basis={firm.latestDateBasis} />
-            </div>
-          </button>
-        ))}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
     )}
   </section>
@@ -298,23 +277,33 @@ const HoldingsTable = ({
     <EmptyState>No positions match this view.</EmptyState>
   ) : (
     <div style={STYLES.tableWrap}>
-      <table style={STYLES.table}>
+      <table
+        style={STYLES.table}
+        aria-label={showFirm ? 'Security holding firms' : 'Firm holdings'}
+      >
         <thead>
           <tr>
-            {showFirm ? <th style={STYLES.th}>Firm</th> : null}
-            <th style={STYLES.th}>Ticker</th>
-            <th style={STYLES.th}>Issuer</th>
-            <th style={{ ...STYLES.th, textAlign: 'right' }}>Shares / principal</th>
-            <th style={{ ...STYLES.th, textAlign: 'right' }}>Value</th>
-            <th style={{ ...STYLES.th, textAlign: 'right' }}>Portfolio %</th>
+            {showFirm ? <th scope="col" style={STYLES.th}>Firm</th> : null}
+            <th scope="col" style={STYLES.th}>Ticker</th>
+            <th scope="col" style={STYLES.th}>Issuer</th>
+            <th scope="col" style={{ ...STYLES.th, textAlign: 'right' }}>
+              Shares / principal
+            </th>
+            <th scope="col" style={{ ...STYLES.th, textAlign: 'right' }}>
+              Value
+            </th>
+            <th scope="col" style={{ ...STYLES.th, textAlign: 'right' }}>
+              Portfolio %
+            </th>
             <th
+              scope="col"
               style={{ ...STYLES.th, textAlign: 'right' }}
               aria-label="Change versus prior quarter"
             >
               Change
             </th>
-            <th style={STYLES.th}>As of</th>
-            <th style={STYLES.th}>Details</th>
+            <th scope="col" style={STYLES.th}>As of</th>
+            <th scope="col" style={STYLES.th}>Details</th>
           </tr>
         </thead>
         <tbody>
@@ -350,7 +339,7 @@ const HoldingsTable = ({
                 {holding.shareType ? ` ${holding.shareType}` : ''}
               </td>
               <td style={{ ...STYLES.td, textAlign: 'right' }}>
-                <HoldingValue holding={holding} />
+                {formatMoney(holding.reportedValue)}
               </td>
               <td style={{ ...STYLES.td, textAlign: 'right' }}>
                 {formatPercent(holding.portfolioPercent)}
@@ -363,11 +352,6 @@ const HoldingsTable = ({
               </td>
               <td style={STYLES.td}>
                 {formatDate(holding.asOfDate)}
-                {holding.dateBasis === 'LEGACY_AS_OF_UNVERIFIED' ? (
-                  <div style={{ marginTop: 6 }}>
-                    <DateBasisBadge basis={holding.dateBasis} />
-                  </div>
-                ) : null}
               </td>
               <td style={STYLES.td}>
                 <PositionDetails holding={holding} />
@@ -379,34 +363,37 @@ const HoldingsTable = ({
     </div>
   );
 
-const FilingHistory = ({ firm }: { firm: FirmDetail }) => (
-  <section style={STYLES.stack}>
+const FilingHistory = ({ firm }: { firm: FirmDetail }) => {
+  const filings = firm.filingHistory.filter(
+    (filing) => filing.dateBasis === 'SEC_REPORT_PERIOD',
+  );
+
+  return <section style={STYLES.stack}>
     <h3 style={STYLES.sectionTitle}>Filing history</h3>
-    {firm.filingHistory.length === 0 ? (
+    {filings.length === 0 ? (
       <EmptyState>No earlier filings are available.</EmptyState>
     ) : (
       <div style={STYLES.tableWrap}>
-        <table style={STYLES.table}>
+        <table style={STYLES.table} aria-label="Filing history">
           <thead>
             <tr>
-              <th style={STYLES.th}>As of</th>
-              <th style={STYLES.th}>Filed</th>
-              <th style={STYLES.th}>Form</th>
-              <th style={STYLES.th}>Coverage</th>
-              <th style={{ ...STYLES.th, textAlign: 'right' }}>Positions</th>
-              <th style={{ ...STYLES.th, textAlign: 'right' }}>Reported value</th>
+              <th scope="col" style={STYLES.th}>As of</th>
+              <th scope="col" style={STYLES.th}>Filed</th>
+              <th scope="col" style={STYLES.th}>Form</th>
+              <th scope="col" style={STYLES.th}>Coverage</th>
+              <th scope="col" style={{ ...STYLES.th, textAlign: 'right' }}>
+                Accession positions
+              </th>
+              <th scope="col" style={{ ...STYLES.th, textAlign: 'right' }}>
+                Accession reported value
+              </th>
             </tr>
           </thead>
           <tbody>
-            {firm.filingHistory.map((filing) => (
+            {filings.map((filing) => (
               <tr key={filing.id}>
                 <td style={STYLES.td}>
                   {formatDate(filing.asOfDate)}
-                  {filing.dateBasis === 'LEGACY_AS_OF_UNVERIFIED' ? (
-                    <div style={{ marginTop: 6 }}>
-                      <DateBasisBadge basis={filing.dateBasis} />
-                    </div>
-                  ) : null}
                 </td>
                 <td style={STYLES.td}>{formatDate(filing.filedAt)}</td>
                 <td style={STYLES.td}>{filing.formType ?? '—'}</td>
@@ -423,35 +410,37 @@ const FilingHistory = ({ firm }: { firm: FirmDetail }) => (
         </table>
       </div>
     )}
-  </section>
-);
+  </section>;
+};
 
 export const FirmHoldings = ({
   firm,
   holdings,
+  totalCount,
+  totalReportedValue,
   asOfDate,
+  dateBasis,
+  order = 'value_desc',
   backLabel = 'All firms',
   onBack,
   onSelectSecurity,
+  onOrderChange,
 }: {
   firm: FirmDetail;
   holdings: Holding[];
-  asOfDate?: string;
+  totalCount: number;
+  totalReportedValue: string | null;
+  asOfDate: string;
+  dateBasis: DateBasis;
+  order?: 'value_desc' | 'shares_desc' | 'ticker_asc';
   backLabel?: string;
   onBack(): void;
   onSelectSecurity?(holding: Holding): void;
+  onOrderChange?(order: 'value_desc' | 'shares_desc' | 'ticker_asc'): void;
 }) => {
-  const selectedFiling = asOfDate
-    ? firm.filingHistory.find((filing) => filing.asOfDate === asOfDate)
-    : undefined;
-  const holdingsAsOf = selectedFiling?.asOfDate ?? firm.latestAsOfDate;
-  const filedAt = selectedFiling?.filedAt ?? firm.latestFiledAt;
-  const formType = selectedFiling?.formType ?? firm.latestFormType;
-  const coverage = selectedFiling?.coverage ?? firm.latestCoverage;
-  const dateBasis = selectedFiling?.dateBasis ?? firm.latestDateBasis;
-  const positionCount = selectedFiling?.positionCount ?? firm.positionCount;
-  const totalReportedValue =
-    selectedFiling?.totalReportedValue ?? firm.totalReportedValue;
+  const holdingsAsOf = asOfDate;
+  const holdingsDateLabel =
+    dateBasis === 'SEC_REPORT_PERIOD' ? 'SEC report period' : 'Holdings as of';
 
   return <article style={STYLES.stack}>
     <button type="button" style={STYLES.backButton} onClick={onBack}>
@@ -466,29 +455,51 @@ export const FirmHoldings = ({
           </div>
         </div>
         <div style={{ textAlign: 'right' }}>
+          <div style={STYLES.muted}>Effective portfolio</div>
           <div style={STYLES.strongMetric}>
             {formatMoney(totalReportedValue)}
           </div>
           <div style={STYLES.muted}>
-            {formatCount(positionCount)} positions
+            {formatCount(totalCount)} positions
           </div>
         </div>
       </div>
       <div style={{ marginTop: 14 }}>
         <div style={{ ...STYLES.firmName, fontSize: 18 }}>
-          Holdings as of {formatDate(holdingsAsOf)}
+          {holdingsDateLabel} {formatDate(holdingsAsOf)}
         </div>
         <div style={STYLES.muted}>
-          Filed {formatDate(filedAt)} · {formType ?? 'Form not available'}
-          {coverage ? ` · ${coverage}` : ''}
-        </div>
-        <div style={{ marginTop: 8 }}>
-          <DateBasisBadge basis={dateBasis} />
+          Composed from the applicable SEC filing accessions shown below.
         </div>
       </div>
     </div>
     <section style={STYLES.stack}>
-      <h3 style={STYLES.sectionTitle}>Holdings</h3>
+      <div style={STYLES.sectionControls}>
+        <div>
+          <h3 style={STYLES.sectionTitle}>Holdings</h3>
+          <div style={STYLES.muted}>
+            {formatCount(holdings.length)} of {formatCount(totalCount)}{' '}
+            positions shown
+          </div>
+        </div>
+        {onOrderChange ? (
+          <label style={STYLES.muted}>
+            Sort positions{' '}
+            <select
+              style={STYLES.select}
+              value={order}
+              aria-label="Sort firm holdings"
+              onChange={(event) =>
+                onOrderChange(event.target.value as typeof order)
+              }
+            >
+              <option value="value_desc">Highest value</option>
+              <option value="shares_desc">Most shares</option>
+              <option value="ticker_asc">Ticker A–Z</option>
+            </select>
+          </label>
+        ) : null}
+      </div>
       <HoldingsTable
         holdings={holdings}
         onSelectSecurity={onSelectSecurity}
@@ -501,11 +512,13 @@ export const FirmHoldings = ({
 export const SecurityHolders = ({
   security,
   holdings,
+  totalCount = holdings.length,
   onBack,
   onSelectFirm,
 }: {
   security: SecuritySummary;
   holdings: Holding[];
+  totalCount?: number;
   onBack(): void;
   onSelectFirm(holding: Holding): void;
 }) => (
@@ -520,6 +533,10 @@ export const SecurityHolders = ({
       <div style={STYLES.muted}>
         {security.issuerName}
         {security.cusip ? ` · CUSIP ${security.cusip}` : ''}
+      </div>
+      <div style={{ ...STYLES.muted, marginTop: 8 }}>
+        {formatCount(holdings.length)} of {formatCount(totalCount)} reported
+        positions shown
       </div>
     </div>
     <HoldingsTable
