@@ -20,12 +20,26 @@ import {
   serializeWorkspaceQuery,
 } from 'src/front-components/thirteen-f-workspace/query-state';
 import {
+  findSecReportPeriod,
   periodOptionValue,
+  readPeriodCatalog,
   secReportPeriods,
 } from 'src/front-components/thirteen-f-workspace/periods';
+import { PeriodSelect } from 'src/front-components/thirteen-f-workspace/period-select';
+import {
+  failedRequest,
+  loadingRequest,
+  RequestStateContent,
+  successfulRequest,
+} from 'src/front-components/thirteen-f-workspace/request-state';
+import {
+  firmHoldingsRequestKey,
+  firmMetadataRequestKey,
+} from 'src/front-components/thirteen-f-workspace/request-keys';
 import type {
   FirmDetail,
   Holding,
+  HoldingsPageEnvelope,
   SearchResults,
   SecuritySummary,
 } from 'src/front-components/thirteen-f-workspace/types';
@@ -90,7 +104,7 @@ const firm: FirmDetail = {
 
 const workspaceSource = readFileSync(
   new URL(
-    '../front-components/thirteen-f-workspace/workspace.tsx',
+    '../front-components/thirteen-f-workspace/workspace-controller.ts',
     import.meta.url,
   ),
   'utf8',
@@ -112,6 +126,11 @@ describe('13F workspace journeys', () => {
     expect(workspaceSource).not.toContain("outline: 'none'");
   });
 
+  it('loads the lightweight period catalog without a heavy summary fallback', () => {
+    expect(workspaceSource).toContain("action: 'periods'");
+    expect(workspaceSource).not.toContain("action: 'summary'");
+  });
+
   it('identifies SEC periods by both report date and date basis', () => {
     const periods = secReportPeriods([
       { asOfDate: '2026-09-30', dateBasis: 'LEGACY_AS_OF_UNVERIFIED' },
@@ -126,6 +145,173 @@ describe('13F workspace journeys', () => {
     expect(periodOptionValue(periods[0])).toBe(
       '2026-09-30:SEC_REPORT_PERIOD',
     );
+  });
+
+  it('renders and resolves all 44 SEC periods without truncating the catalog', () => {
+    const periods = Array.from({ length: 44 }, (_, index) => {
+      const quarterEndings = ['12-31', '09-30', '06-30', '03-31'];
+      const year = 2026 - Math.floor(index / quarterEndings.length);
+      return {
+        asOfDate: `${year}-${quarterEndings[index % quarterEndings.length]}`,
+        dateBasis: 'SEC_REPORT_PERIOD' as const,
+      };
+    });
+    const selectedPeriod = periods[0];
+    const html = renderToStaticMarkup(
+      <PeriodSelect
+        periods={periods}
+        selectedPeriod={selectedPeriod}
+        onChange={() => undefined}
+      />,
+    );
+
+    expect((html.match(/<option/g) ?? [])).toHaveLength(44);
+    expect((html.match(/<optgroup/g) ?? [])).toHaveLength(11);
+    expect(html).toContain('<optgroup label="2026">');
+    expect(html).toContain('<optgroup label="2016">');
+
+    const oldestPeriod = periods[periods.length - 1];
+    expect(
+      findSecReportPeriod(periods, periodOptionValue(oldestPeriod)),
+    ).toEqual(oldestPeriod);
+  });
+
+  it('validates only the period catalog fields consumed by the workspace', () => {
+    expect(
+      readPeriodCatalog({
+        periods: [
+          { asOfDate: '2026-09-30', dateBasis: 'SEC_REPORT_PERIOD' },
+          { asOfDate: '2026-06-30', dateBasis: 'SEC_REPORT_PERIOD' },
+          { asOfDate: '2026-05-15', dateBasis: 'LEGACY_AS_OF_UNVERIFIED' },
+        ],
+      }),
+    ).toEqual({
+      periods: [
+        { asOfDate: '2026-09-30', dateBasis: 'SEC_REPORT_PERIOD' },
+        { asOfDate: '2026-06-30', dateBasis: 'SEC_REPORT_PERIOD' },
+        { asOfDate: '2026-05-15', dateBasis: 'LEGACY_AS_OF_UNVERIFIED' },
+      ],
+    });
+    expect(() =>
+      readPeriodCatalog({ periods: [{ asOfDate: '2026-09-30' }] }),
+    ).toThrow('invalid_period_catalog');
+  });
+
+  it('keeps firm metadata keyed only by firm while holdings follow controls', () => {
+    const scopes = [
+      {
+        firmId: 'firm-1',
+        period: {
+          asOfDate: '2026-06-30',
+          dateBasis: 'SEC_REPORT_PERIOD' as const,
+        },
+        order: 'value_desc' as const,
+      },
+      {
+        firmId: 'firm-1',
+        period: {
+          asOfDate: '2026-06-30',
+          dateBasis: 'SEC_REPORT_PERIOD' as const,
+        },
+        order: 'ticker_asc' as const,
+      },
+      {
+        firmId: 'firm-1',
+        period: {
+          asOfDate: '2026-03-31',
+          dateBasis: 'SEC_REPORT_PERIOD' as const,
+        },
+        order: 'ticker_asc' as const,
+      },
+    ];
+
+    expect(
+      new Set(scopes.map(({ firmId }) => firmMetadataRequestKey(firmId))).size,
+    ).toBe(1);
+    expect(
+      new Set(
+        scopes.map(({ firmId, period, order }) =>
+          firmHoldingsRequestKey(firmId, period, order),
+        ),
+      ).size,
+    ).toBe(3);
+  });
+
+  it('lets a failed period request own content instead of retaining Q2 holdings', () => {
+    const q2Success = successfulRequest<HoldingsPageEnvelope>({
+      items: [holding],
+      totalCount: 1,
+      totalReportedValue: '125000000',
+      pageInfo: {},
+    });
+    const q1Loading = loadingRequest<HoldingsPageEnvelope>();
+    const q1Failure = failedRequest<HoldingsPageEnvelope>(
+      'Could not load this firm’s holdings.',
+    );
+    const html = renderToStaticMarkup(
+      <RequestStateContent
+        state={q1Failure}
+        loadingLabel="Loading firm holdings…"
+      >
+        {(result) => (
+          <div>
+            {result.items[0]?.ticker} · {result.totalReportedValue}
+          </div>
+        )}
+      </RequestStateContent>,
+    );
+
+    expect(q2Success.status).toBe('success');
+    expect(q1Loading).toEqual({ status: 'loading' });
+    expect(q1Failure).toEqual({
+      status: 'error',
+      message: 'Could not load this firm’s holdings.',
+    });
+    expect(html).toContain('role="alert"');
+    expect(html).not.toContain('NVDA');
+    expect(html).not.toContain('125000000');
+  });
+
+  it('lets a failed replacement search own content instead of retaining NVDA', () => {
+    const nvdaSuccess = successfulRequest<SearchResults>({
+      firms: [],
+      securities: [
+        {
+          id: 'security-1',
+          issuerName: 'NVIDIA Corporation',
+          ticker: 'NVDA',
+          cusip: '67066G104',
+        },
+      ],
+    });
+    const aaplLoading = loadingRequest<SearchResults>();
+    const aaplFailure = failedRequest<SearchResults>(
+      'Could not load this 13F view.',
+    );
+    const html = renderToStaticMarkup(
+      <RequestStateContent
+        state={aaplFailure}
+        loadingLabel="Searching 13F data…"
+      >
+        {(results) => (
+          <UnifiedSearchResults
+            results={results}
+            onSelectFirm={() => undefined}
+            onSelectSecurity={() => undefined}
+          />
+        )}
+      </RequestStateContent>,
+    );
+
+    expect(nvdaSuccess.status).toBe('success');
+    expect(aaplLoading).toEqual({ status: 'loading' });
+    expect(aaplFailure).toEqual({
+      status: 'error',
+      message: 'Could not load this 13F view.',
+    });
+    expect(html).toContain('role="alert"');
+    expect(html).not.toContain('NVDA');
+    expect(html).not.toContain('NVIDIA Corporation');
   });
 
   it('formats decimal strings without converting them to imprecise numbers', () => {
@@ -584,13 +770,13 @@ describe('13F workspace journeys', () => {
     const calls: Array<[string, RequestInit | undefined]> = [];
     const fetcher = async (url: string, init?: RequestInit) => {
       calls.push([url, init]);
-      return new globalThis.Response(JSON.stringify({ managerCount: 4 }), {
+      return new globalThis.Response(JSON.stringify({ periods: [] }), {
         status: 200,
       });
     };
 
     await callThirteenFRoute(
-      { action: 'summary' },
+      { action: 'periods' },
       {
         apiUrl: 'https://crm.example.test',
         accessToken: 'twenty-user-token',
