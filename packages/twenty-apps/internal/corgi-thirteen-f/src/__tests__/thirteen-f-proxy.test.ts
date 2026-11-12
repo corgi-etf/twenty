@@ -47,6 +47,10 @@ describe('13F server proxy', () => {
 
   it.each([
     [
+      { action: 'periods' },
+      'https://example.test/api/internal/thirteen-f/periods',
+    ],
+    [
       { action: 'firms', asOfDate: '2026-06-30', dateBasis: 'SEC_REPORT_PERIOD' },
       'https://example.test/api/internal/thirteen-f/firms?asOfDate=2026-06-30&dateBasis=SEC_REPORT_PERIOD',
     ],

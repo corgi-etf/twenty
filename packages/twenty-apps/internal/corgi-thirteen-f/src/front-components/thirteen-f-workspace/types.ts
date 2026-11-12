@@ -94,16 +94,6 @@ export type SearchResults = {
 
 export type PeriodOption = { asOfDate: string; dateBasis: DateBasis };
 
-export type ThirteenFSummary = {
-  periods: PeriodOption[];
-  latestAsOfDate: string | null;
-  managerCount: number;
-  filingCount: number;
-  securityCount: number;
-  holdingCount: number;
-  lastCompletedIngestionAt: string | null;
-};
-
 export type CompanySummary = {
   thirteenFFirmId: string;
   firm: FirmSummary;
@@ -114,6 +104,7 @@ export type HoldersMode = 'exact' | 'latest';
 
 export type ThirteenFQuery =
   | { action: 'summary' }
+  | { action: 'periods' }
   | {
       action: 'firms';
       q?: string;

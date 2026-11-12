@@ -30,6 +30,7 @@ type QueryDependencies = {
 
 const ACTION_KEYS = {
   summary: ['action'],
+  periods: ['action'],
   firms: ['action', 'q', 'asOfDate', 'dateBasis', 'cursor', 'limit'],
   search: ['action', 'q', 'dateBasis', 'limit'],
   firm: ['action', 'firmId'],
@@ -107,6 +108,7 @@ const isValidBody = (body: Record<string, unknown>, action: Action) => {
 
   switch (action) {
     case 'summary':
+    case 'periods':
       return true;
     case 'firms':
       return commonListFieldsAreValid;
@@ -166,6 +168,8 @@ const buildRequestUrl = (
     switch (action) {
       case 'summary':
         return '/summary';
+      case 'periods':
+        return '/periods';
       case 'firms':
         return '/firms';
       case 'search':
@@ -184,6 +188,7 @@ const buildRequestUrl = (
   const url = new URL(`${QUERY_ROOT}${path}`, `${baseUrl.replace(/\/$/, '')}/`);
   const keysByAction: Record<Action, Array<Parameters<typeof appendOptional>[2]>> = {
     summary: [],
+    periods: [],
     firms: ['asOfDate', 'dateBasis', 'q', 'cursor', 'limit'],
     search: ['q', 'dateBasis', 'limit'],
     firm: [],
