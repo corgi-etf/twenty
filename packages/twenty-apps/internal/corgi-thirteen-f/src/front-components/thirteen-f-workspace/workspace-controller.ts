@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import { callThirteenFRoute } from 'src/front-components/thirteen-f-workspace/client';
 import {
@@ -14,6 +14,14 @@ import {
   firmHoldingsRequestKey,
   firmMetadataRequestKey,
 } from 'src/front-components/thirteen-f-workspace/request-keys';
+import {
+  beginLoadMoreRequest,
+  createLoadMoreRequestGate,
+  finishLoadMoreRequest,
+  hasActiveLoadMoreRequest,
+  invalidateLoadMoreRequest,
+  isActiveLoadMoreRequest,
+} from 'src/front-components/thirteen-f-workspace/load-more-request';
 import {
   failedRequest,
   idleRequest,
@@ -121,6 +129,7 @@ export const useThirteenFWorkspaceController = () => {
     useState<HoldingsOrder>('value_desc');
   const [loadingMore, setLoadingMore] = useState(false);
   const [loadMoreError, setLoadMoreError] = useState<string | null>(null);
+  const loadMoreRequestGate = useRef(createLoadMoreRequestGate());
 
   const firmMetadataKey = firmMetadataRequestKey(selectedFirmId);
   const firmHoldingsKey = firmHoldingsRequestKey(
@@ -132,6 +141,23 @@ export const useThirteenFWorkspaceController = () => {
     selectedSecurity?.id,
     selectedPeriod,
   );
+  const loadMoreScopeKey = selectedFirmId
+    ? `firm:${firmHoldingsKey ?? ''}`
+    : selectedSecurity
+      ? `security:${securityHoldingsKey ?? ''}`
+      : `directory:${directoryRequestKey(query, selectedPeriod)}`;
+
+  const resetLoadMoreState = () => {
+    invalidateLoadMoreRequest(loadMoreRequestGate.current);
+    setLoadingMore(false);
+    setLoadMoreError(null);
+  };
+
+  useEffect(() => {
+    invalidateLoadMoreRequest(loadMoreRequestGate.current);
+    setLoadingMore(false);
+    setLoadMoreError(null);
+  }, [loadMoreScopeKey]);
 
   useEffect(() => {
     let active = true;
@@ -334,7 +360,7 @@ export const useThirteenFWorkspaceController = () => {
     setSecurityHoldingsState(idleRequest());
     setFirmState(loadingRequest());
     setFirmHoldingsState(loadingRequest());
-    setLoadMoreError(null);
+    resetLoadMoreState();
     setSelectedFirmId('firmId' in nextFirm ? nextFirm.firmId : nextFirm.id);
   };
 
@@ -344,7 +370,7 @@ export const useThirteenFWorkspaceController = () => {
     setFirmState(idleRequest());
     setFirmHoldingsState(idleRequest());
     setSecurityHoldingsState(loadingRequest());
-    setLoadMoreError(null);
+    resetLoadMoreState();
     setSelectedSecurity(
       'securityId' in security ? securityFromHolding(security) : security,
     );
@@ -357,7 +383,7 @@ export const useThirteenFWorkspaceController = () => {
     setFirmHoldingsState(idleRequest());
     setSecurityHoldingsState(idleRequest());
     setDirectoryState(loadingRequest());
-    setLoadMoreError(null);
+    resetLoadMoreState();
   };
 
   const handleQueryChange = (value: string) => {
@@ -368,12 +394,12 @@ export const useThirteenFWorkspaceController = () => {
     setFirmHoldingsState(idleRequest());
     setSecurityHoldingsState(idleRequest());
     setDirectoryState(loadingRequest());
-    setLoadMoreError(null);
+    resetLoadMoreState();
   };
 
   const handlePeriodChange = (period: PeriodOption | undefined) => {
     setSelectedPeriod(period);
-    setLoadMoreError(null);
+    resetLoadMoreState();
     if (selectedFirmId) {
       setFirmHoldingsState(loadingRequest());
       return;
@@ -388,12 +414,15 @@ export const useThirteenFWorkspaceController = () => {
   const handleHoldingsOrderChange = (order: HoldingsOrder) => {
     if (order === holdingsOrder) return;
     setFirmHoldingsState(loadingRequest());
-    setLoadMoreError(null);
+    resetLoadMoreState();
     setHoldingsOrder(order);
   };
 
   const loadMore = async () => {
-    if (loadingMore) return;
+    if (loadingMore || hasActiveLoadMoreRequest(loadMoreRequestGate.current)) {
+      return;
+    }
+    const requestId = beginLoadMoreRequest(loadMoreRequestGate.current);
     setLoadingMore(true);
     setLoadMoreError(null);
     try {
@@ -414,6 +443,9 @@ export const useThirteenFWorkspaceController = () => {
           limit: 100,
           order: holdingsOrder,
         });
+        if (!isActiveLoadMoreRequest(loadMoreRequestGate.current, requestId)) {
+          return;
+        }
         setFirmHoldingsState((current) => {
           if (
             current.status !== 'success' ||
@@ -446,6 +478,9 @@ export const useThirteenFWorkspaceController = () => {
           cursor: securityHoldingsState.data.page.pageInfo.endCursor,
           limit: 100,
         });
+        if (!isActiveLoadMoreRequest(loadMoreRequestGate.current, requestId)) {
+          return;
+        }
         setSecurityHoldingsState((current) => {
           if (
             current.status !== 'success' ||
@@ -476,6 +511,9 @@ export const useThirteenFWorkspaceController = () => {
           cursor: directoryState.data.page.pageInfo.endCursor,
           limit: 100,
         });
+        if (!isActiveLoadMoreRequest(loadMoreRequestGate.current, requestId)) {
+          return;
+        }
         setDirectoryState((current) => {
           if (
             current.status !== 'success' ||
@@ -495,9 +533,13 @@ export const useThirteenFWorkspaceController = () => {
         });
       }
     } catch {
-      setLoadMoreError('Could not load more results.');
+      if (isActiveLoadMoreRequest(loadMoreRequestGate.current, requestId)) {
+        setLoadMoreError('Could not load more results.');
+      }
     } finally {
-      setLoadingMore(false);
+      if (finishLoadMoreRequest(loadMoreRequestGate.current, requestId)) {
+        setLoadingMore(false);
+      }
     }
   };
 

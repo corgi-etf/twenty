@@ -36,6 +36,13 @@ import {
   firmHoldingsRequestKey,
   firmMetadataRequestKey,
 } from 'src/front-components/thirteen-f-workspace/request-keys';
+import {
+  beginLoadMoreRequest,
+  createLoadMoreRequestGate,
+  finishLoadMoreRequest,
+  invalidateLoadMoreRequest,
+  isActiveLoadMoreRequest,
+} from 'src/front-components/thirteen-f-workspace/load-more-request';
 import type {
   FirmDetail,
   Holding,
@@ -129,6 +136,45 @@ describe('13F workspace journeys', () => {
   it('loads the lightweight period catalog without a heavy summary fallback', () => {
     expect(workspaceSource).toContain("action: 'periods'");
     expect(workspaceSource).not.toContain("action: 'summary'");
+  });
+
+  it('invalidates an in-flight load-more request before switching workspace scope', () => {
+    expect(workspaceSource).toContain('invalidateLoadMoreRequest');
+    expect(workspaceSource).toContain('finishLoadMoreRequest');
+  });
+
+  it('ignores stale load-more failures and completion after a new scope starts loading', async () => {
+    const gate = createLoadMoreRequestGate();
+    const firstRequest = beginLoadMoreRequest(gate);
+    let loading = true;
+    let error: string | null = null;
+
+    invalidateLoadMoreRequest(gate);
+    loading = false;
+    const secondRequest = beginLoadMoreRequest(gate);
+    loading = true;
+
+    await Promise.resolve();
+    if (isActiveLoadMoreRequest(gate, firstRequest)) {
+      error = 'Could not load more results.';
+    }
+    if (finishLoadMoreRequest(gate, firstRequest)) {
+      loading = false;
+    }
+
+    expect(error).toBeNull();
+    expect(loading).toBe(true);
+    expect(isActiveLoadMoreRequest(gate, secondRequest)).toBe(true);
+
+    if (isActiveLoadMoreRequest(gate, secondRequest)) {
+      error = 'Could not load more results.';
+    }
+    if (finishLoadMoreRequest(gate, secondRequest)) {
+      loading = false;
+    }
+
+    expect(error).toBe('Could not load more results.');
+    expect(loading).toBe(false);
   });
 
   it('identifies SEC periods by both report date and date basis', () => {
